@@ -1,0 +1,864 @@
+// -----------------------------------------------------------------------------
+// C++ serving Agent - Phase 6
+//
+// A stateless Agent that serves the S3 data plane from a shared artifact store.
+// It performs no SQL, Parquet generation, or Iceberg/Delta materialization.
+// -----------------------------------------------------------------------------
+
+#ifdef _WIN32
+#define _CRT_SECURE_NO_WARNINGS
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <climits>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#pragma comment(lib, "ws2_32.lib")
+using SocketHandle = SOCKET;
+static const SocketHandle kInvalidSocket = INVALID_SOCKET;
+#else
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+using SocketHandle = int;
+static const SocketHandle kInvalidSocket = -1;
+#endif
+
+namespace fs = std::filesystem;
+
+static const char* APP_VERSION = "cpp-0.2.0";
+
+// ---------------------------------------------------------------------------
+// platform shim
+// ---------------------------------------------------------------------------
+
+static bool net_init() {
+#ifdef _WIN32
+    WSADATA wsa;
+    return WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+#else
+    return true;
+#endif
+}
+
+static void net_cleanup() {
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
+
+static void close_socket(SocketHandle s) {
+#ifdef _WIN32
+    closesocket(s);
+#else
+    close(s);
+#endif
+}
+
+static bool set_reuseaddr(SocketHandle s) {
+    int yes = 1;
+    return setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes)) == 0;
+}
+
+static void set_socket_timeouts(SocketHandle s, int ms) {
+#ifdef _WIN32
+    DWORD t = (DWORD)ms;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof(t));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&t, sizeof(t));
+#else
+    struct timeval tv;
+    tv.tv_sec = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+static std::string getenv_str(const char* name, const std::string& def) {
+    const char* v = std::getenv(name);
+    return (v && *v) ? std::string(v) : def;
+}
+
+static bool parse_i64(const std::string& s, long long& out) {
+    if (s.empty()) return false;
+    size_t i = 0;
+    bool neg = false;
+    if (s[0] == '+' || s[0] == '-') {
+        neg = (s[0] == '-');
+        i = 1;
+        if (i == s.size()) return false;
+    }
+    long long val = 0;
+    for (; i < s.size(); ++i) {
+        char c = s[i];
+        if (c < '0' || c > '9') return false;
+        int d = c - '0';
+        if (val > (LLONG_MAX - d) / 10) return false;
+        val = val * 10 + d;
+    }
+    out = neg ? -val : val;
+    return true;
+}
+
+static int parse_int_or(const std::string& s, int def, int min_v, int max_v) {
+    long long v = 0;
+    if (!parse_i64(s, v)) return def;
+    if (v < min_v || v > max_v) return def;
+    return (int)v;
+}
+
+static void log_line(const std::string& msg) {
+    std::time_t t = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::gmtime(&t));
+    std::fprintf(stderr, "%s [cpp-agent] %s\n", buf, msg.c_str());
+    std::fflush(stderr);
+}
+
+static std::string to_lower_ascii(const std::string& s) {
+    std::string out = s;
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+        return (char)std::tolower(c);
+    });
+    return out;
+}
+
+static std::string url_decode(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            auto hex = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            int hi = hex(s[i + 1]), lo = hex(s[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back((char)((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        if (s[i] == '+') out.push_back(' ');
+        else out.push_back(s[i]);
+    }
+    return out;
+}
+
+static std::string iso_now() {
+    std::time_t t = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S.000Z", std::gmtime(&t));
+    return std::string(buf);
+}
+
+static std::string etag_for(const std::string& key) {
+    uint64_t h = 1469598103934665603ULL;
+    for (unsigned char c : key) {
+        h ^= c;
+        h *= 1099511628211ULL;
+    }
+    char buf[33];
+    std::snprintf(buf, sizeof(buf), "%016llx%016llx",
+                  (unsigned long long)h,
+                  (unsigned long long)(h * 2654435761ULL));
+    return std::string(buf);
+}
+
+static std::string xml_escape(const std::string& s) {
+    std::string o;
+    for (char c : s) {
+        switch (c) {
+            case '&': o += "&amp;"; break;
+            case '<': o += "&lt;"; break;
+            case '>': o += "&gt;"; break;
+            default: o.push_back(c);
+        }
+    }
+    return o;
+}
+
+// ---------------------------------------------------------------------------
+// config
+// ---------------------------------------------------------------------------
+
+struct Config {
+    std::string host = getenv_str("HOST", "0.0.0.0");
+    int port = parse_int_or(getenv_str("PORT", "9400"), 9400, 1, 65535);
+    std::string store_dir = getenv_str("STORE_DIR", getenv_str("ARTIFACT_STORE_DIR", "./.artifacts"));
+    std::string bucket = getenv_str("S3_BUCKET", "fabric-iceberg-poc");
+    std::string agent_id = getenv_str("AGENT_ID", "cpp-agent-1");
+    std::string manager_url = getenv_str("MANAGER_URL", "");
+    int heartbeat_ms = parse_int_or(getenv_str("HEARTBEAT_MS", "2000"), 2000, 200, 600000);
+    int socket_timeout_ms = parse_int_or(getenv_str("SOCKET_TIMEOUT_MS", "10000"), 10000, 1000, 60000);
+    int max_inflight = parse_int_or(getenv_str("MAX_INFLIGHT", "256"), 256, 1, 100000);
+};
+
+static Config CFG;
+
+// ---------------------------------------------------------------------------
+// store/path safety
+// ---------------------------------------------------------------------------
+
+static bool path_has_prefix(const fs::path& base, const fs::path& p) {
+    auto bit = base.begin();
+    auto pit = p.begin();
+    for (; bit != base.end(); ++bit, ++pit) {
+        if (pit == p.end() || *bit != *pit) return false;
+    }
+    return true;
+}
+
+static bool key_is_basic_safe(const std::string& key) {
+    if (key.empty()) return false;
+    if (key.find('\0') != std::string::npos) return false;
+    return true;
+}
+
+static fs::path canonical_store_root() {
+    std::error_code ec;
+    fs::path root = fs::weakly_canonical(fs::path(CFG.store_dir), ec);
+    if (ec) return fs::path(CFG.store_dir).lexically_normal();
+    return root;
+}
+
+static bool resolve_key_path(const std::string& raw_key, fs::path& out_path) {
+    if (!key_is_basic_safe(raw_key)) return false;
+
+    std::string key = raw_key;
+    std::replace(key.begin(), key.end(), '\\', '/');
+    while (!key.empty() && key.front() == '/') key.erase(key.begin());
+    if (key.empty()) return false;
+
+    fs::path rel(key);
+    if (rel.is_absolute()) return false;
+
+    fs::path root = canonical_store_root();
+    std::error_code ec;
+    fs::path cand = fs::weakly_canonical(root / rel, ec);
+    if (ec) return false;
+    if (!path_has_prefix(root, cand)) return false;
+    out_path = cand;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// socket send helpers
+// ---------------------------------------------------------------------------
+
+static bool send_all(SocketHandle s, const char* data, size_t len) {
+    size_t sent = 0;
+    while (sent < len) {
+        size_t rem = len - sent;
+        int chunk = (int)std::min(rem, (size_t)1 << 20);
+#ifdef _WIN32
+        int n = ::send(s, data + sent, chunk, 0);
+#else
+        int n = (int)::send(s, data + sent, chunk, 0);
+#endif
+        if (n <= 0) return false;
+        sent += (size_t)n;
+    }
+    return true;
+}
+
+static bool send_headers(SocketHandle s,
+                         int status,
+                         const std::string& reason,
+                         const std::string& content_type,
+                         long long content_length,
+                         const std::string& extra_headers = "") {
+    std::ostringstream h;
+    h << "HTTP/1.1 " << status << " " << reason << "\r\n"
+      << "Content-Type: " << content_type << "\r\n"
+      << "Content-Length: " << content_length << "\r\n"
+      << "Accept-Ranges: bytes\r\n"
+      << "Server: s3emu-cpp-agent/" << APP_VERSION << "\r\n"
+      << extra_headers
+      << "Connection: close\r\n\r\n";
+    std::string head = h.str();
+    return send_all(s, head.data(), head.size());
+}
+
+static bool send_body_from_file(SocketHandle s, const fs::path& p, long long start, long long count) {
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return false;
+    f.seekg(start, std::ios::beg);
+    if (!f) return false;
+
+    static const size_t kBuf = 64 * 1024;
+    std::vector<char> buf(kBuf);
+    long long left = count;
+    while (left > 0) {
+        size_t want = (size_t)std::min<long long>((long long)kBuf, left);
+        f.read(buf.data(), (std::streamsize)want);
+        std::streamsize got = f.gcount();
+        if (got <= 0) return false;
+        if (!send_all(s, buf.data(), (size_t)got)) return false;
+        left -= (long long)got;
+    }
+    return true;
+}
+
+static std::string s3_error_xml(const std::string& code, const std::string& msg, const std::string& res) {
+    std::ostringstream x;
+    x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>" << code
+      << "</Code><Message>" << xml_escape(msg) << "</Message><Resource>" << xml_escape(res)
+      << "</Resource><RequestId>cpp</RequestId></Error>";
+    return x.str();
+}
+
+static void send_fixed_response(SocketHandle s,
+                                int status,
+                                const std::string& reason,
+                                const std::string& content_type,
+                                const std::string& body,
+                                bool head_only,
+                                const std::string& extra_headers = "") {
+    if (!send_headers(s, status, reason, content_type, (long long)body.size(), extra_headers)) return;
+    if (!head_only && !body.empty()) send_all(s, body.data(), body.size());
+}
+
+// ---------------------------------------------------------------------------
+// request handling
+// ---------------------------------------------------------------------------
+
+struct Request {
+    std::string method;
+    std::string path;
+    std::string query;
+    std::string range;
+};
+
+static std::string content_type_for(const std::string& key) {
+    if (key.size() >= 5 && key.compare(key.size() - 5, 5, ".json") == 0) return "application/json";
+    if (key.size() >= 5 && key.compare(key.size() - 5, 5, ".text") == 0) return "text/plain";
+    if (key.size() >= 4 && key.compare(key.size() - 4, 4, ".avro") == 0) return "application/avro";
+    if (key.size() >= 8 && key.compare(key.size() - 8, 8, ".parquet") == 0) return "application/octet-stream";
+    return "application/octet-stream";
+}
+
+static std::string query_param(const std::string& q, const std::string& name) {
+    std::string pfx = name + "=";
+    size_t pos = 0;
+    while (pos < q.size()) {
+        size_t amp = q.find('&', pos);
+        std::string part = q.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+        if (part.compare(0, pfx.size(), pfx) == 0) return url_decode(part.substr(pfx.size()));
+        if (amp == std::string::npos) break;
+        pos = amp + 1;
+    }
+    return "";
+}
+
+static void handle_list(SocketHandle s, const std::string& prefix, bool head_only) {
+    std::vector<std::pair<std::string, uintmax_t>> hits;
+    std::error_code ec;
+    fs::path root(CFG.store_dir);
+    if (fs::exists(root, ec)) {
+        for (auto it = fs::recursive_directory_iterator(root, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (!it->is_regular_file(ec)) continue;
+            std::string rel = fs::relative(it->path(), root, ec).generic_string();
+            if (rel.empty()) continue;
+            if (rel.rfind(prefix, 0) != 0) continue;
+            hits.push_back({rel, it->file_size(ec)});
+        }
+    }
+    std::sort(hits.begin(), hits.end());
+
+    std::ostringstream x;
+    x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+      << "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
+      << "<Name>" << xml_escape(CFG.bucket) << "</Name>"
+      << "<Prefix>" << xml_escape(prefix) << "</Prefix>"
+      << "<KeyCount>" << hits.size() << "</KeyCount>"
+      << "<MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>";
+    std::string now = iso_now();
+    for (auto& h : hits) {
+        x << "<Contents><Key>" << xml_escape(h.first) << "</Key>"
+          << "<LastModified>" << now << "</LastModified>"
+          << "<ETag>\"" << etag_for(h.first) << "\"</ETag>"
+          << "<Size>" << h.second << "</Size>"
+          << "<StorageClass>STANDARD</StorageClass></Contents>";
+    }
+    x << "</ListBucketResult>";
+    send_fixed_response(s, 200, "OK", "application/xml", x.str(), head_only);
+}
+
+struct RangeResult {
+    bool is_partial = false;
+    bool unsat = false;
+    long long start = 0;
+    long long end = -1;
+};
+
+static RangeResult parse_range_header(const std::string& range, long long total) {
+    RangeResult rr;
+    rr.start = 0;
+    rr.end = total - 1;
+    if (range.empty() || range.rfind("bytes=", 0) != 0 || total < 0) return rr;
+
+    std::string spec = range.substr(6);
+    size_t comma = spec.find(',');
+    if (comma != std::string::npos) spec = spec.substr(0, comma);
+    size_t dash = spec.find('-');
+    if (dash == std::string::npos) return rr;
+
+    std::string a = spec.substr(0, dash);
+    std::string b = spec.substr(dash + 1);
+
+    if (a.empty()) {
+        long long n = 0;
+        if (!parse_i64(b, n)) return rr;
+        if (n <= 0) return rr;
+        if (n > total) n = total;
+        rr.start = total - n;
+        rr.end = total - 1;
+        rr.is_partial = true;
+        return rr;
+    }
+
+    long long start = 0;
+    if (!parse_i64(a, start)) return rr;
+    if (start < 0) return rr;
+    long long end = total - 1;
+    if (!b.empty()) {
+        if (!parse_i64(b, end)) return rr;
+    }
+    if (start >= total) {
+        rr.unsat = true;
+        return rr;
+    }
+    if (end > total - 1) end = total - 1;
+    if (end < start) {
+        rr.unsat = true;
+        return rr;
+    }
+    rr.start = start;
+    rr.end = end;
+    rr.is_partial = true;
+    return rr;
+}
+
+static void handle_get(SocketHandle s, const std::string& key, const std::string& range, bool head_only) {
+    fs::path p;
+    if (!resolve_key_path(key, p)) {
+        std::string body = s3_error_xml("InvalidArgument", "bad key", "/" + key);
+        send_fixed_response(s, 400, "Bad Request", "application/xml", body, head_only);
+        return;
+    }
+
+    std::error_code ec;
+    if (!fs::exists(p, ec) || !fs::is_regular_file(p, ec)) {
+        std::string body = s3_error_xml("NoSuchKey", "The specified key does not exist.", "/" + key);
+        send_fixed_response(s, 404, "Not Found", "application/xml", body, head_only);
+        return;
+    }
+
+    long long total = (long long)fs::file_size(p, ec);
+    if (ec || total < 0) {
+        std::string body = s3_error_xml("InternalError", "stat failed", "/" + key);
+        send_fixed_response(s, 500, "Internal Server Error", "application/xml", body, head_only);
+        return;
+    }
+
+    std::string ct = content_type_for(key);
+    RangeResult rr = parse_range_header(range, total);
+    if (rr.unsat) {
+        std::string body = s3_error_xml("InvalidRange", "range not satisfiable", "/" + key);
+        send_fixed_response(s, 416, "Range Not Satisfiable", "application/xml", body, head_only);
+        return;
+    }
+
+    long long send_start = rr.is_partial ? rr.start : 0;
+    long long send_end = rr.is_partial ? rr.end : (total - 1);
+    long long send_len = (total == 0) ? 0 : (send_end - send_start + 1);
+
+    std::string extra;
+    int status = 200;
+    std::string reason = "OK";
+    if (rr.is_partial) {
+        status = 206;
+        reason = "Partial Content";
+        std::ostringstream e;
+        e << "Content-Range: bytes " << send_start << "-" << send_end << "/" << total << "\r\n";
+        extra = e.str();
+    }
+
+    if (!send_headers(s, status, reason, ct, send_len, extra)) return;
+    if (!head_only && send_len > 0) {
+        if (!send_body_from_file(s, p, send_start, send_len)) {
+            log_line("send_body_from_file failed for key=" + key);
+        }
+    }
+}
+
+static bool parse_request_line(const std::string& line, std::string& method, std::string& target) {
+    std::istringstream ls(line);
+    std::string version;
+    ls >> method >> target >> version;
+    if (method.empty() || target.empty() || version.empty()) return false;
+    return true;
+}
+
+static void handle_connection(SocketHandle client) {
+    std::string buf;
+    char tmp[8192];
+    for (int i = 0; i < 64; ++i) {
+#ifdef _WIN32
+        int n = ::recv(client, tmp, (int)sizeof(tmp), 0);
+#else
+        int n = (int)::recv(client, tmp, sizeof(tmp), 0);
+#endif
+        if (n <= 0) break;
+        buf.append(tmp, (size_t)n);
+        if (buf.size() > (size_t)512 * 1024) {
+            send_fixed_response(client, 413, "Payload Too Large", "text/plain", "", true);
+            close_socket(client);
+            return;
+        }
+        if (buf.find("\r\n\r\n") != std::string::npos) break;
+    }
+    if (buf.empty()) {
+        close_socket(client);
+        return;
+    }
+
+    Request req;
+    size_t line_end = buf.find("\r\n");
+    std::string line = buf.substr(0, line_end == std::string::npos ? buf.size() : line_end);
+    std::string target;
+    if (!parse_request_line(line, req.method, target)) {
+        send_fixed_response(client, 400, "Bad Request", "application/xml",
+                            s3_error_xml("InvalidRequest", "malformed request line", "/"),
+                            true);
+        close_socket(client);
+        return;
+    }
+
+    {
+        std::string lower = to_lower_ascii(buf);
+        size_t rp = lower.find("\r\nrange:");
+        if (rp != std::string::npos) {
+            size_t vs = rp + 8;
+            size_t ve = buf.find("\r\n", vs);
+            if (ve != std::string::npos && ve > vs) {
+                std::string v = buf.substr(vs, ve - vs);
+                size_t a = v.find_first_not_of(" ");
+                req.range = a == std::string::npos ? "" : v.substr(a);
+            }
+        }
+    }
+
+    size_t qpos = target.find('?');
+    std::string raw_path = qpos == std::string::npos ? target : target.substr(0, qpos);
+    req.query = qpos == std::string::npos ? "" : target.substr(qpos + 1);
+    req.path = url_decode(raw_path);
+
+    bool head_only = (req.method == "HEAD");
+
+    if (req.path == "/healthz" || req.path == "/readyz") {
+        send_fixed_response(client, 200, "OK", "application/json",
+                            std::string("{\"status\":\"ok\",\"role\":\"agent\",\"impl\":\"cpp\",\"version\":\"") + APP_VERSION + "\"}",
+                            head_only);
+        close_socket(client);
+        return;
+    }
+
+    if (req.path == "/favicon.ico") {
+        send_fixed_response(client, 204, "No Content", "text/plain", "", head_only);
+        close_socket(client);
+        return;
+    }
+
+    if (req.method != "GET" && req.method != "HEAD") {
+        send_fixed_response(client, 405, "Method Not Allowed", "application/xml",
+                            s3_error_xml("MethodNotAllowed", "only GET/HEAD", req.path),
+                            true);
+        close_socket(client);
+        return;
+    }
+
+    std::string p = req.path;
+    if (!p.empty() && p[0] == '/') p = p.substr(1);
+    size_t slash = p.find('/');
+    std::string bucket = slash == std::string::npos ? p : p.substr(0, slash);
+    std::string key = slash == std::string::npos ? "" : p.substr(slash + 1);
+    (void)bucket;
+
+    if (key.empty()) {
+        handle_list(client, query_param(req.query, "prefix"), head_only);
+    } else {
+        handle_get(client, key, req.range, head_only);
+    }
+
+    close_socket(client);
+}
+
+// ---------------------------------------------------------------------------
+// minimal HTTP client (register/heartbeat)
+// ---------------------------------------------------------------------------
+
+static bool parse_url(const std::string& url, std::string& host, int& port, std::string& base) {
+    std::string u = url;
+    if (u.rfind("http://", 0) == 0) u = u.substr(7);
+    size_t slash = u.find('/');
+    std::string hostport = slash == std::string::npos ? u : u.substr(0, slash);
+    base = slash == std::string::npos ? "" : u.substr(slash);
+    size_t colon = hostport.find(':');
+    host = colon == std::string::npos ? hostport : hostport.substr(0, colon);
+    std::string p = colon == std::string::npos ? "80" : hostport.substr(colon + 1);
+    port = parse_int_or(p, 80, 1, 65535);
+    if (host == "0.0.0.0" || host == "::") host = "127.0.0.1";
+    return !host.empty();
+}
+
+static int http_post(const std::string& host, int port, const std::string& path,
+                     const std::string& body, std::string& resp_body) {
+    struct addrinfo hints;
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo* res = nullptr;
+    std::string ports = std::to_string(port);
+    if (getaddrinfo(host.c_str(), ports.c_str(), &hints, &res) != 0) return -1;
+
+    SocketHandle s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (s == kInvalidSocket) {
+        freeaddrinfo(res);
+        return -1;
+    }
+    set_socket_timeouts(s, CFG.socket_timeout_ms);
+
+    if (connect(s, res->ai_addr, (int)res->ai_addrlen) != 0) {
+        close_socket(s);
+        freeaddrinfo(res);
+        return -1;
+    }
+    freeaddrinfo(res);
+
+    std::ostringstream r;
+    r << "POST " << path << " HTTP/1.1\r\n"
+      << "Host: " << host << ":" << port << "\r\n"
+      << "Content-Type: application/json\r\n"
+      << "Content-Length: " << body.size() << "\r\n"
+      << "Connection: close\r\n\r\n" << body;
+    std::string reqs = r.str();
+    if (!send_all(s, reqs.data(), reqs.size())) {
+        close_socket(s);
+        return -1;
+    }
+
+    std::string full;
+    char tmp[8192];
+    for (;;) {
+#ifdef _WIN32
+        int n = ::recv(s, tmp, (int)sizeof(tmp), 0);
+#else
+        int n = (int)::recv(s, tmp, sizeof(tmp), 0);
+#endif
+        if (n <= 0) break;
+        full.append(tmp, (size_t)n);
+    }
+    close_socket(s);
+
+    int status = -1;
+    if (full.rfind("HTTP/1.1 ", 0) == 0 || full.rfind("HTTP/1.0 ", 0) == 0) {
+        long long st = 0;
+        if (full.size() >= 12 && parse_i64(full.substr(9, 3), st)) status = (int)st;
+    }
+    size_t hb = full.find("\r\n\r\n");
+    resp_body = hb == std::string::npos ? "" : full.substr(hb + 4);
+    return status;
+}
+
+static std::string json_str(const std::string& body, const std::string& name) {
+    std::string pat = "\"" + name + "\"";
+    size_t k = body.find(pat);
+    if (k == std::string::npos) return "";
+    size_t colon = body.find(':', k + pat.size());
+    if (colon == std::string::npos) return "";
+    size_t q1 = body.find('"', colon + 1);
+    if (q1 == std::string::npos) return "";
+    size_t q2 = body.find('"', q1 + 1);
+    if (q2 == std::string::npos) return "";
+    return body.substr(q1 + 1, q2 - q1 - 1);
+}
+
+static std::atomic<bool> g_running{true};
+static std::atomic<int> g_inflight{0};
+
+static void control_loop() {
+    std::string host, base;
+    int port = 80;
+    if (!parse_url(CFG.manager_url, host, port, base)) {
+        log_line("manager_url parse failed");
+        return;
+    }
+
+    std::string lease;
+
+    auto do_register = [&]() -> bool {
+        std::ostringstream j;
+        j << "{\"agent_id\":\"" << CFG.agent_id << "\",\"host\":\"0.0.0.0\",\"port\":" << CFG.port
+          << ",\"os\":\""
+#ifdef _WIN32
+          << "windows"
+#else
+          << "linux"
+#endif
+          << "\",\"version\":\"" << APP_VERSION
+          << "\",\"capacity_hint\":0,\"contract_version\":\"1.0\"}";
+
+        std::string rb;
+        int st = http_post(host, port, "/control/register", j.str(), rb);
+        if (st == 200) {
+            lease = json_str(rb, "lease_id");
+            if (!lease.empty()) {
+                log_line("registered lease=" + lease.substr(0, std::min<size_t>(8, lease.size())));
+                return true;
+            }
+        }
+        log_line("register failed status=" + std::to_string(st));
+        return false;
+    };
+
+    while (g_running && !do_register()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+
+    while (g_running) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(CFG.heartbeat_ms));
+        if (!g_running) break;
+
+        std::ostringstream j;
+        j << "{\"agent_id\":\"" << CFG.agent_id << "\",\"lease_id\":\"" << lease
+          << "\",\"health\":{\"cpu_pct\":0.0,\"mem_bytes\":0,\"cache_bytes\":0,\"inflight\":" << g_inflight.load() << "},"
+          << "\"serving_tables\":[],\"epochs\":{}}";
+
+        std::string rb;
+        int st = http_post(host, port, "/control/heartbeat", j.str(), rb);
+        if (st != 200) {
+            log_line("heartbeat status=" + std::to_string(st) + " -> re-register");
+            while (g_running && !do_register()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            }
+        } else if (rb.find("\"drain\"") != std::string::npos) {
+            log_line("drain requested -> shutting down");
+            g_running = false;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+int main() {
+    if (!net_init()) {
+        log_line("network init failed");
+        return 1;
+    }
+
+    SocketHandle srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (srv == kInvalidSocket) {
+        log_line("socket() failed");
+        net_cleanup();
+        return 1;
+    }
+    set_reuseaddr(srv);
+    set_socket_timeouts(srv, CFG.socket_timeout_ms);
+
+    sockaddr_in addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((unsigned short)CFG.port);
+    if (CFG.host == "0.0.0.0") addr.sin_addr.s_addr = INADDR_ANY;
+    else addr.sin_addr.s_addr = inet_addr(CFG.host.c_str());
+
+    if (bind(srv, (sockaddr*)&addr, sizeof(addr)) != 0) {
+        log_line("bind failed on port " + std::to_string(CFG.port));
+        close_socket(srv);
+        net_cleanup();
+        return 1;
+    }
+    if (listen(srv, 128) != 0) {
+        log_line("listen failed");
+        close_socket(srv);
+        net_cleanup();
+        return 1;
+    }
+
+    log_line("serving S3 from '" + CFG.store_dir + "' on " + CFG.host + ":" + std::to_string(CFG.port) +
+             " (bucket=" + CFG.bucket + ")");
+
+    std::thread ctl;
+    if (!CFG.manager_url.empty()) {
+        log_line("control link -> " + CFG.manager_url + " as " + CFG.agent_id);
+        ctl = std::thread(control_loop);
+    }
+
+    while (g_running) {
+        sockaddr_in caddr;
+#ifdef _WIN32
+        int clen = sizeof(caddr);
+#else
+        socklen_t clen = sizeof(caddr);
+#endif
+        SocketHandle client = accept(srv, (sockaddr*)&caddr, &clen);
+        if (client == kInvalidSocket) continue;
+
+        set_socket_timeouts(client, CFG.socket_timeout_ms);
+
+        int prev = g_inflight.fetch_add(1);
+        if (prev >= CFG.max_inflight) {
+            g_inflight.fetch_sub(1);
+            send_fixed_response(client, 503, "Service Unavailable", "text/plain", "", true);
+            close_socket(client);
+            continue;
+        }
+
+        std::thread([client]() {
+            handle_connection(client);
+            g_inflight.fetch_sub(1);
+        }).detach();
+    }
+
+    g_running = false;
+    if (ctl.joinable()) ctl.join();
+    close_socket(srv);
+    net_cleanup();
+    return 0;
+}

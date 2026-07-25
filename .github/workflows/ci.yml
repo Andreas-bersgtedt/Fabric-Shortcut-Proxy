@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-unused:
+    name: lint unused/import checks (ruff F)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Run ruff F checks
+        run: ruff check . --select F --output-format concise
+
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+  fabric-compat:
+    name: pyiceberg reference-reader validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package + dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Start proxy
+        run: |
+          python main.py > server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:9000/readyz > /dev/null; then
+              echo "proxy ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "proxy did not become ready" >&2
+          cat server.log >&2
+          exit 1
+
+      - name: Validate served Iceberg table with pyiceberg
+        env:
+          S3EMU_SERVER: http://127.0.0.1:9000
+        run: python validate_pyiceberg.py
+
+      - name: Stop proxy
+        if: always()
+        run: kill "$(cat server.pid)" || true
+
+  cpp-linux-conformance:
+    name: C++ agent linux conformance parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package + dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Build C++ agent (Linux)
+        run: bash agent-cpp/build.sh
+
+      - name: Start Python publisher
+        env:
+          PORT: "9011"
+          ARTIFACT_STORE_SERVING: "1"
+          PUBLISH_SERVING_IMAGE: "1"
+          ARTIFACT_STORE_DIR: ".artifacts_cpp_ci"
+        run: |
+          python main.py > py-publisher.log 2>&1 &
+          echo $! > py-publisher.pid
+
+      - name: Wait for Python publisher readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:9011/readyz > /dev/null; then
+              echo "python publisher ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "python publisher did not become ready" >&2
+          cat py-publisher.log >&2
+          exit 1
+
+      - name: Publish serving image
+        run: curl -sf -X POST http://127.0.0.1:9011/_admin/publish-image
+
+      - name: Stop Python publisher
+        if: always()
+        run: kill "$(cat py-publisher.pid)" || true
+
+      - name: Start C++ agent
+        env:
+          PORT: "9012"
+          STORE_DIR: ".artifacts_cpp_ci"
+        run: |
+          ./agent-cpp/agent > cpp-agent.log 2>&1 &
+          echo $! > cpp-agent.pid
+
+      - name: Wait for C++ agent readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9012/readyz > /dev/null; then
+              echo "cpp agent ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "cpp agent did not become ready" >&2
+          cat cpp-agent.log >&2
+          exit 1
+
+      - name: Validate pyiceberg against C++ agent
+        env:
+          S3EMU_SERVER: http://127.0.0.1:9012
+        run: python validate_pyiceberg.py
+
+      - name: Stop C++ agent
+        if: always()
+        run: kill "$(cat cpp-agent.pid)" || true
+
+  dead-code-report:
+    name: dead code report (vulture, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install vulture
+        run: |
+          python -m pip install --upgrade pip
+          pip install vulture
+
+      - name: Run vulture report
+        run: vulture . --exclude .venv,tests --min-confidence 80

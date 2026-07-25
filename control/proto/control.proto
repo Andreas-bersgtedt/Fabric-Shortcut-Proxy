@@ -1,0 +1,151 @@
+// =============================================================================
+// FROZEN CONTRACT — Manager <-> Agent control plane.
+// SCALE_ARCHITECTURE_PLAN.md §5. Mirrors control/contract.py 1:1 (snake_case
+// field names) so JSON<->protobuf is mechanical. This is the language-agnostic
+// interface the future C++ Agent implements. Change ONLY additively (new fields
+// with new tags / new optional messages); never renumber or repurpose a tag.
+// Bump `contract_version` for any breaking change.
+// =============================================================================
+syntax = "proto3";
+
+package s3proxy.control.v1;
+
+// ---- Service ---------------------------------------------------------------
+
+service ControlPlane {
+  // Agent announces itself and receives a lease + heartbeat cadence.
+  rpc Register (RegisterRequest) returns (RegisterResponse);
+
+  // Long-lived: Agent streams health; Manager streams control commands
+  // (drain, reload-config, materialize task, publish-epoch).
+  rpc Heartbeat (stream HeartbeatRequest) returns (stream ControlCommand);
+
+  // Pull the tables/epochs this Agent should serve.
+  rpc GetAssignment (AssignmentRequest) returns (Assignment);
+
+  // Pull the published state of one table (what to serve).
+  rpc GetSnapshot (SnapshotRequest) returns (SnapshotManifest);
+
+  // Report the outcome of a MaterializeTask.
+  rpc ReportTaskResult (TaskResult) returns (Ack);
+}
+
+// ---- Value types -----------------------------------------------------------
+
+// Half-open range [lo, hi) on the integer split key (range-based splits).
+message KeyRange {
+  int64 lo = 1;
+  int64 hi = 2;
+}
+
+message Column {
+  int32  field_id = 1;
+  string name = 2;
+  string iceberg_type = 3;   // "long", "string", "decimal(P,S)", "timestamptz", ...
+  bool   nullable = 4;
+}
+
+message SplitRef {
+  string   object_key = 1;   // key in the artifact store
+  int64    size_bytes = 2;   // REAL size, post-materialization
+  int64    record_count = 3;
+  string   content_hash = 4; // content-addressed (12-hex)
+  KeyRange range = 5;
+}
+
+// ---- Table state -----------------------------------------------------------
+
+message SnapshotManifest {
+  string            table = 1;
+  int64             epoch = 2;          // monotonic published version
+  string            table_format = 3;   // "iceberg" | "delta"
+  repeated SplitRef splits = 4;         // net-current file set
+  repeated string   metadata_keys = 5;  // artifact keys of metadata / _delta_log
+}
+
+// ---- Agent lifecycle -------------------------------------------------------
+
+message RegisterRequest {
+  string agent_id = 1;
+  string host = 2;
+  int32  port = 3;
+  string os = 4;               // "windows" | "linux"
+  string version = 5;          // build/git sha
+  int64  capacity_hint = 6;    // cores/mem hint for scheduling
+  string contract_version = 7;
+}
+
+message RegisterResponse {
+  string lease_id = 1;
+  int32  heartbeat_ms = 2;
+  string contract_version = 3;
+}
+
+message AgentHealth {
+  double cpu_pct = 1;
+  int64  mem_bytes = 2;
+  int64  cache_bytes = 3;
+  int32  inflight = 4;
+}
+
+message HeartbeatRequest {
+  string          agent_id = 1;
+  string          lease_id = 2;
+  AgentHealth     health = 3;
+  repeated string serving_tables = 4;
+  map<string, int64> epochs = 5;   // table -> epoch currently served
+}
+
+// Manager -> Agent pushes over the Heartbeat stream.
+message ControlCommand {
+  oneof cmd {
+    ReloadConfig    reload = 1;
+    Drain           drain = 2;
+    MaterializeTask materialize = 3;
+    PublishSnapshot publish = 4;
+  }
+}
+
+message ReloadConfig { string reason = 1; }
+message Drain        { int32 grace_ms = 1; }
+message PublishSnapshot {
+  string table = 1;
+  int64  epoch = 2;
+}
+
+message AssignmentRequest { string agent_id = 1; }
+message Assignment {
+  string          agent_id = 1;
+  repeated string tables = 2;   // tables this Agent should serve
+}
+
+message SnapshotRequest {
+  string table = 1;
+  int64  epoch = 2;   // 0 = current
+}
+
+// ---- Materialization work queue -------------------------------------------
+
+message MaterializeTask {
+  string          table = 1;
+  int64           epoch = 2;
+  int32           split_index = 3;
+  string          source_table = 4;
+  string          output_key = 5;   // artifact-store key to write
+  repeated Column schema = 6;
+  KeyRange        range = 7;
+}
+
+message TaskResult {
+  string agent_id = 1;
+  string table = 2;
+  int64  epoch = 3;
+  int32  split_index = 4;
+  bool   ok = 5;
+  int64  size_bytes = 6;
+  int64  record_count = 7;
+  string content_hash = 8;
+  string error = 9;
+}
+
+message Ack { bool ok = 1; }

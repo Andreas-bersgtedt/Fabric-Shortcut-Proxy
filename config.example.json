@@ -1,0 +1,34 @@
+{
+  "_comment": "Copy to config.json and edit. Precedence: env var > config.json > default. Set CONFIG_FILE to use a different path. table_format is 'iceberg' (default) or 'delta' (native _delta_log, no conversion). See CONFIGURATION.md for the full field list.",
+
+  "bucket": "fabric-iceberg-poc",
+  "db_url": "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb",
+  "num_splits": 8,
+  "query_max_rows": 500000,
+  "require_sigv4": false,
+  "table_format": "iceberg",
+
+  "tables": [
+    {
+      "name": "orders",
+      "source_table": "public.orders",
+      "key_column": "order_id"
+    },
+    {
+      "name": "customers",
+      "source_table": "public.customers",
+      "key_column": "customer_id",
+      "num_splits": 4
+    },
+    {
+      "name": "events",
+      "source_table": "analytics.events",
+      "key_column": "event_id",
+      "schema": [
+        { "field_id": 1, "name": "event_id", "type": "long", "nullable": false },
+        { "field_id": 2, "name": "occurred", "type": "timestamp" },
+        { "field_id": 3, "name": "payload",  "type": "string" }
+      ]
+    }
+  ]
+}

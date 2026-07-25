@@ -1,0 +1,56 @@
+# Byte-compiled / optimized / cached
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build / distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Databases / generated data
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+
+# Captured runtime output
+response.xml
+*.log
+
+# Local runtime config (use config.example.json as a template)
+config.json
+
+# Persistent Parquet cache (F5)
+.parquet_cache/
+
+# Artifact store (Phase 0 — local backend default dir)
+.artifacts/
+
+# C++ Agent build artifacts (Phase 6 — source is committed, binaries are not)
+agent-cpp/*.exe
+agent-cpp/*.obj
+agent-cpp/*.pdb
+agent-cpp/*.ilk
+agent-cpp/build.txt
+agent-cpp/agent
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

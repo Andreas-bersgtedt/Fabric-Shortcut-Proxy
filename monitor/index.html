@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Monitor — Fabric Shortcut Proxy</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b22; --panel2:#1c2230; --border:#2b3444;
+    --text:#e6edf3; --muted:#8b949e; --accent:#3b82f6; --accent2:#22c55e;
+    --warn:#f59e0b; --err:#ef4444; --sql:#8b5cf6; --gen:#22c55e; --cache:#38bdf8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--border);
+         display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+         position:sticky;top:0;background:var(--bg);z-index:5}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:6px}
+  .dot.live{background:var(--accent2);box-shadow:0 0 8px var(--accent2)}
+  .spacer{flex:1}
+  .ctrl{display:flex;align-items:center;gap:8px;color:var(--muted)}
+  input,select,button{background:var(--panel2);color:var(--text);border:1px solid var(--border);
+       border-radius:6px;padding:6px 10px;font-size:13px}
+  button{cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.ghost{background:transparent}
+  main{padding:20px;max-width:1400px;margin:0 auto}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .card .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .card .v{font-size:22px;font-weight:600;margin-top:4px}
+  .card .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  h2{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;
+     margin:26px 0 10px;font-weight:600}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:9px 12px;text-align:right;white-space:nowrap}
+  th{color:var(--muted);font-weight:600;border-bottom:1px solid var(--border);
+     text-transform:uppercase;font-size:11px;letter-spacing:.03em;position:sticky;top:0;background:var(--panel)}
+  td:first-child,th:first-child{text-align:left}
+  tbody tr{border-bottom:1px solid #20262f}
+  tbody tr:hover{background:var(--panel2)}
+  .tname{font-weight:600}
+  .muted{color:var(--muted)}
+  .pill{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;border:1px solid var(--border)}
+  .pill.on{color:var(--accent2);border-color:var(--accent2)}
+  .pill.off{color:var(--muted)}
+  .pill.delta{color:var(--accent2);border-color:var(--accent2)}
+  .pill.iceberg{color:var(--warn);border-color:var(--warn)}
+  .err{color:var(--err)}
+  .warnrow td{background:rgba(239,68,68,.06)}
+  .bar{height:12px;border-radius:3px;background:var(--panel2);overflow:hidden;display:flex;min-width:120px}
+  .bar > span{display:block;height:100%}
+  .seg-sql{background:var(--sql)} .seg-gen{background:var(--gen)} .seg-cache{background:var(--cache)}
+  .legend{display:flex;gap:16px;color:var(--muted);font-size:12px;margin:6px 2px 0}
+  .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  .rq{display:grid;grid-template-columns:150px 46px 1fr 90px;gap:10px;align-items:center;
+      padding:6px 12px;border-bottom:1px solid #20262f;font-size:12px}
+  .rq:hover{background:var(--panel2)}
+  .rq .lag{font-variant-numeric:tabular-nums}
+  .empty{padding:24px;color:var(--muted);text-align:center}
+  #err{color:var(--err);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot" id="livedot"></span>Iceberg Proxy Monitor</h1>
+  <span class="ctrl"><span id="uptime" class="muted"></span></span>
+  <span id="formatBadge" class="ctrl"></span>
+  <span id="refreshBadge" class="ctrl"></span>
+  <span class="spacer"></span>
+  <span id="err"></span>
+  <span class="ctrl">
+    <label>every</label>
+    <select id="interval">
+      <option value="2000">2s</option>
+      <option value="5000" selected>5s</option>
+      <option value="10000">10s</option>
+      <option value="30000">30s</option>
+    </select>
+    <label><input type="checkbox" id="auto" checked /> auto</label>
+    <button class="ghost" id="refreshNow">Refresh</button>
+    <button class="ghost" id="reset">Reset stats</button>
+  </span>
+</header>
+
+<main>
+  <div class="cards" id="cards"></div>
+
+  <h2>Per-table read &amp; query statistics</h2>
+  <div class="panel">
+    <table id="tbl">
+      <thead><tr>
+        <th>Table</th><th>Ver</th><th>Splits</th><th>Rows</th>
+        <th>Requests</th><th id="thMeta">Meta</th><th id="thManifest">Manifest</th><th>Data</th><th>Errors</th>
+        <th>Cache&nbsp;hit</th><th>Avg&nbsp;SQL</th><th>p95&nbsp;SQL</th>
+        <th>Avg&nbsp;gen</th><th>Avg&nbsp;lag</th><th>p95&nbsp;lag</th><th>Bytes</th><th>Last&nbsp;read</th>
+      </tr></thead>
+      <tbody id="tblBody"></tbody>
+    </table>
+  </div>
+
+  <h2>Query lag — Fabric&nbsp;→&nbsp;SQL&nbsp;→&nbsp;Parquet&nbsp;→&nbsp;Fabric (average per table)</h2>
+  <div class="legend">
+    <span><b class="seg-sql"></b>SQL execution</span>
+    <span><b class="seg-gen"></b>Parquet generation</span>
+    <span><b class="seg-cache"></b>served from cache (no SQL)</span>
+  </div>
+  <div class="panel" id="recentPanel" style="margin-top:8px">
+    <div class="rq muted"><div>Table</div><div>Cache</div><div>Avg Fabric→SQL→Parquet lag</div><div>Avg total</div></div>
+    <div id="recentBody"></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let timer = null;
+
+function fmtBytes(n){ if(n==null) return "–"; const u=["B","KB","MB","GB"]; let i=0,x=n;
+  while(x>=1024&&i<u.length-1){x/=1024;i++;} return x.toFixed(x<10&&i>0?1:0)+u[i]; }
+function fmtNum(n){ return n==null? "–" : Intl.NumberFormat().format(n); }
+function fmtMs(n){ if(n==null) return "–"; return n>=1000? (n/1000).toFixed(2)+"s" : Math.round(n)+"ms"; }
+function ago(ts){ if(!ts) return "–"; const s=Math.max(0,Date.now()/1000-ts);
+  if(s<60) return Math.round(s)+"s ago"; if(s<3600) return Math.round(s/60)+"m ago"; return Math.round(s/3600)+"h ago"; }
+function pct(r){ return r==null? "–" : Math.round(r*100)+"%"; }
+
+async function poll(){
+  try{
+    const r = await fetch("/_monitor/api/summary", {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const d = await r.json();
+    $("err").textContent = "";
+    $("livedot").classList.add("live");
+    render(d);
+  }catch(e){
+    $("err").textContent = "✗ "+e.message;
+    $("livedot").classList.remove("live");
+  }
+}
+
+function render(d){
+  $("uptime").textContent = d.uptime_seconds!=null ? "up "+fmtMs(d.uptime_seconds*1000).replace('ms','s') : "";
+  const fmt = (d.table_format||'iceberg');
+  const isDelta = fmt==='delta';
+  $("formatBadge").innerHTML = `format <span class="pill ${isDelta?'delta':'iceberg'}" `
+    + `title="${isDelta?'Native Delta output — Fabric reads _delta_log/ directly (no conversion)':'Iceberg output — Fabric virtualizes it to Delta on its side'}">`
+    + `${isDelta?'Delta (native)':'Iceberg → Delta'}</span>`;
+  // In Delta mode there is no metadata.json/manifest layer; the "Meta" column
+  // instead reports Delta transaction-log commit reads.
+  $("thMeta").textContent = isDelta ? "Δ log" : "Meta";
+  $("thManifest").textContent = isDelta ? "—" : "Manifest";
+  const rb = d.refresh||{};
+  $("refreshBadge").innerHTML = `auto-refresh <span class="pill ${rb.auto_refresh?'on':'off'}">${rb.auto_refresh?('on · '+rb.strategy+' · '+rb.poll_seconds+'s'):'off'}</span>`;
+
+  const t = d.totals||{}, c = d.cache||{};
+  const pinned = c.parquet_pinned||{};
+  $("cards").innerHTML = [
+    ["Tables", fmtNum(t.tables)],
+    ["Data requests", fmtNum(t.data_requests), "cache hit "+pct(t.cache_hit_ratio)],
+    ["Parquet gens", fmtNum(t.parquet_generations)],
+    ["Bytes served", fmtBytes(t.bytes_served)],
+    ["Pinned splits", fmtNum(pinned.entries)+" · "+fmtBytes(pinned.bytes)],
+    ["SQL p (avg)", d.sql_latency? fmtMs((d.sql_latency.avg_seconds||0)*1000):"–", d.sql_latency? fmtNum(d.sql_latency.count)+" queries":""],
+    ["Source errors", fmtNum(t.source_unavailable), (t.source_unavailable>0?"":"none")],
+  ].map(([k,v,sub])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`).join("");
+
+  const rows = (d.tables||[]);
+  $("tblBody").innerHTML = rows.length ? rows.map(x=>{
+    // Iceberg conversion-reject pattern: Fabric re-reads metadata but never
+    // reaches the manifest/data (e.g. a schema XTable can't parse). Not
+    // meaningful in Delta mode (no conversion layer).
+    const warn = !isDelta && (x.metadata_reads|0)>=3 && (x.data_reads|0)===0 && (x.manifest_reads|0)===0;
+    const probes = (x.probe_404s|0)>0 ? ` <span class="muted" title="expected S3 folder / _delta_log / .gz probes — not failures">(${fmtNum(x.probe_404s)}p)</span>` : '';
+    const metaCol = isDelta ? fmtNum(x.delta_log_reads) : fmtNum(x.metadata_reads);
+    const manifestCol = isDelta ? '<span class="muted">–</span>' : fmtNum(x.manifest_reads);
+    return `<tr class="${warn?'warnrow':''}">
+      <td class="tname">${x.table}${warn?' <span class="err" title="reads metadata but never manifest/data — possible conversion reject">⚠</span>':''}</td>
+      <td>${x.version??'–'}</td><td>${fmtNum(x.splits)}</td><td>${fmtNum(x.total_records)}</td>
+      <td>${fmtNum(x.requests)}</td><td>${metaCol}</td><td>${manifestCol}</td>
+      <td>${fmtNum(x.data_reads)}</td><td class="${(x.errors|0)>0?'err':''}">${fmtNum(x.errors)}${probes}</td>
+      <td>${pct(x.cache_hit_ratio)}</td><td>${fmtMs(x.avg_sql_ms)}</td><td>${fmtMs(x.p95_sql_ms)}</td>
+      <td>${fmtMs(x.avg_gen_ms)}</td><td>${fmtMs(x.avg_total_ms)}</td><td>${fmtMs(x.p95_total_ms)}</td>
+      <td>${fmtBytes(x.bytes_served)}</td><td class="muted">${ago(x.last_read_ts)}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="17" class="empty">No table activity yet.</td></tr>`;
+
+  // Query lag — one averaged line per table (only tables that served data).
+  const qtabs = (d.tables||[]).filter(t=>(t.data_requests|0)>0);
+  const maxLag = Math.max(1, ...qtabs.map(t=>t.avg_total_ms||0));
+  $("recentBody").innerHTML = qtabs.length ? qtabs.map(t=>{
+    const sqlW = Math.round(100*(t.avg_sql_ms||0)/maxLag);
+    const genW = Math.round(100*(t.avg_gen_ms||0)/maxLag);
+    const allCache = (t.avg_sql_ms||0)===0 && (t.avg_gen_ms||0)===0;
+    const seg = allCache
+      ? `<span class="seg-cache" style="width:${Math.max(4,Math.round(100*(t.avg_total_ms||0)/maxLag))}%"></span>`
+      : `<span class="seg-sql" style="width:${sqlW}%" title="avg SQL ${fmtMs(t.avg_sql_ms)}"></span><span class="seg-gen" style="width:${genW}%" title="avg Parquet gen ${fmtMs(t.avg_gen_ms)}"></span>`;
+    return `<div class="rq">
+      <div class="tname">${t.table}</div>
+      <div class="muted">${pct(t.cache_hit_ratio)}</div>
+      <div><div class="bar">${seg}</div></div>
+      <div class="lag">${fmtMs(t.avg_total_ms)} <span class="muted">${t.data_requests}×</span></div>
+    </div>`;
+  }).join("") : `<div class="empty">No data requests captured yet. Trigger a Fabric read (or reset then read).</div>`;
+}
+
+function schedule(){
+  if(timer) clearInterval(timer);
+  if($("auto").checked) timer = setInterval(poll, parseInt($("interval").value));
+}
+$("auto").onchange = schedule;
+$("interval").onchange = schedule;
+$("refreshNow").onclick = poll;
+$("reset").onclick = async () => { await fetch("/_monitor/api/reset",{method:"POST"}); poll(); };
+
+poll();
+schedule();
+</script>
+</body>
+</html>

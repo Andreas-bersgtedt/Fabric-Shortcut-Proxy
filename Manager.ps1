@@ -79,7 +79,7 @@
 
 .PARAMETER RepoUrl
     Repository URL used only when bootstrapping an empty/non-git folder
-    (default the SQLIcebergProxy origin). Ignored when the folder is already a repo.
+    (default the Fabric-Shortcut-Proxy origin). Ignored when the folder is already a repo.
 
 .PARAMETER NoPull
     Skip the git fetch/checkout/pull step entirely (build from the working tree
@@ -124,7 +124,7 @@ param(
     [switch]$RetentionGc,
     [string]$Branch,
     [string]$Remote = "origin",
-    [string]$RepoUrl = "https://github.com/anbergst_microsoft/SQLIcebergProxy.git",
+    [string]$RepoUrl = "https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy.git",
     [switch]$NoPull,
     [switch]$Reinstall,
     [switch]$Recreate,

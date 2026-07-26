@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import config
 from config import TableDef
+from db.capabilities import capabilities_for_db_url
 from iceberg.state_store import SplitDescriptor
 from planner.dialects import get_dialect
 from observability.logging import get_logger
@@ -127,6 +128,12 @@ async def plan_ranges_for_snapshot(snap) -> bool:
 
     table = snap.table
     key = _pk_column(table)
+    caps = capabilities_for_db_url(config.DB_URL)
+    if not caps.supports_range_key_bounds:
+        log.warning("range_planning_fallback_modulo", table=table.name,
+                    key=key, reason="flavor_capability")
+        return False
+
     try:
         bounds = await fetch_key_bounds(table.source_table, key)
     except Exception as exc:  # noqa: BLE001 - planning must not break startup

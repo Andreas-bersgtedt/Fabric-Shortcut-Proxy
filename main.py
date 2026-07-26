@@ -327,10 +327,9 @@ async def lifespan(app: FastAPI):
     if config.AUTO_REFRESH:
         from iceberg import freshness
         await freshness.stop_poller()
-    # Dispose the DB engine cleanly
-    from db.executor import get_engine
-    engine = get_engine()
-    await engine.dispose()
+    # Dispose DB engines cleanly (async-native and sync-fallback modes).
+    from db.executor import dispose_engines
+    await dispose_engines()
 
 
 app = FastAPI(

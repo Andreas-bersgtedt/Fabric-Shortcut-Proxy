@@ -153,6 +153,8 @@ async def test_connect_lists_tables(app, db_path):
     assert data["ok"] is True
     assert "gadgets" in [t["name"] for t in data["tables"]]
     assert data["db_url"].startswith("sqlite+aiosqlite")
+    assert data["capabilities"]["flavor"] == "sqlite"
+    assert data["capabilities"]["execution_mode"] == "async-native"
 
 
 async def test_connect_bad_dialect(app):
@@ -160,6 +162,17 @@ async def test_connect_bad_dialect(app):
         r = await c.post("/_config/api/connect", json={"dialect": "bad", "database": "x"})
     assert r.status_code == 400
     assert r.json()["ok"] is False
+
+
+async def test_connect_databricks_requires_http_path(app):
+    async with _client(app) as c:
+        r = await c.post("/_config/api/connect", json={
+            "dialect": "databricks",
+            "host": "dbc.example.com",
+            "token": "dapi-example",
+        })
+    assert r.status_code == 400
+    assert "http_path" in r.json()["error"]
 
 
 async def test_inspect_reflects_and_detects_key(app, db_path):

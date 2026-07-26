@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
+from db.capabilities import capabilities_for_dialect, flavor_warnings
 from db.reflect import build_url, SchemaReflector, detect_key_column, UnsupportedDialect
 from observability.logging import get_logger
 
@@ -131,8 +132,10 @@ async def save_config(request: Request) -> JSONResponse:
 @router.post("/api/connect")
 async def connect(request: Request) -> JSONResponse:
     body = await request.json()
+    conn = _conn_fields(body)
+    caps = capabilities_for_dialect(conn.get("dialect"))
     try:
-        url = build_url(**_conn_fields(body))
+        url = build_url(**conn)
     except (UnsupportedDialect, ValueError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
@@ -150,6 +153,8 @@ async def connect(request: Request) -> JSONResponse:
         "db_url": url.render_as_string(hide_password=False),
         "db_url_masked": url.render_as_string(hide_password=True),
         "tables": tables,
+        "capabilities": caps.to_dict(),
+        "warnings": flavor_warnings(conn.get("dialect")),
     })
 
 

@@ -18,6 +18,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from db.capabilities import capabilities_for_db_url, missing_required_fields
 from db.executor import sqlalchemy_type_to_iceberg, _split_qualified
 from observability.logging import get_logger
 
@@ -76,6 +77,12 @@ def build_url(
         raise UnsupportedDialect(f"Unsupported dialect {dialect!r}.")
 
     q: dict = dict(query or {})
+    req = missing_required_fields(key, q)
+    if req:
+        raise ValueError(
+            f"Dialect {dialect!r} requires connection field(s): {', '.join(req)}."
+        )
+
     if drivername.startswith("mssql"):
         q.setdefault("driver", driver or "ODBC Driver 18 for SQL Server")
         if trust_cert:
@@ -169,6 +176,27 @@ class SchemaReflector:
                         out.append({"schema": s, "name": name, "kind": "view"})
                 except Exception:  # noqa: BLE001
                     pass
+
+            if out:
+                return out
+
+            # Fallback for engines that do not expose inspector schema/table
+            # metadata consistently (for example Databricks connectors).
+            try:
+                rs = sync_conn.execute(text(
+                    "SELECT table_schema, table_name, table_type "
+                    "FROM information_schema.tables"
+                ))
+                for row in rs:
+                    schema = row[0]
+                    name = row[1]
+                    ttype = (row[2] or "").upper()
+                    if _is_system_schema(schema):
+                        continue
+                    kind = "view" if "VIEW" in ttype else "table"
+                    out.append({"schema": schema, "name": name, "kind": kind})
+            except Exception:  # noqa: BLE001
+                pass
             return out
         return await self._run(_f)
 
@@ -195,6 +223,7 @@ class SchemaReflector:
     async def approx_row_count(self, source_table: str) -> int | None:
         """Fast row estimate from catalog stats; None if unavailable."""
         drv = self._url.drivername
+        caps = capabilities_for_db_url(f"{drv}://")
         try:
             if drv.startswith("postgresql"):
                 row = await self._run(
@@ -216,6 +245,29 @@ class SchemaReflector:
                     ).scalar()
                 )
                 return int(row) if row is not None else None
+
+            if drv.startswith("oracle"):
+                schema, name = _split_qualified(source_table)
+                owner = (schema or "").upper()
+                table = name.upper()
+
+                def _oracle_stats(conn):
+                    if owner:
+                        return conn.execute(
+                            text("SELECT num_rows FROM all_tables WHERE owner = :o AND table_name = :t"),
+                            {"o": owner, "t": table},
+                        ).scalar()
+                    return conn.execute(
+                        text("SELECT num_rows FROM user_tables WHERE table_name = :t"),
+                        {"t": table},
+                    ).scalar()
+
+                row = await self._run(_oracle_stats)
+                if row is not None:
+                    return int(row)
+
+            if caps.supports_fast_row_estimate:
+                return None
 
             # sqlite / oracle / databricks / other: fallback exact count
             schema, name = _split_qualified(source_table)

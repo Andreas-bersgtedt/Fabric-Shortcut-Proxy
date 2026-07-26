@@ -13,7 +13,8 @@ import contextlib
 import time
 from typing import Any
 
-from sqlalchemy import text, inspect
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy import types as satypes
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -24,6 +25,7 @@ from observability import metrics
 log = get_logger(__name__)
 
 _engine: AsyncEngine | None = None
+_sync_engine: Engine | None = None
 
 
 class SourceUnavailable(RuntimeError):
@@ -34,7 +36,22 @@ class SourceUnavailable(RuntimeError):
     """
 
 
+def _db_url_uses_async_driver(db_url: str) -> bool:
+    scheme = (db_url or "").lower().split("://", 1)[0]
+    return (
+        "+asyncpg" in scheme
+        or "+aioodbc" in scheme
+        or "+aiosqlite" in scheme
+    )
+
+
 def get_engine() -> AsyncEngine:
+    if not _db_url_uses_async_driver(config.DB_URL):
+        raise RuntimeError(
+            "DB_URL uses a sync driver. Use executor query APIs, which apply a "
+            "sync-threadpool fallback for this flavor."
+        )
+
     global _engine
     if _engine is None:
         kwargs: dict = {"echo": False}
@@ -44,6 +61,31 @@ def get_engine() -> AsyncEngine:
             kwargs.update({"pool_size": 5, "max_overflow": 10, "pool_timeout": 30})
         _engine = create_async_engine(config.DB_URL, **kwargs)
     return _engine
+
+
+def get_sync_engine() -> Engine:
+    global _sync_engine
+    if _sync_engine is None:
+        kwargs: dict = {"echo": False, "pool_pre_ping": True}
+        if "sqlite" not in config.DB_URL:
+            kwargs.update({"pool_size": 5, "max_overflow": 10, "pool_timeout": 30})
+        _sync_engine = create_engine(config.DB_URL, **kwargs)
+    return _sync_engine
+
+
+def _async_mode() -> bool:
+    return _db_url_uses_async_driver(config.DB_URL)
+
+
+async def dispose_engines() -> None:
+    global _engine, _sync_engine
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
+    if _sync_engine is not None:
+        eng = _sync_engine
+        _sync_engine = None
+        await asyncio.to_thread(eng.dispose)
 
 
 # --- Source backpressure (Phase 4) ------------------------------------------
@@ -132,25 +174,36 @@ async def _execute_once(
     params: dict[str, Any],
     split_index: int,
 ) -> list[dict[str, Any]]:
-    engine = get_engine()
     async with _source_gate():
         async with asyncio.timeout(config.QUERY_TIMEOUT_SECONDS):
-            async with engine.connect() as conn:
-                log.info(
-                    "sql_execute",
-                    split_index=split_index,
-                    sql=sql,
-                    params=params,
-                )
-                result = await conn.execute(text(sql), params)
-                columns = list(result.keys())
-                rows = [dict(zip(columns, row)) for row in result.fetchall()]
-                log.info(
-                    "sql_complete",
-                    split_index=split_index,
-                    rows_returned=len(rows),
-                )
-                return rows
+            log.info(
+                "sql_execute",
+                split_index=split_index,
+                sql=sql,
+                params=params,
+                mode=("async" if _async_mode() else "sync-fallback"),
+            )
+            if _async_mode():
+                engine = get_engine()
+                async with engine.connect() as conn:
+                    result = await conn.execute(text(sql), params)
+                    columns = list(result.keys())
+                    rows = [dict(zip(columns, row)) for row in result.fetchall()]
+            else:
+                def _work() -> list[dict[str, Any]]:
+                    with get_sync_engine().connect() as conn:
+                        result = conn.execute(text(sql), params)
+                        columns = list(result.keys())
+                        return [dict(zip(columns, row)) for row in result.fetchall()]
+
+                rows = await asyncio.to_thread(_work)
+
+            log.info(
+                "sql_complete",
+                split_index=split_index,
+                rows_returned=len(rows),
+            )
+            return rows
 
 
 async def stream_split_query(
@@ -168,19 +221,28 @@ async def stream_split_query(
     raises :class:`SourceUnavailable`); the non-streaming
     :func:`execute_split_query` keeps the retrying path.
     """
-    engine = get_engine()
     try:
         async with _source_gate():
             async with asyncio.timeout(config.QUERY_TIMEOUT_SECONDS):
-                async with engine.connect() as conn:
-                    log.info("sql_stream", split_index=split_index, sql=sql,
-                             params=params, batch_rows=batch_rows)
-                    result = await conn.stream(text(sql), params)
-                    columns = list(result.keys())
-                    total = 0
-                    async for partition in result.partitions(batch_rows):
-                        total += len(partition)
-                        yield [dict(zip(columns, row)) for row in partition]
+                log.info("sql_stream", split_index=split_index, sql=sql,
+                         params=params, batch_rows=batch_rows,
+                         mode=("async" if _async_mode() else "sync-fallback"))
+
+                if _async_mode():
+                    engine = get_engine()
+                    async with engine.connect() as conn:
+                        result = await conn.stream(text(sql), params)
+                        columns = list(result.keys())
+                        total = 0
+                        async for partition in result.partitions(batch_rows):
+                            total += len(partition)
+                            yield [dict(zip(columns, row)) for row in partition]
+                        log.info("sql_stream_complete", split_index=split_index, rows_returned=total)
+                else:
+                    rows = await _execute_once(sql, params, split_index)
+                    total = len(rows)
+                    for i in range(0, total, batch_rows):
+                        yield rows[i:i + batch_rows]
                     log.info("sql_stream_complete", split_index=split_index, rows_returned=total)
     except (SourceUnavailable, asyncio.CancelledError):
         raise
@@ -196,14 +258,40 @@ async def ping(timeout_seconds: float = 3.0) -> bool:
     any error/timeout (never raises), so callers can map it to a 503.
     """
     try:
-        engine = get_engine()
         async with asyncio.timeout(timeout_seconds):
-            async with engine.connect() as conn:
-                await conn.execute(text("SELECT 1"))
+            if _async_mode():
+                engine = get_engine()
+                async with engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+            else:
+                def _sync_ping() -> None:
+                    with get_sync_engine().connect() as conn:
+                        conn.execute(text("SELECT 1"))
+                await asyncio.to_thread(_sync_ping)
         return True
     except Exception as exc:  # noqa: BLE001 - readiness must not raise
         log.warning("db_ping_failed", error=str(exc))
         return False
+
+
+async def execute_scalar(sql: str, params: dict[str, Any] | None = None):
+    """Execute a scalar SQL statement through the active engine mode.
+
+    Uses async-native execution when available, else a sync-threadpool fallback.
+    """
+    params = params or {}
+    async with _source_gate():
+        async with asyncio.timeout(config.QUERY_TIMEOUT_SECONDS):
+            if _async_mode():
+                engine = get_engine()
+                async with engine.connect() as conn:
+                    return (await conn.execute(text(sql), params)).scalar()
+
+            def _sync_scalar():
+                with get_sync_engine().connect() as conn:
+                    return conn.execute(text(sql), params).scalar()
+
+            return await asyncio.to_thread(_sync_scalar)
 
 
 async def fetch_key_bounds(source_table: str, key_column: str) -> tuple[int, int] | None:
@@ -220,10 +308,17 @@ async def fetch_key_bounds(source_table: str, key_column: str) -> tuple[int, int
     src = d.quote_qualified(source_table)
     pk = d.quote(key_column)
     sql = f"SELECT MIN({pk}) AS lo, MAX({pk}) AS hi FROM {src}"
-    engine = get_engine()
     async with asyncio.timeout(config.QUERY_TIMEOUT_SECONDS):
-        async with engine.connect() as conn:
-            row = (await conn.execute(text(sql))).first()
+        if _async_mode():
+            engine = get_engine()
+            async with engine.connect() as conn:
+                row = (await conn.execute(text(sql))).first()
+        else:
+            def _sync_bounds():
+                with get_sync_engine().connect() as conn:
+                    return conn.execute(text(sql)).first()
+
+            row = await asyncio.to_thread(_sync_bounds)
     if row is None or row[0] is None or row[1] is None:
         return None
     try:
@@ -235,11 +330,16 @@ async def fetch_key_bounds(source_table: str, key_column: str) -> tuple[int, int
 
 async def introspect_columns(table: str) -> list[str]:
     """Return the source table's column names, or [] if it can't be inspected."""
-    engine = get_engine()
     schema, name = _split_qualified(table)
-    async with engine.connect() as conn:
-        cols = await conn.run_sync(
-            lambda sync_conn: inspect(sync_conn).get_columns(name, schema=schema)
+    if _async_mode():
+        engine = get_engine()
+        async with engine.connect() as conn:
+            cols = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_columns(name, schema=schema)
+            )
+    else:
+        cols = await asyncio.to_thread(
+            lambda: inspect(get_sync_engine()).get_columns(name, schema=schema)
         )
     return [c["name"] for c in cols]
 
@@ -378,22 +478,31 @@ def sqlalchemy_type_to_iceberg(sa_type) -> str:
 
 async def reflect_columns(source_table: str) -> list[dict]:
     """Return the source table/view's reflected columns (name, type, nullable)."""
-    engine = get_engine()
     schema, name = _split_qualified(source_table)
-    async with engine.connect() as conn:
-        return await conn.run_sync(
-            lambda sync_conn: inspect(sync_conn).get_columns(name, schema=schema)
-        )
+    if _async_mode():
+        engine = get_engine()
+        async with engine.connect() as conn:
+            return await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_columns(name, schema=schema)
+            )
+    return await asyncio.to_thread(
+        lambda: inspect(get_sync_engine()).get_columns(name, schema=schema)
+    )
 
 
 async def reflect_primary_key(source_table: str) -> list[str]:
     """Return the source table's primary-key column names, or [] if none/unknown."""
-    engine = get_engine()
     schema, name = _split_qualified(source_table)
     try:
-        async with engine.connect() as conn:
-            pk = await conn.run_sync(
-                lambda sync_conn: inspect(sync_conn).get_pk_constraint(name, schema=schema)
+        if _async_mode():
+            engine = get_engine()
+            async with engine.connect() as conn:
+                pk = await conn.run_sync(
+                    lambda sync_conn: inspect(sync_conn).get_pk_constraint(name, schema=schema)
+                )
+        else:
+            pk = await asyncio.to_thread(
+                lambda: inspect(get_sync_engine()).get_pk_constraint(name, schema=schema)
             )
         return list(pk.get("constrained_columns") or [])
     except Exception as exc:  # noqa: BLE001 - PK reflection is best-effort (views, perms)

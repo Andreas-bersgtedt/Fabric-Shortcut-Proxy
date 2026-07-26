@@ -18,14 +18,12 @@ import asyncio
 import hashlib
 import time
 
-from sqlalchemy import text
-
 import config
 import cache.lru_cache as cache
 import iceberg.state_store as state_store
 from iceberg.state_store import SnapshotState, SplitDescriptor
 from planner.split_planner import build_split_query
-from db.executor import execute_split_query, get_engine
+from db.executor import execute_scalar, execute_split_query
 from parquet.generator import rows_to_parquet
 from iceberg.stats import collect_split_stats
 from observability.logging import get_logger
@@ -197,25 +195,25 @@ async def probe_change_token(table) -> str | None:
     src = table.source_table
     url = config.DB_URL.lower()
     try:
-        engine = get_engine()
-        async with engine.connect() as conn:
-            if "sqlite" in url:
-                v = (await conn.execute(text("PRAGMA data_version"))).scalar()
-                return f"dv:{v}"
-            if "postgres" in url:
-                v = (await conn.execute(text(
-                    "SELECT (n_tup_ins + n_tup_upd + n_tup_del) "
-                    "FROM pg_stat_user_tables WHERE relid = to_regclass(:t)"
-                ), {"t": src})).scalar()
-                return None if v is None else f"pg:{v}"
-            if "mssql" in url:
-                v = (await conn.execute(text(
-                    "SELECT MAX(last_user_update) FROM sys.dm_db_index_usage_stats "
-                    "WHERE database_id = DB_ID() AND object_id = OBJECT_ID(:t)"
-                ), {"t": src})).scalar()
-                if v is None:
-                    return None
-                return f"ms:{v.isoformat() if hasattr(v, 'isoformat') else v}"
+        if "sqlite" in url:
+            v = await execute_scalar("PRAGMA data_version")
+            return f"dv:{v}"
+        if "postgres" in url:
+            v = await execute_scalar(
+                "SELECT (n_tup_ins + n_tup_upd + n_tup_del) "
+                "FROM pg_stat_user_tables WHERE relid = to_regclass(:t)",
+                {"t": src},
+            )
+            return None if v is None else f"pg:{v}"
+        if "mssql" in url:
+            v = await execute_scalar(
+                "SELECT MAX(last_user_update) FROM sys.dm_db_index_usage_stats "
+                "WHERE database_id = DB_ID() AND object_id = OBJECT_ID(:t)",
+                {"t": src},
+            )
+            if v is None:
+                return None
+            return f"ms:{v.isoformat() if hasattr(v, 'isoformat') else v}"
     except Exception as exc:  # noqa: BLE001 - best-effort probe
         log.warning("refresh_probe_failed", table=table.name, error=str(exc))
         return None

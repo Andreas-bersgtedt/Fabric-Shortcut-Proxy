@@ -145,6 +145,37 @@ def test_previous_version_files_stay_servable_after_refresh():
         delta_log.reset()
 
 
+def test_delta_log_keys_follow_snapshot_table_path_in_canonical_layout():
+    """Delta commit files must be emitted under the snapshot's active table path.
+
+    Regression: commits were emitted under db/<table>/_delta_log even when data
+    files used canonical db/<server>/<database>/<schema>/<object>/data paths.
+    """
+    import iceberg.state_store as ss
+    from config import TableDef
+
+    ss._snapshots.clear(); ss._history.clear()
+    delta_log.reset()
+
+    saved_layout = config.OBJECT_PATH_LAYOUT
+    try:
+        config.OBJECT_PATH_LAYOUT = "canonical"
+        tbl = TableDef(name="Address", source_table="SalesLT.Address", schema=config.TABLE_SCHEMA)
+        snap = ss.build_table_snapshot(tbl, bucket="delta-bucket", warehouse_prefix=config.WAREHOUSE_PREFIX)
+        delta_log.sync_all()
+        objs = delta_log.delta_log_objects()
+
+        expected_log_key = f"{snap.table_path}/_delta_log/00000000000000000000.json"
+        legacy_log_key = f"{config.WAREHOUSE_PREFIX}/{tbl.name}/_delta_log/00000000000000000000.json"
+
+        assert expected_log_key in objs
+        assert legacy_log_key not in objs
+    finally:
+        config.OBJECT_PATH_LAYOUT = saved_layout
+        ss._snapshots.clear(); ss._history.clear()
+        delta_log.reset()
+
+
 # ---------------------------------------------------------------------------
 # Router integration in delta mode
 # ---------------------------------------------------------------------------

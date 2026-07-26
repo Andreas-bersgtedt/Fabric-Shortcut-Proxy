@@ -38,6 +38,7 @@ s3emulator/
 ├── SCALE_ARCHITECTURE_PLAN.md  Manager/Agent cluster rewrite for scale (10⁸+ rows)
 ├── CONFIGURATION.md         Full configuration manual (PostgreSQL / SQL Server)
 ├── DELTA_FORMAT.md          Native Delta output design (TABLE_FORMAT=delta)
+├── ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md  Real Oracle/Databricks operations + smoke tests
 ├── s3/
 │   ├── router.py            GET / HEAD / ListObjectsV2 endpoints
 │   ├── auth.py              AWS SigV4 verification (H3, behind REQUIRE_SIGV4)
@@ -93,8 +94,25 @@ s3emulator/
     ├── test_pinning.py          Split pinning (no size drift)
     ├── test_trace.py            Request-timeline classification
     ├── test_monitor.py          Monitor dashboard API
-    └── test_delta.py            Native Delta output + refresh diffs
+    ├── test_delta.py            Native Delta output + refresh diffs
+    ├── test_capabilities.py     Per-flavor capability matrix tests
+    ├── test_executor_sync_fallback.py  Sync-driver query fallback coverage
+    └── test_integration_oracle_databricks.py  Real Oracle/Databricks smoke (env-gated)
 ```
+
+  ## Oracle + Databricks Integration Coverage
+
+  Real-environment integration smoke tests are available in
+  [tests/test_integration_oracle_databricks.py](tests/test_integration_oracle_databricks.py).
+  These tests are opt-in and skipped unless the required environment variables
+  are present.
+
+  ```powershell
+  .\.venv\Scripts\python.exe -m pytest tests/test_integration_oracle_databricks.py -q
+  ```
+
+  For setup, day-2 operations, troubleshooting, and rollback, use
+  [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
 ## Quick start
 

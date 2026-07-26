@@ -103,9 +103,18 @@ async def lifespan(app: FastAPI):
                      "or the SQL endpoint may never converge on the latest version.",
             )
     else:
+        runtime_tables = list(config.TABLES)
+
+        # Phase 2 split planner v2 (opt-in): dynamic split-count selection from
+        # row-target planning with min/max guardrails.
+        if config.SPLIT_TARGET_ROWS > 0:
+            from planner.split_planner import choose_table_num_splits
+            for t in runtime_tables:
+                t.num_splits = await choose_table_num_splits(t)
+
         # Build the Iceberg snapshot for every configured table (F1 — multi-table).
         snapshots = build_all_snapshots(
-            config.TABLES,
+            runtime_tables,
             bucket=config.BUCKET_NAME,
             warehouse_prefix=config.WAREHOUSE_PREFIX,
         )

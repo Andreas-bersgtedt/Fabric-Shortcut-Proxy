@@ -321,6 +321,33 @@ async def fetch_column_bounds(source_table: str, key_column: str):
     return row[0], row[1]
 
 
+async def fetch_table_row_count(source_table: str) -> int | None:
+    """Return ``COUNT(*)`` for a source table/view, or None when unavailable."""
+    from planner.dialects import get_dialect
+
+    d = get_dialect(config.DB_URL)
+    src = d.quote_qualified(source_table)
+    sql = f"SELECT COUNT(*) AS n FROM {src}"
+    async with asyncio.timeout(config.QUERY_TIMEOUT_SECONDS):
+        if _async_mode():
+            engine = get_engine()
+            async with engine.connect() as conn:
+                row = (await conn.execute(text(sql))).first()
+        else:
+            def _sync_count():
+                with get_sync_engine().connect() as conn:
+                    return conn.execute(text(sql)).first()
+
+            row = await asyncio.to_thread(_sync_count)
+
+    if row is None or row[0] is None:
+        return None
+    try:
+        return int(row[0])
+    except (TypeError, ValueError):
+        return None
+
+
 async def fetch_key_bounds(source_table: str, key_column: str) -> tuple[int, int] | None:
     """Return ``(min, max)`` of the integer key column for range planning (Phase 4).
 

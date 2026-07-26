@@ -8,7 +8,12 @@ import pytest
 import config
 from config import ColumnDef, TableDef
 from iceberg.state_store import SnapshotState, SplitDescriptor
-from planner.split_planner import build_split_query, plan_ranges_for_snapshot
+from planner.split_planner import (
+    build_split_query,
+    choose_table_num_splits,
+    compute_split_count,
+    plan_ranges_for_snapshot,
+)
 
 
 class _Caps:
@@ -135,3 +140,54 @@ async def test_plan_ranges_auto_falls_back_for_string_only(monkeypatch):
     ok = await plan_ranges_for_snapshot(snap)
     assert ok is False
     assert all(s.key_lo is None and s.key_hi is None for s in snap.splits)
+
+
+def test_compute_split_count_guardrails():
+    assert compute_split_count(
+        estimated_rows=1_000_000,
+        target_rows=100_000,
+        min_splits=1,
+        max_splits=256,
+        default_splits=8,
+    ) == 10
+    assert compute_split_count(
+        estimated_rows=50,
+        target_rows=100_000,
+        min_splits=4,
+        max_splits=256,
+        default_splits=8,
+    ) == 4
+    assert compute_split_count(
+        estimated_rows=10_000_000,
+        target_rows=1,
+        min_splits=1,
+        max_splits=32,
+        default_splits=8,
+    ) == 32
+    assert compute_split_count(
+        estimated_rows=None,
+        target_rows=100_000,
+        min_splits=1,
+        max_splits=16,
+        default_splits=8,
+    ) == 8
+
+
+@pytest.mark.asyncio
+async def test_choose_table_num_splits_uses_row_target(monkeypatch):
+    table = TableDef(
+        name="sales",
+        source_table="dbo.sales",
+        num_splits=8,
+        schema=[ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False)],
+    )
+    monkeypatch.setattr(config, "SPLIT_TARGET_ROWS", 100_000, raising=False)
+    monkeypatch.setattr(config, "SPLIT_COUNT_MIN", 1, raising=False)
+    monkeypatch.setattr(config, "SPLIT_COUNT_MAX", 64, raising=False)
+
+    async def _fake_count(_source: str):
+        return 1_200_000
+
+    monkeypatch.setattr("db.executor.fetch_table_row_count", _fake_count)
+    chosen = await choose_table_num_splits(table)
+    assert chosen == 12

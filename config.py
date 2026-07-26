@@ -161,6 +161,13 @@ NUM_SPLITS: int = _get_int("NUM_SPLITS", "num_splits", 8)
 #     modulo fallback, including non-PK sortable keys via row-number sharding).
 SPLIT_STRATEGY: str = _get_str("SPLIT_STRATEGY", "split_strategy", "modulo").strip().lower()
 
+# Phase 2 split-count planning (opt-in): when >0, estimate row count and choose
+# table split count as ceil(rows / split_target_rows), clamped to min/max.
+# 0 keeps explicit table/config split counts unchanged.
+SPLIT_TARGET_ROWS: int = _get_int("SPLIT_TARGET_ROWS", "split_target_rows", 0)
+SPLIT_COUNT_MIN: int = _get_int("SPLIT_COUNT_MIN", "split_count_min", 1)
+SPLIT_COUNT_MAX: int = _get_int("SPLIT_COUNT_MAX", "split_count_max", 256)
+
 # Phase 4 scale engine — streaming Parquet materialization. When on, a split is
 # read from the source in batches and written incrementally to the Parquet file,
 # so peak memory is ~one batch of rows instead of the whole split materialized in
@@ -522,6 +529,15 @@ def validate_config() -> None:
             f"SPLIT_STRATEGY must be one of 'modulo'|'range'|'date'|'auto' "
             f"(got {SPLIT_STRATEGY!r})."
         )
+    if SPLIT_TARGET_ROWS < 0:
+        problems.append(f"SPLIT_TARGET_ROWS must be >= 0 (got {SPLIT_TARGET_ROWS}).")
+    if SPLIT_COUNT_MIN < 1:
+        problems.append(f"SPLIT_COUNT_MIN must be >= 1 (got {SPLIT_COUNT_MIN}).")
+    if SPLIT_COUNT_MAX < SPLIT_COUNT_MIN:
+        problems.append(
+            f"SPLIT_COUNT_MAX must be >= SPLIT_COUNT_MIN "
+            f"(got {SPLIT_COUNT_MAX} < {SPLIT_COUNT_MIN})."
+        )
     if STREAM_BATCH_ROWS < 1:
         problems.append(f"STREAM_BATCH_ROWS must be >= 1 (got {STREAM_BATCH_ROWS}).")
     if SOURCE_MAX_CONCURRENCY < 0:
@@ -642,6 +658,9 @@ SETTINGS_META: dict[str, dict] = {
     # Splits & query
     "num_splits":     {"cat": "Splits & query", "help": "Virtual Parquet files per table."},
     "split_strategy": {"cat": "Splits & query", "help": "'modulo' (full-scan), 'range' (integer ranges), 'date' (temporal ranges), or 'auto' (range/date then deterministic fallback)."},
+    "split_target_rows": {"cat": "Splits & query", "help": "Target rows per split for dynamic split-count planning (0 disables, keeps configured split counts)."},
+    "split_count_min": {"cat": "Splits & query", "help": "Lower guardrail for dynamic split-count planning."},
+    "split_count_max": {"cat": "Splits & query", "help": "Upper guardrail for dynamic split-count planning."},
     "streaming_parquet": {"cat": "Splits & query", "help": "Materialize each split in row batches (bounded memory) instead of loading the whole split into RAM."},
     "stream_batch_rows": {"cat": "Splits & query", "help": "Batch/row-group size for streaming Parquet materialization."},
     "source_max_concurrency": {"cat": "Splits & query", "help": "Cap concurrent SQL queries against the source DB (backpressure). 0 = unlimited."},

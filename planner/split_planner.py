@@ -13,6 +13,7 @@ Rows are ordered by pk_col to keep results deterministic across retries.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import math
 
 import config
 from config import TableDef
@@ -144,6 +145,63 @@ def compute_temporal_ranges(lo, hi, n: int, kind: str) -> list[tuple[object, obj
     hi_t = _to_tick(hi_v, kind)
     int_ranges = compute_key_ranges(lo_t, hi_t, n)
     return [(_from_tick(a, kind), _from_tick(b, kind)) for a, b in int_ranges]
+
+
+def compute_split_count(
+    *,
+    estimated_rows: int | None,
+    target_rows: int,
+    min_splits: int,
+    max_splits: int,
+    default_splits: int,
+) -> int:
+    """Return split count from row-target planning with guardrails."""
+    if target_rows <= 0 or estimated_rows is None or estimated_rows <= 0:
+        return max(min_splits, min(max_splits, default_splits))
+    proposed = int(math.ceil(estimated_rows / target_rows))
+    return max(min_splits, min(max_splits, proposed))
+
+
+async def choose_table_num_splits(table: TableDef) -> int:
+    """Choose a table split count using SPLIT_TARGET_ROWS guardrails.
+
+    Returns the existing ``table.num_splits`` when dynamic planning is disabled
+    or when row estimation fails.
+    """
+    if config.SPLIT_TARGET_ROWS <= 0:
+        return table.num_splits
+
+    from db.executor import fetch_table_row_count
+
+    try:
+        est = await fetch_table_row_count(table.source_table)
+    except Exception as exc:  # noqa: BLE001 - startup should not fail here
+        log.warning(
+            "split_count_estimation_failed",
+            table=table.name,
+            source=table.source_table,
+            error=str(exc),
+        )
+        return table.num_splits
+
+    chosen = compute_split_count(
+        estimated_rows=est,
+        target_rows=config.SPLIT_TARGET_ROWS,
+        min_splits=config.SPLIT_COUNT_MIN,
+        max_splits=config.SPLIT_COUNT_MAX,
+        default_splits=table.num_splits,
+    )
+    log.info(
+        "split_count_planned",
+        table=table.name,
+        estimated_rows=est,
+        target_rows=config.SPLIT_TARGET_ROWS,
+        min_splits=config.SPLIT_COUNT_MIN,
+        max_splits=config.SPLIT_COUNT_MAX,
+        chosen_splits=chosen,
+        configured_splits=table.num_splits,
+    )
+    return chosen
 
 
 def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:

@@ -99,6 +99,14 @@
     changes if needed. The script does NOT auto-pop the stash; it prints how to
     restore it after startup.
 
+.PARAMETER ObjectPathLayout
+    Virtual object path layout: 'legacy' (db/<table>) or 'canonical'
+    (db/<server>/<database>/<schema>/<object>). Overrides OBJECT_PATH_LAYOUT.
+
+.PARAMETER DisableLegacyAliases
+    Disable serving legacy object aliases when canonical layout is enabled.
+    Sets ENABLE_LEGACY_PATH_ALIASES=0.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -134,7 +142,10 @@ param(
     [switch]$Reinstall,
     [switch]$Recreate,
     [switch]$SkipInstall,
-    [switch]$AutoStash
+    [switch]$AutoStash,
+    [ValidateSet("legacy", "canonical")]
+    [string]$ObjectPathLayout,
+    [switch]$DisableLegacyAliases
 )
 
 $ErrorActionPreference = "Stop"
@@ -369,6 +380,8 @@ if ($AdminUi)                                        { $env:ENABLE_ADMIN_UI = "1
 if ($PSBoundParameters.ContainsKey("AdminToken"))    { $env:ADMIN_TOKEN  = $AdminToken }
 if ($Ha)                                             { $env:MANAGER_HA = "1" }
 if ($RetentionGc)                                    { $env:RETENTION_GC = "1" }
+if ($PSBoundParameters.ContainsKey("ObjectPathLayout")) { $env:OBJECT_PATH_LAYOUT = $ObjectPathLayout }
+if ($DisableLegacyAliases)                           { $env:ENABLE_LEGACY_PATH_ALIASES = "0" }
 
 $effCtlHost   = if ($env:CONTROL_HOST) { $env:CONTROL_HOST } else { "127.0.0.1" }
 $effCtlPort   = if ($env:CONTROL_PORT) { $env:CONTROL_PORT } else { "9200" }
@@ -379,6 +392,8 @@ $effCount     = if ($env:AGENT_COUNT) { [int]$env:AGENT_COUNT } else { 1 }
 $effGateway   = ($env:ENABLE_GATEWAY -eq "1")
 $effAdminUi   = ($env:ENABLE_ADMIN_UI -eq "1")
 $effHa        = ($env:MANAGER_HA -eq "1")
+$effLayout    = if ($env:OBJECT_PATH_LAYOUT) { $env:OBJECT_PATH_LAYOUT } else { "legacy" }
+$effAliases   = if ($env:ENABLE_LEGACY_PATH_ALIASES) { ($env:ENABLE_LEGACY_PATH_ALIASES -eq "1") } else { $true }
 
 # Address a client (Fabric) would use to reach an Agent / the gateway when bound 0.0.0.0.
 $agentDialHost = if ($effAgentHost -in @("0.0.0.0", "::")) { "127.0.0.1" } else { $effAgentHost }
@@ -411,6 +426,7 @@ if ($effGateway) {
     }
 }
 Write-Host "    Table format    : $effFormat" -ForegroundColor DarkGray
+Write-Host "    Object paths    : layout=$effLayout legacy_aliases=$effAliases" -ForegroundColor DarkGray
 Write-Host "    Source DB       : $dbUrlMasked" -ForegroundColor DarkGray
 Write-Host "    The Manager restarts any Agent automatically if it crashes." -ForegroundColor DarkGray
 Write-Host "    Press Ctrl+C to stop (also stops the supervised Agents)." -ForegroundColor DarkGray

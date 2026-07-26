@@ -392,8 +392,8 @@ $effCount     = if ($env:AGENT_COUNT) { [int]$env:AGENT_COUNT } else { 1 }
 $effGateway   = ($env:ENABLE_GATEWAY -eq "1")
 $effAdminUi   = ($env:ENABLE_ADMIN_UI -eq "1")
 $effHa        = ($env:MANAGER_HA -eq "1")
-$effLayout    = if ($env:OBJECT_PATH_LAYOUT) { $env:OBJECT_PATH_LAYOUT } else { "legacy" }
-$effAliases   = if ($env:ENABLE_LEGACY_PATH_ALIASES) { ($env:ENABLE_LEGACY_PATH_ALIASES -eq "1") } else { $true }
+$effLayout    = if ($env:OBJECT_PATH_LAYOUT) { $env:OBJECT_PATH_LAYOUT } else { "canonical" }
+$effAliases   = if ($env:ENABLE_LEGACY_PATH_ALIASES) { ($env:ENABLE_LEGACY_PATH_ALIASES -eq "1") } else { $false }
 
 # Address a client (Fabric) would use to reach an Agent / the gateway when bound 0.0.0.0.
 $agentDialHost = if ($effAgentHost -in @("0.0.0.0", "::")) { "127.0.0.1" } else { $effAgentHost }

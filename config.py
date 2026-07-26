@@ -100,11 +100,10 @@ TABLE_NAME: str = _get_str("TABLE_NAME", "table_name", "sales")
 # Phase 1: virtual object path layout.
 #   legacy    -> db/<table>
 #   canonical -> db/<server>/<database>/<schema>/<object>
-# Legacy aliasing can stay on during migration so existing shortcuts continue
-# to resolve while new shortcuts use canonical paths.
-OBJECT_PATH_LAYOUT: str = _get_str("OBJECT_PATH_LAYOUT", "object_path_layout", "legacy").strip().lower()
+# Default is canonical with legacy aliases disabled for immediate cutover.
+OBJECT_PATH_LAYOUT: str = _get_str("OBJECT_PATH_LAYOUT", "object_path_layout", "canonical").strip().lower()
 ENABLE_LEGACY_PATH_ALIASES: bool = _get_bool(
-    "ENABLE_LEGACY_PATH_ALIASES", "enable_legacy_path_aliases", True
+    "ENABLE_LEGACY_PATH_ALIASES", "enable_legacy_path_aliases", False
 )
 
 # S3 credentials (Fabric uses these when creating the shortcut connection).

@@ -64,7 +64,7 @@ async def client():
 
 
 async def test_list_objects_returns_metadata_and_splits(client):
-    r = await client.get("/test-bucket?list-type=2&prefix=warehouse/")
+    r = await client.get(f"/test-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     assert r.status_code == 200
     body = r.text
     assert "metadata.json" in body
@@ -74,7 +74,7 @@ async def test_list_objects_returns_metadata_and_splits(client):
 
 async def test_head_metadata_json(client):
     # First list to discover the metadata key
-    r = await client.get("/test-bucket?list-type=2&prefix=warehouse/")
+    r = await client.get(f"/test-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     assert r.status_code == 200
     # Extract metadata key from XML
     import xml.etree.ElementTree as ET

@@ -245,10 +245,16 @@ Use a subpath that matches your selected `TABLE_FORMAT`:
 
 | Mode | Fabric shortcut subpath |
 |---|---|
-| `iceberg` | `warehouse/db/sales/metadata/v1.metadata.json` |
-| `delta` | `warehouse/db/sales` |
+| `iceberg` | `db/<server>/<database>/<schema>/<object>/metadata/v1.metadata.json` |
+| `delta` | `db/<server>/<database>/<schema>/<object>` |
 
 Fabric auto-discovers the remaining table objects from that entry point.
+
+For strict canonical-only behavior (no legacy aliases), start Manager with:
+
+```powershell
+.\Manager.ps1 -ObjectPathLayout canonical -DisableLegacyAliases
+```
 
 > By default the proxy does **not** verify credentials (`REQUIRE_SIGV4=0`), so any
 > Access Key ID / Secret works. If you set `REQUIRE_SIGV4=1`, the shortcut's

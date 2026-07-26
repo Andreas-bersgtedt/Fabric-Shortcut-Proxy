@@ -187,3 +187,35 @@ Before enabling Oracle/Databricks in production:
 2. Capture baseline latency and error rates.
 3. Document final DB_URL pattern and secrets handling.
 4. Schedule staged rollout with rollback owner and window.
+
+## 11. Canonical Path Rollout (Immediate Alias Disable)
+
+### 11.1 Default behavior (current)
+Current defaults are:
+1. OBJECT_PATH_LAYOUT=canonical
+2. ENABLE_LEGACY_PATH_ALIASES=0
+
+That means objects are published only under:
+`db/<server>/<database>/<schema>/<object>/...`
+
+### 11.2 Recommended startup command
+
+```powershell
+.\Manager.ps1 -NoPull -TableFormat delta -Gateway -AdminUi -ObjectPathLayout canonical -DisableLegacyAliases
+```
+
+### 11.3 One-time cleanup for deterministic tree in Fabric
+If prior runs used legacy paths, clear artifacts once before restart:
+
+```powershell
+Remove-Item -Recurse -Force .\.artifacts
+```
+
+Then restart Manager with the command above.
+
+### 11.4 Expected Fabric browser shape
+Under bucket root, table objects should appear as:
+1. `db/<server>/<database>/<schema>/<object>/_delta_log/...`
+2. `db/<server>/<database>/<schema>/<object>/data/split-*.parquet`
+
+Legacy `db/<table>/...` folders should not be visible when aliases are disabled.

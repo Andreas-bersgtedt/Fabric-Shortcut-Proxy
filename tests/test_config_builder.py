@@ -40,9 +40,31 @@ def test_build_url_mssql_adds_driver_and_cert():
     assert "TrustServerCertificate" in s
 
 
+def test_build_url_oracle_defaults_port():
+    url = build_url(dialect="oracle", host="orcl-host", database="ORCLPDB1",
+                    username="u", password="p")
+    s = url.render_as_string(hide_password=False)
+    assert s.startswith("oracle+oracledb://u:")
+    assert "@orcl-host:1521/ORCLPDB1" in s
+
+
+def test_build_url_databricks_with_http_path():
+    url = build_url(
+        dialect="databricks",
+        host="dbc.example.com",
+        username="token",
+        password="dapi-example",
+        query={"http_path": "/sql/1.0/warehouses/abc"},
+    )
+    s = url.render_as_string(hide_password=False)
+    assert s.startswith("databricks://token:")
+    assert "@dbc.example.com:443" in s
+    assert "http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc" in s
+
+
 def test_build_url_rejects_unknown_dialect():
     with pytest.raises(UnsupportedDialect):
-        build_url(dialect="oracle", host="h", database="db")
+        build_url(dialect="not-a-real-dialect", host="h", database="db")
 
 
 def test_detect_key_column():
@@ -135,7 +157,7 @@ async def test_connect_lists_tables(app, db_path):
 
 async def test_connect_bad_dialect(app):
     async with _client(app) as c:
-        r = await c.post("/_config/api/connect", json={"dialect": "oracle", "database": "x"})
+        r = await c.post("/_config/api/connect", json={"dialect": "bad", "database": "x"})
     assert r.status_code == 400
     assert r.json()["ok"] is False
 

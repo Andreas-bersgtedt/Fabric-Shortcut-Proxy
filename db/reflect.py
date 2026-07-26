@@ -11,9 +11,12 @@ driver — never a raw URL from the client — and only inspector APIs are used
 """
 from __future__ import annotations
 
+import asyncio
+
+from sqlalchemy import create_engine
 from sqlalchemy import inspect, text
-from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.engine import URL, Engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from db.executor import sqlalchemy_type_to_iceberg, _split_qualified
 from observability.logging import get_logger
@@ -28,12 +31,17 @@ _DRIVERS: dict[str, str] = {
     "postgres": "postgresql+asyncpg",
     "mssql": "mssql+aioodbc",
     "sqlserver": "mssql+aioodbc",
+    "oracle": "oracle+oracledb",
+    "oraclesql": "oracle+oracledb",
+    "databricks": "databricks",
     "sqlite": "sqlite+aiosqlite",   # tests / local files only
 }
 
 _DEFAULT_PORTS: dict[str, int] = {
     "postgresql": 5432, "postgres": 5432,
     "mssql": 1433, "sqlserver": 1433,
+    "oracle": 1521, "oraclesql": 1521,
+    "databricks": 443,
 }
 
 # Schemas that are never interesting to expose as tables.
@@ -93,25 +101,52 @@ class SchemaReflector:
 
     def __init__(self, url: URL) -> None:
         self._url = url
-        self._engine = None
+        self._async_engine: AsyncEngine | None = None
+        self._sync_engine: Engine | None = None
+
+    @staticmethod
+    def _is_async_driver(drivername: str) -> bool:
+        # Current known async-native drivers in this project. Other drivers
+        # run via a sync engine in a worker thread.
+        return (
+            drivername.startswith("postgresql+asyncpg")
+            or drivername.startswith("mssql+aioodbc")
+            or drivername.startswith("sqlite+aiosqlite")
+        )
 
     async def __aenter__(self) -> "SchemaReflector":
-        self._engine = create_async_engine(self._url, echo=False)
+        if self._is_async_driver(self._url.drivername):
+            self._async_engine = create_async_engine(self._url, echo=False)
+        else:
+            self._sync_engine = create_engine(self._url, echo=False, pool_pre_ping=True)
         return self
 
     async def __aexit__(self, *exc) -> None:
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+        if self._async_engine is not None:
+            await self._async_engine.dispose()
+            self._async_engine = None
+        if self._sync_engine is not None:
+            eng = self._sync_engine
+            self._sync_engine = None
+            await asyncio.to_thread(eng.dispose)
 
     async def _run(self, fn):
-        async with self._engine.connect() as conn:
-            return await conn.run_sync(fn)
+        if self._async_engine is not None:
+            async with self._async_engine.connect() as conn:
+                return await conn.run_sync(fn)
+
+        if self._sync_engine is None:
+            raise RuntimeError("SchemaReflector engine is not initialized.")
+
+        def _work():
+            with self._sync_engine.connect() as conn:
+                return fn(conn)
+
+        return await asyncio.to_thread(_work)
 
     async def server_version(self) -> str | None:
         try:
-            async with self._engine.connect() as conn:
-                info = conn.sync_connection.dialect.server_version_info
+            info = await self._run(lambda conn: conn.dialect.server_version_info)
             return ".".join(str(p) for p in info) if info else None
         except Exception:  # noqa: BLE001
             return None
@@ -161,27 +196,32 @@ class SchemaReflector:
         """Fast row estimate from catalog stats; None if unavailable."""
         drv = self._url.drivername
         try:
-            async with self._engine.connect() as conn:
-                if drv.startswith("postgresql"):
-                    row = (await conn.execute(
+            if drv.startswith("postgresql"):
+                row = await self._run(
+                    lambda conn: conn.execute(
                         text("SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass(:t)"),
                         {"t": source_table},
-                    )).scalar()
-                    return int(row) if row is not None and row >= 0 else None
-                if drv.startswith("mssql"):
-                    row = (await conn.execute(
+                    ).scalar()
+                )
+                return int(row) if row is not None and row >= 0 else None
+
+            if drv.startswith("mssql"):
+                row = await self._run(
+                    lambda conn: conn.execute(
                         text(
                             "SELECT SUM(row_count) FROM sys.dm_db_partition_stats "
                             "WHERE object_id = OBJECT_ID(:t) AND index_id IN (0,1)"
                         ),
                         {"t": source_table},
-                    )).scalar()
-                    return int(row) if row is not None else None
-                # sqlite / other: cheap enough for small demo tables
-                schema, name = _split_qualified(source_table)
-                ident = f'"{name}"' if not schema else f'"{schema}"."{name}"'
-                row = (await conn.execute(text(f"SELECT COUNT(*) FROM {ident}"))).scalar()
+                    ).scalar()
+                )
                 return int(row) if row is not None else None
+
+            # sqlite / oracle / databricks / other: fallback exact count
+            schema, name = _split_qualified(source_table)
+            ident = f'"{name}"' if not schema else f'"{schema}"."{name}"'
+            row = await self._run(lambda conn: conn.execute(text(f"SELECT COUNT(*) FROM {ident}")).scalar())
+            return int(row) if row is not None else None
         except Exception:  # noqa: BLE001
             return None
 

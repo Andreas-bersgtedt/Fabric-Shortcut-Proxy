@@ -67,7 +67,7 @@
 <body>
 <header>
   <h1>Config Builder</h1>
-  <p>Connect to SQL Server / PostgreSQL, pick tables, download <code>config.json</code>.</p>
+  <p>Connect to SQL sources, pick tables, download <code>config.json</code>.</p>
 </header>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
 
@@ -103,6 +103,8 @@
       <select id="dialect">
         <option value="postgresql">PostgreSQL</option>
         <option value="mssql">SQL Server</option>
+        <option value="oracle">Oracle</option>
+        <option value="databricks">Databricks SQL Warehouse</option>
       </select>
       <div class="row">
         <div><label>Host</label><input id="host" placeholder="db.example.com" /></div>
@@ -119,6 +121,14 @@
         <input id="driver" placeholder="ODBC Driver 18 for SQL Server" />
         <div class="checkbox"><input type="checkbox" id="trust_cert" checked />
           <span>TrustServerCertificate (SQL Server, dev)</span></div>
+        <label>Token (Databricks)</label>
+        <input id="token" type="password" placeholder="dapi..." />
+        <label>HTTP Path (Databricks)</label>
+        <input id="http_path" placeholder="/sql/1.0/warehouses/<id>" />
+        <div class="row">
+          <div><label>Catalog (Databricks)</label><input id="catalog" placeholder="optional" /></div>
+          <div><label>Schema (Databricks)</label><input id="schema" placeholder="optional" /></div>
+        </div>
       </details>
       <div class="actions">
         <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
@@ -211,8 +221,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433" };
-const PERSIST = ["dialect","host","port","database","username","driver","bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
+const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443" };
+const PERSIST = ["dialect","host","port","database","username","driver","http_path","catalog","schema","bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
 
 const state = {
   connection: null,   // last-used connection fields
@@ -237,6 +247,10 @@ function connFields(){
     password: $("password").value,
     driver: $("driver").value.trim() || null,
     trust_cert: $("trust_cert").checked,
+    token: $("token").value,
+    http_path: $("http_path").value.trim() || null,
+    catalog: $("catalog").value.trim() || null,
+    schema: $("schema").value.trim() || null,
   };
 }
 

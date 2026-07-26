@@ -30,15 +30,32 @@ _HTML_PATH = pathlib.Path(__file__).parent / "index.html"
 # ---------------------------------------------------------------------------
 
 def _conn_fields(d: dict) -> dict:
+    dialect = str(d.get("dialect", "")).strip().lower()
+    username = d.get("username") or None
+    password = d.get("password") or None
+
+    # Databricks commonly authenticates with username='token' and password=<PAT>.
+    token = d.get("token") or None
+    if dialect == "databricks" and token and not password:
+        username = username or "token"
+        password = token
+
+    query: dict[str, str] = {}
+    for k in ("http_path", "catalog", "schema"):
+        v = d.get(k)
+        if v:
+            query[k] = str(v)
+
     return dict(
-        dialect=str(d.get("dialect", "")),
+        dialect=dialect,
         host=d.get("host") or None,
         port=int(d["port"]) if d.get("port") else None,
         database=d.get("database") or None,
-        username=d.get("username") or None,
-        password=d.get("password") or None,
+        username=username,
+        password=password,
         driver=d.get("driver") or None,
         trust_cert=bool(d.get("trust_cert", True)),
+        query=query or None,
     )
 
 

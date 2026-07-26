@@ -117,6 +117,62 @@ class MSSQLDialect(Dialect):
             f"ORDER BY {pk}"
         )
 
+
+class OracleDialect(Dialect):
+    """Oracle SQL: quoted identifiers and FETCH FIRST row-limit syntax."""
+
+    name = "oracle"
+    int_cast_type = "NUMBER(19)"
+
+    def build_select(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        predicate = (
+            f"(MOD({self.cast_int(pk)}, :{num_splits_param})) = :{split_index_param}"
+        )
+        return (
+            f"SELECT {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"ORDER BY {pk} "
+            f"FETCH FIRST :{max_rows_param} ROWS ONLY"
+        )
+
+    def build_select_range(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        key_lo_param: str,
+        key_hi_param: str,
+        max_rows_param: str,
+    ) -> str:
+        predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
+        return (
+            f"SELECT {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"ORDER BY {pk} "
+            f"FETCH FIRST :{max_rows_param} ROWS ONLY"
+        )
+
+
+class DatabricksDialect(Dialect):
+    """Databricks SQL: Spark-style quoting and BIGINT casts."""
+
+    name = "databricks"
+    int_cast_type = "BIGINT"
+    quote_open = "`"
+    quote_close = "`"
+
     def build_select_range(
         self,
         *,
@@ -139,6 +195,8 @@ class MSSQLDialect(Dialect):
 _SQLITE = SQLiteDialect()
 _POSTGRES = PostgresDialect()
 _MSSQL = MSSQLDialect()
+_ORACLE = OracleDialect()
+_DATABRICKS = DatabricksDialect()
 _GENERIC = Dialect()
 
 
@@ -149,6 +207,10 @@ def get_dialect(db_url: str) -> Dialect:
         return _MSSQL
     if "postgres" in scheme:
         return _POSTGRES
+    if "oracle" in scheme:
+        return _ORACLE
+    if "databricks" in scheme:
+        return _DATABRICKS
     if "sqlite" in scheme:
         return _SQLITE
     return _GENERIC

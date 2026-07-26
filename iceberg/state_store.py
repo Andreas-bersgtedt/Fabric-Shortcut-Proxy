@@ -42,11 +42,13 @@ class SplitDescriptor:
     # Per-column Iceberg statistics (F3), keyed by field_id. Populated only when
     # ICEBERG_MANIFEST_STATS is enabled; drives the manifest stat maps.
     stats: dict | None = None
-    # Phase 4 range planning: the half-open integer key range [key_lo, key_hi)
-    # this split owns when SPLIT_STRATEGY="range". None => modulo planning (the
-    # planner falls back to WHERE pk % num_splits = split_index).
-    key_lo: int | None = None
-    key_hi: int | None = None
+    # Split key chosen by planner (explicit key_column or auto-selected).
+    split_key_column: str | None = None
+    # Phase 4/2 range planning: the half-open key range [key_lo, key_hi)
+    # this split owns when a range strategy is active (integer/date/timestamp).
+    # None => modulo planning (or row-number fallback for non-integer keys).
+    key_lo: object | None = None
+    key_hi: object | None = None
 
 
 @dataclass

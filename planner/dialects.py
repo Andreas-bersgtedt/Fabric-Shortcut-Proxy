@@ -74,6 +74,37 @@ class Dialect:
             f"LIMIT :{max_rows_param}"
         )
 
+    def build_select_row_number(
+        self,
+        *,
+        projected: str,
+        source: str,
+        order_by: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        """Fallback split strategy for non-integer keys.
+
+        Uses ROW_NUMBER() over a stable sort key, then shards rows by
+        ``(row_number - 1) % num_splits``. This keeps behavior deterministic for
+        sortable non-PK keys (e.g. string/date) without integer casting.
+        """
+        rownum = self.quote("__row_num")
+        inner = (
+            f"SELECT {projected}, "
+            f"ROW_NUMBER() OVER (ORDER BY {order_by}) AS {rownum} "
+            f"FROM {source}"
+        )
+        predicate = f"(({rownum} - 1) % :{num_splits_param}) = :{split_index_param}"
+        return (
+            f"SELECT {projected} "
+            f"FROM ({inner}) AS q "
+            f"WHERE {predicate} "
+            f"ORDER BY {rownum} "
+            f"LIMIT :{max_rows_param}"
+        )
+
 
 class SQLiteDialect(Dialect):
     name = "sqlite"
@@ -115,6 +146,30 @@ class MSSQLDialect(Dialect):
             f"FROM {source} "
             f"WHERE {predicate} "
             f"ORDER BY {pk}"
+        )
+
+    def build_select_row_number(
+        self,
+        *,
+        projected: str,
+        source: str,
+        order_by: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        rownum = self.quote("__row_num")
+        inner = (
+            f"SELECT {projected}, "
+            f"ROW_NUMBER() OVER (ORDER BY {order_by}) AS {rownum} "
+            f"FROM {source}"
+        )
+        predicate = f"((q.{rownum} - 1) % :{num_splits_param}) = :{split_index_param}"
+        return (
+            f"SELECT TOP (:{max_rows_param}) {projected} "
+            f"FROM ({inner}) AS q "
+            f"WHERE {predicate} "
+            f"ORDER BY q.{rownum}"
         )
 
 
@@ -161,6 +216,31 @@ class OracleDialect(Dialect):
             f"FROM {source} "
             f"WHERE {predicate} "
             f"ORDER BY {pk} "
+            f"FETCH FIRST :{max_rows_param} ROWS ONLY"
+        )
+
+    def build_select_row_number(
+        self,
+        *,
+        projected: str,
+        source: str,
+        order_by: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        rownum = self.quote("__row_num")
+        inner = (
+            f"SELECT {projected}, "
+            f"ROW_NUMBER() OVER (ORDER BY {order_by}) AS {rownum} "
+            f"FROM {source}"
+        )
+        predicate = f"(MOD((q.{rownum} - 1), :{num_splits_param})) = :{split_index_param}"
+        return (
+            f"SELECT {projected} "
+            f"FROM ({inner}) q "
+            f"WHERE {predicate} "
+            f"ORDER BY q.{rownum} "
             f"FETCH FIRST :{max_rows_param} ROWS ONLY"
         )
 

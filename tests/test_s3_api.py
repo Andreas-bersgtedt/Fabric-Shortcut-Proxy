@@ -7,7 +7,6 @@ SQLite file-based database seeded with test rows.
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 
 import pytest
@@ -15,16 +14,9 @@ import pyarrow.parquet as pq
 import io
 
 _TEST_DB = pathlib.Path(__file__).parent / "test_poc.db"
-os.environ["DB_URL"] = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
-os.environ["NUM_SPLITS"] = "4"
-os.environ["S3_BUCKET"] = "test-bucket"
 
 import httpx
 import config
-# Patch the already-loaded config module (env vars may have been read earlier)
-config.DB_URL = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
-config.NUM_SPLITS = 4
-config.BUCKET_NAME = "test-bucket"
 
 from main import app
 
@@ -33,12 +25,25 @@ from main import app
 async def client():
     # Seed demo DB and build snapshot before the ASGI transport is exercised,
     # because ASGITransport does not fire the FastAPI lifespan automatically.
-    from demo.seed_db import seed_demo_database
-    await seed_demo_database()
-
     import config
     import db.executor as _executor
     from iceberg.state_store import build_snapshot
+    from demo.seed_db import seed_demo_database
+
+    saved = (
+        config.DB_URL,
+        config.NUM_SPLITS,
+        config.BUCKET_NAME,
+        config.TABLE_NAME,
+        config.DB_SOURCE_TABLE,
+    )
+    config.DB_URL = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
+    config.NUM_SPLITS = 4
+    config.BUCKET_NAME = "test-bucket"
+    config.TABLE_NAME = "sales"
+    config.DB_SOURCE_TABLE = "sales"
+
+    await seed_demo_database()
 
     # Reset the global engine so it picks up the DB_URL we set above.
     _executor._engine = None
@@ -57,6 +62,14 @@ async def client():
     if _executor._engine is not None:
         await _executor._engine.dispose()
         _executor._engine = None
+
+    (
+        config.DB_URL,
+        config.NUM_SPLITS,
+        config.BUCKET_NAME,
+        config.TABLE_NAME,
+        config.DB_SOURCE_TABLE,
+    ) = saved
 
     # Clean up test DB file
     if _TEST_DB.exists():

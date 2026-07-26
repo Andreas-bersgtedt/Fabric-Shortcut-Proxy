@@ -12,6 +12,8 @@ Rows are ordered by pk_col to keep results deterministic across retries.
 """
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
+
 import config
 from config import TableDef
 from db.capabilities import capabilities_for_db_url
@@ -20,6 +22,9 @@ from planner.dialects import get_dialect
 from observability.logging import get_logger
 
 log = get_logger(__name__)
+
+_INTEGER_TYPES = {"int", "long"}
+_TEMPORAL_TYPES = {"date", "timestamp", "timestamptz"}
 
 
 def _pk_column(table: TableDef) -> str:
@@ -32,6 +37,42 @@ def _pk_column(table: TableDef) -> str:
             return col.name
     # Fallback: first column
     return table.schema[0].name
+
+
+def _column_type(table: TableDef, column_name: str) -> str | None:
+    for col in table.schema:
+        if col.name == column_name:
+            return col.iceberg_type
+    return None
+
+
+def _first_column_of_type(table: TableDef, allowed: set[str]) -> str | None:
+    for col in table.schema:
+        if col.iceberg_type in allowed:
+            return col.name
+    return None
+
+
+def _choose_strategy_key(table: TableDef, strategy: str) -> str:
+    """Choose the split column for the requested strategy.
+
+    Priority:
+      1) explicit key_column
+      2) integer key for range/auto
+      3) temporal key for date/auto
+      4) fallback to legacy pk-column selection
+    """
+    if table.key_column:
+        return table.key_column
+    if strategy in ("range", "auto"):
+        col = _first_column_of_type(table, _INTEGER_TYPES)
+        if col:
+            return col
+    if strategy in ("date", "auto"):
+        col = _first_column_of_type(table, _TEMPORAL_TYPES)
+        if col:
+            return col
+    return _pk_column(table)
 
 
 def pk_column(table: TableDef) -> str:
@@ -58,6 +99,53 @@ def compute_key_ranges(lo: int, hi: int, n: int) -> list[tuple[int, int]]:
     return [(bounds[i], bounds[i + 1]) for i in range(n)]
 
 
+def _coerce_temporal(value, kind: str):
+    if kind == "date":
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, str):
+            return date.fromisoformat(value)
+        raise TypeError(f"unsupported date bound type: {type(value)!r}")
+
+    # timestamp / timestamptz
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+    if isinstance(value, str):
+        s = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+    raise TypeError(f"unsupported datetime bound type: {type(value)!r}")
+
+
+def _to_tick(value, kind: str) -> int:
+    if kind == "date":
+        return value.toordinal()
+    dt = value
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return int(dt.timestamp() * 1_000_000)
+
+
+def _from_tick(tick: int, kind: str):
+    if kind == "date":
+        return date.fromordinal(tick)
+    return datetime.fromtimestamp(tick / 1_000_000, tz=timezone.utc)
+
+
+def compute_temporal_ranges(lo, hi, n: int, kind: str) -> list[tuple[object, object]]:
+    lo_v = _coerce_temporal(lo, kind)
+    hi_v = _coerce_temporal(hi, kind)
+    lo_t = _to_tick(lo_v, kind)
+    hi_t = _to_tick(hi_v, kind)
+    int_ranges = compute_key_ranges(lo_t, hi_t, n)
+    return [(_from_tick(a, kind), _from_tick(b, kind)) for a, b in int_ranges]
+
+
 def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
     """
     Return (sql_text, params) for the given split.
@@ -77,8 +165,9 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
     """
     table: TableDef = split.table
     dialect = get_dialect(config.DB_URL)
-
-    pk = dialect.quote(_pk_column(table))
+    key_name = split.split_key_column or _pk_column(table)
+    key_type = _column_type(table, key_name)
+    pk = dialect.quote(key_name)
     projected = ", ".join(dialect.quote(col.name) for col in table.schema)
     source = dialect.quote_qualified(table.source_table)
 
@@ -94,6 +183,22 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
         params = {
             "key_lo": split.key_lo,
             "key_hi": split.key_hi,
+            "max_rows": config.QUERY_MAX_ROWS,
+        }
+        return sql, params
+
+    if key_type not in _INTEGER_TYPES:
+        sql = dialect.build_select_row_number(
+            projected=projected,
+            source=source,
+            order_by=pk,
+            num_splits_param="num_splits",
+            split_index_param="split_index",
+            max_rows_param="max_rows",
+        )
+        params = {
+            "num_splits": split.num_splits,
+            "split_index": split.split_index,
             "max_rows": config.QUERY_MAX_ROWS,
         }
         return sql, params
@@ -124,30 +229,63 @@ async def plan_ranges_for_snapshot(snap) -> bool:
     non-integer key). Idempotent and best-effort — never raises, so a planning
     hiccup degrades to the known-good modulo path rather than failing startup.
     """
-    from db.executor import fetch_key_bounds
+    from db.executor import fetch_column_bounds, fetch_key_bounds
 
     table = snap.table
-    key = _pk_column(table)
+    strategy = config.SPLIT_STRATEGY
+    if strategy == "modulo":
+        return False
+
+    key = _choose_strategy_key(table, strategy)
+    key_type = _column_type(table, key)
+
+    for split in snap.splits:
+        split.split_key_column = key
+
     caps = capabilities_for_db_url(config.DB_URL)
     if not caps.supports_range_key_bounds:
         log.warning("range_planning_fallback_modulo", table=table.name,
                     key=key, reason="flavor_capability")
         return False
 
-    try:
-        bounds = await fetch_key_bounds(table.source_table, key)
-    except Exception as exc:  # noqa: BLE001 - planning must not break startup
-        log.warning("range_planning_error_fallback_modulo", table=table.name, error=str(exc))
-        return False
-    if bounds is None:
-        log.warning("range_planning_fallback_modulo", table=table.name,
-                    key=key, reason="no_integer_bounds")
-        return False
+    if strategy in ("range", "auto") and key_type in _INTEGER_TYPES:
+        try:
+            bounds = await fetch_key_bounds(table.source_table, key)
+        except Exception as exc:  # noqa: BLE001 - planning must not break startup
+            log.warning("range_planning_error_fallback_modulo", table=table.name, key=key, error=str(exc))
+            bounds = None
+        if bounds is not None:
+            lo, hi = bounds
+            ranges = compute_key_ranges(lo, hi, len(snap.splits))
+            for split, (rlo, rhi) in zip(snap.splits, ranges):
+                split.key_lo, split.key_hi = rlo, rhi
+            log.info("range_planning_ok", table=table.name, key=key,
+                     key_min=lo, key_max=hi, splits=len(snap.splits), strategy="range")
+            return True
+        if strategy == "range":
+            log.warning("range_planning_fallback_modulo", table=table.name,
+                        key=key, reason="no_integer_bounds")
+            return False
 
-    lo, hi = bounds
-    ranges = compute_key_ranges(lo, hi, len(snap.splits))
-    for split, (rlo, rhi) in zip(snap.splits, ranges):
-        split.key_lo, split.key_hi = rlo, rhi
-    log.info("range_planning_ok", table=table.name, key=key,
-             key_min=lo, key_max=hi, splits=len(snap.splits))
-    return True
+    if strategy in ("date", "auto") and key_type in _TEMPORAL_TYPES:
+        try:
+            bounds = await fetch_column_bounds(table.source_table, key)
+        except Exception as exc:  # noqa: BLE001 - planning must not break startup
+            log.warning("date_range_planning_error_fallback_modulo", table=table.name, key=key, error=str(exc))
+            bounds = None
+        if bounds is not None:
+            lo, hi = bounds
+            ranges = compute_temporal_ranges(lo, hi, len(snap.splits), key_type)
+            for split, (rlo, rhi) in zip(snap.splits, ranges):
+                split.key_lo, split.key_hi = rlo, rhi
+            log.info("date_range_planning_ok", table=table.name, key=key,
+                     key_min=str(lo), key_max=str(hi), splits=len(snap.splits), strategy="date")
+            return True
+        if strategy == "date":
+            log.warning("date_range_planning_fallback_modulo", table=table.name,
+                        key=key, reason="no_temporal_bounds")
+            return False
+
+    log.warning("split_strategy_fallback_modulo", table=table.name, key=key,
+                strategy=strategy, key_type=key_type or "unknown")
+    return False

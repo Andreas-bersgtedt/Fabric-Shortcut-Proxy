@@ -1,7 +1,7 @@
 # Fabric Shortcut Proxy Roadmap
 
 Date: 2026-07-26
-Status: Draft for implementation planning
+Status: Active implementation
 
 ## Purpose
 This roadmap defines the next major capability upgrades for the proxy:
@@ -31,6 +31,8 @@ The plan is phased to minimize regression risk and preserve current known-good b
 ## Phase 1: Canonical Source Path Model
 Goal: represent source identity clearly and map virtual folders to source lineage.
 
+Status: Completed (2026-07-26)
+
 ### Scope
 - Introduce canonical source identity fields for each exposed object:
   - server_name
@@ -53,6 +55,11 @@ Goal: represent source identity clearly and map virtual folders to source lineag
 - New shortcuts can be created with schema-visible paths.
 - Existing legacy path deployments continue to function unchanged when compatibility mode is on.
 - List/GET/HEAD behavior remains compatible for both layouts.
+
+Completion Notes:
+- Default path layout is canonical.
+- Legacy aliases are disabled by default for immediate cutover.
+- Delta `_delta_log` and data objects now align under canonical table paths.
 
 ### Risks
 - Path migration can break existing shortcuts if forced by default.
@@ -179,7 +186,7 @@ Goal: eliminate plain HTTP exposure for production and standardize certificate l
   - Provide migration guides for path layout and TLS adoption.
 
 ## Proposed Milestone Sequence
-- Milestone A: Phase 1 complete (path model + compatibility mode)
+- Milestone A: Phase 1 complete (path model + compatibility mode) ✅
 - Milestone B: Phase 2 complete (split planner v2 with row-target and date/non-PK support)
 - Milestone C: Phase 3 complete (adapter framework + Oracle + Databricks)
 - Milestone D: Phase 4 complete (HTTPS deployment profile + cert lifecycle docs)
@@ -208,4 +215,4 @@ Goal: eliminate plain HTTP exposure for production and standardize certificate l
 - Control-plane mTLS is deferred for now; this cycle delivers HTTPS/TLS edge hardening first.
 
 ## Immediate Next Step
-Create implementation design docs per phase with concrete API/config deltas and test plans, then execute Milestone A first to establish the canonical source path foundation.
+Execute Milestone B (Phase 2): implement split-planner strategy cascade (integer/date/non-PK), add strategy telemetry, and complete coverage for fallback determinism.

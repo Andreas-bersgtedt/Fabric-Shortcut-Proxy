@@ -9,23 +9,15 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import pathlib
 
 import pytest
 import pyarrow.parquet as pq
 
 _TEST_DB = pathlib.Path(__file__).parent / "test_delta.db"
-os.environ["DB_URL"] = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
-os.environ["NUM_SPLITS"] = "4"
-os.environ["S3_BUCKET"] = "delta-bucket"
 
 import httpx
 import config
-
-config.DB_URL = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
-config.NUM_SPLITS = 4
-config.BUCKET_NAME = "delta-bucket"
 
 from main import app
 from config import ColumnDef

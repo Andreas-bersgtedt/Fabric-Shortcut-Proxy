@@ -156,6 +156,9 @@ NUM_SPLITS: int = _get_int("NUM_SPLITS", "num_splits", 8)
 #     the source MIN/MAX. Each split reads only its slice via the PK index — the
 #     path that scales to 10^8 rows. Requires an integer key column; falls back
 #     to modulo (with a warning) when bounds can't be determined.
+#   "date": contiguous ranges over date/timestamp split keys.
+#   "auto": strategy cascade (integer range -> temporal range -> deterministic
+#     modulo fallback, including non-PK sortable keys via row-number sharding).
 SPLIT_STRATEGY: str = _get_str("SPLIT_STRATEGY", "split_strategy", "modulo").strip().lower()
 
 # Phase 4 scale engine — streaming Parquet materialization. When on, a split is
@@ -514,8 +517,11 @@ def validate_config() -> None:
         problems.append(f"NUM_SPLITS must be >= 1 (got {NUM_SPLITS}).")
     if TABLE_FORMAT not in ("iceberg", "delta"):
         problems.append(f"TABLE_FORMAT must be 'iceberg' or 'delta' (got {TABLE_FORMAT!r}).")
-    if SPLIT_STRATEGY not in ("modulo", "range"):
-        problems.append(f"SPLIT_STRATEGY must be 'modulo' or 'range' (got {SPLIT_STRATEGY!r}).")
+    if SPLIT_STRATEGY not in ("modulo", "range", "date", "auto"):
+        problems.append(
+            f"SPLIT_STRATEGY must be one of 'modulo'|'range'|'date'|'auto' "
+            f"(got {SPLIT_STRATEGY!r})."
+        )
     if STREAM_BATCH_ROWS < 1:
         problems.append(f"STREAM_BATCH_ROWS must be >= 1 (got {STREAM_BATCH_ROWS}).")
     if SOURCE_MAX_CONCURRENCY < 0:
@@ -635,7 +641,7 @@ SETTINGS_META: dict[str, dict] = {
     "port": {"cat": "Server", "help": "Listen port."},
     # Splits & query
     "num_splits":     {"cat": "Splits & query", "help": "Virtual Parquet files per table."},
-    "split_strategy": {"cat": "Splits & query", "help": "'modulo' (even, full-scan per split) or 'range' (contiguous key ranges via the PK index — scales to 10^8 rows)."},
+    "split_strategy": {"cat": "Splits & query", "help": "'modulo' (full-scan), 'range' (integer ranges), 'date' (temporal ranges), or 'auto' (range/date then deterministic fallback)."},
     "streaming_parquet": {"cat": "Splits & query", "help": "Materialize each split in row batches (bounded memory) instead of loading the whole split into RAM."},
     "stream_batch_rows": {"cat": "Splits & query", "help": "Batch/row-group size for streaming Parquet materialization."},
     "source_max_concurrency": {"cat": "Splits & query", "help": "Cap concurrent SQL queries against the source DB (backpressure). 0 = unlimited."},

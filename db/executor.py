@@ -294,13 +294,10 @@ async def execute_scalar(sql: str, params: dict[str, Any] | None = None):
             return await asyncio.to_thread(_sync_scalar)
 
 
-async def fetch_key_bounds(source_table: str, key_column: str) -> tuple[int, int] | None:
-    """Return ``(min, max)`` of the integer key column for range planning (Phase 4).
+async def fetch_column_bounds(source_table: str, key_column: str):
+    """Return raw ``(min, max)`` bounds for any comparable key column.
 
-    Runs a single ``SELECT MIN(pk), MAX(pk)`` (an index-only scan on most
-    engines). Returns ``None`` when the table is empty or the key isn't an
-    integer, so the caller can fall back to modulo planning. Never raises for
-    an empty/odd table — only genuine SQL errors propagate.
+    Returns None for empty tables or all-NULL keys.
     """
     from planner.dialects import get_dialect
 
@@ -321,8 +318,23 @@ async def fetch_key_bounds(source_table: str, key_column: str) -> tuple[int, int
             row = await asyncio.to_thread(_sync_bounds)
     if row is None or row[0] is None or row[1] is None:
         return None
+    return row[0], row[1]
+
+
+async def fetch_key_bounds(source_table: str, key_column: str) -> tuple[int, int] | None:
+    """Return ``(min, max)`` of the integer key column for range planning (Phase 4).
+
+    Runs a single ``SELECT MIN(pk), MAX(pk)`` (an index-only scan on most
+    engines). Returns ``None`` when the table is empty or the key isn't an
+    integer, so the caller can fall back to modulo planning. Never raises for
+    an empty/odd table — only genuine SQL errors propagate.
+    """
+    bounds = await fetch_column_bounds(source_table, key_column)
+    if bounds is None:
+        return None
+    lo_raw, hi_raw = bounds
     try:
-        return int(row[0]), int(row[1])
+        return int(lo_raw), int(hi_raw)
     except (TypeError, ValueError):
         # Non-integer key (uuid/string/etc.) — range planning needs integers.
         return None

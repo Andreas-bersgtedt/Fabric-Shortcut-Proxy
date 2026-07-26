@@ -18,7 +18,7 @@ def build_metadata_json(snap: SnapshotState) -> bytes:
     if snap.metadata_bytes is not None:
         return snap.metadata_bytes
 
-    location = f"s3://{config.BUCKET_NAME}/{config.WAREHOUSE_PREFIX}/{snap.table.name}"
+    location = f"s3://{config.BUCKET_NAME}/{snap.table_path}"
 
     schema = iceberg_schema_dict(schema_id=0, columns=snap.table.schema)
 

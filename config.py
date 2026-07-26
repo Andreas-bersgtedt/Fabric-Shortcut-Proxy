@@ -94,8 +94,18 @@ def _get_bool(env: str | None, key: str, default: bool) -> bool:
 # ---------------------------------------------------------------------------
 
 BUCKET_NAME: str = _get_str("S3_BUCKET", "bucket", "fabric-iceberg-poc")
-WAREHOUSE_PREFIX: str = _get_str(None, "warehouse_prefix", "warehouse/db")  # path inside the bucket
+WAREHOUSE_PREFIX: str = _get_str(None, "warehouse_prefix", "db")  # path inside the bucket
 TABLE_NAME: str = _get_str("TABLE_NAME", "table_name", "sales")
+
+# Phase 1: virtual object path layout.
+#   legacy    -> db/<table>
+#   canonical -> db/<server>/<database>/<schema>/<object>
+# Legacy aliasing can stay on during migration so existing shortcuts continue
+# to resolve while new shortcuts use canonical paths.
+OBJECT_PATH_LAYOUT: str = _get_str("OBJECT_PATH_LAYOUT", "object_path_layout", "legacy").strip().lower()
+ENABLE_LEGACY_PATH_ALIASES: bool = _get_bool(
+    "ENABLE_LEGACY_PATH_ALIASES", "enable_legacy_path_aliases", True
+)
 
 # S3 credentials (Fabric uses these when creating the shortcut connection).
 # For POC: proxy accepts any credentials that match these values.
@@ -497,6 +507,10 @@ def validate_config() -> None:
         problems.append("S3_BUCKET must be a non-empty bucket name.")
     if not TABLE_NAME:
         problems.append("TABLE_NAME must be non-empty.")
+    if OBJECT_PATH_LAYOUT not in ("legacy", "canonical"):
+        problems.append(
+            f"OBJECT_PATH_LAYOUT must be 'legacy' or 'canonical' (got {OBJECT_PATH_LAYOUT!r})."
+        )
     if NUM_SPLITS < 1:
         problems.append(f"NUM_SPLITS must be >= 1 (got {NUM_SPLITS}).")
     if TABLE_FORMAT not in ("iceberg", "delta"):
@@ -612,6 +626,8 @@ SETTINGS_META: dict[str, dict] = {
     # S3 / bucket
     "bucket":            {"cat": "S3 endpoint", "help": "Virtual S3 bucket name Fabric connects to."},
     "warehouse_prefix":  {"cat": "S3 endpoint", "help": "Path prefix inside the bucket (warehouse root)."},
+    "object_path_layout": {"cat": "S3 endpoint", "help": "Virtual object layout: legacy (db/<table>) or canonical (db/<server>/<database>/<schema>/<object>)."},
+    "enable_legacy_path_aliases": {"cat": "S3 endpoint", "help": "Serve legacy path aliases while canonical layout is enabled (migration safety)."},
     "access_key_id":     {"cat": "S3 endpoint", "help": "S3 access key id Fabric presents."},
     "secret_access_key": {"cat": "S3 endpoint", "help": "S3 secret key (only checked when require_sigv4).", "secret": True},
     "require_sigv4":     {"cat": "S3 endpoint", "help": "Enforce AWS SigV4 request signatures."},

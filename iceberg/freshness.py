@@ -76,7 +76,8 @@ async def materialize_table(table, bucket: str, warehouse_prefix: str) -> Snapsh
     id is derived from the chunk hashes, so identical content yields identical
     ids (restart-stable) and any change yields a new id.
     """
-    table_path = f"{warehouse_prefix}/{table.name}"
+    table_path = state_store.active_table_path(table, warehouse_prefix)
+    legacy_path = state_store.legacy_table_path(table, warehouse_prefix)
     splits: list[SplitDescriptor] = []
     chunk_hashes: list[str] = []
     total_records = 0
@@ -130,6 +131,8 @@ async def materialize_table(table, bucket: str, warehouse_prefix: str) -> Snapsh
         metadata_key=f"{table_path}/metadata/v1.metadata.json",
         version_hint_key=f"{table_path}/metadata/version-hint.text",
         table=table,
+        table_path=table_path,
+        legacy_table_path=legacy_path,
         uuid=snap_uuid,
     )
     for s in splits:
@@ -140,7 +143,7 @@ async def materialize_table(table, bucket: str, warehouse_prefix: str) -> Snapsh
 
 
 def _finalize_versioned_keys(snap: SnapshotState, version: int) -> None:
-    table_path = f"{config.WAREHOUSE_PREFIX}/{snap.table.name}"
+    table_path = snap.table_path
     snap.version = version
     snap.sequence_number = version
     snap.metadata_key = f"{table_path}/metadata/v{version}.metadata.json"

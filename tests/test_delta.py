@@ -76,7 +76,9 @@ def _mk_snap(table, version, hashes):
         snapshot_id=version * 1000, sequence_number=version,
         watermark_ms=1_700_000_000_000 + version,
         manifest_list_key="", manifest_file_key="", metadata_key="",
-        version_hint_key="", table=table, version=version, uuid="x",
+        version_hint_key="", table=table,
+        table_path=tp, legacy_table_path=tp,
+        version=version, uuid="x",
     )
     snap.splits = [
         SplitDescriptor(

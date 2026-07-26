@@ -14,7 +14,10 @@ admin refresh; reads are unsynchronised (acceptable for POC).
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
+
+from sqlalchemy.engine import make_url
 
 import config
 
@@ -56,6 +59,8 @@ class SnapshotState:
     metadata_key: str               # object key of metadata.json
     version_hint_key: str           # object key of version-hint.text
     table: "config.TableDef"        # the table definition backing this snapshot
+    table_path: str                 # active object root for this snapshot
+    legacy_table_path: str          # legacy alias root (for migration compatibility)
     splits: list[SplitDescriptor] = field(default_factory=list)
 
     # Metadata version (v1, v2, ...). Advances on each history-enabled refresh.
@@ -82,13 +87,80 @@ _snapshots: dict[str, SnapshotState] = {}
 _history: dict[str, list[SnapshotState]] = {}
 
 
+def _safe_segment(s: str | None, fallback: str) -> str:
+    v = (s or "").strip()
+    if not v:
+        v = fallback
+    # Keep path segments filesystem/S3-friendly and deterministic.
+    v = re.sub(r"[^A-Za-z0-9._-]+", "_", v)
+    return v or fallback
+
+
+def _split_source_table(source_table: str) -> tuple[str, str]:
+    if "." in source_table:
+        schema, _, name = source_table.rpartition(".")
+        return schema or "default", name or "table"
+    return "default", source_table or "table"
+
+
+def _connection_identity() -> tuple[str, str]:
+    try:
+        u = make_url(config.DB_URL)
+        server = _safe_segment(u.host, "local")
+        database = _safe_segment(u.database, "default")
+        return server, database
+    except Exception:  # noqa: BLE001 - config validation handles malformed URLs
+        return "local", "default"
+
+
+def legacy_table_path(table: "config.TableDef", warehouse_prefix: str) -> str:
+    return f"{warehouse_prefix}/{_safe_segment(table.name, 'table')}"
+
+
+def canonical_table_path(table: "config.TableDef", warehouse_prefix: str) -> str:
+    server, database = _connection_identity()
+    schema, obj = _split_source_table(table.source_table)
+    return (
+        f"{warehouse_prefix}/"
+        f"{_safe_segment(server, 'local')}/"
+        f"{_safe_segment(database, 'default')}/"
+        f"{_safe_segment(schema, 'default')}/"
+        f"{_safe_segment(obj, 'table')}"
+    )
+
+
+def active_table_path(table: "config.TableDef", warehouse_prefix: str) -> str:
+    if config.OBJECT_PATH_LAYOUT == "canonical":
+        return canonical_table_path(table, warehouse_prefix)
+    return legacy_table_path(table, warehouse_prefix)
+
+
+def alias_to_active_key(key: str) -> str:
+    """Map a legacy alias key to the active key when canonical mode is enabled."""
+    if not (config.OBJECT_PATH_LAYOUT == "canonical" and config.ENABLE_LEGACY_PATH_ALIASES):
+        return key
+
+    for snap in get_all_snapshots():
+        lp = snap.legacy_table_path
+        if key == lp or key.startswith(lp + "/"):
+            return snap.table_path + key[len(lp):]
+    return key
+
+
+def active_to_legacy_key(snap: "SnapshotState", key: str) -> str:
+    if key == snap.table_path or key.startswith(snap.table_path + "/"):
+        return snap.legacy_table_path + key[len(snap.table_path):]
+    return key
+
+
 def build_table_snapshot(table: "config.TableDef", bucket: str, warehouse_prefix: str) -> SnapshotState:
     """Build and register a deterministic snapshot for a single table.
 
     Identifiers are derived from a stable seed so every virtual object key is
     constant across restarts (Fabric's async XTable conversion caches paths).
     """
-    table_path = f"{warehouse_prefix}/{table.name}"
+    table_path = active_table_path(table, warehouse_prefix)
+    legacy_path = legacy_table_path(table, warehouse_prefix)
 
     seed = f"{bucket}/{table_path}"
     digest = hashlib.sha256(seed.encode()).hexdigest()
@@ -106,6 +178,8 @@ def build_table_snapshot(table: "config.TableDef", bucket: str, warehouse_prefix
         metadata_key=f"{table_path}/metadata/v1.metadata.json",
         version_hint_key=f"{table_path}/metadata/version-hint.text",
         table=table,
+        table_path=table_path,
+        legacy_table_path=legacy_path,
     )
     snap.splits = [
         SplitDescriptor(
@@ -132,7 +206,7 @@ def advance_table_snapshot(table_name: str, bucket: str, warehouse_prefix: str) 
     """
     cur = _snapshots[table_name]
     table = cur.table
-    table_path = f"{warehouse_prefix}/{table.name}"
+    table_path = cur.table_path
     version = cur.version + 1
 
     seed = f"{bucket}/{table_path}/v{version}"
@@ -151,6 +225,8 @@ def advance_table_snapshot(table_name: str, bucket: str, warehouse_prefix: str) 
         metadata_key=f"{table_path}/metadata/v{version}.metadata.json",
         version_hint_key=cur.version_hint_key,
         table=table,
+        table_path=table_path,
+        legacy_table_path=cur.legacy_table_path,
     )
     new.version = version
     new.splits = cur.splits            # share the same materialized data files
@@ -247,6 +323,8 @@ def get_split_by_key(object_key: str) -> SplitDescriptor | None:
     Resolving them here (instead of 404) prevents "underlying location does not
     exist" errors on the Fabric SQL endpoint while it catches up.
     """
+    object_key = alias_to_active_key(object_key)
+
     for snap in _snapshots.values():
         for split in snap.splits:
             if split.object_key == object_key:

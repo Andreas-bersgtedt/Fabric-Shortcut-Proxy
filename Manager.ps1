@@ -94,6 +94,11 @@
 .PARAMETER SkipInstall
     Skip dependency installation entirely (fastest start; assumes venv is ready).
 
+.PARAMETER AutoStash
+    When switching branches, automatically stash local tracked and untracked
+    changes if needed. The script does NOT auto-pop the stash; it prints how to
+    restore it after startup.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -128,7 +133,8 @@ param(
     [switch]$NoPull,
     [switch]$Reinstall,
     [switch]$Recreate,
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$AutoStash
 )
 
 $ErrorActionPreference = "Stop"
@@ -148,14 +154,14 @@ function Write-Step {
 
 # Run git safely: git writes progress to stderr, which under
 # $ErrorActionPreference='Stop' becomes a terminating NativeCommandError even with
-# 2>$null. Force 'Continue' inside this scope and return exit code + stdout so the
+# stderr output. Force 'Continue' inside this scope and return exit code + output so the
 # caller decides what to do.
 function Invoke-Git {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $out = & git @GitArgs 2>$null
+        $out = & git @GitArgs 2>&1
         return [pscustomobject]@{ Output = (($out -join "`n").Trim()); ExitCode = $LASTEXITCODE }
     } finally {
         $ErrorActionPreference = $prev
@@ -176,6 +182,9 @@ if ($NoPull) {
 } elseif (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Warning "git not found on PATH - skipping codebase sync."
 } else {
+    $autoStashCreated = $false
+    $autoStashRef = ""
+
     $inside = Invoke-Git rev-parse --is-inside-work-tree
     $isRepo = ($inside.ExitCode -eq 0 -and $inside.Output -eq "true")
 
@@ -195,10 +204,37 @@ if ($NoPull) {
             if ($Branch) {
                 $current = (Invoke-Git rev-parse --abbrev-ref HEAD).Output
                 if ($current -ne $Branch) {
+                    $branchExistsLocal = ((Invoke-Git show-ref --verify --quiet "refs/heads/$Branch").ExitCode -eq 0)
+                    $branchExistsRemote = ((Invoke-Git show-ref --verify --quiet "refs/remotes/$Remote/$Branch").ExitCode -eq 0)
+
+                    $dirty = (Invoke-Git status --porcelain)
+                    $isDirty = ($dirty.ExitCode -eq 0 -and [string]::IsNullOrWhiteSpace($dirty.Output) -eq $false)
+                    if ($isDirty -and -not $AutoStash) {
+                        throw "Cannot switch to branch '$Branch' because local changes are present. Commit, stash, or rerun with -AutoStash.`nLocal changes:`n$($dirty.Output)"
+                    }
+                    if ($isDirty -and $AutoStash) {
+                        $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+                        $stashMsg = "manager-autostash-$stamp"
+                        Write-Step "Local changes detected - auto-stashing before checkout"
+                        $r = Invoke-Git stash push -u -m $stashMsg
+                        if ($r.ExitCode -ne 0) {
+                            throw "git stash push failed:`n$($r.Output)"
+                        }
+                        $autoStashCreated = $true
+                        $autoStashRef = "stash^{/$stashMsg}"
+                    }
+
                     Write-Step "Checking out branch '$Branch'"
-                    $r = Invoke-Git checkout $Branch
+                    if ($branchExistsLocal) {
+                        $r = Invoke-Git checkout $Branch
+                    } elseif ($branchExistsRemote) {
+                        $r = Invoke-Git checkout -B $Branch --track "$Remote/$Branch"
+                    } else {
+                        throw "Branch '$Branch' was not found locally or on '$Remote'."
+                    }
+
                     if ($r.ExitCode -ne 0) {
-                        throw "git checkout '$Branch' failed (commit or stash local changes first - the script never discards your work):`n$($r.Output)"
+                        throw "git checkout '$Branch' failed:`n$($r.Output)"
                     }
                 }
             }
@@ -220,6 +256,10 @@ if ($NoPull) {
                 if (-not $SkipInstall -and (Test-Path $StampFile)) { Remove-Item -Force $StampFile }
             } else {
                 Write-Step "Repo already up to date"
+            }
+
+            if ($autoStashCreated) {
+                Write-Warning "AutoStash created and kept for safety. Restore later with: git stash pop $autoStashRef"
             }
         }
     } else {

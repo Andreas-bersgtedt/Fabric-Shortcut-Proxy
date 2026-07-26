@@ -184,6 +184,32 @@ function Invoke-Git {
     }
 }
 
+function Ensure-CleanOrAutoStash {
+    param(
+        [switch]$AllowAutoStash,
+        [ref]$DidStash,
+        [ref]$StashRef
+    )
+
+    $dirty = (Invoke-Git status --porcelain)
+    $isDirty = ($dirty.ExitCode -eq 0 -and [string]::IsNullOrWhiteSpace($dirty.Output) -eq $false)
+    if (-not $isDirty) { return }
+
+    if (-not $AllowAutoStash) {
+        throw "Local changes are present. Commit, stash, or rerun with -AutoStash.`nLocal changes:`n$($dirty.Output)"
+    }
+
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $stashMsg = "manager-autostash-$stamp"
+    Write-Step "Local changes detected - auto-stashing"
+    $r = Invoke-Git stash push -u -m $stashMsg
+    if ($r.ExitCode -ne 0) {
+        throw "git stash push failed:`n$($r.Output)"
+    }
+    $DidStash.Value = $true
+    $StashRef.Value = "stash^{/$stashMsg}"
+}
+
 # ---------------------------------------------------------------------------
 # 0. Sync the codebase (optional) - IN PLACE in this folder (never a sub-folder).
 #    * Folder IS this repo's root -> fetch + checkout branch + fast-forward pull.
@@ -222,23 +248,7 @@ if ($NoPull) {
                 if ($current -ne $Branch) {
                     $branchExistsLocal = ((Invoke-Git show-ref --verify --quiet "refs/heads/$Branch").ExitCode -eq 0)
                     $branchExistsRemote = ((Invoke-Git show-ref --verify --quiet "refs/remotes/$Remote/$Branch").ExitCode -eq 0)
-
-                    $dirty = (Invoke-Git status --porcelain)
-                    $isDirty = ($dirty.ExitCode -eq 0 -and [string]::IsNullOrWhiteSpace($dirty.Output) -eq $false)
-                    if ($isDirty -and -not $AutoStash) {
-                        throw "Cannot switch to branch '$Branch' because local changes are present. Commit, stash, or rerun with -AutoStash.`nLocal changes:`n$($dirty.Output)"
-                    }
-                    if ($isDirty -and $AutoStash) {
-                        $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-                        $stashMsg = "manager-autostash-$stamp"
-                        Write-Step "Local changes detected - auto-stashing before checkout"
-                        $r = Invoke-Git stash push -u -m $stashMsg
-                        if ($r.ExitCode -ne 0) {
-                            throw "git stash push failed:`n$($r.Output)"
-                        }
-                        $autoStashCreated = $true
-                        $autoStashRef = "stash^{/$stashMsg}"
-                    }
+                    Ensure-CleanOrAutoStash -AllowAutoStash:$AutoStash -DidStash ([ref]$autoStashCreated) -StashRef ([ref]$autoStashRef)
 
                     Write-Step "Checking out branch '$Branch'"
                     if ($branchExistsLocal) {
@@ -259,6 +269,9 @@ if ($NoPull) {
             if ($curBranch -eq "HEAD") {
                 Write-Warning "Detached HEAD - skipping pull. Pass -Branch to check out a branch."
             } else {
+                # Even when no branch switch is needed, local edits can block
+                # ff-only pulls. Apply the same safety policy here.
+                Ensure-CleanOrAutoStash -AllowAutoStash:$AutoStash -DidStash ([ref]$autoStashCreated) -StashRef ([ref]$autoStashRef)
                 Write-Step "Pulling '$curBranch' (fast-forward only)"
                 $r = Invoke-Git pull --ff-only $Remote $curBranch
                 if ($r.ExitCode -ne 0) {

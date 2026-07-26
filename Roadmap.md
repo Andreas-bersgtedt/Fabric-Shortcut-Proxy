@@ -194,12 +194,18 @@ Goal: eliminate plain HTTP exposure for production and standardize certificate l
 - Full CDC-based incremental materialization redesign.
 - Complete dynamic split rebalancing in live refresh loops.
 - Multi-cloud abstraction beyond current S3-compatible contract.
+- Control-plane mTLS enforcement between Manager and Agents (deferred to next cycle after edge TLS is stabilized).
 
 ## Open Decisions
 - Exact canonicalization policy for server/database/schema casing.
 - Default strategy order between date-range and non-PK quantile for specific flavors.
 - Whether direct in-process TLS should be production-supported or dev-only.
 - Initial min/max bounds for split_count guardrails.
+
+## Locked Decisions (2026-07-26)
+- Canonical path rollout defaults immediately for new implementations; migration safety is provided via legacy compatibility serving during transition.
+- Numeric split-quality SLOs are deferred to per-phase design docs (not fixed in this roadmap).
+- Control-plane mTLS is deferred for now; this cycle delivers HTTPS/TLS edge hardening first.
 
 ## Immediate Next Step
 Create implementation design docs per phase with concrete API/config deltas and test plans, then execute Milestone A first to establish the canonical source path foundation.

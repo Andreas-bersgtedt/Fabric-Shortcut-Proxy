@@ -52,6 +52,10 @@
     Serve the /_manager operator console (fleet monitor + start/stop/restart/drain)
     on the control port. Sets ENABLE_ADMIN_UI=1.
 
+.PARAMETER ConfigUi
+    Serve the config builder UI/API at /_config on the control port.
+    Sets ENABLE_CONFIG_BUILDER=1.
+
 .PARAMETER AdminToken
     Token required for mutating /_manager actions (X-Admin-Token header or ?token=).
     Sets ADMIN_TOKEN. Reads stay open; blank = no auth.
@@ -132,6 +136,7 @@ param(
     [int]$AgentCount,
     [switch]$Gateway,
     [switch]$AdminUi,
+    [switch]$ConfigUi,
     [string]$AdminToken,
     [switch]$Ha,
     [switch]$RetentionGc,
@@ -377,6 +382,7 @@ if ($PSBoundParameters.ContainsKey("HeartbeatMs"))   { $env:HEARTBEAT_MS = "$Hea
 if ($PSBoundParameters.ContainsKey("AgentCount"))    { $env:AGENT_COUNT  = "$AgentCount" }
 if ($Gateway)                                        { $env:ENABLE_GATEWAY = "1" }
 if ($AdminUi)                                        { $env:ENABLE_ADMIN_UI = "1" }
+if ($ConfigUi)                                       { $env:ENABLE_CONFIG_BUILDER = "1" }
 if ($PSBoundParameters.ContainsKey("AdminToken"))    { $env:ADMIN_TOKEN  = $AdminToken }
 if ($Ha)                                             { $env:MANAGER_HA = "1" }
 if ($RetentionGc)                                    { $env:RETENTION_GC = "1" }
@@ -391,6 +397,7 @@ $effFormat    = if ($env:TABLE_FORMAT) { $env:TABLE_FORMAT } else { "iceberg" }
 $effCount     = if ($env:AGENT_COUNT) { [int]$env:AGENT_COUNT } else { 1 }
 $effGateway   = ($env:ENABLE_GATEWAY -eq "1")
 $effAdminUi   = ($env:ENABLE_ADMIN_UI -eq "1")
+$effConfigUi  = ($env:ENABLE_CONFIG_BUILDER -eq "1")
 $effHa        = ($env:MANAGER_HA -eq "1")
 $effLayout    = if ($env:OBJECT_PATH_LAYOUT) { $env:OBJECT_PATH_LAYOUT } else { "canonical" }
 $effAliases   = if ($env:ENABLE_LEGACY_PATH_ALIASES) { ($env:ENABLE_LEGACY_PATH_ALIASES -eq "1") } else { $false }
@@ -412,6 +419,9 @@ Write-Step "Starting Manager (control plane + $effCount supervised Agent(s))"
 Write-Host "    Manager control : http://${ctlDialHost}:${effCtlPort}   (/healthz  /readyz  /agents)" -ForegroundColor Green
 if ($effAdminUi) {
     Write-Host "    Operator console: http://${ctlDialHost}:${effCtlPort}/_manager   <- start/stop/restart/drain + monitor" -ForegroundColor Green
+}
+if ($effConfigUi) {
+    Write-Host "    Config builder  : http://${ctlDialHost}:${effCtlPort}/_config    <- live config UI/API" -ForegroundColor Green
 }
 if ($effHa) {
     Write-Host "    Manager HA      : leader lease (primary supervises; run a 2nd -Ha Manager as standby)" -ForegroundColor DarkGray

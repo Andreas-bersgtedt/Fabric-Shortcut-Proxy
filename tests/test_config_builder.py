@@ -14,7 +14,9 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import db.reflect as reflect
 from db.reflect import build_url, detect_key_column, UnsupportedDialect
+from configbuilder.router import _clean_error
 from configbuilder.router import router as cb_router
 
 _DB = pathlib.Path(__file__).parent / "test_cfgbuilder.db"
@@ -38,6 +40,27 @@ def test_build_url_mssql_adds_driver_and_cert():
     assert s.startswith("mssql+aioodbc://")
     assert "ODBC" in s and "Driver" in s
     assert "TrustServerCertificate" in s
+
+
+def test_build_url_mssql_prefers_installed_driver(monkeypatch):
+    monkeypatch.setattr(reflect, "_installed_sql_server_odbc_drivers",
+                        lambda: ["ODBC Driver 17 for SQL Server"])
+    url = build_url(dialect="mssql", host="h", database="db", username="u", password="p")
+    assert url.query["driver"] == "ODBC Driver 17 for SQL Server"
+
+
+def test_clean_error_im002_adds_driver_hint(monkeypatch):
+    monkeypatch.setattr(
+        "configbuilder.router._installed_sql_server_odbc_drivers",
+        lambda: ["ODBC Driver 17 for SQL Server"],
+    )
+    err = Exception(
+        "(pyodbc.InterfaceError) ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] "
+        "Data source name not found and no default driver specified (0) (SQLDriverConnect)')"
+    )
+    msg = _clean_error(err)
+    assert "Hint:" in msg
+    assert "ODBC Driver 17 for SQL Server" in msg
 
 
 def test_build_url_oracle_defaults_port():

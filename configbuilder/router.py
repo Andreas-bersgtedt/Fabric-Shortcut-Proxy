@@ -17,7 +17,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
 from db.capabilities import capabilities_for_dialect, flavor_warnings
-from db.reflect import build_url, SchemaReflector, detect_key_column, UnsupportedDialect
+from db.reflect import (
+    _installed_sql_server_odbc_drivers,
+    build_url,
+    SchemaReflector,
+    detect_key_column,
+    UnsupportedDialect,
+)
 from observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -63,6 +69,21 @@ def _conn_fields(d: dict) -> dict:
 def _clean_error(exc: Exception) -> str:
     """Redact any embedded credential and trim driver noise from an error."""
     msg = config.redact_db_url(str(exc))
+    low = msg.lower()
+    if "im002" in low and "sqldriverconnect" in low:
+        drivers = _installed_sql_server_odbc_drivers()
+        if drivers:
+            hint = (
+                "Hint: SQL Server ODBC driver not found for this connection string. "
+                "Pick an installed value in Advanced -> ODBC driver, e.g. "
+                + ", ".join(drivers)
+            )
+        else:
+            hint = (
+                "Hint: SQL Server ODBC driver is missing. Install 'ODBC Driver 18 for SQL Server' "
+                "(or 17) and retry, or set Advanced -> ODBC driver to an installed name."
+            )
+        msg = f"{msg}\n{hint}"
     return msg[:400]
 
 

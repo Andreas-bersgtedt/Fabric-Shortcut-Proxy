@@ -58,6 +58,38 @@ class UnsupportedDialect(ValueError):
     pass
 
 
+def _installed_sql_server_odbc_drivers() -> list[str]:
+    """Best-effort list of locally installed SQL Server ODBC drivers.
+
+    Returns an empty list when ``pyodbc`` is unavailable or driver enumeration
+    fails; callers should then fall back to a safe default.
+    """
+    try:
+        import pyodbc  # type: ignore
+        return [d for d in pyodbc.drivers() if "sql server" in d.lower()]
+    except Exception:  # noqa: BLE001 - advisory only
+        return []
+
+
+def _default_mssql_odbc_driver() -> str:
+    """Pick the best available SQL Server ODBC driver on this host."""
+    preferred = (
+        "ODBC Driver 18 for SQL Server",
+        "ODBC Driver 17 for SQL Server",
+        "ODBC Driver 13 for SQL Server",
+        "ODBC Driver 11 for SQL Server",
+        "SQL Server Native Client 11.0",
+        "SQL Server",
+    )
+    installed = _installed_sql_server_odbc_drivers()
+    for name in preferred:
+        if name in installed:
+            return name
+    if installed:
+        return installed[-1]
+    return "ODBC Driver 18 for SQL Server"
+
+
 def build_url(
     *,
     dialect: str,
@@ -84,7 +116,7 @@ def build_url(
         )
 
     if drivername.startswith("mssql"):
-        q.setdefault("driver", driver or "ODBC Driver 18 for SQL Server")
+        q.setdefault("driver", driver or _default_mssql_odbc_driver())
         if trust_cert:
             q.setdefault("TrustServerCertificate", "yes")
 

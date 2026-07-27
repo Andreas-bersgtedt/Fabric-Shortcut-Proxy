@@ -70,6 +70,13 @@ def _clean_error(exc: Exception) -> str:
     """Redact any embedded credential and trim driver noise from an error."""
     msg = config.redact_db_url(str(exc))
     low = msg.lower()
+    if "can't load plugin: sqlalchemy.dialects:databricks" in low:
+        hint = (
+            "Hint: Databricks SQLAlchemy dialect is not installed in this environment. "
+            "Install project dependencies again (for example `pip install -e .`) or install "
+            "`databricks-sqlalchemy`."
+        )
+        msg = f"{msg}\n{hint}"
     if "im002" in low and "sqldriverconnect" in low:
         drivers = _installed_sql_server_odbc_drivers()
         if drivers:

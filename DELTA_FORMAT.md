@@ -33,13 +33,13 @@ The default stays `iceberg` (the validated known-good path). Delta is opt-in via
 
 ## 2. What gets served
 
-For a table exposed at `warehouse/db/<table>/` the object map becomes:
+For a table exposed at `db/<server>/<database>/<schema>/<object>/` the object map becomes:
 
 ```
-warehouse/db/<table>/_delta_log/00000000000000000000.json   ← commit 0
-warehouse/db/<table>/_delta_log/00000000000000000001.json   ← commit 1 (after a refresh)
-warehouse/db/<table>/data/split-0-<hash>.parquet            ← current data files
-warehouse/db/<table>/data/split-1-<hash>.parquet
+db/<server>/<database>/<schema>/<object>/_delta_log/00000000000000000000.json   ← commit 0
+db/<server>/<database>/<schema>/<object>/_delta_log/00000000000000000001.json   ← commit 1 (after a refresh)
+db/<server>/<database>/<schema>/<object>/data/split-0-<hash>.parquet            ← current data files
+db/<server>/<database>/<schema>/<object>/data/split-1-<hash>.parquet
 …
 ```
 
@@ -47,7 +47,7 @@ No `metadata.json`, no `*.avro` manifests, no `version-hint.text`. The Parquet
 files are byte-for-byte the same ones the Iceberg path serves (same generator,
 same content-addressed names, same pinning).
 
-Point the Fabric shortcut at `warehouse/db/<table>` exactly as before — Fabric
+Point the Fabric shortcut at `db/<server>/<database>/<schema>/<object>` — Fabric
 auto-detects `_delta_log/` and reads it as a Delta table.
 
 ---

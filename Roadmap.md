@@ -3,6 +3,9 @@
 Date: 2026-07-26
 Status: Active implementation
 
+Note: this document is a design roadmap snapshot and may lag current runtime defaults.
+For operational truth, use `config.py`, `README.md`, and `CONFIGURATION.md`.
+
 ## Purpose
 This roadmap defines the next major capability upgrades for the proxy:
 1. Expand supported SQL server flavors (Oracle, Databricks SQL Warehouse, and future additions).
@@ -66,7 +69,7 @@ Completion Notes:
 - Case sensitivity differences across engines may create duplicate-looking paths.
 
 ### Mitigation
-- Compatibility mode enabled by default for upgrades.
+- Compatibility mode remains available as an explicit migration option.
 - Explicit path normalization policy documented and tested.
 
 ---

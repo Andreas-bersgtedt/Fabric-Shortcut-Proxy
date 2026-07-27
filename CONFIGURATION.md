@@ -31,7 +31,8 @@ At startup the proxy:
 2. For every table, **reflects the source columns** and maps them to Iceberg
    types (or uses your explicit schema, if you provided one).
 3. Resolves the **split key column** (explicit `KEY_COLUMN`, else the primary key).
-4. Materializes split Parquet files and serves them under `warehouse/db/<name>/…`.
+4. Materializes split Parquet files and serves them under canonical paths
+  `db/<server>/<database>/<schema>/<object>/…`.
 
 > A **single table** needs only environment variables. **Multiple tables** are
 > cleanest via `config.json` (no Python editing at all).
@@ -76,8 +77,10 @@ file from a UI:
 ```powershell
 $env:ENABLE_CONFIG_BUILDER = "1"
 .\Manager.ps1 -SkipInstall
-# open http://localhost:9000/_config/
+# open http://localhost:9200/_config/   # Manager control-plane surface
 ```
+
+If you run standalone `python main.py` (no Manager), use `http://localhost:9000/_config/`.
 
 Enter host / user / password → pick tables (key column auto‑detected, overridable)
 → **Download config.json**. It's **off by default** and accepts DB credentials, so
@@ -116,8 +119,18 @@ mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&
 
 ### 3.2 The key column (`KEY_COLUMN`) — the only thing you must choose
 
-Each table is sharded into `NUM_SPLITS` Parquet files by a modulo on an integer
-column:
+By default, split count is dynamic (`split_target_rows=100000`) and planning uses
+contiguous key ranges for index-pruned reads when possible. The legacy modulo
+predicate remains as deterministic fallback.
+
+Range form (preferred):
+
+```sql
+WHERE <key> >= :key_lo AND <key> < :key_hi
+ORDER BY <key>
+```
+
+Modulo fallback form:
 
 ```sql
 WHERE (CAST(<key> AS BIGINT) % :num_splits) = :split_index
@@ -127,9 +140,8 @@ ORDER BY <key>
 - If `KEY_COLUMN` is set, that column is the split key **and** its presence turns
   on automatic schema reflection.
 - If it is not set, the proxy uses the table's **primary key** (auto‑detected).
-- The key **must be an integer column** (`int`/`long`). A monotonic id gives the
-  most even split distribution. Startup fails with a clear message if the key is
-  missing or not integer.
+- Integer keys are preferred for range planning. For non-integer keys, the planner
+  falls back to deterministic row-number sharding.
 
 > **Views** usually have no primary key — always pass `KEY_COLUMN` for a view.
 
@@ -197,7 +209,7 @@ CREATE TABLE public.orders (
 $env:DB_URL          = "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb"
 $env:DB_SOURCE_TABLE = "public.orders"   # table or view
 $env:KEY_COLUMN      = "order_id"        # integer split key -> enables auto-schema
-$env:TABLE_NAME      = "orders"          # Iceberg name -> warehouse/db/orders
+$env:TABLE_NAME      = "orders"          # Iceberg name (path is canonical by default)
 $env:NUM_SPLITS      = "8"
 .\Manager.ps1 -SkipInstall
 ```
@@ -209,7 +221,7 @@ SQL (PostgreSQL dialect):
 ```sql
 SELECT "order_id", "customer", "amount", "created", "is_paid"
 FROM "public"."orders"
-WHERE (CAST("order_id" AS BIGINT) % :num_splits) = :split_index
+WHERE "order_id" >= :key_lo AND "order_id" < :key_hi
 ORDER BY "order_id"
 LIMIT :max_rows
 ```
@@ -218,7 +230,7 @@ LIMIT :max_rows
 
 ```powershell
 curl http://localhost:9000/readyz
-curl "http://localhost:9000/fabric-iceberg-poc/warehouse/db/orders/metadata/v1.metadata.json"
+curl "http://localhost:9000/fabric-iceberg-poc/db/<server>/<database>/<schema>/orders/metadata/v1.metadata.json"
 
 $env:S3EMU_SERVER = "http://127.0.0.1:9000"
 .\.venv\Scripts\python.exe validate_pyiceberg.py   # (edit meta path for non-'sales' tables)
@@ -230,7 +242,7 @@ $env:S3EMU_SERVER = "http://127.0.0.1:9000"
 |---|---|
 | URL | `http://<proxy-host>:9000` |
 | Bucket | `fabric-iceberg-poc` |
-| Sub path | `warehouse/db/orders/metadata/v1.metadata.json` |
+| Sub path | `db/<server>/<database>/<schema>/orders/metadata/v1.metadata.json` |
 
 ---
 
@@ -269,7 +281,7 @@ Per‑table JSON fields:
 | Field | Required | Notes |
 |---|---|---|
 | `source_table` | yes | Table/view; schema‑qualified allowed |
-| `name` | no | Defaults to the source table's last segment; sets the `warehouse/db/<name>` path |
+| `name` | no | Defaults to the source table's last segment; canonical path is derived from source identity |
 | `key_column` | no | Integer split key; defaults to the primary key |
 | `num_splits` | no | Defaults to the top‑level `num_splits` / `NUM_SPLITS` |
 | `schema` | no | Explicit override: `[{ "field_id", "name", "type", "nullable" }]` |
@@ -293,9 +305,9 @@ table has a primary key (auto‑detected); pass it for views or composite keys.
 $env:DB_URL = "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb"
 .\Manager.ps1 -SkipInstall
 
-curl "http://localhost:9000/fabric-iceberg-poc/warehouse/db/orders/metadata/v1.metadata.json"
-curl "http://localhost:9000/fabric-iceberg-poc/warehouse/db/customers/metadata/v1.metadata.json"
-curl "http://localhost:9000/fabric-iceberg-poc?list-type=2&prefix=warehouse/db/&delimiter=/"
+curl "http://localhost:9000/fabric-iceberg-poc/db/<server>/<database>/<schema>/orders/metadata/v1.metadata.json"
+curl "http://localhost:9000/fabric-iceberg-poc/db/<server>/<database>/<schema>/customers/metadata/v1.metadata.json"
+curl "http://localhost:9000/fabric-iceberg-poc?list-type=2&prefix=db/&delimiter=/"
 ```
 
 Create one Fabric shortcut per table (`…/orders/…`, `…/customers/…`).
@@ -389,7 +401,7 @@ Create one Fabric shortcut per table.
 | `DB_URL` | `sqlite+aiosqlite:///./poc_source.db` | Scheme selects the dialect |
 | `DB_SOURCE_TABLE` | `sales` | Source table/view; schema‑qualified allowed |
 | `KEY_COLUMN` | *(unset)* | Integer split key; **set it to enable auto‑schema** for your table |
-| `TABLE_NAME` | `sales` | Iceberg name → `warehouse/db/<name>` |
+| `TABLE_NAME` | `sales` | Iceberg name; canonical path defaults to `db/<server>/<database>/<schema>/<object>` |
 | `NUM_SPLITS` | `8` | Split count |
 | `TABLE_FORMAT` | `iceberg` | Output format served to Fabric: `iceberg` (Fabric virtualizes to Delta) or `delta` (native `_delta_log`, no conversion — lower lag). See §13 |
 | `QUERY_MAX_ROWS` | `500000` | Max rows per split |
@@ -549,7 +561,7 @@ after old snapshot data is pruned. A stale Fabric reader may still ask for a
 prior version's data file until it re-syncs the log; those files stay pinned and
 served (within `SNAPSHOT_HISTORY_LIMIT`), so you don't get "underlying location
 does not exist" errors mid-refresh. Point your Fabric S3 shortcut at
-`warehouse/db/<table>` exactly as before — Fabric auto-detects the `_delta_log/`.
+`db/<server>/<database>/<schema>/<object>` — Fabric auto-detects the `_delta_log/`.
 
 > Design notes and the full action layout: [DELTA_FORMAT.md](DELTA_FORMAT.md).
 

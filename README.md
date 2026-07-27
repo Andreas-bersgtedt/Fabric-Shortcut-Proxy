@@ -270,7 +270,7 @@ Point the proxy at a table/view and a **key column** — the table schema is
 $env:DB_URL          = "postgresql+asyncpg://user:pass@host:5432/dbname"  # or mssql+aioodbc://...
 $env:DB_SOURCE_TABLE = "public.orders"   # table or view (schema-qualified ok)
 $env:KEY_COLUMN      = "order_id"        # integer split key -> enables auto-schema
-$env:TABLE_NAME      = "orders"          # -> warehouse/db/orders
+$env:TABLE_NAME      = "orders"          # canonical path derived from source identity
 .\Manager.ps1 -SkipInstall
 ```
 
@@ -315,8 +315,10 @@ web page that connects to your database, lists tables, and downloads a
 ```powershell
 $env:ENABLE_CONFIG_BUILDER = "1"
 .\Manager.ps1 -SkipInstall
-# then open http://localhost:9000/_config/
+# then open http://localhost:9200/_config/   # Manager control-plane surface
 ```
+
+If you run standalone `python main.py` (no Manager), open `http://localhost:9000/_config/`.
 
 Enter host / user / password, pick tables (the key column is auto-detected and
 overridable), and click **Download config.json**. It's **off by default** and
@@ -341,7 +343,7 @@ automatically:
 
 The proxy can expose several virtual tables from one instance (F1).
 Each is described by a `TableDef` in `config.py`'s `TABLES` list and served under
-`warehouse/db/<name>`. Schemas are reflected from the source — just name the
+`db/<server>/<database>/<schema>/<object>`. Schemas are reflected from the source — just name the
 table and its key column:
 
 ```python
@@ -356,7 +358,7 @@ By default `TABLES` contains just the single demo `sales` table. `key_column` is
 optional when the source has a primary key (auto-detected); pass it for views.
 Each table gets its own deterministic snapshot lineage, format-specific metadata/log,
 and on-demand Parquet splits. Create one Fabric shortcut per table pointing at its
-`warehouse/db/<name>` prefix.
+canonical table prefix.
 
 ## Key environment variables
 
@@ -377,7 +379,7 @@ and on-demand Parquet splits. Create one Fabric shortcut per table pointing at i
 | `DB_RETRY_BACKOFF`    | `0.5`                                    | Linear backoff base (seconds) between retries |
 | `VALIDATE_SOURCE_SCHEMA` | `1`                                   | Fail fast at startup if a declared column is missing |
 | `REQUIRE_SIGV4`       | `0`                                      | Enforce AWS SigV4 request signatures (403 on mismatch) |
-| `ENABLE_CONFIG_BUILDER` | `0`                                    | Serve the config-builder UI at `/_config/` (local admin only) |
+| `ENABLE_CONFIG_BUILDER` | `0`                                    | Serve the config-builder UI (typically via Manager at `http://localhost:9200/_config/`) |
 | `PARQUET_DISK_CACHE`  | `0`                                      | Persist generated Parquet to disk; warm restarts skip regeneration (F5) |
 | `PARQUET_DISK_CACHE_DIR` | `./.parquet_cache`                    | Directory for the persistent Parquet cache |
 | `CONCURRENT_STARTUP_MATERIALIZATION` | `1`                       | Materialize splits in parallel at startup (F4) |
@@ -393,6 +395,27 @@ and on-demand Parquet splits. Create one Fabric shortcut per table pointing at i
 > This is a curated subset. **Every** setting — with defaults, categories, and help
 > text — is documented in [CONFIGURATION.md](CONFIGURATION.md) and browsable in the
 > config-builder UI's "All settings" panel.
+
+## Documentation freshness
+
+Use this order when docs appear to conflict:
+
+1. **Runtime source of truth**: [config.py](config.py) (defaults, validation, effective-setting sources) and API/router modules.
+2. **Operator docs (kept current)**:
+  - [README.md](README.md) for setup and quick operations.
+  - [CONFIGURATION.md](CONFIGURATION.md) for complete settings and behavior.
+  - [DELTA_FORMAT.md](DELTA_FORMAT.md) for `TABLE_FORMAT=delta` semantics.
+3. **Design/history docs (may describe prior states)**:
+  - [PLANNING.md](PLANNING.md)
+  - [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md)
+  - [CONFIG_BUILDER_PLAN.md](CONFIG_BUILDER_PLAN.md)
+
+Current defaults and behavior to assume unless overridden:
+
+- Canonical object paths are enabled by default: `db/<server>/<database>/<schema>/<object>`.
+- Legacy path aliases are disabled by default.
+- Split planning is row-targeted by default (`split_target_rows=100000`) and prefers range-based slices.
+- In Manager mode, the config UI is served from the control plane (`http://localhost:9200/_config/`).
 
 ## Operational endpoints
 

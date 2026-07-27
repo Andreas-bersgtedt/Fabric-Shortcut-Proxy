@@ -161,10 +161,10 @@ NUM_SPLITS: int = _get_int("NUM_SPLITS", "num_splits", 8)
 #     modulo fallback, including non-PK sortable keys via row-number sharding).
 SPLIT_STRATEGY: str = _get_str("SPLIT_STRATEGY", "split_strategy", "modulo").strip().lower()
 
-# Phase 2 split-count planning (opt-in): when >0, estimate row count and choose
-# table split count as ceil(rows / split_target_rows), clamped to min/max.
-# 0 keeps explicit table/config split counts unchanged.
-SPLIT_TARGET_ROWS: int = _get_int("SPLIT_TARGET_ROWS", "split_target_rows", 0)
+# Phase 2 split-count planning: estimate row count and choose table split count
+# as ceil(rows / split_target_rows), clamped to min/max.
+# Default is 100k rows/split so split count grows with table size.
+SPLIT_TARGET_ROWS: int = _get_int("SPLIT_TARGET_ROWS", "split_target_rows", 100_000)
 SPLIT_COUNT_MIN: int = _get_int("SPLIT_COUNT_MIN", "split_count_min", 1)
 SPLIT_COUNT_MAX: int = _get_int("SPLIT_COUNT_MAX", "split_count_max", 256)
 

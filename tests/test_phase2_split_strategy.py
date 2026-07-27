@@ -142,6 +142,34 @@ async def test_plan_ranges_auto_falls_back_for_string_only(monkeypatch):
     assert all(s.key_lo is None and s.key_hi is None for s in snap.splits)
 
 
+@pytest.mark.asyncio
+async def test_plan_ranges_promotes_modulo_when_row_target_enabled(monkeypatch):
+    table = TableDef(
+        name="sales",
+        source_table="dbo.sales",
+        key_column="id",
+        num_splits=4,
+        schema=[
+            ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
+            ColumnDef(field_id=2, name="amount", iceberg_type="long", nullable=True),
+        ],
+    )
+    snap = _snapshot(table, splits=4)
+
+    monkeypatch.setattr(config, "SPLIT_STRATEGY", "modulo", raising=False)
+    monkeypatch.setattr(config, "SPLIT_TARGET_ROWS", 100_000, raising=False)
+    monkeypatch.setattr("planner.split_planner.capabilities_for_db_url", lambda _u: _Caps())
+
+    async def _fake_bounds(_table: str, _col: str):
+        return 1, 400_000
+
+    monkeypatch.setattr("db.executor.fetch_key_bounds", _fake_bounds)
+
+    ok = await plan_ranges_for_snapshot(snap)
+    assert ok is True
+    assert all(s.key_lo is not None and s.key_hi is not None for s in snap.splits)
+
+
 def test_compute_split_count_guardrails():
     assert compute_split_count(
         estimated_rows=1_000_000,

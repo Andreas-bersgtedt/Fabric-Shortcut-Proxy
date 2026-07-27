@@ -291,6 +291,11 @@ async def plan_ranges_for_snapshot(snap) -> bool:
 
     table = snap.table
     strategy = config.SPLIT_STRATEGY
+    # Dynamic split planning targets bounded rows/split; when enabled, treat the
+    # legacy modulo default as range planning so each split reads only its slice.
+    if strategy == "modulo" and config.SPLIT_TARGET_ROWS > 0:
+        strategy = "range"
+
     if strategy == "modulo":
         return False
 

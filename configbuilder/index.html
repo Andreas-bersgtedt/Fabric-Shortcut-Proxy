@@ -84,6 +84,17 @@
     <b>Save</b> it to <code>config.json</code> — most settings apply on the next restart. When opened on the
     <b>Manager</b>, you can also scale the number of Agents <b>live</b>.</div>
 
+  <div style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <b>S3 secret key</b> <span id="s3SecretState" class="hint" style="margin-left:6px;">(checking...)</span>
+    <div class="hint">Write-only field. Value is never shown back; status only.</div>
+    <div class="tablebar" style="margin-top:8px;">
+      <input id="s3SecretInput" type="password" placeholder="Enter new S3 secret_access_key" />
+      <button class="btn primary" id="btnSaveS3Secret">Replace</button>
+      <button class="btn ghost" id="btnClearS3Secret">Clear</button>
+    </div>
+    <div class="status" id="s3SecretStatus"></div>
+  </div>
+
   <div id="fleetScale" style="display:none; margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
     <b>Fleet size</b> — Agents supervised: <span id="fleetCount">?</span>
     &nbsp;&nbsp;<label>Agents <input id="agentCount" type="number" min="1" style="width:66px;" /></label>
@@ -564,6 +575,16 @@ const live = { settings: [], edits: {} };
 function liveFlash(el, msg, ok){ el.className="status "+(ok?"ok":"err"); el.textContent=msg;
   if(ok) setTimeout(()=>{ el.textContent=""; el.className="status"; }, 4000); }
 
+function settingByKey(key){ return (live.settings||[]).find(s => s.key === key) || null; }
+
+function renderS3SecretState(){
+  const s = settingByKey("secret_access_key");
+  if(!s){ $("s3SecretState").textContent = "(not available)"; return; }
+  const isSet = String(s.value || "") === "***set***";
+  const src = s.source || "default";
+  $("s3SecretState").textContent = isSet ? `(set via ${src})` : "(not set)";
+}
+
 async function loadCurrent(){
   try{
     const r = await fetch("/_config/api/current", {cache:"no-store"});
@@ -572,6 +593,7 @@ async function loadCurrent(){
     live.edits = {};                             // discard stale edits after a fresh read
   }catch(e){ live.settings = []; liveFlash($("liveStatus"), "Failed to read current config: "+e); }
   renderLive();
+  renderS3SecretState();
   // Detect Manager (fleet endpoint) to enable live scaling.
   try{
     const fr = await fetch("/_manager/api/fleet", {cache:"no-store"});
@@ -581,6 +603,41 @@ async function loadCurrent(){
       if(!$("agentCount").value) $("agentCount").value = f.agents_total;
     }
   }catch(e){ /* not on a Manager — hide scaling */ }
+}
+
+async function saveS3Secret(){
+  const raw = ($("s3SecretInput").value || "").trim();
+  if(!raw){ liveFlash($("s3SecretStatus"), "Enter a secret value to replace, or click Clear."); return; }
+  liveFlash($("s3SecretStatus"), "Saving S3 secret...", true);
+  try{
+    const r = await fetch("/_config/api/save", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings:{secret_access_key: raw}})
+    });
+    const d = await r.json();
+    if(!r.ok){ liveFlash($("s3SecretStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    $("s3SecretInput").value = "";
+    liveFlash($("s3SecretStatus"), "✓ S3 secret saved to config.json (restart to apply).", true);
+    setTimeout(loadCurrent, 400);
+  }catch(e){ liveFlash($("s3SecretStatus"), "Save error: "+e); }
+}
+
+async function clearS3Secret(){
+  if(!confirm("Clear S3 secret_access_key in config.json?")) return;
+  liveFlash($("s3SecretStatus"), "Clearing S3 secret...", true);
+  try{
+    const r = await fetch("/_config/api/save", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings:{secret_access_key: ""}})
+    });
+    const d = await r.json();
+    if(!r.ok){ liveFlash($("s3SecretStatus"), "Clear failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    $("s3SecretInput").value = "";
+    liveFlash($("s3SecretStatus"), "✓ S3 secret cleared in config.json (restart to apply).", true);
+    setTimeout(loadCurrent, 400);
+  }catch(e){ liveFlash($("s3SecretStatus"), "Clear error: "+e); }
 }
 
 function effStr(s){ return (s.value===null||s.value===undefined)?"":String(s.value); }
@@ -679,6 +736,8 @@ $("liveSearch").addEventListener("input", renderLive);
 $("btnReloadLive").onclick = loadCurrent;
 $("btnSaveLive").onclick = saveLive;
 $("btnScale").onclick = applyScale;
+$("btnSaveS3Secret").onclick = saveS3Secret;
+$("btnClearS3Secret").onclick = clearS3Secret;
 loadCurrent();
 </script>
 </body>

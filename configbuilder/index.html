@@ -95,6 +95,20 @@
     <div class="status" id="s3SecretStatus"></div>
   </div>
 
+  <div style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <b>SigV4 diagnostics</b>
+    <div class="hint">Effective authentication values used by this running process.</div>
+    <div style="margin-top:8px; display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; align-items:center;">
+      <div class="hint">require_sigv4</div><div id="diagRequireSigv4">-</div>
+      <div class="hint">access_key_id</div><div id="diagAccessKey">-</div>
+      <div class="hint">access_key source</div><div id="diagAccessKeySource">-</div>
+      <div class="hint">secret_access_key</div><div id="diagSecretStatus">-</div>
+      <div class="hint">secret source</div><div id="diagSecretSource">-</div>
+      <div class="hint">config file</div><div id="diagConfigFile">-</div>
+    </div>
+    <div class="status" id="diagWarning" style="margin-top:8px;"></div>
+  </div>
+
   <div id="fleetScale" style="display:none; margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
     <b>Fleet size</b> — Agents supervised: <span id="fleetCount">?</span>
     &nbsp;&nbsp;<label>Agents <input id="agentCount" type="number" min="1" style="width:66px;" /></label>
@@ -570,7 +584,7 @@ $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
 loadBuilderBootstrap();
 
 // ---- Phase 5.1: live server config (read current · save · scale fleet) ----
-const live = { settings: [], edits: {} };
+const live = { settings: [], edits: {}, configFile: "" };
 
 function liveFlash(el, msg, ok){ el.className="status "+(ok?"ok":"err"); el.textContent=msg;
   if(ok) setTimeout(()=>{ el.textContent=""; el.className="status"; }, 4000); }
@@ -585,15 +599,53 @@ function renderS3SecretState(){
   $("s3SecretState").textContent = isSet ? `(set via ${src})` : "(not set)";
 }
 
+function renderSigv4Diagnostics(){
+  const req = settingByKey("require_sigv4");
+  const ak = settingByKey("access_key_id");
+  const sec = settingByKey("secret_access_key");
+
+  $("diagRequireSigv4").textContent = req ? String(req.value) : "-";
+  $("diagAccessKey").textContent = ak ? (String(ak.value || "") || "(blank)") : "-";
+  $("diagAccessKeySource").textContent = ak ? (ak.source || "default") : "-";
+  if(sec){
+    const isSet = String(sec.value || "") === "***set***";
+    $("diagSecretStatus").textContent = isSet ? "set" : "not set";
+    $("diagSecretSource").textContent = sec.source || "default";
+  } else {
+    $("diagSecretStatus").textContent = "-";
+    $("diagSecretSource").textContent = "-";
+  }
+  $("diagConfigFile").textContent = live.configFile || "config.json";
+
+  const envOverrides = [];
+  if(ak && ak.source === "env") envOverrides.push("access_key_id");
+  if(sec && sec.source === "env") envOverrides.push("secret_access_key");
+  if(req && req.source === "env") envOverrides.push("require_sigv4");
+
+  if(envOverrides.length){
+    liveFlash(
+      $("diagWarning"),
+      "Environment override active for: " + envOverrides.join(", ") +
+      ". Saving config.json will not change runtime values until env vars are updated and the Manager restarts.",
+      false,
+    );
+  } else {
+    $("diagWarning").textContent = "";
+    $("diagWarning").className = "status";
+  }
+}
+
 async function loadCurrent(){
   try{
     const r = await fetch("/_config/api/current", {cache:"no-store"});
     const d = await r.json();
     live.settings = d.settings || [];
+    live.configFile = d.config_file || "config.json";
     live.edits = {};                             // discard stale edits after a fresh read
-  }catch(e){ live.settings = []; liveFlash($("liveStatus"), "Failed to read current config: "+e); }
+  }catch(e){ live.settings = []; live.configFile = ""; liveFlash($("liveStatus"), "Failed to read current config: "+e); }
   renderLive();
   renderS3SecretState();
+  renderSigv4Diagnostics();
   // Detect Manager (fleet endpoint) to enable live scaling.
   try{
     const fr = await fetch("/_manager/api/fleet", {cache:"no-store"});

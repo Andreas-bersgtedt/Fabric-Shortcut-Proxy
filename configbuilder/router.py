@@ -96,6 +96,40 @@ async def current_config() -> JSONResponse:
     })
 
 
+@router.get("/api/bootstrap")
+async def bootstrap_builder() -> JSONResponse:
+    """Runtime snapshot used by the builder UI to prefill the main form.
+
+    Returns non-secret effective values plus the currently configured table
+    mappings so opening ``/_config`` starts from what is running now.
+    """
+    tables = []
+    for t in config.TABLES:
+        tables.append({
+            "name": t.name,
+            "source_table": t.source_table,
+            "key_column": t.key_column,
+            "num_splits": int(t.num_splits),
+        })
+
+    return JSONResponse({
+        "builder": {
+            "db_url_masked": config.redact_db_url(config.DB_URL),
+            "has_db_url": bool(config.DB_URL),
+            "bucket": config.BUCKET_NAME,
+            "num_splits": int(config.NUM_SPLITS),
+            "table_format": config.TABLE_FORMAT,
+            "require_sigv4": bool(config.REQUIRE_SIGV4),
+            "auto_refresh": bool(config.AUTO_REFRESH),
+            "refresh_poll_seconds": int(config.REFRESH_POLL_SECONDS),
+            "refresh_strategy": config.REFRESH_STRATEGY,
+            "refresh_allow_full_pull": bool(config.REFRESH_ALLOW_FULL_PULL),
+            "refresh_ttl_seconds": int(config.REFRESH_TTL_SECONDS),
+            "tables": tables,
+        }
+    })
+
+
 @router.post("/api/save")
 async def save_config(request: Request) -> JSONResponse:
     """Phase 5.1: validate + persist a partial settings map to the on-disk

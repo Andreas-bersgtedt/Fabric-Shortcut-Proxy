@@ -254,6 +254,59 @@ function connFields(){
   };
 }
 
+function applyBootstrap(builder){
+  if(!builder) return;
+  // Prime the main builder form from runtime config.
+  if(builder.bucket) $("bucket").value = String(builder.bucket);
+  if(builder.num_splits!=null) $("numSplits").value = String(builder.num_splits);
+  if(builder.table_format) $("tableFormat").value = String(builder.table_format);
+  $("requireSigv4").checked = !!builder.require_sigv4;
+  $("autoRefresh").checked = !!builder.auto_refresh;
+  if(builder.refresh_poll_seconds!=null) $("refreshPoll").value = String(builder.refresh_poll_seconds);
+  if(builder.refresh_strategy) $("refreshStrategy").value = String(builder.refresh_strategy);
+  if(builder.refresh_ttl_seconds!=null) $("refreshTtl").value = String(builder.refresh_ttl_seconds);
+  $("refreshFullPull").checked = !!builder.refresh_allow_full_pull;
+
+  // Prefill table mappings so the preview reflects what is currently running.
+  state.selected.clear();
+  for(const t of (builder.tables||[])){
+    if(!t || !t.source_table) continue;
+    const source = String(t.source_table);
+    const name = String(t.name || source.split(".").pop() || "table");
+    state.selected.set(source, {
+      name,
+      schema: null,
+      source_table: source,
+      key_column: t.key_column || null,
+      num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
+      integer_keys: t.key_column ? [t.key_column] : [],
+      columns: [],
+      approx_rows: null,
+      invalid: !t.key_column,
+      pending: false,
+    });
+  }
+
+  state.db_url_masked = builder.db_url_masked || "";
+  state.db_url = state.db_url_masked || "";
+  if(builder.has_db_url){
+    $("includePassword").checked = false;
+    $("pwHint").style.display = "block";
+  }
+  $("refreshOpts").style.display = $("autoRefresh").checked ? "block" : "none";
+  $("fmtHint").style.display = $("tableFormat").value === "delta" ? "block" : "none";
+  renderSelected();
+  saveForm();
+}
+
+async function loadBuilderBootstrap(){
+  try{
+    const r = await fetch("/_config/api/bootstrap", {cache:"no-store"});
+    const d = await r.json();
+    if(r.ok) applyBootstrap(d.builder || {});
+  }catch(e){ /* keep local/default form when bootstrap is unavailable */ }
+}
+
 async function api(path, body){
   const r = await fetch(path, { method:"POST", headers:{"Content-Type":"application/json"},
                                 body: JSON.stringify(body) });
@@ -496,6 +549,7 @@ $("settingsSearch").addEventListener("input", renderSettings);
 loadForm();
 loadSettings();
 $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
+loadBuilderBootstrap();
 
 // ---- Phase 5.1: live server config (read current · save · scale fleet) ----
 const live = { settings: [], edits: {} };

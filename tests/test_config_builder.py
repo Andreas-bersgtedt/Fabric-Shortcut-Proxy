@@ -144,6 +144,17 @@ async def test_settings_api(app):
     assert {"num_splits", "pin_materialized_splits", "auto_refresh", "require_sigv4"} <= keys
 
 
+async def test_bootstrap_api_prefills_running_builder_config(app):
+    async with _client(app) as c:
+        r = await c.get("/_config/api/bootstrap")
+    assert r.status_code == 200
+    b = r.json()["builder"]
+    assert isinstance(b.get("bucket"), str)
+    assert isinstance(b.get("num_splits"), int)
+    assert b.get("table_format") in ("iceberg", "delta")
+    assert isinstance(b.get("tables"), list)
+
+
 async def test_connect_lists_tables(app, db_path):
     async with _client(app) as c:
         r = await c.post("/_config/api/connect",

@@ -244,6 +244,10 @@ _ADMIN_HTML = r"""<!doctype html>
   button.stop { border-color: #5a2230; } button.stop:hover { background: #3a1622; }
   button:disabled { opacity: .4; cursor: not-allowed; }
   .tok { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .navbtn { display: inline-block; font-size: 12px; font-weight: 600; text-decoration: none;
+            padding: 5px 10px; border-radius: 7px; border: 1px solid #313a4f;
+            background: #1c2740; color: #dfe6f2; }
+  .navbtn:hover { background: #24365c; }
   input { font: inherit; padding: 4px 8px; border-radius: 7px; border: 1px solid #313a4f;
           background: #0d1320; color: #e6e9ef; }
   #msg { margin: 0 0 12px; min-height: 18px; font-size: 13px; }
@@ -257,6 +261,7 @@ _ADMIN_HTML = r"""<!doctype html>
   <span id="ready" class="pill muted">…</span>
   <span id="clock" class="muted" style="font-size:12px"></span>
   <div class="tok">
+    <a class="navbtn" href="/_config">Config UI</a>
     <label class="muted" id="toklabel" style="display:none">admin token
       <input id="token" type="password" size="16" placeholder="X-Admin-Token"/>
     </label>

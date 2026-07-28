@@ -122,6 +122,8 @@ _register("VALIDATE_SOURCE_SCHEMA", "validate_source_schema", "bool", VALIDATE_S
 # Register system settings so they're recognized by the config builder UI
 # (these are imported from system_config, so we register them manually)
 _register("BUCKET_NAME", "bucket", "str", BUCKET_NAME)
+_register("S3_ACCESS_KEY_ID", "access_key_id", "str", ACCESS_KEY_ID)
+_register("S3_SECRET_ACCESS_KEY", "secret_access_key", "str", SECRET_ACCESS_KEY)
 _register("REQUIRE_SIGV4", "require_sigv4", "bool", REQUIRE_SIGV4)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
 
@@ -590,6 +592,8 @@ _KEY_TO_ATTR: dict[str, str] = {
     "refresh_ttl_seconds": "REFRESH_TTL_SECONDS",
     "query_timeout_seconds": "QUERY_TIMEOUT_SECONDS",
     "query_max_rows": "QUERY_MAX_ROWS",
+    "access_key_id": "ACCESS_KEY_ID",
+    "secret_access_key": "SECRET_ACCESS_KEY",
 }
 
 

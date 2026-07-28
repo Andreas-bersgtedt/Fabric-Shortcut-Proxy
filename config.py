@@ -119,6 +119,13 @@ _register("DB_MAX_RETRIES", "db_max_retries", "int", DB_MAX_RETRIES)
 _register("DB_RETRY_BACKOFF_SECONDS", "db_retry_backoff_seconds", "float", DB_RETRY_BACKOFF_SECONDS)
 _register("VALIDATE_SOURCE_SCHEMA", "validate_source_schema", "bool", VALIDATE_SOURCE_SCHEMA)
 
+# Register system settings so they're recognized by the config builder UI
+# (these are imported from system_config, so we register them manually)
+_register("BUCKET_NAME", "bucket", "str", BUCKET_NAME)
+_register("REQUIRE_SIGV4", "require_sigv4", "bool", REQUIRE_SIGV4)
+_register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
+# Note: table_format will be re-registered when loaded from config.performance.json via _get_str()
+
 
 def _get_str(env: str | None, key: str, default: str, cfg_dict: dict | None = None) -> str:
     _register(env, key, "str", default)

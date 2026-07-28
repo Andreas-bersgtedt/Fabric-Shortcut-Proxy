@@ -776,12 +776,23 @@ def apply_live_settings(updates: dict) -> dict:
 
 
 def write_config_updates(updates: dict) -> dict:
-    """Validate + merge ``updates`` into the appropriate separate config files (atomic writes)."""
-    clean, errors = validate_setting_updates(updates)
+    """Validate + merge ``updates`` into the appropriate separate config files (atomic writes).
+    
+    Handles individual settings via _SETTINGS_TO_FILE_MAP plus special handling for
+    the "tables" array which goes to config.tables.json.
+    """
+    # Make a copy to avoid mutating caller's dict
+    updates_copy = dict(updates) if isinstance(updates, dict) else {}
+    
+    # Special handling: extract "tables" before validation (it's not a scalar setting)
+    tables_update = updates_copy.pop("tables", None)
+    
+    # Validate remaining settings
+    clean, errors = validate_setting_updates(updates_copy)
     if errors:
         raise ValueError("; ".join(errors))
 
-    if not clean:
+    if not clean and tables_update is None:
         return {"path": "none", "changed": [], "config": {}}
 
     # Group settings by their target config file
@@ -792,6 +803,13 @@ def write_config_updates(updates: dict) -> dict:
             if target_file not in settings_by_file:
                 settings_by_file[target_file] = {}
             settings_by_file[target_file][key] = value
+
+    # Add tables to config.tables.json if provided
+    if tables_update is not None:
+        if "config.tables.json" not in settings_by_file:
+            settings_by_file["config.tables.json"] = {}
+        # For tables, we store it directly as the section content (special case)
+        settings_by_file["config.tables.json"]["_tables"] = tables_update
 
     # Write to each target file
     changed_count = 0
@@ -813,8 +831,14 @@ def write_config_updates(updates: dict) -> dict:
             elif not isinstance(existing[section_name], dict):
                 existing[section_name] = {}
 
-            # Merge new settings into the section
-            existing[section_name].update(file_settings)
+            # Handle tables specially (comes in as "_tables" marker)
+            if "_tables" in file_settings:
+                existing[section_name] = file_settings["_tables"]
+                changed_count += 1
+            else:
+                # Merge new settings into the section
+                existing[section_name].update(file_settings)
+                changed_count += len(file_settings)
 
             # Atomic write with temp file
             tmp = f"{target_file}.tmp"
@@ -823,11 +847,13 @@ def write_config_updates(updates: dict) -> dict:
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, target_file)
-            changed_count += len(file_settings)
 
         except (OSError, ValueError) as exc:
             raise ValueError(f"Failed to write {target_file}: {exc}") from exc
 
     # Return summary (use the first config file as reference path for logging)
     first_file = next(iter(settings_by_file.keys())) if settings_by_file else "config.json"
-    return {"path": os.path.abspath(first_file), "changed": sorted(clean.keys()), "config": clean}
+    changed_keys = list(clean.keys())
+    if tables_update is not None:
+        changed_keys.append("tables")
+    return {"path": os.path.abspath(first_file), "changed": sorted(changed_keys), "config": clean}

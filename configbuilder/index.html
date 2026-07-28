@@ -217,6 +217,7 @@
     <pre id="preview">{}</pre>
     <div class="actions">
       <button class="btn primary" id="btnApplySettings">⚡ Apply now</button>
+      <button class="btn ghost" id="btnSaveSettings">Save to config.json</button>
       <button class="btn ghost" id="btnDownload">Download config.json</button>
       <button class="btn ghost" id="btnCopy">Copy</button>
     </div>
@@ -252,8 +253,8 @@
       <div class="hint">Write-only field. Value is never shown back; status only.</div>
       <div class="tablebar" style="margin-top:8px;">
         <input id="s3SecretInput" type="password" placeholder="Enter new S3 secret_access_key" />
-        <button class="btn primary" id="btnSaveS3Secret">Replace</button>
-        <button class="btn ghost" id="btnClearS3Secret">Clear</button>
+        <button class="btn primary" id="btnSaveS3Secret">Replace & save</button>
+        <button class="btn ghost" id="btnClearS3Secret">Clear & save</button>
       </div>
       <div class="status" id="s3SecretStatus"></div>
     </div>
@@ -277,6 +278,7 @@
       &nbsp;&nbsp;<label>Agents <input id="agentCount" type="number" min="1" style="width:66px;" /></label>
       <label style="margin-left:8px;">admin token <input id="scaleToken" type="password" size="12" placeholder="(if set)" /></label>
       <button class="btn primary" id="btnScale">Apply live</button>
+      <button class="btn ghost" id="btnSaveFleetSize">Save to config.json</button>
       <span class="status" id="scaleStatus" style="display:inline; margin-left:8px;"></span>
     </div>
 
@@ -608,7 +610,6 @@ function updatePreview(){
 });
 
 // ---- download / copy ----
-$("btnApplySettings").onclick = applySettings;
 $("btnApplyTables").onclick = applyTables;
 $("btnDownload").onclick = () => {
   if(!state.db_url){ flash("Connect first."); return; }
@@ -655,6 +656,39 @@ async function applySettings(){
       msg += "↺ To change bucket/sigv4, save to config.json and restart.";
     flash(msg || "✓ Done.", true);
   }catch(e){ flash("Apply error: "+e); }
+}
+
+async function saveSettings(){
+  // Save all settings from form to config.json (including non-live like bucket, require_sigv4)
+  const settings = {};
+  const bucket = $("bucket").value.trim();
+  if(bucket && bucket !== "fabric-iceberg-poc") settings.bucket = bucket;
+  const ns = parseInt($("numSplits").value); if(ns) settings.num_splits = ns;
+  const fmt = $("tableFormat").value; if(fmt && fmt !== "iceberg") settings.table_format = fmt;
+  if($("requireSigv4").checked) settings.require_sigv4 = true;
+  settings.auto_refresh = $("autoRefresh").checked;
+  if($("autoRefresh").checked){
+    const poll = parseInt($("refreshPoll").value); if(poll) settings.refresh_poll_seconds = poll;
+    settings.refresh_strategy = $("refreshStrategy").value;
+    settings.refresh_allow_full_pull = $("refreshFullPull").checked;
+    const ttl = parseInt($("refreshTtl").value); if(ttl) settings.refresh_ttl_seconds = ttl;
+  }
+  if(!Object.keys(settings).length){ flash("Nothing to save. (All values at defaults.)", true); return; }
+  flash("Saving settings to config.json…", true);
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings})
+    });
+    const d = await r.json();
+    if(!r.ok){ flash("Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    let msg = "✓ Saved to config.json. ";
+    if(d.restart_required && d.restart_required.length)
+      msg += "Restart required: "+d.restart_required.join(", ");
+    else
+      msg += "Live settings applied immediately.";
+    flash(msg, true);
+  }catch(e){ flash("Save error: "+e); }
 }
 
 async function applyTables(){
@@ -835,37 +869,53 @@ async function loadCurrent(){
 
 async function saveS3Secret(){
   const raw = ($("s3SecretInput").value || "").trim();
-  if(!raw){ liveFlash($("s3SecretStatus"), "Enter a secret value to replace, or click Clear."); return; }
-  liveFlash($("s3SecretStatus"), "Saving S3 secret...", true);
+  if(!raw){ liveFlash($("s3SecretStatus"), "Enter a secret value to replace, or click Clear.", false); return; }
+  liveFlash($("s3SecretStatus"), "Saving S3 secret to config.json...", true);
   try{
-    const r = await fetch("/_config/api/save", {
+    const r = await fetch("/_config/api/apply", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify({settings:{secret_access_key: raw}})
     });
     const d = await r.json();
-    if(!r.ok){ liveFlash($("s3SecretStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    if(!r.ok){ liveFlash($("s3SecretStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status), false); return; }
     $("s3SecretInput").value = "";
     liveFlash($("s3SecretStatus"), "✓ S3 secret saved to config.json (restart to apply).", true);
     setTimeout(loadCurrent, 400);
-  }catch(e){ liveFlash($("s3SecretStatus"), "Save error: "+e); }
+  }catch(e){ liveFlash($("s3SecretStatus"), "Save error: "+e, false); }
 }
 
 async function clearS3Secret(){
   if(!confirm("Clear S3 secret_access_key in config.json?")) return;
-  liveFlash($("s3SecretStatus"), "Clearing S3 secret...", true);
+  liveFlash($("s3SecretStatus"), "Clearing S3 secret from config.json...", true);
   try{
-    const r = await fetch("/_config/api/save", {
+    const r = await fetch("/_config/api/apply", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify({settings:{secret_access_key: ""}})
     });
     const d = await r.json();
-    if(!r.ok){ liveFlash($("s3SecretStatus"), "Clear failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    if(!r.ok){ liveFlash($("s3SecretStatus"), "Clear failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status), false); return; }
     $("s3SecretInput").value = "";
     liveFlash($("s3SecretStatus"), "✓ S3 secret cleared in config.json (restart to apply).", true);
     setTimeout(loadCurrent, 400);
-  }catch(e){ liveFlash($("s3SecretStatus"), "Clear error: "+e); }
+  }catch(e){ liveFlash($("s3SecretStatus"), "Clear error: "+e, false); }
+}
+
+async function saveFleetSize(){
+  const count = parseInt($("agentCount").value);
+  if(!count || count < 1){ liveFlash($("scaleStatus"), "Enter a count >= 1 to save.", false); return; }
+  liveFlash($("scaleStatus"), "Saving to config.json...", true);
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings:{agent_count: count}})
+    });
+    const d = await r.json();
+    if(!r.ok){ liveFlash($("scaleStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status), false); return; }
+    liveFlash($("scaleStatus"), "✓ Fleet size saved to config.json (applies on restart).", true);
+  }catch(e){ liveFlash($("scaleStatus"), "Save error: "+e, false); }
 }
 
 function effStr(s){ return (s.value===null||s.value===undefined)?"":String(s.value); }
@@ -1043,7 +1093,10 @@ $("liveSearch").addEventListener("input", renderLive);
 $("btnReloadLive").onclick = loadCurrent;
 $("btnSaveLive").onclick = saveLive;
 $("btnApplyLive").onclick = applyLive;
+$("btnApplySettings").onclick = applySettings;
+$("btnSaveSettings").onclick = saveSettings;
 $("btnScale").onclick = applyScale;
+$("btnSaveFleetSize").onclick = saveFleetSize;
 $("btnSaveS3Secret").onclick = saveS3Secret;
 $("btnClearS3Secret").onclick = clearS3Secret;
 $("btnApplyAdvanced").onclick = applyAdvanced;

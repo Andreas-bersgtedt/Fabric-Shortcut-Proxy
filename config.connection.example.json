@@ -1,0 +1,15 @@
+{
+  "_comment": "Connection configuration — database URL, query limits, resilience. Place as config.connection.json or included in config.json. Update db_url with your SQL Server, PostgreSQL, or Oracle credentials.",
+  "connection": {
+    "_comment": "Database connection, query limits, resilience",
+    "db_url": "mssql+aioodbc://sa:YourPassword@localhost/source_db?driver=ODBC+Driver+18+for+SQL+Server",
+    "source_table": "dbo.orders",
+    "key_column": "order_id",
+    "table_name": "orders",
+    "query_timeout_seconds": 300,
+    "query_max_rows": 500000,
+    "db_max_retries": 3,
+    "db_retry_backoff_seconds": 1,
+    "validate_source_schema": true
+  }
+}

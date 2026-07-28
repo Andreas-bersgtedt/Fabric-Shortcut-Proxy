@@ -1,5 +1,5 @@
 {
-  "_comment": "Refactored configuration (Phase 5.1). Sections: system (S3, server, fleet, control plane, HA), connection (database), performance (splits, caching, output format), freshness (refresh strategy), tables (multi-table registry). Precedence: env var > config.json > default.",
+  "_comment": "Refactored configuration (Phase 5.1). Sections: system (S3, server, fleet, control plane, HA), connection (database), performance (splits, caching, output format), freshness (refresh strategy), tables (multi-table registry). Precedence: env var > config.{section}.json > config.json > default. Separate files optional: config.system.json, config.connection.json, config.performance.json, config.freshness.json, config.tables.json override corresponding monolithic sections.",
 
   "system": {
     "_comment": "S3, server binding, artifact store, fleet coordination, control plane, HA",
@@ -42,9 +42,9 @@
   },
 
   "connection": {
-    "_comment": "Database connection, query limits, resilience",
-    "db_url": "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb",
-    "source_table": "public.orders",
+    "_comment": "Database connection, query limits, resilience. Update db_url with your SQL Server, PostgreSQL, or Oracle credentials.",
+    "db_url": "mssql+aioodbc://sa:YourPassword@localhost/source_db?driver=ODBC+Driver+18+for+SQL+Server",
+    "source_table": "dbo.orders",
     "key_column": "order_id",
     "table_name": "orders",
     "query_timeout_seconds": 300,
@@ -93,18 +93,18 @@
   "tables": [
     {
       "name": "orders",
-      "source_table": "public.orders",
+      "source_table": "dbo.orders",
       "key_column": "order_id"
     },
     {
       "name": "customers",
-      "source_table": "public.customers",
+      "source_table": "dbo.customers",
       "key_column": "customer_id",
       "num_splits": 4
     },
     {
       "name": "events",
-      "source_table": "analytics.events",
+      "source_table": "dbo.events",
       "key_column": "event_id",
       "schema": [
         { "field_id": 1, "name": "event_id", "type": "long", "nullable": false },

@@ -56,19 +56,40 @@ from connection_config import (
 # ---------------------------------------------------------------------------
 
 def _load_config_file() -> dict:
+    """Load config from separate files or monolithic config.json.
+    
+    Precedence (per section):
+      1. config.{section}.json (e.g., config.performance.json, config.freshness.json)
+      2. config.json or $CONFIG_FILE (monolithic)
+      3. empty dict
+    """
+    # Always try to load the monolithic file first as base
     path = os.environ.get("CONFIG_FILE", "config.json")
     try:
         with open(path, "r", encoding="utf-8-sig") as fh:
             data = json.load(fh)
         if not isinstance(data, dict):
             print(f"[config] {path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
-            return {}
-        return data
+            data = {}
     except FileNotFoundError:
-        return {}
+        data = {}
     except (OSError, json.JSONDecodeError) as exc:
         print(f"[config] failed to read {path!r}: {exc}", file=sys.stderr)
-        return {}
+        data = {}
+    
+    # Merge in section-specific files (they override monolithic sections)
+    for section in ("performance", "freshness", "tables"):
+        section_path = f"config.{section}.json"
+        if os.path.exists(section_path):
+            try:
+                with open(section_path, "r", encoding="utf-8-sig") as fh:
+                    section_data = json.load(fh)
+                if isinstance(section_data, dict) and section in section_data:
+                    data[section] = section_data[section]
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"[config] failed to read {section_path!r}: {exc}", file=sys.stderr)
+    
+    return data
 
 
 _FILE_CFG: dict = _load_config_file()

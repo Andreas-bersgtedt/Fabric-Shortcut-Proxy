@@ -22,7 +22,28 @@ import sys
 # ---------------------------------------------------------------------------
 
 def _load_config_file() -> dict:
-    """Load the top-level config.json."""
+    """Load config from separate file (config.connection.json) or monolithic config.json.
+    
+    Precedence:
+      1. config.connection.json (if it exists)
+      2. config.json or $CONFIG_FILE (monolithic)
+      3. empty dict
+    """
+    # Try section-specific file first
+    section_path = "config.connection.json"
+    if os.path.exists(section_path):
+        try:
+            with open(section_path, "r", encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                print(f"[connection_config] {section_path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
+                return {}
+            return data
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"[connection_config] failed to read {section_path!r}: {exc}", file=sys.stderr)
+            return {}
+    
+    # Fall back to monolithic config.json
     path = os.environ.get("CONFIG_FILE", "config.json")
     try:
         with open(path, "r", encoding="utf-8-sig") as fh:
@@ -77,7 +98,7 @@ def _get_float(env: str | None, key: str, default: float) -> float:
 #   Oracle     : oracle+oracledb://user:pass@host:1521/ORCL
 #   Databricks : databricks://token:dapi...@<server-hostname>/<catalog>/<schema>
 #   SQLite     : sqlite+aiosqlite:///./poc_source.db
-DB_URL: str = _get_str("DB_URL", "db_url", "sqlite+aiosqlite:///./poc_source.db")
+DB_URL: str = _get_str("DB_URL", "db_url", "mssql+aioodbc://SA:YourPassword@localhost/source_db?driver=ODBC+Driver+18+for+SQL+Server")
 
 # Single-table mode defaults (legacy; prefer config.json "tables" array)
 DB_SOURCE_TABLE: str = _get_str("DB_SOURCE_TABLE", "source_table", "sales")

@@ -164,7 +164,7 @@
 <div id="settings-tab" class="tab-content">
   <div class="card">
     <h2>Global Settings</h2>
-    <div class="hint" style="margin-bottom:14px;">Configure bucket, splits, table format, and refresh options. <b>Apply now</b> pushes changes to the running server instantly; <b>Download</b> saves a <code>config.json</code> for next restart.</div>
+    <div class="hint" style="margin-bottom:14px;">Refresh settings apply instantly via <b>Apply now</b>. Bucket, table format, and auth settings require <b>Download + restart</b> to take effect.</div>
     <div class="row">
       <div><label>Bucket</label><input id="bucket" value="fabric-iceberg-poc" /></div>
       <div><label>Default splits</label><input id="numSplits" value="8" /></div>
@@ -578,13 +578,11 @@ function flash(msg, ok){ const s=$("buildStatus"); s.className="status "+(ok?"ok
   setTimeout(()=>{ s.textContent=""; s.className="status"; }, 4000); }
 
 async function applySettings(){
-  // Build the settings dict from the curated form — same as buildConfig() but
-  // targeting the /api/apply endpoint (no db_url, no tables needed here).
+  // Build the settings dict from the curated form — only live-applicable settings
+  // (bucket, require_sigv4 are structural; saved to config.json but require restart).
   const settings = {};
   const ns = parseInt($("numSplits").value); if(ns) settings.num_splits = ns;
-  const bucket = $("bucket").value.trim(); if(bucket) settings.bucket = bucket;
   const fmt = $("tableFormat").value; if(fmt) settings.table_format = fmt;
-  settings.require_sigv4 = $("requireSigv4").checked;
   settings.auto_refresh   = $("autoRefresh").checked;
   if($("autoRefresh").checked){
     const poll = parseInt($("refreshPoll").value); if(poll) settings.refresh_poll_seconds = poll;
@@ -592,7 +590,7 @@ async function applySettings(){
     settings.refresh_allow_full_pull = $("refreshFullPull").checked;
     const ttl = parseInt($("refreshTtl").value); if(ttl) settings.refresh_ttl_seconds = ttl;
   }
-  if(!Object.keys(settings).length){ flash("Nothing to apply."); return; }
+  if(!Object.keys(settings).length){ flash("Nothing to apply. (Only refresh settings are live-applicable here.)", true); return; }
   flash("Applying settings…", true);
   try{
     const r = await fetch("/_config/api/apply", {
@@ -605,7 +603,7 @@ async function applySettings(){
     if(d.applied_live && d.applied_live.length)
       msg += "⚡ Applied live: "+d.applied_live.join(", ")+". ";
     if(d.restart_required && d.restart_required.length)
-      msg += "↺ Restart needed: "+d.restart_required.join(", ")+".";
+      msg += "↺ To change bucket/sigv4, save to config.json and restart.";
     flash(msg || "✓ Done.", true);
   }catch(e){ flash("Apply error: "+e); }
 }

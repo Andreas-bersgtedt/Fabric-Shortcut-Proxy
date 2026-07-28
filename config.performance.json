@@ -4,7 +4,7 @@
     "iceberg_manifest_stats": false,
     "iceberg_snapshot_history": false,
     "max_concurrent_generations": 4,
-    "metadata_cache_ttl": 62,
+    "metadata_cache_ttl": 61,
     "num_splits": 4,
     "parquet_cache_max_bytes": 268435456,
     "parquet_cache_ttl": 300,

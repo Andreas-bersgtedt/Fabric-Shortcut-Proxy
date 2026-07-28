@@ -1,6 +1,6 @@
 {
   "freshness": {
-    "auto_refresh": false,
+    "auto_refresh": true,
     "refresh_allow_full_pull": false,
     "refresh_poll_seconds": 600,
     "refresh_strategy": "auto",

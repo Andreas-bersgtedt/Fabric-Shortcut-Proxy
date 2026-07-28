@@ -135,6 +135,7 @@
     </details>
     <div class="actions">
       <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
+      <button class="btn ghost" id="btnSaveConnection">Save connection to config</button>
     </div>
     <div class="status" id="connStatus"></div>
   </div>
@@ -417,6 +418,44 @@ $("btnConnect").onclick = async () => {
   s.className="status ok";
   s.textContent = `✓ Connected${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
   renderTables(); document.querySelector('[data-tab="tables"]').click(); renderSelected();
+};
+
+// ---- save connection ----
+$("btnSaveConnection").onclick = async () => {
+  saveForm();
+  const s = $("connStatus"); s.className="status"; s.textContent="Saving connection…";
+  $("btnSaveConnection").disabled = true;
+  const conn = connFields();
+  const data = await api("/_config/api/connect", conn);
+  if(!data.ok){ 
+    $("btnSaveConnection").disabled = false;
+    s.className="status err"; 
+    s.textContent="✗ Test failed: " + (data.error||"connection failed — fix and try again"); 
+    return; 
+  }
+  // Connection works — now save it
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST", 
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings:{db_url: data.db_url}})
+    });
+    const result = await r.json();
+    if(!r.ok){ 
+      $("btnSaveConnection").disabled = false;
+      s.className="status err"; 
+      s.textContent="✗ Save failed: " + ((result.errors&&result.errors.join("; "))||result.error||r.status); 
+      return; 
+    }
+    $("btnSaveConnection").disabled = false;
+    s.className="status ok";
+    s.textContent = "✓ Connection saved to config.connection.json (restart required to apply)";
+    setTimeout(()=>{ s.textContent=""; s.className="status"; }, 4000);
+  }catch(e){
+    $("btnSaveConnection").disabled = false;
+    s.className="status err";
+    s.textContent = "✗ Save error: " + e;
+  }
 };
 
 // ---- table list ----

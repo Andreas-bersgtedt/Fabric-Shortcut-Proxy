@@ -733,10 +733,22 @@ def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
 
 
 def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
-    """Validate a partial settings map. Returns ``(clean, errors)``."""
+    """Validate a partial settings map. Returns ``(clean, errors)``.
+    
+    Special handling: "tables" is allowed as a non-scalar (array of table dicts)
+    and passes through without registry validation.
+    """
     clean: dict = {}
     errors: list[str] = []
     for k, v in (updates or {}).items():
+        # Special case: "tables" is an array of table configs, not a scalar setting
+        if k == "tables":
+            if not isinstance(v, list):
+                errors.append(f"{k}: must be a list")
+            else:
+                clean[k] = v  # Pass through as-is
+            continue
+        
         reg = _SETTINGS_REGISTRY.get(k)
         if reg is None:
             errors.append(f"unknown setting {k!r}")
@@ -781,19 +793,16 @@ def write_config_updates(updates: dict) -> dict:
     Handles individual settings via _SETTINGS_TO_FILE_MAP plus special handling for
     the "tables" array which goes to config.tables.json.
     """
-    # Make a copy to avoid mutating caller's dict
-    updates_copy = dict(updates) if isinstance(updates, dict) else {}
-    
-    # Special handling: extract "tables" before validation (it's not a scalar setting)
-    tables_update = updates_copy.pop("tables", None)
-    
-    # Validate remaining settings
-    clean, errors = validate_setting_updates(updates_copy)
+    # Validate all settings (including "tables" which is allowed as special case)
+    clean, errors = validate_setting_updates(updates)
     if errors:
         raise ValueError("; ".join(errors))
 
-    if not clean and tables_update is None:
+    if not clean:
         return {"path": "none", "changed": [], "config": {}}
+
+    # Extract "tables" from clean if present (special case, not a scalar setting)
+    tables_update = clean.pop("tables", None)
 
     # Group settings by their target config file
     settings_by_file: dict[str, dict] = {}
@@ -812,7 +821,10 @@ def write_config_updates(updates: dict) -> dict:
         settings_by_file["config.tables.json"]["_tables"] = tables_update
 
     # Write to each target file
-    changed_count = 0
+    changed_keys = list(clean.keys())
+    if tables_update is not None:
+        changed_keys.append("tables")
+    
     for target_file, file_settings in settings_by_file.items():
         try:
             # Read existing config from the file
@@ -834,11 +846,9 @@ def write_config_updates(updates: dict) -> dict:
             # Handle tables specially (comes in as "_tables" marker)
             if "_tables" in file_settings:
                 existing[section_name] = file_settings["_tables"]
-                changed_count += 1
             else:
                 # Merge new settings into the section
                 existing[section_name].update(file_settings)
-                changed_count += len(file_settings)
 
             # Atomic write with temp file
             tmp = f"{target_file}.tmp"
@@ -853,7 +863,4 @@ def write_config_updates(updates: dict) -> dict:
 
     # Return summary (use the first config file as reference path for logging)
     first_file = next(iter(settings_by_file.keys())) if settings_by_file else "config.json"
-    changed_keys = list(clean.keys())
-    if tables_update is not None:
-        changed_keys.append("tables")
     return {"path": os.path.abspath(first_file), "changed": sorted(changed_keys), "config": clean}

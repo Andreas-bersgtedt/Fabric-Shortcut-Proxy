@@ -48,7 +48,7 @@ def _load_config_file() -> dict:
 
 
 _FILE_CFG: dict = _load_config_file()
-_CONN_CFG: dict = _FILE_CFG.get("connection", {})
+_CONN_CFG: dict = _FILE_CFG
 
 
 def _raw(env: str | None, key: str, default):

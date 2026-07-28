@@ -2,7 +2,7 @@
   "tables": [
     {
       "name": "sales",
-      "source_table": "dbo.sales",
+      "source_table": "sales",
       "key_column": "id"
     }
   ]

@@ -566,9 +566,21 @@ $("btnCopy").onclick = async () => {
 function flash(msg, ok){ const s=$("buildStatus"); s.className="status "+(ok?"ok":"err"); s.textContent=msg;
   setTimeout(()=>{ s.textContent=""; s.className="status"; }, 3000); }
 
-// ---- dialect default port ----
+// ---- dialect default port & field refresh ----
 $("dialect").addEventListener("change", ()=>{
-  if(!$("port").value.trim()) $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
+  const newDialect = $("dialect").value;
+  // Update port placeholder
+  $("port").placeholder = "(default "+DEFAULT_PORTS[newDialect]+")";
+  // Clear connection fields when dialect changes (poor UX to keep old values)
+  $("database").value = "";
+  $("username").value = "";
+  $("password").value = "";
+  $("driver").value = "";
+  $("token").value = "";
+  $("http_path").value = "";
+  $("catalog").value = "";
+  $("schema").value = "";
+  $("trust_cert").checked = true;
 });
 
 // ---- all-settings catalog (section 4) ----

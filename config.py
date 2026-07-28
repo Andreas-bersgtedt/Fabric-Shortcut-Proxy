@@ -8,10 +8,11 @@ Splits configuration across three modules:
 
 Settings resolve with this precedence (highest wins):
     1. environment variable
-    2. external JSON config file (``config.json``, or ``$CONFIG_FILE``)
+    2. external JSON config files (config.system.json, config.connection.json, 
+       config.performance.json, config.freshness.json, config.tables.json)
     3. built-in default
 
-See ``config.example.json`` for the full shape.
+See config.*.example.json for templates. Monolithic config.json is no longer supported.
 """
 from __future__ import annotations
 
@@ -56,38 +57,26 @@ from connection_config import (
 # ---------------------------------------------------------------------------
 
 def _load_config_file() -> dict:
-    """Load config from separate files or monolithic config.json.
+    """Load config from separate section-specific JSON files only.
     
+    Loads: config.performance.json, config.freshness.json, config.tables.json
     Precedence (per section):
-      1. config.{section}.json (e.g., config.performance.json, config.freshness.json)
-      2. config.json or $CONFIG_FILE (monolithic)
-      3. empty dict
+      1. config.{section}.json
+      2. empty dict (no fallback to monolithic config.json)
     """
-    # Always try to load the monolithic file first as base
-    path = os.environ.get("CONFIG_FILE", "config.json")
-    try:
-        with open(path, "r", encoding="utf-8-sig") as fh:
-            data = json.load(fh)
-        if not isinstance(data, dict):
-            print(f"[config] {path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
-            data = {}
-    except FileNotFoundError:
-        data = {}
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"[config] failed to read {path!r}: {exc}", file=sys.stderr)
-        data = {}
-    
-    # Merge in section-specific files (they override monolithic sections)
+    data = {}
     for section in ("performance", "freshness", "tables"):
         section_path = f"config.{section}.json"
-        if os.path.exists(section_path):
-            try:
-                with open(section_path, "r", encoding="utf-8-sig") as fh:
-                    section_data = json.load(fh)
-                if isinstance(section_data, dict) and section in section_data:
-                    data[section] = section_data[section]
-            except (OSError, json.JSONDecodeError) as exc:
-                print(f"[config] failed to read {section_path!r}: {exc}", file=sys.stderr)
+        try:
+            with open(section_path, "r", encoding="utf-8-sig") as fh:
+                section_data = json.load(fh)
+            if isinstance(section_data, dict):
+                # Extract section if wrapped, else use entire file as section
+                data[section] = section_data.get(section, section_data) if section in section_data else section_data
+        except FileNotFoundError:
+            pass  # Section is optional; use defaults
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"[config] failed to read {section_path!r}: {exc}", file=sys.stderr)
     
     return data
 

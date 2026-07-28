@@ -7,8 +7,10 @@ support without touching system or performance configuration.
 
 Settings resolve with this precedence (highest wins):
     1. environment variable
-    2. external JSON config file (``config.json``, section: "connection")
+    2. external JSON config file (``config.connection.json``)
     3. built-in default
+
+Note: Monolithic config.json is no longer supported. Use config.connection.json.
 """
 from __future__ import annotations
 
@@ -22,40 +24,26 @@ import sys
 # ---------------------------------------------------------------------------
 
 def _load_config_file() -> dict:
-    """Load config from separate file (config.connection.json) or monolithic config.json.
+    """Load connection configuration from config.connection.json.
     
     Precedence:
-      1. config.connection.json (if it exists)
-      2. config.json or $CONFIG_FILE (monolithic)
-      3. empty dict
+      1. config.connection.json
+      2. empty dict (no fallback to monolithic config.json)
     """
-    # Try section-specific file first
     section_path = "config.connection.json"
-    if os.path.exists(section_path):
-        try:
-            with open(section_path, "r", encoding="utf-8-sig") as fh:
-                data = json.load(fh)
-            if not isinstance(data, dict):
-                print(f"[connection_config] {section_path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
-                return {}
-            return data
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"[connection_config] failed to read {section_path!r}: {exc}", file=sys.stderr)
-            return {}
-    
-    # Fall back to monolithic config.json
-    path = os.environ.get("CONFIG_FILE", "config.json")
     try:
-        with open(path, "r", encoding="utf-8-sig") as fh:
+        with open(section_path, "r", encoding="utf-8-sig") as fh:
             data = json.load(fh)
         if not isinstance(data, dict):
-            print(f"[connection_config] {path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
+            print(f"[connection_config] {section_path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
             return {}
-        return data
+        # Extract 'connection' section if present
+        return data.get("connection", data) if "connection" in data else data
     except FileNotFoundError:
+        print(f"[connection_config] {section_path}: file not found; using defaults only.", file=sys.stderr)
         return {}
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"[connection_config] failed to read {path!r}: {exc}", file=sys.stderr)
+        print(f"[connection_config] failed to read {section_path!r}: {exc}", file=sys.stderr)
         return {}
 
 

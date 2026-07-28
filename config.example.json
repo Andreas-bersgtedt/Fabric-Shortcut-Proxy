@@ -1,5 +1,5 @@
 {
-  "_comment": "Refactored configuration (Phase 5.1). Sections: system (S3, server, fleet, control plane, HA), connection (database), performance (splits, caching, output format), freshness (refresh strategy), tables (multi-table registry). Precedence: env var > config.{section}.json > config.json > default. Separate files optional: config.system.json, config.connection.json, config.performance.json, config.freshness.json, config.tables.json override corresponding monolithic sections.",
+  "_comment": "DEPRECATED: Monolithic config.json is no longer supported. Use separate config files instead: config.system.json, config.connection.json, config.performance.json, config.freshness.json, config.tables.json. See config.*.example.json for templates. Environment variables still take precedence: env var > config.{section}.json > default.",
 
   "system": {
     "_comment": "S3, server binding, artifact store, fleet coordination, control plane, HA",

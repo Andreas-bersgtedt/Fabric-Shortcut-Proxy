@@ -7,8 +7,10 @@ deployments and rarely change per-environment.
 
 Settings resolve with this precedence (highest wins):
     1. environment variable
-    2. external JSON config file (``config.json``, section: "system")
+    2. external JSON config file (``config.system.json``)
     3. built-in default
+
+Note: Monolithic config.json is no longer supported. Use config.system.json.
 """
 from __future__ import annotations
 
@@ -18,49 +20,35 @@ import sys
 
 
 # ---------------------------------------------------------------------------
-# JSON Config loading (shared with other modules)
+# JSON Config loading — config.system.json only
 # ---------------------------------------------------------------------------
 
 def _load_config_file() -> dict:
-    """Load config from separate file (config.system.json) or monolithic config.json.
+    """Load system configuration from config.system.json.
     
     Precedence:
-      1. config.system.json (if it exists)
-      2. config.json or $CONFIG_FILE (monolithic)
-      3. empty dict
+      1. config.system.json
+      2. empty dict (no fallback to monolithic config.json)
     """
-    # Try section-specific file first
     section_path = "config.system.json"
-    if os.path.exists(section_path):
-        try:
-            with open(section_path, "r", encoding="utf-8-sig") as fh:
-                data = json.load(fh)
-            if not isinstance(data, dict):
-                print(f"[system_config] {section_path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
-                return {}
-            return data
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"[system_config] failed to read {section_path!r}: {exc}", file=sys.stderr)
-            return {}
-    
-    # Fall back to monolithic config.json
-    path = os.environ.get("CONFIG_FILE", "config.json")
     try:
-        with open(path, "r", encoding="utf-8-sig") as fh:
+        with open(section_path, "r", encoding="utf-8-sig") as fh:
             data = json.load(fh)
         if not isinstance(data, dict):
-            print(f"[system_config] {path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
+            print(f"[system_config] {section_path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
             return {}
-        return data
+        # Extract 'system' section if present
+        return data.get("system", data) if "system" in data else data
     except FileNotFoundError:
+        print(f"[system_config] {section_path}: file not found; using defaults only.", file=sys.stderr)
         return {}
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"[system_config] failed to read {path!r}: {exc}", file=sys.stderr)
+        print(f"[system_config] failed to read {section_path!r}: {exc}", file=sys.stderr)
         return {}
 
 
 _FILE_CFG: dict = _load_config_file()
-_SYSTEM_CFG: dict = _FILE_CFG.get("system", {})
+_SYSTEM_CFG: dict = _FILE_CFG
 
 
 def _raw(env: str | None, key: str, default):

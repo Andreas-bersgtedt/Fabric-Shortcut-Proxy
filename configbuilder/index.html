@@ -66,7 +66,11 @@
   .checkbox input { width:auto; }
   .setcat { margin:14px 0 4px; color:var(--muted); font-size:11px; text-transform:uppercase;
             letter-spacing:.04em; font-weight:700; }
-  .setrow { display:grid; grid-template-columns:190px 130px 1fr; gap:10px; align-items:center;
+  .live-badge { display:inline-block; font-size:10px; font-weight:700; border-radius:4px;
+                padding:1px 5px; margin-left:6px; vertical-align:middle; }
+  .live-badge.live { background:#14532d; color:#4ade80; border:1px solid #16a34a; }
+  .live-badge.restart { background:#431407; color:#fb923c; border:1px solid #c2410c; }
+  .setrow { display:grid; grid-template-columns:220px 130px 1fr; gap:10px; align-items:center;
             padding:5px 0; border-top:1px solid var(--line); }
   .setrow > label { margin:0; color:var(--fg); font-family:ui-monospace,Consolas,monospace;
                     font-size:12px; word-break:break-all; }
@@ -268,7 +272,12 @@
     <div class="tablebar" style="margin-top:10px;">
       <input id="liveSearch" placeholder="Filter settings…" />
       <button class="btn ghost" id="btnReloadLive">Reload</button>
-      <button class="btn primary" id="btnSaveLive">Save changes to config.json</button>
+      <button class="btn ghost" id="btnSaveLive">Save to config.json</button>
+      <button class="btn primary" id="btnApplyLive">⚡ Apply now</button>
+    </div>
+    <div class="hint" style="margin-top:6px;">
+      <span style="color:#4ade80;">⚡ live</span> settings apply immediately.
+      <span style="color:#fb923c;">↺ restart</span> settings are saved to <code>config.json</code> and apply on next restart.
     </div>
     <div class="status" id="liveStatus"></div>
     <div id="liveSettings" style="max-height:420px; overflow:auto; margin-top:8px;"><div class="hint">Loading…</div></div>
@@ -765,7 +774,13 @@ function renderLive(){
     if(q && !(s.key.includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
     if(s.category!==cat){ cat=s.category; const h=document.createElement("div"); h.className="setcat"; h.textContent=cat; wrap.appendChild(h); }
     const row=document.createElement("div"); row.className="setrow";
-    const lab=document.createElement("label"); lab.textContent=s.key;
+    const lab=document.createElement("label");
+    const badge=document.createElement("span");
+    badge.className = s.live ? "live-badge live" : "live-badge restart";
+    badge.textContent = s.live ? "⚡ live" : "↺ restart";
+    badge.title = s.live ? "Applies immediately without restart" : "Requires restart to take effect";
+    lab.textContent=s.key;
+    lab.appendChild(badge);
     lab.title=(s.env?("env "+s.env+"  ·  "):"")+(s.help||"");
     let inp;
     const cur = effStr(s);
@@ -800,7 +815,12 @@ function collectLiveChanges(){
 
 function updateSaveBadge(){
   const n=Object.keys(collectLiveChanges()).length;
-  $("btnSaveLive").textContent = n ? ("Save "+n+" change"+(n>1?"s":"")+" to config.json") : "Save changes to config.json";
+  const liveN = Object.keys(collectLiveChanges()).filter(k=>{
+    const s = live.settings.find(x=>x.key===k); return s && s.live;
+  }).length;
+  const restartN = n - liveN;
+  $("btnApplyLive").textContent = n ? ("⚡ Apply "+n+" change"+(n>1?"s":"")) : "⚡ Apply now";
+  $("btnSaveLive").textContent = n ? ("Save "+n+" to config.json") : "Save to config.json";
 }
 
 async function saveLive(){
@@ -816,6 +836,26 @@ async function saveLive(){
     live.edits = {};
     setTimeout(loadCurrent, 500);
   }catch(e){ liveFlash($("liveStatus"), "Save error: "+e); }
+}
+
+async function applyLive(){
+  const changes=collectLiveChanges();
+  const n=Object.keys(changes).length;
+  if(!n){ liveFlash($("liveStatus"), "No changes to apply. (Edit a value first.)"); return; }
+  liveFlash($("liveStatus"), "Applying "+n+" change(s)…", true);
+  try{
+    const r=await fetch("/_config/api/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:changes})});
+    const d=await r.json();
+    if(!r.ok){ liveFlash($("liveStatus"), "Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    let msg = "";
+    if(d.applied_live && d.applied_live.length)
+      msg += "⚡ Applied live: "+d.applied_live.join(", ")+". ";
+    if(d.restart_required && d.restart_required.length)
+      msg += "↺ Saved (restart needed): "+d.restart_required.join(", ")+".";
+    liveFlash($("liveStatus"), msg || "✓ Done.", true);
+    live.edits = {};
+    setTimeout(loadCurrent, 500);
+  }catch(e){ liveFlash($("liveStatus"), "Apply error: "+e); }
 }
 
 async function applyScale(){
@@ -836,6 +876,7 @@ async function applyScale(){
 $("liveSearch").addEventListener("input", renderLive);
 $("btnReloadLive").onclick = loadCurrent;
 $("btnSaveLive").onclick = saveLive;
+$("btnApplyLive").onclick = applyLive;
 $("btnScale").onclick = applyScale;
 $("btnSaveS3Secret").onclick = saveS3Secret;
 $("btnClearS3Secret").onclick = clearS3Secret;

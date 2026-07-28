@@ -5,6 +5,9 @@ Endpoints (all under ``/_config``):
   GET  /_config/            -> the single-page app
   POST /_config/api/connect -> test a connection, list tables/views
   POST /_config/api/inspect -> reflect columns + detect key column per table
+  POST /_config/api/save    -> persist settings to config.json (restart to apply)
+  POST /_config/api/apply   -> apply live + persist in one call (no restart needed
+                               for live-applicable settings)
 
 The generated ``config.json`` is assembled client-side from these responses.
 """
@@ -188,6 +191,60 @@ async def save_config(request: Request) -> JSONResponse:
         "restart_required": True,
         "note": "Saved to config.json. Restart the Manager/Agents to apply "
                 "(agent_count can also be applied live from the Manager: POST /_manager/api/scale).",
+    })
+
+
+@router.post("/api/apply")
+async def apply_config(request: Request) -> JSONResponse:
+    """Apply settings to the running process AND persist to config.json in one call.
+
+    Live-applicable settings (see ``config.LIVE_SETTINGS``) take effect
+    immediately — no restart needed. Structural settings (DB_URL, PORT, bucket,
+    etc.) are persisted to config.json and reported as ``restart_required``.
+
+    Request body: ``{"settings": {"key": value, ...}}``
+    """
+    body = await request.json()
+    updates = body.get("settings") if isinstance(body, dict) else None
+    if not isinstance(updates, dict) or not updates:
+        return JSONResponse({"ok": False, "error": 'body must be {"settings": {key: value, ...}}'},
+                            status_code=400)
+    clean, errors = config.validate_setting_updates(updates)
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+
+    # 1. Apply live to this process.
+    try:
+        live_result = config.apply_live_settings(clean)
+    except (ValueError, AttributeError) as exc:
+        log.warning("config_builder_apply_failed", error=str(exc))
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    # 2. Persist all changes to config.json (both live and restart-required).
+    try:
+        saved = config.write_config_updates(clean)
+    except (OSError, ValueError) as exc:
+        log.warning("config_builder_save_failed", error=str(exc))
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    log.info("config_applied",
+             applied_live=live_result["applied"],
+             restart_required=live_result["restart_required"],
+             path=saved["path"])
+
+    return JSONResponse({
+        "ok": True,
+        "applied_live": live_result["applied"],
+        "restart_required": live_result["restart_required"],
+        "path": saved["path"],
+        "note": (
+            f"Applied {len(live_result['applied'])} setting(s) live."
+            + (
+                f" {len(live_result['restart_required'])} setting(s) saved to config.json "
+                f"(restart required): {', '.join(live_result['restart_required'])}."
+                if live_result["restart_required"] else ""
+            )
+        ),
     })
 
 

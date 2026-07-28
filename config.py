@@ -481,6 +481,71 @@ _SETTINGS_CAT_ORDER = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Live-applicable settings — can be mutated in the running process without
+# a restart. Structural settings (DB_URL, PORT, bucket, HA, control plane)
+# always require a restart.
+# ---------------------------------------------------------------------------
+
+LIVE_SETTINGS: frozenset[str] = frozenset({
+    # Performance / splits
+    "num_splits", "split_strategy", "split_target_rows",
+    "split_count_min", "split_count_max",
+    "streaming_parquet", "stream_batch_rows",
+    "source_max_concurrency", "max_concurrent_generations",
+    "timestamp_assume_utc", "pin_materialized_splits",
+    "table_format",
+    # Caching
+    "metadata_cache_ttl", "parquet_cache_ttl",
+    "parquet_cache_max_bytes",
+    "parquet_disk_cache", "parquet_disk_cache_dir",
+    # Observability
+    "request_trace", "trace_buffer_size",
+    # Iceberg
+    "iceberg_manifest_stats", "iceberg_snapshot_history",
+    "snapshot_history_limit", "concurrent_startup_materialization",
+    # Freshness
+    "auto_refresh", "refresh_poll_seconds", "refresh_strategy",
+    "refresh_allow_full_pull", "refresh_ttl_seconds",
+    # Connection limits (safe to change mid-flight)
+    "query_timeout_seconds", "query_max_rows",
+})
+
+# Mapping from config.json key -> module-level attribute name (UPPER_CASE).
+_KEY_TO_ATTR: dict[str, str] = {
+    "num_splits": "NUM_SPLITS",
+    "split_strategy": "SPLIT_STRATEGY",
+    "split_target_rows": "SPLIT_TARGET_ROWS",
+    "split_count_min": "SPLIT_COUNT_MIN",
+    "split_count_max": "SPLIT_COUNT_MAX",
+    "streaming_parquet": "STREAMING_PARQUET",
+    "stream_batch_rows": "STREAM_BATCH_ROWS",
+    "source_max_concurrency": "SOURCE_MAX_CONCURRENCY",
+    "max_concurrent_generations": "MAX_CONCURRENT_GENERATIONS",
+    "timestamp_assume_utc": "TIMESTAMP_ASSUME_UTC",
+    "pin_materialized_splits": "PIN_MATERIALIZED_SPLITS",
+    "table_format": "TABLE_FORMAT",
+    "metadata_cache_ttl": "METADATA_CACHE_TTL_SECONDS",
+    "parquet_cache_ttl": "PARQUET_CACHE_TTL_SECONDS",
+    "parquet_cache_max_bytes": "PARQUET_CACHE_MAX_BYTES",
+    "parquet_disk_cache": "PARQUET_DISK_CACHE",
+    "parquet_disk_cache_dir": "PARQUET_DISK_CACHE_DIR",
+    "request_trace": "REQUEST_TRACE",
+    "trace_buffer_size": "TRACE_BUFFER_SIZE",
+    "iceberg_manifest_stats": "ICEBERG_MANIFEST_STATS",
+    "iceberg_snapshot_history": "ICEBERG_SNAPSHOT_HISTORY",
+    "snapshot_history_limit": "SNAPSHOT_HISTORY_LIMIT",
+    "concurrent_startup_materialization": "CONCURRENT_STARTUP_MATERIALIZATION",
+    "auto_refresh": "AUTO_REFRESH",
+    "refresh_poll_seconds": "REFRESH_POLL_SECONDS",
+    "refresh_strategy": "REFRESH_STRATEGY",
+    "refresh_allow_full_pull": "REFRESH_ALLOW_FULL_PULL",
+    "refresh_ttl_seconds": "REFRESH_TTL_SECONDS",
+    "query_timeout_seconds": "QUERY_TIMEOUT_SECONDS",
+    "query_max_rows": "QUERY_MAX_ROWS",
+}
+
+
 def settings_catalog() -> list[dict]:
     """Return every registered setting with its json key, env var, type, default, category and help."""
     items = []
@@ -494,6 +559,7 @@ def settings_catalog() -> list[dict]:
             "category": meta.get("cat", "Other"),
             "help": meta.get("help", ""),
             "secret": bool(meta.get("secret", False)),
+            "live": reg["key"] in LIVE_SETTINGS,
         })
     items.sort(key=lambda s: (
         _SETTINGS_CAT_ORDER.index(s["category"]) if s["category"] in _SETTINGS_CAT_ORDER else 999,
@@ -561,6 +627,7 @@ def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
             "value": value, "source": source,
             "category": meta.get("cat", "Other"),
             "help": meta.get("help", ""), "secret": secret,
+            "live": key in LIVE_SETTINGS,
         })
     out.sort(key=lambda s: (
         _SETTINGS_CAT_ORDER.index(s["category"]) if s["category"] in _SETTINGS_CAT_ORDER else 999,
@@ -583,6 +650,33 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
         except (ValueError, TypeError) as exc:
             errors.append(f"{k}: {exc}")
     return clean, errors
+
+
+def apply_live_settings(updates: dict) -> dict:
+    """Apply validated settings directly to this module's runtime attributes.
+
+    Returns ``{"applied": [keys], "restart_required": [keys]}``.
+    Settings in ``LIVE_SETTINGS`` are set immediately (next access picks up the
+    new value); all others are reported as restart_required so the caller can
+    still persist them to config.json for the next start.
+    """
+    clean, errors = validate_setting_updates(updates)
+    if errors:
+        raise ValueError("; ".join(errors))
+    this = sys.modules[__name__]
+    applied: list[str] = []
+    restart_required: list[str] = []
+    for k, v in clean.items():
+        if k in LIVE_SETTINGS:
+            attr = _KEY_TO_ATTR.get(k)
+            if attr:
+                setattr(this, attr, v)
+                applied.append(k)
+            else:
+                restart_required.append(k)  # in LIVE_SETTINGS but no attr map yet
+        else:
+            restart_required.append(k)
+    return {"applied": applied, "restart_required": restart_required}
 
 
 def write_config_updates(updates: dict) -> dict:

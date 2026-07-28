@@ -1,6 +1,11 @@
 {
   "tables": [
     {
+      "key_column": "SalesOrderID",
+      "name": "SO_Header",
+      "source_table": "SYNTHETIC_DATA.SO_Header"
+    },
+    {
       "key_column": "AddressID",
       "name": "Address",
       "source_table": "SalesLT.Address"
@@ -49,11 +54,6 @@
       "key_column": "SalesOrderID",
       "name": "SalesOrderHeader",
       "source_table": "SalesLT.SalesOrderHeader"
-    },
-    {
-      "key_column": "SalesOrderID",
-      "name": "SO_Header",
-      "source_table": "SYNTHETIC_DATA.SO_Header"
     }
   ]
 }

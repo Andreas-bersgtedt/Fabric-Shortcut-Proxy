@@ -207,7 +207,7 @@ def create_admin_router(
 
 
 # ---------------------------------------------------------------------------
-# Self‑contained console page (no external assets). Polls /_manager/api/fleet.
+# Self‑contained console page with Fleet & Monitor tabs.
 # ---------------------------------------------------------------------------
 _ADMIN_HTML = r"""<!doctype html>
 <html lang="en">
@@ -220,18 +220,27 @@ _ADMIN_HTML = r"""<!doctype html>
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.45 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
          background: #0f1420; color: #e6e9ef; }
-  header { padding: 14px 20px; border-bottom: 1px solid #232a3a; display: flex; align-items: center;
-           gap: 16px; flex-wrap: wrap; background: #131a29; }
-  h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header { padding: 12px 20px; border-bottom: 1px solid #232a3a; display: flex; align-items: center;
+           gap: 12px; flex-wrap: wrap; background: #131a29; }
+  h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .2px; flex: 0 0 auto; }
+  .tabs { display: flex; gap: 4px; margin-left: 0; border-bottom: none; }
+  .tab-btn { background: transparent; border: none; border-bottom: 2px solid transparent; 
+             padding: 8px 14px; cursor: pointer; color: #8a93a6; font-weight: 500; font-size: 13px;
+             transition: all 0.2s; }
+  .tab-btn.active { border-bottom-color: #3b82f6; color: #e6e9ef; }
+  .tab-btn:hover { color: #c5cdd8; }
   .pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .ok { background: #12351f; color: #6ee7a0; }
   .bad { background: #3a1620; color: #ff8098; }
   .muted { color: #8a93a6; }
-  main { padding: 18px 20px; }
+  main { padding: 18px 20px; overflow-y: auto; height: calc(100vh - 52px); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
   .cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
   .card { background: #151c2c; border: 1px solid #232a3a; border-radius: 10px; padding: 12px 16px; min-width: 120px; }
   .card .n { font-size: 22px; font-weight: 700; }
   .card .l { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #8a93a6; }
+  .card .sub { font-size: 11px; color: #8a93a6; margin-top: 4px; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #202737; white-space: nowrap; }
   th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #8a93a6; font-weight: 600; }
@@ -243,24 +252,42 @@ _ADMIN_HTML = r"""<!doctype html>
   button:hover { background: #24365c; }
   button.stop { border-color: #5a2230; } button.stop:hover { background: #3a1622; }
   button:disabled { opacity: .4; cursor: not-allowed; }
-  .tok { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   .navbtn { display: inline-block; font-size: 12px; font-weight: 600; text-decoration: none;
             padding: 5px 10px; border-radius: 7px; border: 1px solid #313a4f;
             background: #1c2740; color: #dfe6f2; }
   .navbtn:hover { background: #24365c; }
-  input { font: inherit; padding: 4px 8px; border-radius: 7px; border: 1px solid #313a4f;
-          background: #0d1320; color: #e6e9ef; }
+  input, select { font: inherit; padding: 4px 8px; border-radius: 7px; border: 1px solid #313a4f;
+                  background: #0d1320; color: #e6e9ef; }
   #msg { margin: 0 0 12px; min-height: 18px; font-size: 13px; }
   .err { color: #ff8098; } .good { color: #6ee7a0; }
   code { color: #9fb4ff; }
+  h2 { font-size: 13px; color: #8a93a6; text-transform: uppercase; letter-spacing: .05em;
+       margin: 18px 0 8px; font-weight: 600; }
+  .panel { background: #151c2c; border: 1px solid #232a3a; border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+  .legend { display: flex; gap: 16px; color: #8a93a6; font-size: 12px; margin: 6px 2px 0; }
+  .legend b { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .rq { display: grid; grid-template-columns: 150px 46px 1fr 90px; gap: 10px; align-items: center;
+        padding: 6px 12px; border-bottom: 1px solid #202737; font-size: 12px; }
+  .rq:hover { background: #131a29; }
+  .rq .lag { font-variant-numeric: tabular-nums; }
+  .empty { padding: 24px; color: #8a93a6; text-align: center; }
+  .bar { height: 12px; border-radius: 3px; background: #202737; overflow: hidden; display: flex; min-width: 120px; }
+  .bar > span { display: block; height: 100%; }
+  .seg-sql { background: #8b5cf6; } .seg-gen { background: #22c55e; } .seg-cache { background: #38bdf8; }
+  .tname { font-weight: 600; }
+  .warnrow td { background: rgba(239,68,68,.06); }
+  .monitor-controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+  .monitor-controls label { color: #8a93a6; font-size: 12px; }
 </style>
 </head>
 <body>
 <header>
   <h1>Fabric Shortcut Proxy · Manager</h1>
+  <div class="tabs" id="tabs"></div>
   <span id="ready" class="pill muted">…</span>
   <span id="clock" class="muted" style="font-size:12px"></span>
-  <div class="tok">
+  <div class="hdr-right">
     <a class="navbtn" href="/_config">Config UI</a>
     <label class="muted" id="toklabel" style="display:none">admin token
       <input id="token" type="password" size="16" placeholder="X-Admin-Token"/>
@@ -269,24 +296,94 @@ _ADMIN_HTML = r"""<!doctype html>
   </div>
 </header>
 <main>
-  <div class="cards" id="cards"></div>
-  <p id="msg"></p>
-  <div style="margin:0 0 12px">
-    <button onclick="rollingRestart()">Rolling restart (one at a time)</button>
-    <button class="stop" onclick="shutdownManager()">Shutdown Manager + all Agents</button>
+  <!-- FLEET TAB -->
+  <div id="fleetTab" class="tab-content active">
+    <div class="cards" id="cards"></div>
+    <p id="msg"></p>
+    <div style="margin:0 0 12px">
+      <button onclick="rollingRestart()">Rolling restart (one at a time)</button>
+      <button class="stop" onclick="shutdownManager()">Shutdown Manager + all Agents</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr>
+          <th>Agent</th><th>State</th><th>PID</th><th>Port</th><th>Shard</th>
+          <th>Restarts</th><th>Heartbeat</th><th>Serving</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
   </div>
-  <table>
-    <thead><tr>
-      <th>Agent</th><th>State</th><th>PID</th><th>Port</th><th>Shard</th>
-      <th>Restarts</th><th>Heartbeat</th><th>Serving</th><th>Actions</th>
-    </tr></thead>
-    <tbody id="rows"></tbody>
-  </table>
+
+  <!-- MONITOR TAB -->
+  <div id="monitorTab" class="tab-content">
+    <div class="monitor-controls">
+      <label>Refresh every
+        <select id="interval">
+          <option value="2000">2s</option>
+          <option value="5000" selected>5s</option>
+          <option value="10000">10s</option>
+          <option value="30000">30s</option>
+        </select>
+      </label>
+      <button onclick="monitorRefresh()">Refresh</button>
+      <button onclick="monitorReset()">Reset stats</button>
+    </div>
+    <div class="cards" id="monitorCards"></div>
+    <h2>Per-table read &amp; query statistics</h2>
+    <div class="panel">
+      <div style="overflow-x:auto">
+        <table id="tbl">
+          <thead><tr>
+            <th>Table</th><th>Ver</th><th>Splits</th><th>Rows</th>
+            <th>Requests</th><th id="thMeta">Meta</th><th id="thManifest">Manifest</th><th>Data</th><th>Errors</th>
+            <th>Cache&nbsp;hit</th><th>Avg&nbsp;SQL</th><th>p95&nbsp;SQL</th>
+            <th>Avg&nbsp;gen</th><th>Avg&nbsp;lag</th><th>p95&nbsp;lag</th><th>Bytes</th><th>Last&nbsp;read</th>
+          </tr></thead>
+          <tbody id="tblBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <h2>Query lag — Fabric → SQL → Parquet → Fabric (avg per table)</h2>
+    <div class="legend">
+      <span><b class="seg-sql"></b>SQL execution</span>
+      <span><b class="seg-gen"></b>Parquet generation</span>
+      <span><b class="seg-cache"></b>served from cache (no SQL)</span>
+    </div>
+    <div class="panel">
+      <div class="rq muted"><div>Table</div><div>Cache</div><div>Avg Fabric→SQL→Parquet lag</div><div>Avg total</div></div>
+      <div id="recentBody"></div>
+    </div>
+  </div>
 </main>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let tokenRequired = false;
+let monitorTimer = null;
+let fleetTimer = null;
 
+// ====== TAB MANAGEMENT ======
+function switchTab(tabName) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(tabName + 'Tab').classList.add('active');
+  document.getElementById(tabName + 'Btn').classList.add('active');
+  
+  if (tabName === 'monitor') {
+    scheduleMonitor();
+    monitorRefresh();
+  } else if (monitorTimer) {
+    clearInterval(monitorTimer);
+  }
+}
+
+const tabs = [{ id: 'fleet', label: 'Fleet' }, { id: 'monitor', label: 'Monitor' }];
+$("tabs").innerHTML = tabs.map(t => 
+  `<button class="tab-btn${t.id === 'fleet' ? ' active' : ''}" id="${t.id}Btn" onclick="switchTab('${t.id}')">${t.label}</button>`
+).join('');
+
+// ====== FLEET FUNCTIONS ======
 function tok() { return $("token").value.trim(); }
 function headers() {
   const h = { "Content-Type": "application/json" };
@@ -384,16 +481,106 @@ async function shutdownManager() {
     const r = await fetch("/_manager/api/shutdown", { method: "POST", headers: headers() });
     const d = await r.json();
     if (!r.ok) { msg(`shutdown failed: ${d.detail || r.status}`, "err"); }
-    else { msg(d.note || "shutting down…", "good"); if (timer) clearInterval(timer); }
+    else { msg(d.note || "shutting down…", "good"); if (fleetTimer) clearInterval(fleetTimer); }
   } catch (e) { msg(`shutdown error: ${e}`, "err"); }
 }
 
 $("auto").addEventListener("change", loop);
-let timer = null;
 function loop() {
-  if (timer) { clearInterval(timer); timer = null; }
-  if ($("auto").checked) timer = setInterval(refresh, 2000);
+  if (fleetTimer) { clearInterval(fleetTimer); fleetTimer = null; }
+  if ($("auto").checked && document.getElementById('fleetTab').classList.contains('active')) 
+    fleetTimer = setInterval(refresh, 2000);
 }
+
+// ====== MONITOR FUNCTIONS ======
+function fmtBytes(n){ if(n==null) return "–"; const u=["B","KB","MB","GB"]; let i=0,x=n;
+  while(x>=1024&&i<u.length-1){x/=1024;i++;} return x.toFixed(x<10&&i>0?1:0)+u[i]; }
+function fmtNum(n){ return n==null? "–" : Intl.NumberFormat().format(n); }
+function fmtMs(n){ if(n==null) return "–"; return n>=1000? (n/1000).toFixed(2)+"s" : Math.round(n)+"ms"; }
+function ago(ts){ if(!ts) return "–"; const s=Math.max(0,Date.now()/1000-ts);
+  if(s<60) return Math.round(s)+"s ago"; if(s<3600) return Math.round(s/60)+"m ago"; return Math.round(s/3600)+"h ago"; }
+function pct(r){ return r==null? "–" : Math.round(r*100)+"%"; }
+
+async function monitorRefresh(){
+  try{
+    const r = await fetch("/_monitor/api/summary", {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const d = await r.json();
+    monitorRender(d);
+  }catch(e){
+    console.error("Monitor error:", e);
+  }
+}
+
+function monitorRender(d){
+  const fmt = (d.table_format||'iceberg');
+  const isDelta = fmt==='delta';
+  $("thMeta").textContent = isDelta ? "Δ log" : "Meta";
+  $("thManifest").textContent = isDelta ? "—" : "Manifest";
+  
+  const t = d.totals||{}, c = d.cache||{};
+  const pinned = c.parquet_pinned||{};
+  $("monitorCards").innerHTML = [
+    ["Tables", fmtNum(t.tables)],
+    ["Data requests", fmtNum(t.data_requests), "cache hit "+pct(t.cache_hit_ratio)],
+    ["Parquet gens", fmtNum(t.parquet_generations)],
+    ["Bytes served", fmtBytes(t.bytes_served)],
+    ["Pinned splits", fmtNum(pinned.entries)+" · "+fmtBytes(pinned.bytes)],
+    ["SQL p (avg)", d.sql_latency? fmtMs((d.sql_latency.avg_seconds||0)*1000):"–", d.sql_latency? fmtNum(d.sql_latency.count)+" queries":""],
+    ["Source errors", fmtNum(t.source_unavailable), (t.source_unavailable>0?"":"none")],
+  ].map(([k,v,sub])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`).join("");
+
+  const rows = (d.tables||[]);
+  $("tblBody").innerHTML = rows.length ? rows.map(x=>{
+    const warn = !isDelta && (x.metadata_reads|0)>=3 && (x.data_reads|0)===0 && (x.manifest_reads|0)===0;
+    const probes = (x.probe_404s|0)>0 ? ` <span class="muted" title="expected probes">(${fmtNum(x.probe_404s)}p)</span>` : '';
+    const metaCol = isDelta ? fmtNum(x.delta_log_reads) : fmtNum(x.metadata_reads);
+    const manifestCol = isDelta ? '<span class="muted">–</span>' : fmtNum(x.manifest_reads);
+    return `<tr class="${warn?'warnrow':''}">
+      <td class="tname">${x.table}${warn?' <span class="err">⚠</span>':''}</td>
+      <td>${x.version??'–'}</td><td>${fmtNum(x.splits)}</td><td>${fmtNum(x.total_records)}</td>
+      <td>${fmtNum(x.requests)}</td><td>${metaCol}</td><td>${manifestCol}</td>
+      <td>${fmtNum(x.data_reads)}</td><td class="${(x.errors|0)>0?'err':''}">${fmtNum(x.errors)}${probes}</td>
+      <td>${pct(x.cache_hit_ratio)}</td><td>${fmtMs(x.avg_sql_ms)}</td><td>${fmtMs(x.p95_sql_ms)}</td>
+      <td>${fmtMs(x.avg_gen_ms)}</td><td>${fmtMs(x.avg_total_ms)}</td><td>${fmtMs(x.p95_total_ms)}</td>
+      <td>${fmtBytes(x.bytes_served)}</td><td class="muted">${ago(x.last_read_ts)}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="17" class="empty">No table activity yet.</td></tr>`;
+
+  const qtabs = (d.tables||[]).filter(t=>(t.data_requests|0)>0);
+  const maxLag = Math.max(1, ...qtabs.map(t=>t.avg_total_ms||0));
+  $("recentBody").innerHTML = qtabs.length ? qtabs.map(t=>{
+    const sqlW = Math.round(100*(t.avg_sql_ms||0)/maxLag);
+    const genW = Math.round(100*(t.avg_gen_ms||0)/maxLag);
+    const allCache = (t.avg_sql_ms||0)===0 && (t.avg_gen_ms||0)===0;
+    const seg = allCache
+      ? `<span class="seg-cache" style="width:${Math.max(4,Math.round(100*(t.avg_total_ms||0)/maxLag))}%"></span>`
+      : `<span class="seg-sql" style="width:${sqlW}%" title="avg SQL ${fmtMs(t.avg_sql_ms)}"></span><span class="seg-gen" style="width:${genW}%" title="avg gen ${fmtMs(t.avg_gen_ms)}"></span>`;
+    return `<div class="rq">
+      <div class="tname">${t.table}</div>
+      <div class="muted">${pct(t.cache_hit_ratio)}</div>
+      <div><div class="bar">${seg}</div></div>
+      <div class="lag">${fmtMs(t.avg_total_ms)} <span class="muted">${t.data_requests}×</span></div>
+    </div>`;
+  }).join("") : `<div class="empty">No data requests captured yet.</div>`;
+}
+
+async function monitorReset() {
+  try {
+    await fetch("/_monitor/api/reset", {method:"POST"});
+    monitorRefresh();
+  } catch (e) {
+    console.error("Reset error:", e);
+  }
+}
+
+function scheduleMonitor(){
+  if(monitorTimer) clearInterval(monitorTimer);
+  if($("auto").checked) monitorTimer = setInterval(monitorRefresh, parseInt($("interval").value));
+}
+$("interval").onchange = scheduleMonitor;
+
+// Initial load
 refresh(); loop();
 </script>
 </body>

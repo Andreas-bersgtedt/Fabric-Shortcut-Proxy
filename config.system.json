@@ -8,7 +8,7 @@
     "secret_access_key": "",
     "require_sigv4": false,
     "host": "127.0.0.1",
-    "port": 8000,
+    "port": 9200,
     "enable_config_builder": true,
     "enable_monitor": true,
     "artifact_store_backend": "local",

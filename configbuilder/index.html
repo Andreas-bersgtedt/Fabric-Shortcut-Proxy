@@ -157,6 +157,10 @@
     <h2>Per-Table Configuration</h2>
     <div class="hint" style="margin-bottom:14px;">Adjust the key column and split count for each table.</div>
     <div id="selectedList"></div>
+    <div class="actions">
+      <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
+    </div>
+    <div class="status" id="tableStatus"></div>
   </div>
 </div>
 
@@ -226,6 +230,11 @@
     <div class="hint" style="margin-bottom:14px;">Every global configuration setting with its built-in default. Leave a field blank to keep the default; only changed values are written to <code>config.json</code>.</div>
     <input id="settingsSearch" placeholder="Filter settings…" style="margin:10px 0;" />
     <div id="allSettings" class="tab-settings"><div class="hint">Loading…</div></div>
+    <div class="actions">
+      <button class="btn primary" id="btnApplyAdvanced">⚡ Apply changes</button>
+      <button class="btn ghost" id="btnSaveAdvanced">Save to config.json</button>
+    </div>
+    <div class="status" id="advancedStatus"></div>
   </div>
 </div>
 
@@ -561,6 +570,7 @@ function updatePreview(){
 
 // ---- download / copy ----
 $("btnApplySettings").onclick = applySettings;
+$("btnApplyTables").onclick = applyTables;
 $("btnDownload").onclick = () => {
   if(!state.db_url){ flash("Connect first."); return; }
   const cfg = buildConfig();
@@ -606,6 +616,42 @@ async function applySettings(){
       msg += "↺ To change bucket/sigv4, save to config.json and restart.";
     flash(msg || "✓ Done.", true);
   }catch(e){ flash("Apply error: "+e); }
+}
+
+async function applyTables(){
+  const items = [...state.selected.values()];
+  const tables = items.filter(s=>!s.invalid && s.key_column).map(s=>{
+    const e = { name:s.name, source_table:s.source_table, key_column:s.key_column };
+    if(s.num_splits) e.num_splits = parseInt(s.num_splits);
+    return e;
+  });
+  if(!tables.length){ 
+    const status = $("tableStatus");
+    status.className="status err"; 
+    status.textContent="Select at least one table with a valid key column to apply."; 
+    return; 
+  }
+  const status = $("tableStatus");
+  status.className="status"; 
+  status.textContent="Applying "+tables.length+" table(s)…";
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings:{tables}})
+    });
+    const d = await r.json();
+    if(!r.ok){ 
+      status.className="status err"; 
+      status.textContent="Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status); 
+      return; 
+    }
+    status.className="status ok"; 
+    status.textContent="✓ Applied "+tables.length+" table(s) to config.tables.json"; 
+    setTimeout(()=>{ status.textContent=""; status.className="status"; }, 4000);
+  }catch(e){ 
+    status.className="status err"; 
+    status.textContent="Apply error: "+e; 
+  }
 }
 
 // ---- dialect default port & field refresh ----
@@ -906,6 +952,54 @@ async function applyScale(){
   }catch(e){ liveFlash($("scaleStatus"), "Scale error: "+e); }
 }
 
+function collectAdvancedChanges(){
+  const out={};
+  document.querySelectorAll('#allSettings [data-key]').forEach(inp=>{
+    const raw = (inp.value||"").trim();
+    if(raw==="") return;                       // blank => keep default
+    const key = inp.dataset.key, type = inp.dataset.type, def = inp.dataset.default;
+    let val;
+    if(type==="bool") val = (raw==="true");
+    else if(type==="int"){ val = parseInt(raw); if(isNaN(val)) return; }
+    else if(type==="float"){ val = parseFloat(raw); if(isNaN(val)) return; }
+    else val = raw;
+    if(String(val) === String(def)) return;    // equals default => don't write
+    out[key] = val;
+  });
+  return out;
+}
+
+async function applyAdvanced(){
+  const changes = collectAdvancedChanges();
+  const n = Object.keys(changes).length;
+  if(!n){ liveFlash($("advancedStatus"), "No changes to apply. (Edit a value first.)"); return; }
+  liveFlash($("advancedStatus"), "Applying "+n+" change(s)…", true);
+  try{
+    const r=await fetch("/_config/api/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:changes})});
+    const d=await r.json();
+    if(!r.ok){ liveFlash($("advancedStatus"), "Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    let msg = "";
+    if(d.applied_live && d.applied_live.length)
+      msg += "⚡ Applied live: "+d.applied_live.join(", ")+". ";
+    if(d.restart_required && d.restart_required.length)
+      msg += "↺ Saved (restart needed): "+d.restart_required.join(", ")+".";
+    liveFlash($("advancedStatus"), msg || "✓ Done.", true);
+  }catch(e){ liveFlash($("advancedStatus"), "Apply error: "+e); }
+}
+
+async function saveAdvanced(){
+  const changes = collectAdvancedChanges();
+  const n = Object.keys(changes).length;
+  if(!n){ liveFlash($("advancedStatus"), "No changes to save. (Edit a value first.)"); return; }
+  liveFlash($("advancedStatus"), "Saving "+n+" change(s)…", true);
+  try{
+    const r=await fetch("/_config/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:changes})});
+    const d=await r.json();
+    if(!r.ok){ liveFlash($("advancedStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    liveFlash($("advancedStatus"), "✓ Saved "+d.changed.join(", ")+" to config.json (restart to apply).", true);
+  }catch(e){ liveFlash($("advancedStatus"), "Save error: "+e); }
+}
+
 $("liveSearch").addEventListener("input", renderLive);
 $("btnReloadLive").onclick = loadCurrent;
 $("btnSaveLive").onclick = saveLive;
@@ -913,6 +1007,8 @@ $("btnApplyLive").onclick = applyLive;
 $("btnScale").onclick = applyScale;
 $("btnSaveS3Secret").onclick = saveS3Secret;
 $("btnClearS3Secret").onclick = clearS3Secret;
+$("btnApplyAdvanced").onclick = applyAdvanced;
+$("btnSaveAdvanced").onclick = saveAdvanced;
 loadCurrent();
 initTabs();
 </script>

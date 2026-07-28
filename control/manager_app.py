@@ -86,6 +86,9 @@ def _make_supervisor(i: int, count: int) -> AgentSupervisor:
         name=agent_id,
         restart_backoff=config.AGENT_RESTART_BACKOFF_SECONDS,
         max_rapid_restarts=config.AGENT_MAX_RAPID_RESTARTS,
+        memory_alert_threshold_mb=config.MEMORY_ALERT_THRESHOLD_MB,
+        memory_restart_threshold_mb=config.MEMORY_RESTART_THRESHOLD_MB,
+        memory_history_samples=config.MEMORY_HISTORY_SAMPLES,
     )
 
 

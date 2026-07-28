@@ -71,6 +71,12 @@ def fleet_snapshot(
             "epochs": rec["epochs"] if rec else {},
             "pending_commands": rec["pending_commands"] if rec else 0,
             "dead": sup.name in dead,
+            # Memory monitoring
+            "rss_mb": round(sup.rss_mb, 2),
+            "avg_rss_mb": round(sup.avg_rss_mb, 2),
+            "peak_rss_mb": round(sup.peak_rss_mb, 2),
+            "memory_alert_threshold_mb": sup.memory_alert_threshold_mb,
+            "memory_restart_threshold_mb": sup.memory_restart_threshold_mb,
         })
 
     registered = registry.count()
@@ -308,7 +314,7 @@ _ADMIN_HTML = r"""<!doctype html>
       <table>
         <thead><tr>
           <th>Agent</th><th>State</th><th>PID</th><th>Port</th><th>Shard</th>
-          <th>Restarts</th><th>Heartbeat</th><th>Serving</th><th>Actions</th>
+          <th>Restarts</th><th>Heartbeat</th><th>Memory (MB)</th><th>Serving</th><th>Actions</th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
@@ -416,19 +422,30 @@ function render(d) {
   ready.className = "pill " + (d.ready ? "ok" : "bad");
   $("clock").textContent = "updated " + new Date().toLocaleTimeString();
 
+  // Aggregate memory stats
+  const totalMem = d.agents.reduce((s, a) => s + (a.rss_mb || 0), 0);
+  const avgMem = d.agents.length > 0 ? totalMem / d.agents.length : 0;
+  const peakMem = Math.max(...d.agents.map(a => a.peak_rss_mb || 0));
+  const maxThreshold = Math.max(...d.agents.map(a => a.memory_restart_threshold_mb || 0));
+
   const cards = [
     ["Agents alive", d.agents_alive + " / " + d.agents_total],
     ["Registered", d.agents_registered_alive + " / " + d.agents_registered],
     ["Gateway", d.gateway_enabled ? (d.gateway_targets + " targets") : "off"],
+    ["Fleet memory", totalMem.toFixed(0) + " MB", "avg " + avgMem.toFixed(1) + " MB"],
+    ["Peak memory", peakMem.toFixed(1) + " MB", maxThreshold > 0 ? "limit " + maxThreshold + " MB" : ""],
   ];
   $("cards").innerHTML = cards.map(c =>
-    `<div class="card"><div class="n">${c[1]}</div><div class="l">${c[0]}</div></div>`).join("");
+    `<div class="card"><div class="n">${c[1]}</div><div class="l">${c[0]}</div>${c[2]?`<div class="sub">${c[2]}</div>`:"" }</div>`).join("");
 
   $("rows").innerHTML = d.agents.map(a => {
     const serving = (a.serving_tables && a.serving_tables.length)
       ? a.serving_tables.map(t => `${t}@${a.epochs[t] ?? "?"}`).join(", ")
       : '<span class="muted">—</span>';
     const hb = (a.heartbeat_age == null) ? '<span class="muted">—</span>' : a.heartbeat_age + "s";
+    const memClass = a.memory_restart_threshold_mb > 0 && a.rss_mb >= a.memory_restart_threshold_mb 
+      ? 'err' : (a.memory_alert_threshold_mb > 0 && a.rss_mb >= a.memory_alert_threshold_mb ? 'muted' : '');
+    const memText = `<span class="${memClass}">${a.rss_mb.toFixed(1)} / ${a.peak_rss_mb.toFixed(1)}</span><span class="muted"> avg ${a.avg_rss_mb.toFixed(1)}</span>`;
     const startDisabled = a.process_alive && !a.crash_looped ? "disabled" : "";
     const stopDisabled = a.process_alive ? "" : "disabled";
     return `<tr>
@@ -439,6 +456,7 @@ function render(d) {
       <td>${a.shard_index}/${a.shard_count}</td>
       <td>${a.restart_count}</td>
       <td>${hb}</td>
+      <td>${memText}</td>
       <td>${serving}</td>
       <td>
         <button ${startDisabled} onclick="act('${a.name}','start')">Start</button>

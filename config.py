@@ -124,6 +124,11 @@ _register("VALIDATE_SOURCE_SCHEMA", "validate_source_schema", "bool", VALIDATE_S
 _register("BUCKET_NAME", "bucket", "str", BUCKET_NAME)
 _register("REQUIRE_SIGV4", "require_sigv4", "bool", REQUIRE_SIGV4)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
+
+# Register memory monitoring settings
+_register("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", "int", 800)
+_register("MEMORY_RESTART_THRESHOLD_MB", "memory_restart_threshold_mb", "int", 1200)
+_register("MEMORY_HISTORY_SAMPLES", "memory_history_samples", "int", 60)
 # Note: table_format will be re-registered when loaded from config.performance.json via _get_str()
 
 
@@ -181,6 +186,9 @@ SNAPSHOT_REFRESH_ON_START: bool = True
 
 # Resource guards
 MAX_CONCURRENT_GENERATIONS: int = _get_int("MAX_CONCURRENT_GENERATIONS", "max_concurrent_generations", 4, _PERF_CFG)
+MEMORY_ALERT_THRESHOLD_MB: int = _get_int("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", 800, _PERF_CFG)
+MEMORY_RESTART_THRESHOLD_MB: int = _get_int("MEMORY_RESTART_THRESHOLD_MB", "memory_restart_threshold_mb", 1200, _PERF_CFG)
+MEMORY_HISTORY_SAMPLES: int = _get_int("MEMORY_HISTORY_SAMPLES", "memory_history_samples", 60, _PERF_CFG)
 
 # Robustness
 TIMESTAMP_ASSUME_UTC: bool = _get_bool("TIMESTAMP_ASSUME_UTC", "timestamp_assume_utc", True, _PERF_CFG)
@@ -459,6 +467,9 @@ SETTINGS_META: dict[str, dict] = {
     "metadata_cache_ttl": {"cat": "Caching", "help": "Metadata cache TTL (seconds)."},
     # Robustness
     "max_concurrent_generations": {"cat": "Robustness", "help": "Max simultaneous on-demand Parquet builds."},
+    "memory_alert_threshold_mb": {"cat": "Robustness", "help": "Alert when agent process RAM exceeds this (MB). 0 = disabled."},
+    "memory_restart_threshold_mb": {"cat": "Robustness", "help": "Restart agent when RAM exceeds this (MB). 0 = disabled."},
+    "memory_history_samples": {"cat": "Robustness", "help": "Number of historical memory samples to retain for trend analysis."},
     "timestamp_assume_utc": {"cat": "Robustness", "help": "Map naive datetimes to timestamptz (Fabric SQL endpoint rejects TIMESTAMP_NTZ)."},
     # Admin UIs / observability
     "enable_config_builder": {"cat": "Admin & observability", "help": "Serve config builder at /_config."},
@@ -552,6 +563,9 @@ _KEY_TO_ATTR: dict[str, str] = {
     "stream_batch_rows": "STREAM_BATCH_ROWS",
     "source_max_concurrency": "SOURCE_MAX_CONCURRENCY",
     "max_concurrent_generations": "MAX_CONCURRENT_GENERATIONS",
+    "memory_alert_threshold_mb": "MEMORY_ALERT_THRESHOLD_MB",
+    "memory_restart_threshold_mb": "MEMORY_RESTART_THRESHOLD_MB",
+    "memory_history_samples": "MEMORY_HISTORY_SAMPLES",
     "timestamp_assume_utc": "TIMESTAMP_ASSUME_UTC",
     "pin_materialized_splits": "PIN_MATERIALIZED_SPLITS",
     "bucket": "BUCKET_NAME",
@@ -673,6 +687,9 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "stream_batch_rows": "config.performance.json",
     "source_max_concurrency": "config.performance.json",
     "max_concurrent_generations": "config.performance.json",
+    "memory_alert_threshold_mb": "config.performance.json",
+    "memory_restart_threshold_mb": "config.performance.json",
+    "memory_history_samples": "config.performance.json",
     "timestamp_assume_utc": "config.performance.json",
     "table_format": "config.performance.json",
     "pin_materialized_splits": "config.performance.json",

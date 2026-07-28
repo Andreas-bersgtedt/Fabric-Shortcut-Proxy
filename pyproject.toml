@@ -18,6 +18,7 @@ dependencies = [
     "databricks-sqlalchemy>=2.0",  # Databricks SQLAlchemy dialect/plugin
     "structlog>=24.1",
     "tzdata>=2024.1",          # IANA tz data (Windows) — needed to read tz-aware timestamp values
+    "psutil>=5.9",             # Process memory/CPU monitoring
     "httpx>=0.27",          # for integration tests
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

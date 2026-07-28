@@ -135,6 +135,23 @@ def create_admin_router(
     async def fleet() -> dict:
         return fleet_snapshot(registry, supervisors, gateway=gateway, token_required=token_required)
 
+    @router.get("/_manager/api/memory-history/{name}")
+    async def memory_history(name: str) -> dict:
+        """Get memory history (RSS samples in MB) for a specific agent."""
+        sup = _by_name(name)
+        if sup is None:
+            raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
+        # Return history as list of MB values (most recent at end)
+        history_mb = [x / (1024 * 1024) for x in sup._memory_history]
+        return {
+            "agent": name,
+            "history_mb": history_mb,
+            "current_mb": sup.rss_mb,
+            "peak_mb": sup.peak_rss_mb,
+            "alert_threshold_mb": sup.memory_alert_threshold_mb,
+            "restart_threshold_mb": sup.memory_restart_threshold_mb,
+        }
+
     @router.post("/_manager/api/agents/{name}/{action}")
     async def agent_action(name: str, action: str, request: Request) -> dict:
         _check_token(request)
@@ -309,6 +326,13 @@ _ADMIN_HTML = r"""<!doctype html>
     <div style="margin:0 0 12px">
       <button onclick="rollingRestart()">Rolling restart (one at a time)</button>
       <button class="stop" onclick="shutdownManager()">Shutdown Manager + all Agents</button>
+    </div>
+    <div style="margin:0 0 12px">
+      <label><input type="checkbox" id="showMemoryTrends" onchange="toggleMemoryTrends()"/> Show memory trends</label>
+    </div>
+    <div id="memoryTrends" style="display:none; margin:12px 0">
+      <h2>Agent Memory Trends</h2>
+      <div id="memoryGraphs" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 12px; margin-bottom: 16px;"></div>
     </div>
     <div style="overflow-x:auto">
       <table>
@@ -598,7 +622,68 @@ function scheduleMonitor(){
 }
 $("interval").onchange = scheduleMonitor;
 
+// ====== MEMORY TRENDS ======
+function toggleMemoryTrends() {
+  $("memoryTrends").style.display = $("showMemoryTrends").checked ? "block" : "none";
+  if ($("showMemoryTrends").checked) updateMemoryTrends();
+}
+
+async function updateMemoryTrends() {
+  try {
+    const agents = (lastFleetData?.agents || []).filter(a => a.process_alive);
+    const graphs = $("memoryGraphs");
+    graphs.innerHTML = "";
+    for (const agent of agents) {
+      const r = await fetch(`/_manager/api/memory-history/${agent.name}`, {cache:"no-store"});
+      if (!r.ok) continue;
+      const d = await r.json();
+      if (!d.history_mb || d.history_mb.length === 0) continue;
+      graphs.innerHTML += renderMemoryGraph(d);
+    }
+  } catch (e) {
+    console.error("Memory trends error:", e);
+  }
+}
+
+function renderMemoryGraph(d) {
+  const hist = d.history_mb || [];
+  if (hist.length === 0) return '';
+  const maxMB = Math.max(...hist, d.restart_threshold_mb || 0) * 1.1;
+  const h = 120, w = 350;
+  const pts = hist.map((v, i) => {
+    const x = (i / Math.max(1, hist.length - 1)) * (w - 20);
+    const y = h - (v / maxMB) * (h - 20);
+    return `${x + 10},${y + 10}`;
+  }).join(" ");
+  const svg = `<svg viewBox="0 0 ${w} ${h + 30}" style="width:100%; height:150px; border:1px solid #232a3a; border-radius:8px">
+    <defs>
+      <linearGradient id="g${d.agent}" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:0.3" />
+        <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:0" />
+      </linearGradient>
+    </defs>
+    ${d.alert_threshold_mb > 0 ? `<line x1="10" y1="${h - (d.alert_threshold_mb/maxMB) * (h-20) + 10}" x2="${w - 10}" y2="${h - (d.alert_threshold_mb/maxMB) * (h-20) + 10}" stroke="#f59e0b" stroke-dasharray="2,2" stroke-width="1" opacity="0.5"/>` : ''}
+    ${d.restart_threshold_mb > 0 ? `<line x1="10" y1="${h - (d.restart_threshold_mb/maxMB) * (h-20) + 10}" x2="${w - 10}" y2="${h - (d.restart_threshold_mb/maxMB) * (h-20) + 10}" stroke="#ef4444" stroke-dasharray="2,2" stroke-width="1" opacity="0.5"/>` : ''}
+    <polyline points="${pts}" fill="url(#g${d.agent})" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round"/>
+    <text x="10" y="${h + 25}" font-size="11" fill="#8a93a6">${hist.length} samples</text>
+    <text x="${w - 80}" y="${h + 25}" font-size="11" fill="#e6e9ef" text-anchor="end">${d.current_mb.toFixed(1)} MB</text>
+  </svg>`;
+  return `<div class="panel" style="padding: 12px"><div style="color:#e6e9ef; font-weight:600; margin-bottom:8px">${d.agent}</div>${svg}</div>`;
+}
+
 // Initial load
+let lastFleetData = null;
+async function refreshAndMem() {
+  try {
+    const r = await fetch("/_manager/api/fleet", { cache: "no-store" });
+    const d = await r.json();
+    lastFleetData = d;
+    render(d);
+    if ($("showMemoryTrends").checked) updateMemoryTrends();
+  } catch (e) { msg("failed to load fleet: " + e, "err"); }
+}
+refresh = refreshAndMem;
+
 refresh(); loop();
 </script>
 </body>

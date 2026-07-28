@@ -1,0 +1,27 @@
+{
+  "performance": {
+    "table_format": "delta",
+    "num_splits": 8,
+    "split_strategy": "modulo",
+    "split_target_rows": 100000,
+    "split_count_min": 1,
+    "split_count_max": 256,
+    "streaming_parquet": false,
+    "stream_batch_rows": 50000,
+    "source_max_concurrency": 0,
+    "max_concurrent_generations": 4,
+    "timestamp_assume_utc": true,
+    "pin_materialized_splits": true,
+    "parquet_disk_cache": false,
+    "parquet_disk_cache_dir": "./.parquet_cache",
+    "parquet_cache_max_bytes": 268435456,
+    "parquet_cache_ttl": 300,
+    "metadata_cache_ttl": 60,
+    "request_trace": true,
+    "trace_buffer_size": 5000,
+    "iceberg_manifest_stats": false,
+    "iceberg_snapshot_history": false,
+    "snapshot_history_limit": 10,
+    "concurrent_startup_materialization": true
+  }
+}

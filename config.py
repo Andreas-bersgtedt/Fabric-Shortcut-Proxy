@@ -583,8 +583,94 @@ def settings_catalog() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def config_file_path() -> str:
-    """The JSON config path this process reads (``$CONFIG_FILE`` or config.json)."""
+    """The JSON config path this process reads (``$CONFIG_FILE`` or config.json).
+    
+    Note: This is for backward compatibility only. New code should use separate
+    config files (config.system.json, config.connection.json, etc.).
+    """
     return os.environ.get("CONFIG_FILE", "config.json")
+
+
+# Mapping of settings to their config section files
+_SETTINGS_TO_FILE_MAP: dict[str, str] = {
+    # System settings → config.system.json
+    "bucket": "config.system.json",
+    "warehouse_prefix": "config.system.json",
+    "object_path_layout": "config.system.json",
+    "enable_legacy_path_aliases": "config.system.json",
+    "access_key_id": "config.system.json",
+    "secret_access_key": "config.system.json",
+    "require_sigv4": "config.system.json",
+    "host": "config.system.json",
+    "port": "config.system.json",
+    "enable_config_builder": "config.system.json",
+    "enable_monitor": "config.system.json",
+    "artifact_store_backend": "config.system.json",
+    "artifact_store_dir": "config.system.json",
+    "artifact_store_serving": "config.system.json",
+    "publish_serving_image": "config.system.json",
+    "agent_count": "config.system.json",
+    "agent_shard_index": "config.system.json",
+    "agent_shard_count": "config.system.json",
+    "enable_gateway": "config.system.json",
+    "materialize_wait_seconds": "config.system.json",
+    "manager_url": "config.system.json",
+    "agent_id": "config.system.json",
+    "control_host": "config.system.json",
+    "control_port": "config.system.json",
+    "heartbeat_ms": "config.system.json",
+    "heartbeat_miss_limit": "config.system.json",
+    "agent_restart_backoff_seconds": "config.system.json",
+    "agent_max_rapid_restarts": "config.system.json",
+    "manager_ha": "config.system.json",
+    "leader_lease_ttl_ms": "config.system.json",
+    "leader_lease_renew_ms": "config.system.json",
+    "retention_gc": "config.system.json",
+    "retention_gc_interval_seconds": "config.system.json",
+    "rolling_restart_health_timeout": "config.system.json",
+    "enable_admin_ui": "config.system.json",
+    "admin_token": "config.system.json",
+    # Connection settings → config.connection.json
+    "db_url": "config.connection.json",
+    "source_table": "config.connection.json",
+    "key_column": "config.connection.json",
+    "table_name": "config.connection.json",
+    "query_timeout_seconds": "config.connection.json",
+    "query_max_rows": "config.connection.json",
+    "db_max_retries": "config.connection.json",
+    "db_retry_backoff_seconds": "config.connection.json",
+    "validate_source_schema": "config.connection.json",
+    # Performance settings → config.performance.json
+    "num_splits": "config.performance.json",
+    "split_strategy": "config.performance.json",
+    "split_target_rows": "config.performance.json",
+    "split_count_min": "config.performance.json",
+    "split_count_max": "config.performance.json",
+    "streaming_parquet": "config.performance.json",
+    "stream_batch_rows": "config.performance.json",
+    "source_max_concurrency": "config.performance.json",
+    "max_concurrent_generations": "config.performance.json",
+    "timestamp_assume_utc": "config.performance.json",
+    "table_format": "config.performance.json",
+    "pin_materialized_splits": "config.performance.json",
+    "parquet_disk_cache": "config.performance.json",
+    "parquet_disk_cache_dir": "config.performance.json",
+    "parquet_cache_max_bytes": "config.performance.json",
+    "parquet_cache_ttl": "config.performance.json",
+    "metadata_cache_ttl": "config.performance.json",
+    "request_trace": "config.performance.json",
+    "trace_buffer_size": "config.performance.json",
+    "iceberg_manifest_stats": "config.performance.json",
+    "iceberg_snapshot_history": "config.performance.json",
+    "snapshot_history_limit": "config.performance.json",
+    "concurrent_startup_materialization": "config.performance.json",
+    # Freshness settings → config.freshness.json
+    "auto_refresh": "config.freshness.json",
+    "refresh_poll_seconds": "config.freshness.json",
+    "refresh_strategy": "config.freshness.json",
+    "refresh_allow_full_pull": "config.freshness.json",
+    "refresh_ttl_seconds": "config.freshness.json",
+}
 
 
 def _coerce_setting_value(typ: str, value):
@@ -690,27 +776,58 @@ def apply_live_settings(updates: dict) -> dict:
 
 
 def write_config_updates(updates: dict) -> dict:
-    """Validate + merge ``updates`` into the on-disk config file (atomic write)."""
+    """Validate + merge ``updates`` into the appropriate separate config files (atomic writes)."""
     clean, errors = validate_setting_updates(updates)
     if errors:
         raise ValueError("; ".join(errors))
 
-    path = config_file_path()
-    try:
-        with open(path, "r", encoding="utf-8-sig") as fh:
-            existing = json.load(fh)
-        if not isinstance(existing, dict):
-            existing = {}
-    except FileNotFoundError:
-        existing = {}
+    if not clean:
+        return {"path": "none", "changed": [], "config": {}}
 
-    existing.update(clean)
+    # Group settings by their target config file
+    settings_by_file: dict[str, dict] = {}
+    for key, value in clean.items():
+        target_file = _SETTINGS_TO_FILE_MAP.get(key)
+        if target_file:
+            if target_file not in settings_by_file:
+                settings_by_file[target_file] = {}
+            settings_by_file[target_file][key] = value
 
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(existing, fh, indent=2, sort_keys=True)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    # Write to each target file
+    changed_count = 0
+    for target_file, file_settings in settings_by_file.items():
+        try:
+            # Read existing config from the file
+            try:
+                with open(target_file, "r", encoding="utf-8-sig") as fh:
+                    existing = json.load(fh)
+                if not isinstance(existing, dict):
+                    existing = {}
+            except FileNotFoundError:
+                existing = {}
 
-    return {"path": os.path.abspath(path), "changed": sorted(clean.keys()), "config": existing}
+            # Extract the section (e.g., for config.system.json, the section is "system")
+            section_name = target_file.split("config.")[-1].split(".json")[0]  # "system", "connection", etc.
+            if section_name not in existing:
+                existing[section_name] = {}
+            elif not isinstance(existing[section_name], dict):
+                existing[section_name] = {}
+
+            # Merge new settings into the section
+            existing[section_name].update(file_settings)
+
+            # Atomic write with temp file
+            tmp = f"{target_file}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(existing, fh, indent=2, sort_keys=True)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, target_file)
+            changed_count += len(file_settings)
+
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Failed to write {target_file}: {exc}") from exc
+
+    # Return summary (use the first config file as reference path for logging)
+    first_file = next(iter(settings_by_file.keys())) if settings_by_file else "config.json"
+    return {"path": os.path.abspath(first_file), "changed": sorted(clean.keys()), "config": clean}

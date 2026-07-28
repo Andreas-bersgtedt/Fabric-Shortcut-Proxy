@@ -1,0 +1,9 @@
+{
+  "tables": [
+    {
+      "name": "sales",
+      "source_table": "dbo.sales",
+      "key_column": "id"
+    }
+  ]
+}

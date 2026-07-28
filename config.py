@@ -107,6 +107,19 @@ def _register(env: str | None, key: str, typ: str, default) -> None:
         _SETTINGS_REGISTRY[key] = {"key": key, "env": env, "type": typ, "default": default}
 
 
+# Register connection settings so they're recognized by the config builder UI
+# (these are imported from connection_config, so we register them manually)
+_register("DB_URL", "db_url", "str", DB_URL)
+_register("DB_SOURCE_TABLE", "source_table", "str", DB_SOURCE_TABLE)
+_register("KEY_COLUMN", "key_column", "str", KEY_COLUMN)
+_register("TABLE_NAME", "table_name", "str", TABLE_NAME)
+_register("QUERY_TIMEOUT_SECONDS", "query_timeout_seconds", "int", QUERY_TIMEOUT_SECONDS)
+_register("QUERY_MAX_ROWS", "query_max_rows", "int", QUERY_MAX_ROWS)
+_register("DB_MAX_RETRIES", "db_max_retries", "int", DB_MAX_RETRIES)
+_register("DB_RETRY_BACKOFF_SECONDS", "db_retry_backoff_seconds", "float", DB_RETRY_BACKOFF_SECONDS)
+_register("VALIDATE_SOURCE_SCHEMA", "validate_source_schema", "bool", VALIDATE_SOURCE_SCHEMA)
+
+
 def _get_str(env: str | None, key: str, default: str, cfg_dict: dict | None = None) -> str:
     _register(env, key, "str", default)
     v = _raw(env, key, default, cfg_dict)

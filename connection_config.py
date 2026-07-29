@@ -80,13 +80,14 @@ def _get_float(env: str | None, key: str, default: float) -> float:
 # ---------------------------------------------------------------------------
 
 # SQLAlchemy async connection URL.
+# SECURITY: Load from DB_URL environment variable (never hardcode passwords).
 # Examples:
 #   PostgreSQL : postgresql+asyncpg://user:pass@host/db
 #   SQL Server : mssql+aioodbc://user:pass@host/db?driver=ODBC+Driver+18+for+SQL+Server
 #   Oracle     : oracle+oracledb://user:pass@host:1521/ORCL
 #   Databricks : databricks://token:dapi...@<server-hostname>/<catalog>/<schema>
 #   SQLite     : sqlite+aiosqlite:///./poc_source.db
-DB_URL: str = _get_str("DB_URL", "db_url", "mssql+aioodbc://SA:YourPassword@localhost/source_db?driver=ODBC+Driver+18+for+SQL+Server")
+DB_URL: str = _get_str("DB_URL", "db_url", "")
 
 # Single-table mode defaults (legacy; prefer config.json "tables" array)
 DB_SOURCE_TABLE: str = _get_str("DB_SOURCE_TABLE", "source_table", "sales")
@@ -125,11 +126,21 @@ else:
 # ---------------------------------------------------------------------------
 
 import re as _re
+from security.credentials import scrub_database_url, validate_no_hardcoded_credentials
 
 
 def redact_db_url(url: str) -> str:
     """Mask password in DB URL for safe logging.
     
     ``scheme://user:password@host/db`` -> ``scheme://user:***@host/db``.
+    Uses the security module for consistent credential scrubbing.
     """
-    return _re.sub(r"(://[^:/@]+:)[^@/]*(@)", r"\1***\2", url)
+    return scrub_database_url(url)
+
+
+# Validate on import: ensure no hardcoded credentials in config
+try:
+    validate_no_hardcoded_credentials(_FILE_CFG)
+except ValueError as e:
+    print(f"[connection_config] SECURITY ERROR: {e}", file=sys.stderr)
+    sys.exit(1)

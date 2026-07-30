@@ -31,7 +31,7 @@ from observability.logging import get_logger
 log = get_logger(__name__)
 
 _CONFIG_FILE = os.environ.get("MOUNTS_CONFIG_FILE", "config.mounts.json")
-_SUPPORTED_BACKENDS = ("local", "s3")     # Phase 1 local; Phase 2 s3/MinIO. smb/azure later
+_SUPPORTED_BACKENDS = ("local", "s3", "azure")   # local (P1), s3/MinIO (P2), Azure Blob/ADLS (P3)
 
 
 def _enabled() -> bool:
@@ -46,20 +46,23 @@ def _enabled() -> bool:
 class Mount:
     """One bucket served as passthrough from a storage backend."""
     bucket: str
-    backend: str                 # "local" | "s3"
-    root: str = ""               # local: filesystem path (NFS/SMB mount); s3: upstream bucket
+    backend: str                 # "local" | "s3" | "azure"
+    root: str = ""               # local: filesystem path; s3: upstream bucket; azure: container
     prefix: str = ""             # confine serving to this subtree of the backend
     read_only: bool = True
     credential: str = ""         # credential-store id for upstream creds
     # s3 backend (non-secret connection knobs; secrets live in the credential store)
-    endpoint: str = ""           # custom endpoint URL (MinIO/Ceph/R2/...)
+    endpoint: str = ""           # custom endpoint URL (MinIO/Ceph/R2/...); azure: account URL override
     region: str = ""
     addressing_style: str = ""   # auto | path | virtual
     signature_version: str = ""  # s3v4 | s3 ("" = botocore default)
     verify_tls: str = ""         # ""=default | "false"=skip | else CA bundle path
     use_fips: bool = False
     use_dualstack: bool = False
-    auth: str = ""               # credential-less mode: anonymous | instance
+    auth: str = ""               # credential-less mode: anonymous | instance | default | managed_identity
+    # azure backend (non-secret connection knobs)
+    account: str = ""            # storage account name
+    endpoint_suffix: str = ""    # blob endpoint suffix (sovereign clouds); "" = blob.core.windows.net
 
 
 def _norm_prefix(p: str) -> str:
@@ -83,6 +86,8 @@ def _mount_from_json(d: dict) -> Mount:
         use_fips=bool(d.get("use_fips", False)),
         use_dualstack=bool(d.get("use_dualstack", False)),
         auth=str(d.get("auth") or "").strip().lower(),
+        account=str(d.get("account") or "").strip(),
+        endpoint_suffix=str(d.get("endpoint_suffix") or "").strip(),
     )
 
 
@@ -127,6 +132,9 @@ def _build_mounts() -> dict[str, Mount]:
             continue
         if m.backend == "s3" and not m.root:
             print(f"[mounts] s3 mount {m.bucket!r} missing 'root' (upstream bucket); skipped.", file=sys.stderr)
+            continue
+        if m.backend == "azure" and not m.root:
+            print(f"[mounts] azure mount {m.bucket!r} missing 'root' (container); skipped.", file=sys.stderr)
             continue
         if not m.read_only:
             print(f"[mounts] mount {m.bucket!r}: read-write not supported yet; serving read-only.", file=sys.stderr)
@@ -174,6 +182,9 @@ def _build_backend(mount: Mount) -> ArtifactStore:
     if mount.backend == "s3":
         from storage.s3_store import build_s3_store
         return build_s3_store(mount)
+    if mount.backend == "azure":
+        from storage.azure_store import build_azure_store
+        return build_azure_store(mount)
     raise ValueError(f"unsupported mount backend: {mount.backend!r}")
 
 
@@ -198,6 +209,15 @@ def validate_mounts() -> list[str]:
                 from storage.s3_auth import resolve_s3_auth, validate_s3_auth
                 auth = resolve_s3_auth(m)
                 problems.extend(f"mount {bucket!r}: {p}" for p in validate_s3_auth(auth))
+            except Exception as exc:  # noqa: BLE001 - surface a clean message, never a secret
+                problems.append(f"mount {bucket!r}: {exc}")
+        elif m.backend == "azure":
+            if not m.root:
+                problems.append(f"mount {bucket!r}: azure backend needs 'root' (the container)")
+            try:
+                from storage.azure_auth import resolve_azure_auth, validate_azure_auth
+                auth = resolve_azure_auth(m)
+                problems.extend(f"mount {bucket!r}: {p}" for p in validate_azure_auth(auth))
             except Exception as exc:  # noqa: BLE001 - surface a clean message, never a secret
                 problems.append(f"mount {bucket!r}: {exc}")
     return problems

@@ -1,5 +1,5 @@
 {
-  "_comment": "Storage proxy mount table. Copy to config.mounts.json (gitignored) and set ENABLE_STORAGE_PROXY=1. Each mount serves an S3 bucket as read-only byte passthrough from a backend, ALONGSIDE the relational->Iceberg path. Backends: 'local' (a filesystem path, incl. an OS-mounted NFS/SMB share) and 's3' (a native upstream S3/MinIO/S3-compatible bucket). For 's3', 'root' is the upstream bucket; secrets live in the encrypted credential store keyed by 'credential' (never inline) — a credential-less mount must set an explicit 'auth' mode ('anonymous' or 'instance'). The bucket must differ from the DB warehouse bucket (S3_BUCKET).",
+  "_comment": "Storage proxy mount table. Copy to config.mounts.json (gitignored) and set ENABLE_STORAGE_PROXY=1. Each mount serves an S3 bucket as read-only byte passthrough from a backend, ALONGSIDE the relational->Iceberg path. Backends: 'local' (a filesystem path, incl. an OS-mounted NFS/SMB share), 's3' (a native upstream S3/MinIO/S3-compatible bucket), and 'azure' (a native Azure Blob/ADLS Gen2 container). 'root' is the filesystem path / upstream bucket / container respectively; secrets live in the encrypted credential store keyed by 'credential' (never inline) — a credential-less s3 mount must set 'auth' ('anonymous'/'instance'), a credential-less azure mount must set 'auth' ('default'/'managed_identity'/'anonymous'). The bucket must differ from the DB warehouse bucket (S3_BUCKET).",
   "mounts": [
     {
       "bucket": "secure-nfs",
@@ -31,6 +31,23 @@
       "backend": "s3",
       "root": "open-data",
       "auth": "anonymous",
+      "read_only": true
+    },
+    {
+      "bucket": "blobvault",
+      "backend": "azure",
+      "root": "reports",
+      "prefix": "2026/",
+      "account": "mystorageacct",
+      "credential": "blobvault",
+      "read_only": true
+    },
+    {
+      "bucket": "adls-open",
+      "backend": "azure",
+      "root": "public",
+      "account": "opendatalake",
+      "auth": "default",
       "read_only": true
     }
   ]

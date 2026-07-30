@@ -466,6 +466,88 @@ async def delete_s3_credential(credential_id: str) -> JSONResponse:
     return JSONResponse({"ok": True, "credential_id": credential_id, "removed": removed})
 
 
+def _azure_auth_blob(auth) -> dict:
+    """Reduce a parsed AzureAuthConfig to the minimal stored blob for its mode."""
+    blob: dict = {"mode": auth.mode}
+    if auth.mode == "connection_string":
+        blob["connection_string"] = auth.connection_string
+    elif auth.mode == "account_key":
+        blob["account_key"] = auth.account_key
+    elif auth.mode == "sas":
+        blob["sas_token"] = auth.sas_token
+    elif auth.mode == "aad_client_secret":
+        blob["tenant_id"] = auth.tenant_id
+        blob["client_id"] = auth.client_id
+        blob["client_secret"] = auth.client_secret
+    elif auth.mode == "managed_identity":
+        if auth.client_id:
+            blob["client_id"] = auth.client_id
+    return blob
+
+
+@router.get("/api/azure-credentials")
+async def list_azure_credentials() -> JSONResponse:
+    """Non-secret list of stored upstream Azure credential ids."""
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "enabled": False,
+                             "error": "credential store is disabled (ENABLE_CREDENTIAL_STORE=0)"})
+    st = _store()
+    return JSONResponse({"ok": True, "enabled": True, "available": st.available,
+                         "backend": st.backend_name, "ids": st.list_secret_ids()})
+
+
+@router.post("/api/azure-credentials")
+async def save_azure_credential(request: Request) -> JSONResponse:
+    """Encrypt + persist an upstream Azure credential blob, keyed by an id.
+
+    Body: ``{credential_id, auth: {mode, ...}}``. Secrets are validated per mode
+    and stored encrypted; only the id is ever returned.
+    """
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled (ENABLE_CREDENTIAL_STORE=0)"},
+                            status_code=400)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    cid = str(body.get("credential_id") or "").strip()
+    if not cid:
+        return JSONResponse({"ok": False, "error": "credential_id is required"}, status_code=400)
+    auth_in = body.get("auth")
+    if not isinstance(auth_in, dict):
+        return JSONResponse({"ok": False, "error": "auth object is required"}, status_code=400)
+
+    from storage.azure_auth import parse_azure_auth, validate_azure_auth
+    auth = parse_azure_auth(auth_in)
+    problems = validate_azure_auth(auth)
+    if problems:
+        return JSONResponse({"ok": False, "errors": problems}, status_code=400)
+
+    st = _store()
+    if not st.available:
+        return JSONResponse({"ok": False, "backend": st.backend_name,
+                             "error": "no encryption backend available; on non-Windows hosts install "
+                                      "'cryptography' or set FSP_CRED_KEY"}, status_code=400)
+    try:
+        st.set_secret(cid, _azure_auth_blob(auth))
+    except (RuntimeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    log.info("azure_credential_saved", credential=cid, mode=auth.mode, backend=st.backend_name)
+    return JSONResponse({"ok": True, "credential_id": cid, "mode": auth.mode,
+                         "backend": st.backend_name,
+                         "note": "Saved (encrypted). Restart the Manager/Agents to apply to serving."})
+
+
+@router.delete("/api/azure-credentials/{credential_id}")
+async def delete_azure_credential(credential_id: str) -> JSONResponse:
+    """Remove a stored Azure credential (running Agents keep it until the next restart)."""
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    removed = _store().delete_secret(credential_id)
+    log.info("azure_credential_deleted", credential=credential_id, removed=removed)
+    return JSONResponse({"ok": True, "credential_id": credential_id, "removed": removed})
+
+
 # ---------------------------------------------------------------------------
 # Storage proxy mounts (config.mounts.json)
 # ---------------------------------------------------------------------------
@@ -550,6 +632,31 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
                 "use_fips": bool(e.get("use_fips", False)),
                 "use_dualstack": bool(e.get("use_dualstack", False)),
             })
+        elif backend == "azure":
+            if not root:
+                errors.append(f"mounts[{i}]: azure backend needs 'root' (the container)")
+                continue
+            credential = str(e.get("credential") or "").strip()
+            auth = str(e.get("auth") or "").strip().lower()
+            if not credential and not auth:
+                errors.append(f"mounts[{i}]: azure backend needs a 'credential' id or an explicit 'auth' "
+                              "mode ('default', 'managed_identity', or 'anonymous')")
+                continue
+            account = str(e.get("account") or "").strip()
+            endpoint = str(e.get("endpoint") or "").strip()
+            conn_string_cred = credential and auth == ""
+            # connection_string auth carries the account itself; otherwise we need
+            # an account name or an explicit account URL to reach the endpoint.
+            if not account and not endpoint and not conn_string_cred:
+                errors.append(f"mounts[{i}]: azure backend needs 'account' (storage account name) or 'endpoint' (account URL)")
+                continue
+            entry.update({
+                "credential": credential,
+                "auth": auth,
+                "account": account,
+                "endpoint": endpoint,
+                "endpoint_suffix": str(e.get("endpoint_suffix") or "").strip(),
+            })
         seen.add(bucket)
         clean.append(entry)
     return clean, errors
@@ -570,6 +677,10 @@ async def list_mounts() -> JSONResponse:
                           "signature_version": m.signature_version,
                           "verify_tls": m.verify_tls, "use_fips": m.use_fips,
                           "use_dualstack": m.use_dualstack})
+        elif m.backend == "azure":
+            entry.update({"credential": m.credential, "auth": m.auth,
+                          "account": m.account, "endpoint": m.endpoint,
+                          "endpoint_suffix": m.endpoint_suffix})
         mounts.append(entry)
     return JSONResponse({
         "ok": True,
@@ -623,8 +734,10 @@ async def test_mount(request: Request) -> JSONResponse:
     prefix = str(body.get("prefix") or "").strip().strip("/")
     if backend == "s3":
         return await _test_s3_mount(body, root, prefix)
+    if backend == "azure":
+        return await _test_azure_mount(body, root, prefix)
     if backend != "local":
-        return JSONResponse({"ok": False, "error": f"backend {backend!r} not testable (use 'local' or 's3')"})
+        return JSONResponse({"ok": False, "error": f"backend {backend!r} not testable (use 'local', 's3', or 'azure')"})
     if not root:
         return JSONResponse({"ok": False, "error": "root path is required"})
     base = os.path.join(root, *prefix.split("/")) if prefix else root
@@ -660,6 +773,32 @@ async def _test_s3_mount(body: dict, root: str, prefix: str) -> JSONResponse:
         return JSONResponse({"ok": False, "error": "; ".join(problems)})
     try:
         store = build_s3_store(mount)
+        entries = store.list_dir(mount.prefix)
+        sample = [name + ("/" if is_dir else "") for name, is_dir, *_ in entries[:20]]
+    except Exception as exc:  # noqa: BLE001 - surface a clean, secret-free message
+        return JSONResponse({"ok": False, "error": str(exc)})
+    return JSONResponse({"ok": True, "bucket": root, "auth_mode": auth.mode,
+                         "sample": sample, "sample_count": len(sample)})
+
+
+async def _test_azure_mount(body: dict, root: str, prefix: str) -> JSONResponse:
+    """Build the azure backend from the posted mount and list one folder level."""
+    import storage.mounts as sm
+    from storage.azure_auth import resolve_azure_auth, validate_azure_auth
+    from storage.azure_store import build_azure_store
+
+    if not root:
+        return JSONResponse({"ok": False, "error": "azure backend needs 'root' (the container)"})
+    mount = sm._mount_from_json({**body, "backend": "azure", "prefix": prefix})
+    try:
+        auth = resolve_azure_auth(mount)
+    except Exception as exc:  # noqa: BLE001 - never leak secret material
+        return JSONResponse({"ok": False, "error": str(exc)})
+    problems = validate_azure_auth(auth)
+    if problems:
+        return JSONResponse({"ok": False, "error": "; ".join(problems)})
+    try:
+        store = build_azure_store(mount)
         entries = store.list_dir(mount.prefix)
         sample = [name + ("/" if is_dir else "") for name, is_dir, *_ in entries[:20]]
     except Exception as exc:  # noqa: BLE001 - surface a clean, secret-free message

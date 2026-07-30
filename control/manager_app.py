@@ -69,6 +69,10 @@ def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int) 
         "AGENT_SHARD_COUNT": str(shard_count),
         # Split-ownership strategy — shared fleet-wide so every shard agrees.
         "SHARD_STRATEGY": config.SHARD_STRATEGY,
+        # Expose each Agent's monitor API so the Manager's operator console can
+        # scrape + aggregate it (the console's Monitor tab lives on the Manager).
+        "ENABLE_MONITOR": "1" if (config.ENABLE_MONITOR or config.ENABLE_ADMIN_UI)
+                          else os.environ.get("ENABLE_MONITOR", "0"),
     }
 
 
@@ -292,6 +296,14 @@ def create_manager_app() -> FastAPI:
     if config.ENABLE_CONFIG_BUILDER:
         from configbuilder.router import router as config_builder_router
         app.include_router(config_builder_router)
+
+    # Fleet monitor: the operator console's Monitor tab (and the standalone SPA)
+    # live on the Manager, but the live stats are per-Agent — this router scrapes
+    # every Agent's /_monitor/api/summary and merges them. Mounted BEFORE the
+    # gateway catch-all (which also reserves /_monitor) so it isn't shadowed.
+    if config.ENABLE_ADMIN_UI or config.ENABLE_MONITOR:
+        from control.monitor_proxy import create_monitor_proxy_router
+        app.include_router(create_monitor_proxy_router(supervisors))
 
     # Gateway (LB) MUST be included last: its /{bucket} catch-all would otherwise
     # shadow the control/health routes above.

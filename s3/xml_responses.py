@@ -21,15 +21,17 @@ def _modified(ts_ms: int | None = None) -> str:
     return _iso_now()
 
 
-def list_buckets_response(bucket_name: str, created_ms: int | None = None) -> bytes:
+def list_buckets_response(bucket_name: str, created_ms: int | None = None,
+                          *, extra_buckets: list[str] | None = None) -> bytes:
     root = ET.Element("ListAllMyBucketsResult", xmlns="http://s3.amazonaws.com/doc/2006-03-01/")
     owner = ET.SubElement(root, "Owner")
     ET.SubElement(owner, "ID").text = "poc-owner"
     ET.SubElement(owner, "DisplayName").text = "poc-owner"
     buckets_el = ET.SubElement(root, "Buckets")
-    bucket_el = ET.SubElement(buckets_el, "Bucket")
-    ET.SubElement(bucket_el, "Name").text = bucket_name
-    ET.SubElement(bucket_el, "CreationDate").text = _modified(created_ms)
+    for name in [bucket_name, *(extra_buckets or [])]:
+        bucket_el = ET.SubElement(buckets_el, "Bucket")
+        ET.SubElement(bucket_el, "Name").text = name
+        ET.SubElement(bucket_el, "CreationDate").text = _modified(created_ms)
     return b'<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode").encode()
 
 

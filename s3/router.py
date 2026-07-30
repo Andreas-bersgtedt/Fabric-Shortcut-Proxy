@@ -307,8 +307,17 @@ async def list_buckets() -> FastAPIResponse:
     """Handle S3 ListBuckets — Fabric calls this first when browsing."""
     snapshots = get_all_snapshots()
     created_ms = snapshots[0].watermark_ms if snapshots else 0
-    body = list_buckets_response(config.BUCKET_NAME, created_ms=created_ms)
-    log.info("list_buckets", bucket=config.BUCKET_NAME)
+    # Advertise mounted storage-proxy buckets alongside the DB warehouse so they
+    # appear in Fabric's bucket picker (they resolve via passthrough).
+    extra: list[str] = []
+    try:
+        from storage.mounts import enabled, mount_ids
+        if enabled():
+            extra = mount_ids()
+    except Exception:  # noqa: BLE001 - the storage proxy must never break ListBuckets
+        extra = []
+    body = list_buckets_response(config.BUCKET_NAME, created_ms=created_ms, extra_buckets=extra)
+    log.info("list_buckets", bucket=config.BUCKET_NAME, mounts=extra)
     return FastAPIResponse(content=body, media_type="application/xml")
 
 

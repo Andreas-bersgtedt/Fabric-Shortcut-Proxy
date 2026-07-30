@@ -177,6 +177,16 @@ async def test_coexistence_db_bucket_still_served(proxy_app):
         assert r2.status_code == 404 and "NoSuchBucket" in r2.text
 
 
+async def test_listbuckets_advertises_mounts(proxy_app):
+    # Fabric's shortcut picker calls ListBuckets (GET /) first — a mount must
+    # appear there alongside the DB warehouse bucket, else it can't be browsed.
+    async with _client(proxy_app) as c:
+        r = await c.get("/")
+        assert r.status_code == 200
+        assert config.BUCKET_NAME in r.text
+        assert "secure-nfs" in r.text
+
+
 # ---------------------------------------------------------------------------
 # config-builder mount endpoints (Storage tab wiring)
 # ---------------------------------------------------------------------------

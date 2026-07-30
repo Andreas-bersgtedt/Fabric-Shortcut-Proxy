@@ -360,6 +360,16 @@ const state = {
 // Composite key so same-named tables from different sources never collide.
 function selKey(connId, source){ return (connId||"default") + "::" + source; }
 
+// SECURITY: passwords must never be written into config files (the startup gate
+// rejects inline credentials in db_url). Strip the password from a URL and
+// detect whether one was present so we can point the operator at an env var.
+function stripPw(url){
+  if(!url) return url || "";
+  return url.replace(/(:\/\/[^:/@]+):[^@/]*@/, "$1@");
+}
+function hasPw(url){ return /:\/\/[^:/@]+:[^@/]*@/.test(url||""); }
+function envVarFor(id){ return id==="default" ? "DB_URL" : ("DB_URL_" + String(id).replace(/[^A-Za-z0-9]+/g,"_").toUpperCase()); }
+
 function newConn(id){
   return { id, dialect:"postgresql", host:"", port:"", database:"", username:"", password:"",
     driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"",
@@ -636,13 +646,22 @@ $("btnSaveConnection").onclick = async () => {
   commitActive();
   const s = $("connStatus"); s.className="status"; s.textContent="Saving connections…";
   $("btnSaveConnection").disabled = true;
-  // Only persist connections that were tested this session (real, non-masked URLs).
+  // Only persist connections tested this session (real URLs). Passwords are
+  // STRIPPED before writing — the security gate rejects inline credentials in
+  // config files — and the operator is pointed at the matching env var.
   const settings = {};
+  const envHints = [];
   const dflt = state.connections.get("default");
-  if(dflt && dflt.tested && dflt.db_url) settings.db_url = dflt.db_url;
-  const named = [...state.connections.values()]
-    .filter(c=>c.id!=="default" && c.tested && c.db_url)
-    .map(c=>({id:c.id, db_url:c.db_url}));
+  if(dflt && dflt.tested && dflt.db_url){
+    settings.db_url = stripPw(dflt.db_url);
+    if(hasPw(dflt.db_url)) envHints.push(envVarFor("default"));
+  }
+  const named = [];
+  for(const c of state.connections.values()){
+    if(c.id==="default" || !c.tested || !c.db_url) continue;
+    named.push({id:c.id, db_url: stripPw(c.db_url)});
+    if(hasPw(c.db_url)) envHints.push(envVarFor(c.id));
+  }
   if(named.length) settings.connections = named;
   if(!Object.keys(settings).length){
     $("btnSaveConnection").disabled = false;
@@ -668,8 +687,13 @@ $("btnSaveConnection").onclick = async () => {
     const parts = [];
     if(settings.db_url) parts.push("default");
     if(named.length) parts.push(`${named.length} named source${named.length>1?"s":""}`);
-    s.textContent = "✓ Saved " + parts.join(" + ") + " to config.connection.json (restart required to apply).";
-    setTimeout(()=>{ s.textContent=""; s.className="status"; }, 5000);
+    let msg = "✓ Saved " + parts.join(" + ") + " to config.connection.json (restart to apply).";
+    if(envHints.length){
+      const uniq = [...new Set(envHints)];
+      msg += " Passwords were omitted for security — set " + uniq.join(", ")
+           + " as environment variable(s) before starting (e.g. .\\Manager.ps1 -DbUrl \"<full URL>\" for the default).";
+    }
+    s.textContent = msg;
   }catch(e){
     $("btnSaveConnection").disabled = false;
     s.className="status err";
@@ -783,9 +807,11 @@ function renderSelected(){
 function buildConfig(){
   const cfg = {};
   const withPw = $("includePassword").checked;
-  const urlOf = (c) => withPw ? c.db_url : c.db_url_masked;
+  // Never emit the "user:***@host" masked form (it also trips the security gate);
+  // when a password is excluded, strip it entirely to a credential-free URL.
+  const urlOf = (c) => { const full = c.db_url || c.db_url_masked || ""; return withPw ? full : stripPw(full); };
   const dflt = state.connections.get("default");
-  cfg.db_url = dflt ? urlOf(dflt) : (withPw ? state.db_url : state.db_url_masked);
+  cfg.db_url = dflt ? urlOf(dflt) : (withPw ? state.db_url : stripPw(state.db_url || state.db_url_masked));
   // Named sources -> connections[] (the reserved 'default' stays as db_url).
   const named = [...state.connections.values()].filter(c=>c.id!=="default");
   if(named.length) cfg.connections = named.map(c=>({ id:c.id, db_url: urlOf(c) }));

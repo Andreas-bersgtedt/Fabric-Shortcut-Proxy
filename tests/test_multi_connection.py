@@ -185,3 +185,18 @@ def test_write_tables_with_connection(tmp_path, monkeypatch):
     assert tbls[1]["connection"] == "pg"
     assert "connection" not in tbls[0]
 
+
+def test_named_connection_env_override(monkeypatch):
+    # DB_URL_<ID> overrides the file's db_url so secrets can stay out of config.
+    monkeypatch.setenv("DB_URL_WAREHOUSE_PG", "postgresql+asyncpg://envhost/db")
+    c = connection_config._connection_from_json(
+        {"id": "warehouse_pg", "db_url": "postgresql+asyncpg://filehost/db"}
+    )
+    assert c.db_url == "postgresql+asyncpg://envhost/db"
+
+    # No env override -> the file value wins.
+    c2 = connection_config._connection_from_json(
+        {"id": "other_src", "db_url": "postgresql+asyncpg://filehost/db"}
+    )
+    assert c2.db_url == "postgresql+asyncpg://filehost/db"
+

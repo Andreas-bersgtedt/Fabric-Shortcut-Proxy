@@ -162,6 +162,20 @@ def redact_db_url(url: str) -> str:
 # top-level ``connections`` array in config.connection.json; each table binds to
 # one via its ``connection`` id (default: "default"). Per-connection query
 # limits are optional and fall back to the global defaults above.
+#
+# SECURITY: keep passwords OUT of config files. A named source's URL can be
+# supplied via the ``DB_URL_<ID>`` environment variable (id upper-cased,
+# non-alphanumerics -> ``_``), which overrides the file's ``db_url``. The
+# ``default`` source uses ``DB_URL``. The config builder writes credential-free
+# URLs and points operators at these env vars.
+
+
+def _env_url_for(connection_id: str) -> str | None:
+    """Return the ``DB_URL_<ID>`` environment override for a named connection, if set."""
+    if not connection_id:
+        return None
+    name = "DB_URL_" + _re.sub(r"[^A-Za-z0-9]+", "_", connection_id).upper()
+    return os.environ.get(name) or None
 
 
 @dataclass(frozen=True)
@@ -177,11 +191,15 @@ class Connection:
 
 
 def _connection_from_json(d: dict) -> Connection:
-    """Build a Connection from a ``connections[]`` entry (limits fall back to defaults)."""
+    """Build a Connection from a ``connections[]`` entry (limits fall back to defaults).
+
+    A ``DB_URL_<ID>`` environment variable overrides the file's ``db_url`` so
+    secrets can stay out of config files.
+    """
     cid = str(d.get("id") or d.get("name") or "").strip()
     return Connection(
         id=cid,
-        db_url=str(d.get("db_url") or ""),
+        db_url=_env_url_for(cid) or str(d.get("db_url") or ""),
         query_timeout_seconds=int(d.get("query_timeout_seconds", QUERY_TIMEOUT_SECONDS)),
         query_max_rows=int(d.get("query_max_rows", QUERY_MAX_ROWS)),
         db_max_retries=int(d.get("db_max_retries", DB_MAX_RETRIES)),

@@ -187,11 +187,44 @@ async def lifespan(app: FastAPI):
 
         _mat_sem = asyncio.Semaphore(config.MAX_CONCURRENT_GENERATIONS)
 
+        # Size-weighted split ownership (devplan/shardweight.md). When enabled with
+        # >1 shard and a shared store, compute a per-table LPT assignment from the
+        # prior run's observed split sizes so each shard gets a balanced share of
+        # BYTES, not just count. Falls back to modulo per split when absent.
+        _weight_store = None
+        _shard_assignment: dict | None = None
+        if config.SHARD_STRATEGY == "weighted" and config.AGENT_SHARD_COUNT > 1:
+            from planner import shard_weight as _sw
+            from runtime.artifact_store import build_store as _build_store
+            try:
+                _weight_store = _build_store(config.ARTIFACT_STORE_BACKEND,
+                                             local_dir=config.ARTIFACT_STORE_DIR)
+                _weights = _sw.load_weights(_weight_store)
+                _shard_assignment = _sw.build_assignment(snapshots, config.AGENT_SHARD_COUNT, _weights)
+                log.info("shard_assignment", strategy="weighted",
+                         shard_index=config.AGENT_SHARD_INDEX,
+                         shard_count=config.AGENT_SHARD_COUNT,
+                         warm=bool(_weights),
+                         loads=_sw.shard_loads(_shard_assignment, config.AGENT_SHARD_COUNT, _weights))
+            except Exception as exc:  # noqa: BLE001 - never let weighting break startup
+                log.warning("shard_weight_disabled", error=str(exc))
+                _weight_store = None
+                _shard_assignment = None
+
         def _owns_split(split) -> bool:
             """Phase 3: this Agent's shard owns (materializes) the split. With a
-            single shard every split is owned (single-Agent / known-good path)."""
+            single shard every split is owned (single-Agent / known-good path).
+            When a weighted assignment is active, it decides ownership; otherwise
+            (or for an unseen split) fall back to round-robin by split index."""
             n = config.AGENT_SHARD_COUNT
-            return n <= 1 or (split.split_index % n == config.AGENT_SHARD_INDEX)
+            if n <= 1:
+                return True
+            if _shard_assignment is not None:
+                from planner.shard_weight import stable_key
+                owner = _shard_assignment.get(stable_key(split.table.name, split.split_index))
+                if owner is not None:
+                    return owner == config.AGENT_SHARD_INDEX
+            return split.split_index % n == config.AGENT_SHARD_INDEX
 
         async def _wait_for_store(key: str) -> bytes | None:
             """Poll the artifact store for a split another shard is generating.
@@ -268,6 +301,20 @@ async def lifespan(app: FastAPI):
             snap.total_records = sum(counts)
             log.info("splits_materialized", table=snap.table.name,
                      total_records=snap.total_records, splits=len(snap.splits))
+
+        # Persist this run's observed split sizes so the next run can balance by
+        # bytes (weighted strategy). Shard 0 writes the full map — after the loop
+        # every Agent knows all sizes (owned=generated, non-owned=fetched). Idempotent.
+        if (config.SHARD_STRATEGY == "weighted" and _weight_store is not None
+                and config.AGENT_SHARD_INDEX == 0):
+            from planner.shard_weight import stable_key, save_weights
+            sizes = {
+                stable_key(snap.table.name, s.split_index): int(s.file_size_in_bytes)
+                for snap in snapshots for s in snap.splits
+                if s.file_size_in_bytes
+            }
+            if save_weights(_weight_store, sizes):
+                log.info("shard_weights_saved", entries=len(sizes))
 
         # Correctness guard for multi-table: Fabric's Iceberg->Delta conversion +
         # SQL-endpoint sync can run for MINUTES. If the in-memory Parquet cache

@@ -1175,6 +1175,10 @@ function renderSettings(){
     if(s.type==="bool"){
       inp=document.createElement("select");
       inp.innerHTML=`<option value="">default (${s.default})</option><option value="true">true</option><option value="false">false</option>`;
+    } else if(Array.isArray(s.choices) && s.choices.length){
+      inp=document.createElement("select");
+      inp.innerHTML=`<option value="">default (${s.default})</option>`
+        + s.choices.map(c=>`<option value="${c}">${c}</option>`).join("");
     } else {
       inp=document.createElement("input");
       inp.type=(s.type==="int"||s.type==="float")?"number":"text";
@@ -1361,6 +1365,8 @@ function renderLive(){
     const shown = (live.edits[s.key]!==undefined) ? String(live.edits[s.key]) : cur;
     if(s.type==="bool"){ inp=document.createElement("select");
       ["true","false"].forEach(v=>{ const o=document.createElement("option"); o.value=v; o.textContent=v; if(v===shown) o.selected=true; inp.appendChild(o); });
+    } else if(Array.isArray(s.choices) && s.choices.length){ inp=document.createElement("select");
+      s.choices.forEach(v=>{ const o=document.createElement("option"); o.value=v; o.textContent=v; if(String(v)===shown) o.selected=true; inp.appendChild(o); });
     } else { inp=document.createElement("input"); inp.value=shown; }
     inp.dataset.key=s.key; inp.dataset.type=s.type; inp.dataset.orig=cur;
     if(shown!==cur) inp.style.outline="2px solid #f5a623";   // highlight unsaved edit

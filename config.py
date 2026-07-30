@@ -35,7 +35,7 @@ from system_config import (
     # Artifact Store
     ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_SERVING, PUBLISH_SERVING_IMAGE,
     # Fleet
-    AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
+    AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
     # Control Plane
     MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT,
     HEARTBEAT_MS, HEARTBEAT_MISS_LIMIT, AGENT_RESTART_BACKOFF_SECONDS, AGENT_MAX_RAPID_RESTARTS,
@@ -150,6 +150,7 @@ _register("S3_ACCESS_KEY_ID", "access_key_id", "str", ACCESS_KEY_ID)
 _register("S3_SECRET_ACCESS_KEY", "secret_access_key", "str", SECRET_ACCESS_KEY)
 _register("REQUIRE_SIGV4", "require_sigv4", "bool", REQUIRE_SIGV4)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
+_register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 
 # Register memory monitoring settings
 _register("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", "int", 800)
@@ -402,6 +403,8 @@ def validate_config() -> None:
         problems.append(f"AGENT_SHARD_COUNT must be >= 1 (got {AGENT_SHARD_COUNT}).")
     if not (0 <= AGENT_SHARD_INDEX < AGENT_SHARD_COUNT):
         problems.append(f"AGENT_SHARD_INDEX must be in 0..AGENT_SHARD_COUNT-1 (got {AGENT_SHARD_INDEX}/{AGENT_SHARD_COUNT}).")
+    if SHARD_STRATEGY not in ("modulo", "weighted"):
+        problems.append(f"SHARD_STRATEGY must be 'modulo' or 'weighted' (got {SHARD_STRATEGY!r}).")
     if QUERY_TIMEOUT_SECONDS <= 0:
         problems.append(f"QUERY_TIMEOUT must be > 0 (got {QUERY_TIMEOUT_SECONDS}).")
     if QUERY_MAX_ROWS <= 0:
@@ -543,6 +546,7 @@ SETTINGS_META: dict[str, dict] = {
     "agent_count": {"cat": "Cluster (scale)", "help": "Manager: number of Agents to supervise (each on PORT+i)."},
     "agent_shard_index": {"cat": "Cluster (scale)", "help": "This Agent's materialization shard (set by the Manager)."},
     "agent_shard_count": {"cat": "Cluster (scale)", "help": "Total materialization shards (= agent_count)."},
+    "shard_strategy": {"cat": "Cluster (scale)", "help": "Split-ownership across shards: 'modulo' (round-robin by split index) or 'weighted' (size-weighted, balances bytes using observed split sizes from the prior run; needs a shared artifact store). Restart to apply.", "choices": ["modulo", "weighted"]},
     "enable_gateway": {"cat": "Cluster (scale)", "help": "Manager: front the Agent fleet with a built-in round-robin S3 gateway."},
     "materialize_wait_seconds": {"cat": "Cluster (scale)", "help": "Non-owner Agent: max wait for a sharded split to appear in the store before generating it locally."},
     "enable_admin_ui": {"cat": "Cluster (scale)", "help": "Manager: serve the /_manager operator console (fleet monitor + start/stop/restart/drain)."},
@@ -611,6 +615,7 @@ _KEY_TO_ATTR: dict[str, str] = {
     "bucket": "BUCKET_NAME",
     "require_sigv4": "REQUIRE_SIGV4",
     "agent_count": "AGENT_COUNT",
+    "shard_strategy": "SHARD_STRATEGY",
     "table_format": "TABLE_FORMAT",
     "metadata_cache_ttl": "METADATA_CACHE_TTL_SECONDS",
     "parquet_cache_ttl": "PARQUET_CACHE_TTL_SECONDS",
@@ -648,6 +653,7 @@ def settings_catalog() -> list[dict]:
             "category": meta.get("cat", "Other"),
             "help": meta.get("help", ""),
             "secret": bool(meta.get("secret", False)),
+            "choices": meta.get("choices"),
             "live": reg["key"] in LIVE_SETTINGS,
         })
     items.sort(key=lambda s: (
@@ -691,6 +697,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "agent_count": "config.system.json",
     "agent_shard_index": "config.system.json",
     "agent_shard_count": "config.system.json",
+    "shard_strategy": "config.system.json",
     "enable_gateway": "config.system.json",
     "materialize_wait_seconds": "config.system.json",
     "manager_url": "config.system.json",
@@ -805,6 +812,7 @@ def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
             "value": value, "source": source,
             "category": meta.get("cat", "Other"),
             "help": meta.get("help", ""), "secret": secret,
+            "choices": meta.get("choices"),
             "live": key in LIVE_SETTINGS,
         })
     out.sort(key=lambda s: (
@@ -871,9 +879,15 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
             errors.append(f"unknown setting {k!r}")
             continue
         try:
-            clean[k] = _coerce_setting_value(reg["type"], v)
+            coerced = _coerce_setting_value(reg["type"], v)
         except (ValueError, TypeError) as exc:
             errors.append(f"{k}: {exc}")
+            continue
+        choices = SETTINGS_META.get(k, {}).get("choices")
+        if choices and str(coerced) not in [str(c) for c in choices]:
+            errors.append(f"{k}: must be one of {choices} (got {coerced!r})")
+            continue
+        clean[k] = coerced
     return clean, errors
 
 

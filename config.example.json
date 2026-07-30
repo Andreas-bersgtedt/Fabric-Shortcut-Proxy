@@ -21,6 +21,7 @@
     "agent_count": 1,
     "agent_shard_index": 0,
     "agent_shard_count": 1,
+    "shard_strategy": "modulo",
     "enable_gateway": false,
     "materialize_wait_seconds": 30,
     "manager_url": "",

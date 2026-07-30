@@ -67,6 +67,8 @@ def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int) 
         # Phase 3: distributed materialization — this Agent's shard of the splits.
         "AGENT_SHARD_INDEX": str(shard_index),
         "AGENT_SHARD_COUNT": str(shard_count),
+        # Split-ownership strategy — shared fleet-wide so every shard agrees.
+        "SHARD_STRATEGY": config.SHARD_STRATEGY,
     }
 
 

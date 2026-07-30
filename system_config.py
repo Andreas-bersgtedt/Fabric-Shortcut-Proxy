@@ -152,6 +152,10 @@ AGENT_SHARD_INDEX: int = _get_int("AGENT_SHARD_INDEX", "agent_shard_index", 0)
 # Total materialization shards (= AGENT_COUNT)
 AGENT_SHARD_COUNT: int = _get_int("AGENT_SHARD_COUNT", "agent_shard_count", 1)
 
+# Split-ownership strategy across shards: "modulo" (round-robin by split index) or
+# "weighted" (size-weighted LPT using observed split sizes from the prior run).
+SHARD_STRATEGY: str = _get_str("SHARD_STRATEGY", "shard_strategy", "modulo").strip().lower()
+
 # Front the fleet with a built-in round-robin S3 gateway (Manager)
 ENABLE_GATEWAY: bool = _get_bool("ENABLE_GATEWAY", "enable_gateway", False)
 

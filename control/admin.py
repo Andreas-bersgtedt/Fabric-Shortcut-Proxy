@@ -65,6 +65,7 @@ def fleet_snapshot(
             "port": int(env["PORT"]) if str(env.get("PORT", "")).isdigit() else None,
             "shard_index": int(env.get("AGENT_SHARD_INDEX", 0) or 0),
             "shard_count": int(env.get("AGENT_SHARD_COUNT", 1) or 1),
+            "shard_strategy": str(env.get("SHARD_STRATEGY", "modulo") or "modulo"),
             "registered": rec is not None,
             "heartbeat_age": rec["seconds_since_heartbeat"] if rec else None,
             "serving_tables": rec["serving_tables"] if rec else [],
@@ -477,7 +478,7 @@ function render(d) {
       <td>${stateCell(a)}</td>
       <td>${a.pid ?? '<span class="muted">—</span>'}</td>
       <td>${a.port ?? "—"}</td>
-      <td>${a.shard_index}/${a.shard_count}</td>
+      <td>${a.shard_index}/${a.shard_count}${a.shard_strategy==="weighted"?' <span class="muted">(weighted)</span>':''}</td>
       <td>${a.restart_count}</td>
       <td>${hb}</td>
       <td>${memText}</td>

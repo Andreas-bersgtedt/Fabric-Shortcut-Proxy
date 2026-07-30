@@ -51,7 +51,7 @@
   .trow { display:flex; align-items:center; gap:8px; padding:6px 10px; border-top:1px solid var(--line); }
   .trow .name { flex:1; }
   .trow .kind { font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
-  .cfgrow { display:grid; grid-template-columns: 1fr auto auto; gap:8px; align-items:center;
+  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto; gap:8px; align-items:center;
             padding:8px 10px; border-top:1px solid var(--line); }
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
@@ -73,6 +73,16 @@
   .iconbtn { background:transparent; border:1px solid var(--line); color:var(--muted);
              border-radius:6px; padding:3px 9px; cursor:pointer; font-size:12px; }
   .iconbtn:hover { border-color:var(--err); color:var(--err); }
+  /* Collapsible per-connection table groups */
+  .tgroup { border:1px solid var(--line); border-radius:8px; margin-bottom:10px; overflow:hidden; }
+  .tghead { display:flex; align-items:center; gap:8px; padding:9px 12px; cursor:pointer;
+            background:var(--card); font-size:13px; font-weight:600; user-select:none; }
+  .tghead:hover { background:var(--bg); }
+  .tgcaret { display:inline-block; transition:transform .12s; color:var(--muted); }
+  .tgroup.open .tgcaret { transform:rotate(90deg); }
+  .tgcount { color:var(--muted); font-weight:400; font-size:12px; margin-left:auto; }
+  .tgbody { display:none; }
+  .tgroup.open .tgbody { display:block; }
   .mini { width:90px; } .keysel { width:150px; }
   .invalid { color:var(--err); font-size:11px; }
   pre { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:12px;
@@ -185,7 +195,7 @@
 
   <div class="card" id="selectedCard" style="margin-top:16px; display:none;">
     <h2>Per-Table Configuration</h2>
-    <div class="hint" style="margin-bottom:14px;">Adjust the key column and split count for each table.</div>
+    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Adjust the key column and split count, or remove a table with ✕.</div>
     <div id="selectedList"></div>
     <div class="actions">
       <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
@@ -354,7 +364,8 @@ const state = {
   connections: new Map(),    // id -> connObj (see newConn)
   tables: [],                // [{schema,name,kind}] for the ACTIVE connection
   connection: null,          // active conn's form snapshot (for /inspect)
-  selected: new Map()        // key `${connId}::${source_table}` -> table cfg
+  selected: new Map(),       // key `${connId}::${source_table}` -> table cfg
+  expandedGroups: new Set()  // connection ids whose table group is expanded in the Tables tab
 };
 
 // Composite key so same-named tables from different sources never collide.
@@ -460,12 +471,14 @@ function addConn(){
   const s=$("connStatus"); s.className="status"; s.textContent="New connection — set an id + details, then Test connection.";
 }
 function removeConn(id){
-  if(id === "default") return;
   const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
-  if(!confirm(`Remove connection '${id}'`+(n?` and its ${n} selected table(s)`:"")+"?")) return;
+  const label = id === "default" ? "the default connection" : `connection '${id}'`;
+  if(!confirm(`Remove ${label}`+(n?` and its ${n} selected table(s)`:"")+"?")) return;
   for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
   state.connections.delete(id);
-  if(state.activeConnId === id) state.activeConnId = "default";
+  // Never leave the manager empty — a default slot must always exist.
+  if(state.connections.size === 0) state.connections.set("default", newConn("default"));
+  if(!state.connections.has(state.activeConnId)) state.activeConnId = state.connections.keys().next().value;
   const c = state.connections.get(state.activeConnId);
   state.db_url = c.db_url; state.db_url_masked = c.db_url_masked;
   writeFormFromConn(c);
@@ -510,12 +523,11 @@ function renderConnList(){
       + `<div class="meta">${c.flavor || c.dialect || ""} · ${urlLine}</div>`
       + `<div class="meta">${n} table(s) selected</div>`;
     const acts = document.createElement("div"); acts.className = "connacts";
-    if(c.id !== "default"){
-      const rm = document.createElement("button"); rm.className = "iconbtn";
-      rm.textContent = "Remove"; rm.title = "Remove this connection";
-      rm.onclick = (e)=>{ e.stopPropagation(); removeConn(c.id); };
-      acts.appendChild(rm);
-    }
+    const rm = document.createElement("button"); rm.className = "iconbtn";
+    rm.textContent = "Remove";
+    rm.title = c.id === "default" ? "Remove the default connection and its tables" : "Remove this connection";
+    rm.onclick = (e)=>{ e.stopPropagation(); removeConn(c.id); };
+    acts.appendChild(rm);
     row.append(left, acts);
     row.onclick = ()=> selectConn(c.id);
     wrap.appendChild(row);
@@ -779,26 +791,61 @@ function renderSelected(){
   const items = [...state.selected.values()];
   card.style.display = items.length? "block":"none";
   wrap.innerHTML="";
+
+  // Group the selected tables by their source connection.
+  const groups = new Map();
   for(const s of items){
-    const row = document.createElement("div"); row.className="cfgrow";
-    const src = document.createElement("div"); src.className="src";
-    const connBadge = (s.connection && s.connection!=="default") ? ` <span class="pill">${s.connection}</span>` : "";
-    src.innerHTML = `<strong>${s.name}</strong>${connBadge}<br><span class="rows">${s.source_table}${
-      s.approx_rows!=null? " · ~"+Intl.NumberFormat().format(s.approx_rows)+" rows":""}</span>`;
-    if(s.pending){ src.innerHTML += `<br><span class="rows">reflecting…</span>`; }
-    if(s.invalid){ src.innerHTML += `<br><span class="invalid">no integer key — cannot split</span>`; }
+    const cid = s.connection || "default";
+    if(!groups.has(cid)) groups.set(cid, []);
+    groups.get(cid).push(s);
+  }
 
-    const keysel = document.createElement("select"); keysel.className="keysel";
-    const keys = s.integer_keys.length? s.integer_keys : (s.key_column? [s.key_column]: []);
-    for(const k of keys){ const o=document.createElement("option"); o.value=k; o.textContent=k;
-      if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
-    if(keys.length===0){ const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true; }
-    keysel.onchange = ()=>{ s.key_column=keysel.value; updatePreview(); };
+  for(const [cid, list] of groups){
+    const open = state.expandedGroups.has(cid);
+    const grp = document.createElement("div"); grp.className = "tgroup" + (open ? " open" : "");
 
-    const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
-    splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
+    const head = document.createElement("div"); head.className = "tghead";
+    const needKey = list.filter(s=>s.invalid || !s.key_column).length;
+    const primary = cid === "default" ? ' <span class="badge">primary</span>' : "";
+    head.innerHTML = `<span class="tgcaret">▸</span><span>${cid}${primary}</span>`
+      + `<span class="tgcount">${list.length} table${list.length!==1?"s":""}`
+      + (needKey ? ` · ${needKey} need a key` : "") + `</span>`;
+    head.onclick = ()=>{
+      if(state.expandedGroups.has(cid)) state.expandedGroups.delete(cid);
+      else state.expandedGroups.add(cid);
+      renderSelected();
+    };
 
-    row.append(src, keysel, splits); wrap.appendChild(row);
+    const body = document.createElement("div"); body.className = "tgbody";
+    for(const s of list){
+      const key = selKey(s.connection, s.source_table);
+      const row = document.createElement("div"); row.className="cfgrow";
+      const src = document.createElement("div"); src.className="src";
+      src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
+        s.approx_rows!=null? " · ~"+Intl.NumberFormat().format(s.approx_rows)+" rows":""}</span>`;
+      if(s.pending){ src.innerHTML += `<br><span class="rows">reflecting…</span>`; }
+      if(s.invalid){ src.innerHTML += `<br><span class="invalid">no integer key — cannot split</span>`; }
+
+      const keysel = document.createElement("select"); keysel.className="keysel";
+      const keys = s.integer_keys.length? s.integer_keys : (s.key_column? [s.key_column]: []);
+      for(const k of keys){ const o=document.createElement("option"); o.value=k; o.textContent=k;
+        if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
+      if(keys.length===0){ const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true; }
+      keysel.onchange = ()=>{ s.key_column=keysel.value; updatePreview(); persistConns(); };
+
+      const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
+      splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
+
+      const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
+      rm.onclick = ()=>{
+        state.selected.delete(key);
+        renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
+      };
+
+      row.append(src, keysel, splits, rm); body.appendChild(row);
+    }
+
+    grp.append(head, body); wrap.appendChild(grp);
   }
   updatePreview();
 }

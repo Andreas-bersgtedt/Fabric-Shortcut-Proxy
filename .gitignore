@@ -57,11 +57,13 @@ Thumbs.db
 *.swp
 config.py.backup
 
-# Sensitive configuration files - DO NOT commit
-# Credentials must be provided via environment variables
+# Local per-deployment config files - DO NOT commit
+# Credentials come from environment variables; table lists are environment-specific.
+# Fresh installs fall back to built-in defaults (SQLite poc_source.db + 'sales' table).
 config.connection.json
 config.system.json
 config.performance.json
+config.tables.json
 *.env
 .env.local
 secrets.json

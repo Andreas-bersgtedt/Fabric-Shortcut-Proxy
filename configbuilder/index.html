@@ -128,7 +128,7 @@
 <div id="connection-tab" class="tab-content active">
   <div class="card">
     <h2>Connections</h2>
-    <div class="hint" style="margin-bottom:12px;">Manage every source database here. Select one to edit it, <b>+ Add connection</b> for extra sources (any dialect), or remove ones you don't need. The reserved <code>default</code> connection is saved as <code>db_url</code>; the others go to <code>connections[]</code> (a restart loads them).</div>
+    <div class="hint" style="margin-bottom:12px;">Your <b>default</b> connection is your primary database (saved as <code>db_url</code>) and is <b>always present</b> — configure it with your main source and put your tables on it. Only <b>+ Add connection</b> when you need a <b>second, different</b> database; those extra sources are saved to <code>connections[]</code> and a restart loads them.</div>
     <div id="connList" class="connlist"></div>
     <div class="actions" style="margin-top:12px;">
       <button class="btn ghost" id="btnAddConn">+ Add connection</button>
@@ -141,7 +141,7 @@
     <div class="hint" style="margin-bottom:14px;">Enter the source details, then <b>Test connection</b> to verify it and list its tables.</div>
     <label>Connection id</label>
     <input id="connId" value="default" placeholder="default" />
-    <div class="hint" id="connIdHint" style="margin:-6px 0 12px;">The reserved <code>default</code> id can't be renamed. Give each extra source a distinct id (e.g. <code>warehouse_pg</code>).</div>
+    <div class="hint" id="connIdHint" style="margin:-6px 0 12px;">The <code>default</code> id is the reserved primary source and can't be renamed or deleted. If you only have one database, configure <code>default</code> and skip adding connections. Named sources (e.g. <code>warehouse_pg</code>) are only for additional databases.</div>
     <label>Dialect</label>
     <select id="dialect">
       <option value="postgresql">PostgreSQL</option>
@@ -394,20 +394,11 @@ function loadForm(){ try{ const o=JSON.parse(localStorage.getItem("cfgbuilder")|
   PERSIST.forEach(id=>{ if(o[id]!==undefined) $(id).value=o[id]; }); }catch(e){} }
 
 function persistConns(){
-  try{
-    const conns = [...state.connections.values()].map(c=>{ const {password, ...rest}=c; return rest; });
-    localStorage.setItem("cfgbuilder_conns", JSON.stringify({conns, active:state.activeConnId}));
-  }catch(e){}
+  // Connection/table state mirrors the LIVE config (bootstrap) — intentionally
+  // NOT persisted, so a removed connection/table can't reappear as a stale ghost.
+  try{ localStorage.removeItem("cfgbuilder_conns"); }catch(e){}
 }
-function loadConns(){
-  try{
-    const o = JSON.parse(localStorage.getItem("cfgbuilder_conns")||"{}");
-    for(const c of (o.conns||[])){
-      if(c && c.id) state.connections.set(String(c.id), Object.assign(newConn(String(c.id)), c));
-    }
-    if(o.active) state.activeConnId = String(o.active);
-  }catch(e){}
-}
+function loadConns(){ /* no-op: the running config is the single source of truth */ }
 function ensureDefaultConn(){
   if(!state.connections.has("default")) state.connections.set("default", newConn("default"));
   if(!state.connections.has(state.activeConnId)) state.activeConnId = "default";
@@ -470,6 +461,13 @@ function addConn(){
   $("connId").focus(); $("connId").select();
   const s=$("connStatus"); s.className="status"; s.textContent="New connection — set an id + details, then Test connection.";
 }
+function clearConnTables(id){
+  const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
+  if(!n){ const s=$("connStatus"); s.className="status"; s.textContent="No tables are assigned to '"+id+"'."; return; }
+  if(!confirm(`Remove all ${n} table(s) from '${id}'?`)) return;
+  for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
+  renderConnList(); renderSelected(); updatePreview();
+}
 function removeConn(id){
   const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
   const label = id === "default" ? "the default connection" : `connection '${id}'`;
@@ -524,9 +522,17 @@ function renderConnList(){
       + `<div class="meta">${n} table(s) selected</div>`;
     const acts = document.createElement("div"); acts.className = "connacts";
     const rm = document.createElement("button"); rm.className = "iconbtn";
-    rm.textContent = "Remove";
-    rm.title = c.id === "default" ? "Remove the default connection and its tables" : "Remove this connection";
-    rm.onclick = (e)=>{ e.stopPropagation(); removeConn(c.id); };
+    if(c.id === "default"){
+      // The default connection is the reserved primary (the db_url) and is always
+      // present — you can't delete it, only clear the tables assigned to it.
+      rm.textContent = "Clear tables";
+      rm.title = "Remove the tables assigned to the primary connection (it can't be deleted — it's the db_url)";
+      rm.onclick = (e)=>{ e.stopPropagation(); clearConnTables("default"); };
+    } else {
+      rm.textContent = "Remove";
+      rm.title = "Remove this connection and its tables";
+      rm.onclick = (e)=>{ e.stopPropagation(); removeConn(c.id); };
+    }
     acts.appendChild(rm);
     row.append(left, acts);
     row.onclick = ()=> selectConn(c.id);
@@ -547,48 +553,42 @@ function applyBootstrap(builder){
   if(builder.refresh_ttl_seconds!=null) $("refreshTtl").value = String(builder.refresh_ttl_seconds);
   $("refreshFullPull").checked = !!builder.refresh_allow_full_pull;
 
-  // Merge running-config sources into the manager (masked URLs; don't clobber
-  // any locally-edited connection the operator hasn't saved yet).
-  if(builder.has_db_url && builder.db_url_masked){
-    const d = state.connections.get("default") || newConn("default");
-    if(!d.db_url_masked){ d.db_url_masked = builder.db_url_masked; d.db_url = d.db_url || builder.db_url_masked; }
-    if(!d.flavor && builder.db_url_masked){ d.flavor = ""; }
-    state.connections.set("default", d);
-  }
+  // Authoritative: the builder mirrors the LIVE config exactly, so nothing stale
+  // lingers — a connection/table removed from config can't silently reappear, and
+  // tables always show under the connection the config actually assigns them to.
+  state.connections.clear();
+  state.selected.clear();
+
+  const d = newConn("default");
+  if(builder.has_db_url && builder.db_url_masked){ d.db_url_masked = builder.db_url_masked; d.db_url = builder.db_url_masked; }
+  state.connections.set("default", d);
   for(const c of (builder.connections||[])){
     if(!c || !c.id) continue;
-    const id = String(c.id);
-    if(!state.connections.has(id)){
-      const nc = newConn(id);
-      nc.db_url_masked = c.db_url_masked || ""; nc.db_url = c.db_url_masked || "";
-      nc.flavor = c.flavor || "";
-      state.connections.set(id, nc);
-    }
+    const nc = newConn(String(c.id));
+    nc.db_url_masked = c.db_url_masked || ""; nc.db_url = c.db_url_masked || ""; nc.flavor = c.flavor || "";
+    state.connections.set(nc.id, nc);
   }
-  ensureDefaultConn();
+  if(!state.connections.has(state.activeConnId)) state.activeConnId = "default";
 
-  // Prefill table mappings so the preview reflects what is currently running
-  // (only when the operator hasn't already selected tables locally).
-  if(state.selected.size === 0){
-    for(const t of (builder.tables||[])){
-      if(!t || !t.source_table) continue;
-      const source = String(t.source_table);
-      const name = String(t.name || source.split(".").pop() || "table");
-      const connId = String(t.connection || "default");
-      state.selected.set(selKey(connId, source), {
-        name,
-        schema: null,
-        source_table: source,
-        connection: connId,
-        key_column: t.key_column || null,
-        num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
-        integer_keys: t.key_column ? [t.key_column] : [],
-        columns: [],
-        approx_rows: null,
-        invalid: !t.key_column,
-        pending: false,
-      });
-    }
+  // Mirror the configured table -> connection assignments.
+  for(const t of (builder.tables||[])){
+    if(!t || !t.source_table) continue;
+    const source = String(t.source_table);
+    const name = String(t.name || source.split(".").pop() || "table");
+    const connId = String(t.connection || "default");
+    state.selected.set(selKey(connId, source), {
+      name,
+      schema: null,
+      source_table: source,
+      connection: connId,
+      key_column: t.key_column || null,
+      num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
+      integer_keys: t.key_column ? [t.key_column] : [],
+      columns: [],
+      approx_rows: null,
+      invalid: !t.key_column,
+      pending: false,
+    });
   }
 
   const active = state.connections.get(state.activeConnId);

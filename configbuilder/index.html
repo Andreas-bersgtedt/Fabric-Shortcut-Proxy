@@ -58,6 +58,21 @@
   .cfgrow .rows { font-size:11px; color:var(--muted); }
   .pill { display:inline-block; font-size:10px; padding:0 6px; border:1px solid var(--accent);
           color:var(--accent); border-radius:20px; vertical-align:middle; }
+  .connlist { display:flex; flex-direction:column; gap:8px; }
+  .connrow { display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;
+             padding:10px 12px; border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+  .connrow:hover { border-color:var(--accent2); }
+  .connrow.active { border-color:var(--accent); background:rgba(56,189,248,.07); }
+  .connrow .cid { font-weight:600; font-size:13px; }
+  .connrow .meta { font-size:11px; color:var(--muted); margin-top:2px; word-break:break-all; }
+  .connacts { display:flex; gap:6px; }
+  .badge { display:inline-block; font-size:10px; padding:0 6px; border-radius:20px;
+           border:1px solid var(--line); color:var(--muted); vertical-align:middle; }
+  .badge.ok { color:var(--ok); border-color:var(--ok); }
+  .badge.warn { color:var(--warn); border-color:var(--warn); }
+  .iconbtn { background:transparent; border:1px solid var(--line); color:var(--muted);
+             border-radius:6px; padding:3px 9px; cursor:pointer; font-size:12px; }
+  .iconbtn:hover { border-color:var(--err); color:var(--err); }
   .mini { width:90px; } .keysel { width:150px; }
   .invalid { color:var(--err); font-size:11px; }
   pre { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:12px;
@@ -102,11 +117,21 @@
 <!-- CONNECTION TAB -->
 <div id="connection-tab" class="tab-content active">
   <div class="card">
-    <h2>Database Connection</h2>
-    <div class="hint" style="margin-bottom:14px;">Connect to your SQL source database to discover tables and generate configuration. To serve tables from <b>several sources</b>, give each a distinct <b>Connection id</b>, connect, pick its tables, then repeat for the next source.</div>
+    <h2>Connections</h2>
+    <div class="hint" style="margin-bottom:12px;">Manage every source database here. Select one to edit it, <b>+ Add connection</b> for extra sources (any dialect), or remove ones you don't need. The reserved <code>default</code> connection is saved as <code>db_url</code>; the others go to <code>connections[]</code> (a restart loads them).</div>
+    <div id="connList" class="connlist"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn ghost" id="btnAddConn">+ Add connection</button>
+      <button class="btn ghost" id="btnSaveConnection">💾 Save all connections to config</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2 id="connEditTitle">Edit connection</h2>
+    <div class="hint" style="margin-bottom:14px;">Enter the source details, then <b>Test connection</b> to verify it and list its tables.</div>
     <label>Connection id</label>
     <input id="connId" value="default" placeholder="default" />
-    <div class="hint" style="margin:-6px 0 12px;">Use <code>default</code> for the primary source (its URL is saved as <code>db_url</code>). Use a distinct id (e.g. <code>warehouse_pg</code>) for each additional source.</div>
+    <div class="hint" id="connIdHint" style="margin:-6px 0 12px;">The reserved <code>default</code> id can't be renamed. Give each extra source a distinct id (e.g. <code>warehouse_pg</code>).</div>
     <label>Dialect</label>
     <select id="dialect">
       <option value="postgresql">PostgreSQL</option>
@@ -140,15 +165,8 @@
     </details>
     <div class="actions">
       <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
-      <button class="btn ghost" id="btnSaveConnection">Save connection(s) to config</button>
     </div>
     <div class="status" id="connStatus"></div>
-  </div>
-
-  <div class="card" id="sourcesCard" style="margin-top:16px; display:none;">
-    <h2>Configured sources</h2>
-    <div class="hint" style="margin-bottom:12px;">Each source you connect to is remembered here. Tables you select are tagged with the active source's id. Named sources (not <code>default</code>) require a restart to load.</div>
-    <div id="sourcesList"></div>
   </div>
 </div>
 
@@ -324,25 +342,72 @@ function initTabs(){
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443" };
-const PERSIST = ["connId","dialect","host","port","database","username","driver","http_path","catalog","schema","bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
+// Connection fields live in the per-connection manager; only global builder
+// settings are persisted through the generic form store.
+const PERSIST = ["bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
+// Editable connection form fields (password is in-memory only, never persisted).
+const CONN_FIELDS = ["dialect","host","port","database","username","password","driver","token","http_path","catalog","schema"];
 
 const state = {
-  connection: null,   // last-used connection fields
   db_url: "", db_url_masked: "",
-  activeConnId: "default",   // the source id newly listed/selected tables are tagged with
-  connections: new Map(),    // id -> {id, db_url, db_url_masked, flavor, saved}
-  tables: [],         // [{schema,name,kind}] for the ACTIVE connection
-  selected: new Map() // key `${connId}::${source_table}` -> {name, source_table, connection, key_column, num_splits, integer_keys, columns, approx_rows, invalid}
+  activeConnId: "default",   // the connection currently loaded in the edit form
+  connections: new Map(),    // id -> connObj (see newConn)
+  tables: [],                // [{schema,name,kind}] for the ACTIVE connection
+  connection: null,          // active conn's form snapshot (for /inspect)
+  selected: new Map()        // key `${connId}::${source_table}` -> table cfg
 };
 
 // Composite key so same-named tables from different sources never collide.
 function selKey(connId, source){ return (connId||"default") + "::" + source; }
+
+function newConn(id){
+  return { id, dialect:"postgresql", host:"", port:"", database:"", username:"", password:"",
+    driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"",
+    db_url:"", db_url_masked:"", flavor:"", tested:false };
+}
 
 // ---- persistence (never the password) ----
 function saveForm(){ const o={}; PERSIST.forEach(id=>o[id]=$(id).value);
   try{ localStorage.setItem("cfgbuilder", JSON.stringify(o)); }catch(e){} }
 function loadForm(){ try{ const o=JSON.parse(localStorage.getItem("cfgbuilder")||"{}");
   PERSIST.forEach(id=>{ if(o[id]!==undefined) $(id).value=o[id]; }); }catch(e){} }
+
+function persistConns(){
+  try{
+    const conns = [...state.connections.values()].map(c=>{ const {password, ...rest}=c; return rest; });
+    localStorage.setItem("cfgbuilder_conns", JSON.stringify({conns, active:state.activeConnId}));
+  }catch(e){}
+}
+function loadConns(){
+  try{
+    const o = JSON.parse(localStorage.getItem("cfgbuilder_conns")||"{}");
+    for(const c of (o.conns||[])){
+      if(c && c.id) state.connections.set(String(c.id), Object.assign(newConn(String(c.id)), c));
+    }
+    if(o.active) state.activeConnId = String(o.active);
+  }catch(e){}
+}
+function ensureDefaultConn(){
+  if(!state.connections.has("default")) state.connections.set("default", newConn("default"));
+  if(!state.connections.has(state.activeConnId)) state.activeConnId = "default";
+}
+
+// Read the form into the active connection object (and vice versa).
+function readFormIntoConn(c){
+  if(!c) return;
+  CONN_FIELDS.forEach(f => c[f] = $(f).value);
+  c.trust_cert = $("trust_cert").checked;
+}
+function writeFormFromConn(c){
+  if(!c) return;
+  CONN_FIELDS.forEach(f => $(f).value = (c[f]!=null ? c[f] : ""));
+  $("trust_cert").checked = c.trust_cert !== false;
+  $("connId").value = c.id;
+  $("connId").disabled = (c.id === "default");
+  $("port").placeholder = "(default "+DEFAULT_PORTS[c.dialect||"postgresql"]+")";
+  $("connEditTitle").textContent = "Edit connection — " + c.id;
+}
+function commitActive(){ readFormIntoConn(state.connections.get(state.activeConnId)); }
 
 function connFields(){
   return {
@@ -362,24 +427,88 @@ function connFields(){
   };
 }
 
-// ---- configured-sources panel ----
-function renderSources(){
-  const card = $("sourcesCard"); const wrap = $("sourcesList");
-  const items = [...state.connections.values()];
-  card.style.display = items.length ? "block" : "none";
-  wrap.innerHTML = "";
-  for(const c of items){
+// ---- connection manager ----
+function selectConn(id){
+  if(!state.connections.has(id)) return;
+  commitActive();
+  state.activeConnId = id;
+  const c = state.connections.get(id);
+  state.db_url = c.db_url; state.db_url_masked = c.db_url_masked;
+  writeFormFromConn(c);
+  $("connStatus").textContent=""; $("connStatus").className="status";
+  renderConnList(); renderSelected(); persistConns();
+}
+function addConn(){
+  commitActive();
+  let n = 1, id = "source_"+n;
+  while(state.connections.has(id)){ n++; id = "source_"+n; }
+  state.connections.set(id, newConn(id));
+  state.activeConnId = id;
+  writeFormFromConn(state.connections.get(id));
+  renderConnList(); persistConns();
+  $("connId").focus(); $("connId").select();
+  const s=$("connStatus"); s.className="status"; s.textContent="New connection — set an id + details, then Test connection.";
+}
+function removeConn(id){
+  if(id === "default") return;
+  const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
+  if(!confirm(`Remove connection '${id}'`+(n?` and its ${n} selected table(s)`:"")+"?")) return;
+  for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
+  state.connections.delete(id);
+  if(state.activeConnId === id) state.activeConnId = "default";
+  const c = state.connections.get(state.activeConnId);
+  state.db_url = c.db_url; state.db_url_masked = c.db_url_masked;
+  writeFormFromConn(c);
+  renderConnList(); renderSelected(); updatePreview(); persistConns();
+}
+function renameActive(newId){
+  newId = (newId||"").trim();
+  const oldId = state.activeConnId;
+  if(oldId === "default"){ $("connId").value = "default"; return; }   // default is fixed
+  if(!newId || newId === oldId) return;
+  const s = $("connStatus");
+  if(newId === "default" || state.connections.has(newId)){
+    s.className="status err"; s.textContent="✗ id '"+newId+"' is reserved or already in use.";
+    $("connId").value = oldId; return;
+  }
+  const c = state.connections.get(oldId);
+  state.connections.delete(oldId); c.id = newId; state.connections.set(newId, c);
+  for(const [k,v] of [...state.selected.entries()]){
+    if((v.connection||"default") === oldId){
+      v.connection = newId; state.selected.delete(k); state.selected.set(selKey(newId, v.source_table), v);
+    }
+  }
+  state.activeConnId = newId;
+  writeFormFromConn(c);
+  renderConnList(); renderSelected(); updatePreview(); persistConns();
+}
+function renderConnList(){
+  const wrap = $("connList"); wrap.innerHTML = "";
+  for(const c of state.connections.values()){
     const n = [...state.selected.values()].filter(s=>(s.connection||"default")===c.id).length;
-    const row = document.createElement("div"); row.className = "cfgrow";
-    const active = c.id === state.activeConnId;
-    const left = document.createElement("div"); left.className = "src";
-    left.innerHTML = `<strong>${c.id}${active?' <span class="pill">active</span>':''}</strong>`
-      + `<br><span class="rows">${c.flavor||''} · ${c.db_url_masked||''}</span>`
-      + `<br><span class="rows">${n} table(s) selected</span>`;
-    const useBtn = document.createElement("button"); useBtn.className="btn ghost"; useBtn.textContent="Make active";
-    useBtn.onclick = ()=>{ state.activeConnId = c.id; $("connId").value = c.id;
-      state.db_url = c.db_url; state.db_url_masked = c.db_url_masked; renderSources(); renderSelected(); };
-    row.append(left, useBtn); wrap.appendChild(row);
+    const row = document.createElement("div");
+    row.className = "connrow" + (c.id === state.activeConnId ? " active" : "");
+    const left = document.createElement("div");
+    const idLabel = c.id === "default"
+      ? `${c.id} <span class="badge">primary</span>`
+      : c.id;
+    const testBadge = c.tested ? '<span class="badge ok">tested</span>' : '<span class="badge warn">not tested</span>';
+    const urlLine = c.db_url_masked
+      ? c.db_url_masked
+      : (c.host ? (c.dialect + " · " + c.host + (c.database ? "/"+c.database : "")) : "not configured yet");
+    left.innerHTML = `<div class="cid">${idLabel} ${testBadge}</div>`
+      + `<div class="meta">${c.flavor || c.dialect || ""} · ${urlLine}</div>`
+      + `<div class="meta">${n} table(s) selected</div>`;
+    const acts = document.createElement("div"); acts.className = "connacts";
+    if(c.id !== "default"){
+      const rm = document.createElement("button"); rm.className = "iconbtn";
+      rm.textContent = "Remove"; rm.title = "Remove this connection";
+      rm.onclick = (e)=>{ e.stopPropagation(); removeConn(c.id); };
+      acts.appendChild(rm);
+    }
+    row.append(left, acts);
+    row.onclick = ()=> selectConn(c.id);
+    wrap.appendChild(row);
   }
 }
 
@@ -396,52 +525,63 @@ function applyBootstrap(builder){
   if(builder.refresh_ttl_seconds!=null) $("refreshTtl").value = String(builder.refresh_ttl_seconds);
   $("refreshFullPull").checked = !!builder.refresh_allow_full_pull;
 
-  // Prefill configured sources (masked — real URLs come from re-connecting).
-  state.connections.clear();
+  // Merge running-config sources into the manager (masked URLs; don't clobber
+  // any locally-edited connection the operator hasn't saved yet).
   if(builder.has_db_url && builder.db_url_masked){
-    state.connections.set("default", {id:"default", db_url:builder.db_url_masked,
-      db_url_masked:builder.db_url_masked, flavor:"", saved:true});
+    const d = state.connections.get("default") || newConn("default");
+    if(!d.db_url_masked){ d.db_url_masked = builder.db_url_masked; d.db_url = d.db_url || builder.db_url_masked; }
+    if(!d.flavor && builder.db_url_masked){ d.flavor = ""; }
+    state.connections.set("default", d);
   }
   for(const c of (builder.connections||[])){
     if(!c || !c.id) continue;
-    state.connections.set(String(c.id), {id:String(c.id), db_url:c.db_url_masked||"",
-      db_url_masked:c.db_url_masked||"", flavor:c.flavor||"", saved:true});
+    const id = String(c.id);
+    if(!state.connections.has(id)){
+      const nc = newConn(id);
+      nc.db_url_masked = c.db_url_masked || ""; nc.db_url = c.db_url_masked || "";
+      nc.flavor = c.flavor || "";
+      state.connections.set(id, nc);
+    }
   }
-  state.activeConnId = "default";
+  ensureDefaultConn();
 
-  // Prefill table mappings so the preview reflects what is currently running.
-  state.selected.clear();
-  for(const t of (builder.tables||[])){
-    if(!t || !t.source_table) continue;
-    const source = String(t.source_table);
-    const name = String(t.name || source.split(".").pop() || "table");
-    const connId = String(t.connection || "default");
-    state.selected.set(selKey(connId, source), {
-      name,
-      schema: null,
-      source_table: source,
-      connection: connId,
-      key_column: t.key_column || null,
-      num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
-      integer_keys: t.key_column ? [t.key_column] : [],
-      columns: [],
-      approx_rows: null,
-      invalid: !t.key_column,
-      pending: false,
-    });
+  // Prefill table mappings so the preview reflects what is currently running
+  // (only when the operator hasn't already selected tables locally).
+  if(state.selected.size === 0){
+    for(const t of (builder.tables||[])){
+      if(!t || !t.source_table) continue;
+      const source = String(t.source_table);
+      const name = String(t.name || source.split(".").pop() || "table");
+      const connId = String(t.connection || "default");
+      state.selected.set(selKey(connId, source), {
+        name,
+        schema: null,
+        source_table: source,
+        connection: connId,
+        key_column: t.key_column || null,
+        num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
+        integer_keys: t.key_column ? [t.key_column] : [],
+        columns: [],
+        approx_rows: null,
+        invalid: !t.key_column,
+        pending: false,
+      });
+    }
   }
 
-  state.db_url_masked = builder.db_url_masked || "";
-  state.db_url = state.db_url_masked || "";
+  const active = state.connections.get(state.activeConnId);
+  state.db_url = active.db_url || ""; state.db_url_masked = active.db_url_masked || "";
   if(builder.has_db_url){
     $("includePassword").checked = false;
     $("pwHint").style.display = "block";
   }
   $("refreshOpts").style.display = $("autoRefresh").checked ? "block" : "none";
   $("fmtHint").style.display = $("tableFormat").value === "delta" ? "block" : "none";
-  renderSources();
+  writeFormFromConn(active);
+  renderConnList();
   renderSelected();
   saveForm();
+  persistConns();
 }
 
 async function loadBuilderBootstrap(){
@@ -460,9 +600,9 @@ async function api(path, body){
   return data;
 }
 
-// ---- connect ----
+// ---- connect / test ----
 $("btnConnect").onclick = async () => {
-  saveForm();
+  commitActive();
   const s = $("connStatus"); s.className="status"; s.textContent="Connecting…";
   $("btnConnect").disabled = true;
   const conn = connFields();
@@ -471,51 +611,44 @@ $("btnConnect").onclick = async () => {
   if(!data.ok){ s.className="status err"; s.textContent="✗ " + (data.error||"connection failed"); return; }
   const connId = conn.id || "default";
   state.activeConnId = connId;
+  const c = state.connections.get(connId) || newConn(connId);
+  readFormIntoConn(c);
+  c.db_url = data.db_url; c.db_url_masked = data.db_url_masked;
+  c.flavor = (data.capabilities && data.capabilities.flavor) || conn.dialect; c.tested = true;
+  state.connections.set(connId, c);
   state.connection = conn; state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
   state.tables = data.tables || [];
-  // Remember this source; drop only THIS source's prior selections (re-listing it).
-  state.connections.set(connId, {
-    id: connId, db_url: data.db_url, db_url_masked: data.db_url_masked,
-    flavor: (data.capabilities && data.capabilities.flavor) || conn.dialect, saved: false,
-  });
+  // Re-listing this source: drop only ITS prior selections.
   for(const k of [...state.selected.keys()]){
     if(k.startsWith(connId + "::")) state.selected.delete(k);
   }
   s.className="status ok";
   s.textContent = `✓ Connected as '${connId}'${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
-  renderSources(); renderTables(); document.querySelector('[data-tab="tables"]').click(); renderSelected();
+  renderConnList(); renderTables(); persistConns();
+  document.querySelector('[data-tab="tables"]').click(); renderSelected();
 };
 
-// ---- save connection(s) ----
+// ---- add a new connection ----
+$("btnAddConn").onclick = addConn;
+
+// ---- save all connections to config ----
 $("btnSaveConnection").onclick = async () => {
-  saveForm();
-  const s = $("connStatus"); s.className="status"; s.textContent="Saving connection…";
+  commitActive();
+  const s = $("connStatus"); s.className="status"; s.textContent="Saving connections…";
   $("btnSaveConnection").disabled = true;
-  const conn = connFields();
-  const data = await api("/_config/api/connect", conn);
-  if(!data.ok){
-    $("btnSaveConnection").disabled = false;
-    s.className="status err";
-    s.textContent="✗ Test failed: " + (data.error||"connection failed — fix and try again");
-    return;
-  }
-  const connId = conn.id || "default";
-  state.activeConnId = connId;
-  state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
-  state.connections.set(connId, {
-    id: connId, db_url: data.db_url, db_url_masked: data.db_url_masked,
-    flavor: (data.capabilities && data.capabilities.flavor) || conn.dialect, saved: true,
-  });
-  renderSources();
-  // Persist: default -> db_url; every non-default remembered source -> connections[].
+  // Only persist connections that were tested this session (real, non-masked URLs).
   const settings = {};
   const dflt = state.connections.get("default");
-  if(dflt) settings.db_url = dflt.db_url;
-  const named = [...state.connections.values()].filter(c=>c.id!=="default").map(c=>({id:c.id, db_url:c.db_url}));
+  if(dflt && dflt.tested && dflt.db_url) settings.db_url = dflt.db_url;
+  const named = [...state.connections.values()]
+    .filter(c=>c.id!=="default" && c.tested && c.db_url)
+    .map(c=>({id:c.id, db_url:c.db_url}));
   if(named.length) settings.connections = named;
-  if(!Object.keys(settings).length){ 
+  if(!Object.keys(settings).length){
     $("btnSaveConnection").disabled = false;
-    s.className="status err"; s.textContent="✗ Nothing to save yet."; return;
+    s.className="status err";
+    s.textContent="✗ Nothing to save — Test at least one connection first (it needs a live URL).";
+    return;
   }
   try{
     const r = await fetch("/_config/api/apply", {
@@ -532,9 +665,11 @@ $("btnSaveConnection").onclick = async () => {
     }
     $("btnSaveConnection").disabled = false;
     s.className="status ok";
-    const extra = named.length ? ` (+${named.length} named source${named.length>1?"s":""})` : "";
-    s.textContent = "✓ Saved to config.connection.json" + extra + " (restart required to apply)";
-    setTimeout(()=>{ s.textContent=""; s.className="status"; }, 4500);
+    const parts = [];
+    if(settings.db_url) parts.push("default");
+    if(named.length) parts.push(`${named.length} named source${named.length>1?"s":""}`);
+    s.textContent = "✓ Saved " + parts.join(" + ") + " to config.connection.json (restart required to apply).";
+    setTimeout(()=>{ s.textContent=""; s.className="status"; }, 5000);
   }catch(e){
     $("btnSaveConnection").disabled = false;
     s.className="status err";
@@ -836,7 +971,20 @@ $("dialect").addEventListener("change", ()=>{
   $("catalog").value = "";
   $("schema").value = "";
   $("trust_cert").checked = true;
+  onConnFormEdit();
 });
+
+// Keep the connection list in sync as the operator edits the active source.
+function onConnFormEdit(){
+  const c = state.connections.get(state.activeConnId);
+  if(!c) return;
+  readFormIntoConn(c);
+  c.tested = false;            // edits invalidate a prior successful test
+  renderConnList(); persistConns();
+}
+CONN_FIELDS.forEach(f => { const el = $(f); if(el) el.addEventListener("input", onConnFormEdit); });
+$("trust_cert").addEventListener("change", onConnFormEdit);
+$("connId").addEventListener("change", ()=> renameActive($("connId").value));
 
 // ---- all-settings catalog (section 4) ----
 // Keys already configured by the curated controls above are hidden here to
@@ -883,6 +1031,10 @@ function renderSettings(){
 $("settingsSearch").addEventListener("input", renderSettings);
 
 loadForm();
+loadConns();
+ensureDefaultConn();
+writeFormFromConn(state.connections.get(state.activeConnId));
+renderConnList();
 loadSettings();
 $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
 loadBuilderBootstrap();

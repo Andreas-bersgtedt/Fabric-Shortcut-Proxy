@@ -74,6 +74,37 @@ class Dialect:
             f"LIMIT :{max_rows_param}"
         )
 
+    def build_select_row_number(
+        self,
+        *,
+        projected: str,
+        source: str,
+        order_by: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        """Fallback split strategy for non-integer keys.
+
+        Uses ROW_NUMBER() over a stable sort key, then shards rows by
+        ``(row_number - 1) % num_splits``. This keeps behavior deterministic for
+        sortable non-PK keys (e.g. string/date) without integer casting.
+        """
+        rownum = self.quote("__row_num")
+        inner = (
+            f"SELECT {projected}, "
+            f"ROW_NUMBER() OVER (ORDER BY {order_by}) AS {rownum} "
+            f"FROM {source}"
+        )
+        predicate = f"(({rownum} - 1) % :{num_splits_param}) = :{split_index_param}"
+        return (
+            f"SELECT {projected} "
+            f"FROM ({inner}) AS q "
+            f"WHERE {predicate} "
+            f"ORDER BY {rownum} "
+            f"LIMIT :{max_rows_param}"
+        )
+
 
 class SQLiteDialect(Dialect):
     name = "sqlite"
@@ -117,6 +148,111 @@ class MSSQLDialect(Dialect):
             f"ORDER BY {pk}"
         )
 
+    def build_select_row_number(
+        self,
+        *,
+        projected: str,
+        source: str,
+        order_by: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        rownum = self.quote("__row_num")
+        inner = (
+            f"SELECT {projected}, "
+            f"ROW_NUMBER() OVER (ORDER BY {order_by}) AS {rownum} "
+            f"FROM {source}"
+        )
+        predicate = f"((q.{rownum} - 1) % :{num_splits_param}) = :{split_index_param}"
+        return (
+            f"SELECT TOP (:{max_rows_param}) {projected} "
+            f"FROM ({inner}) AS q "
+            f"WHERE {predicate} "
+            f"ORDER BY q.{rownum}"
+        )
+
+
+class OracleDialect(Dialect):
+    """Oracle SQL: quoted identifiers and FETCH FIRST row-limit syntax."""
+
+    name = "oracle"
+    int_cast_type = "NUMBER(19)"
+
+    def build_select(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        predicate = (
+            f"(MOD({self.cast_int(pk)}, :{num_splits_param})) = :{split_index_param}"
+        )
+        return (
+            f"SELECT {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"ORDER BY {pk} "
+            f"FETCH FIRST :{max_rows_param} ROWS ONLY"
+        )
+
+    def build_select_range(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        key_lo_param: str,
+        key_hi_param: str,
+        max_rows_param: str,
+    ) -> str:
+        predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
+        return (
+            f"SELECT {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"ORDER BY {pk} "
+            f"FETCH FIRST :{max_rows_param} ROWS ONLY"
+        )
+
+    def build_select_row_number(
+        self,
+        *,
+        projected: str,
+        source: str,
+        order_by: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        rownum = self.quote("__row_num")
+        inner = (
+            f"SELECT {projected}, "
+            f"ROW_NUMBER() OVER (ORDER BY {order_by}) AS {rownum} "
+            f"FROM {source}"
+        )
+        predicate = f"(MOD((q.{rownum} - 1), :{num_splits_param})) = :{split_index_param}"
+        return (
+            f"SELECT {projected} "
+            f"FROM ({inner}) q "
+            f"WHERE {predicate} "
+            f"ORDER BY q.{rownum} "
+            f"FETCH FIRST :{max_rows_param} ROWS ONLY"
+        )
+
+
+class DatabricksDialect(Dialect):
+    """Databricks SQL: Spark-style quoting and BIGINT casts."""
+
+    name = "databricks"
+    int_cast_type = "BIGINT"
+    quote_open = "`"
+    quote_close = "`"
+
     def build_select_range(
         self,
         *,
@@ -139,6 +275,8 @@ class MSSQLDialect(Dialect):
 _SQLITE = SQLiteDialect()
 _POSTGRES = PostgresDialect()
 _MSSQL = MSSQLDialect()
+_ORACLE = OracleDialect()
+_DATABRICKS = DatabricksDialect()
 _GENERIC = Dialect()
 
 
@@ -149,6 +287,10 @@ def get_dialect(db_url: str) -> Dialect:
         return _MSSQL
     if "postgres" in scheme:
         return _POSTGRES
+    if "oracle" in scheme:
+        return _ORACLE
+    if "databricks" in scheme:
+        return _DATABRICKS
     if "sqlite" in scheme:
         return _SQLITE
     return _GENERIC

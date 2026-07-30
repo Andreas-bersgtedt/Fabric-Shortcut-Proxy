@@ -85,8 +85,8 @@ def _table_uuid(name: str) -> str:
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
-def _rel_path(object_key: str, table: str) -> str:
-    prefix = f"{config.WAREHOUSE_PREFIX}/{table}/"
+def _rel_path(object_key: str, table_path: str) -> str:
+    prefix = f"{table_path}/"
     return object_key[len(prefix):] if object_key.startswith(prefix) else object_key
 
 
@@ -139,7 +139,7 @@ def _register(snap) -> None:
     if _committed_version.get(name, 0) >= ver:
         return
     files = [
-        (_rel_path(s.object_key, name), s.file_size_in_bytes or 0, s.record_count or 0)
+        (_rel_path(s.object_key, snap.table_path), s.file_size_in_bytes or 0, s.record_count or 0)
         for s in snap.splits
     ]
     ts = snap.watermark_ms
@@ -206,8 +206,8 @@ def reset() -> None:
 # Object serving (used by the S3 router when TABLE_FORMAT=delta)
 # ---------------------------------------------------------------------------
 
-def _log_key(name: str, version: int) -> str:
-    return f"{config.WAREHOUSE_PREFIX}/{name}/_delta_log/{version:020d}.json"
+def _log_key(table_path: str, version: int) -> str:
+    return f"{table_path}/_delta_log/{version:020d}.json"
 
 
 def delta_log_objects() -> dict[str, dict]:
@@ -224,7 +224,7 @@ def delta_log_objects() -> dict[str, dict]:
             cur = max(snaps, key=lambda s: s.version)
             for i, text in enumerate(_commits.get(name, [])):
                 data = text.encode()
-                objects[_log_key(name, i)] = {
+                objects[_log_key(cur.table_path, i)] = {
                     "size": len(data),
                     "last_modified_ms": cur.watermark_ms,
                     "data": data,

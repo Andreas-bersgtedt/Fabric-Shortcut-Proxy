@@ -1,0 +1,28 @@
+{
+  "_comment": "Connection configuration — database URL(s), query limits, resilience. Place as config.connection.json. Update db_url with your SQL Server, PostgreSQL, or Oracle credentials. The 'connection' section defines the DEFAULT source. Add a 'connections' array to serve tables from ADDITIONAL sources of different dialects; each table binds to one by id via its 'connection' field in config.tables.json (default: 'default').",
+  "connection": {
+    "_comment": "The DEFAULT source connection (id 'default'). Reserved id derived from db_url/DB_URL.",
+    "db_url": "mssql+aioodbc://sa:YourPassword@localhost/source_db?driver=ODBC+Driver+18+for+SQL+Server",
+    "source_table": "dbo.orders",
+    "key_column": "order_id",
+    "table_name": "orders",
+    "query_timeout_seconds": 300,
+    "query_max_rows": 500000,
+    "db_max_retries": 3,
+    "db_retry_backoff_seconds": 1,
+    "validate_source_schema": true
+  },
+  "connections": [
+    {
+      "_comment": "Additional named source (may be a different dialect). Bind a table to it with \"connection\": \"warehouse_pg\" in config.tables.json. Per-connection query limits are optional and fall back to the defaults above.",
+      "id": "warehouse_pg",
+      "db_url": "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb",
+      "query_timeout_seconds": 120,
+      "query_max_rows": 500000
+    },
+    {
+      "id": "legacy_oracle",
+      "db_url": "oracle+oracledb://proxy_reader:secret@oracle-host:1521/ORCLPDB1"
+    }
+  ]
+}

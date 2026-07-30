@@ -1,0 +1,33 @@
+{
+  "_comment": "Tables configuration — multi-table registry. Place as config.tables.json or included in config.json. Each table may bind to a source via 'connection' (a connection id from config.connection.json); defaults to 'default'.",
+  "tables": [
+    {
+      "name": "orders",
+      "source_table": "dbo.orders",
+      "key_column": "order_id"
+    },
+    {
+      "name": "customers",
+      "source_table": "dbo.customers",
+      "key_column": "customer_id",
+      "num_splits": 4
+    },
+    {
+      "_comment": "Served from a DIFFERENT source (id 'warehouse_pg' in config.connection.json).",
+      "name": "shipments",
+      "source_table": "public.shipments",
+      "key_column": "shipment_id",
+      "connection": "warehouse_pg"
+    },
+    {
+      "name": "events",
+      "source_table": "dbo.events",
+      "key_column": "event_id",
+      "schema": [
+        { "field_id": 1, "name": "event_id", "type": "long", "nullable": false },
+        { "field_id": 2, "name": "occurred", "type": "timestamp" },
+        { "field_id": 3, "name": "payload", "type": "string" }
+      ]
+    }
+  ]
+}

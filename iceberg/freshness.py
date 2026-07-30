@@ -18,14 +18,12 @@ import asyncio
 import hashlib
 import time
 
-from sqlalchemy import text
-
 import config
 import cache.lru_cache as cache
 import iceberg.state_store as state_store
 from iceberg.state_store import SnapshotState, SplitDescriptor
 from planner.split_planner import build_split_query
-from db.executor import execute_split_query, get_engine
+from db.executor import execute_scalar, execute_split_query
 from parquet.generator import rows_to_parquet
 from iceberg.stats import collect_split_stats
 from observability.logging import get_logger
@@ -78,7 +76,8 @@ async def materialize_table(table, bucket: str, warehouse_prefix: str) -> Snapsh
     id is derived from the chunk hashes, so identical content yields identical
     ids (restart-stable) and any change yields a new id.
     """
-    table_path = f"{warehouse_prefix}/{table.name}"
+    table_path = state_store.active_table_path(table, warehouse_prefix)
+    legacy_path = state_store.legacy_table_path(table, warehouse_prefix)
     splits: list[SplitDescriptor] = []
     chunk_hashes: list[str] = []
     total_records = 0
@@ -89,7 +88,7 @@ async def materialize_table(table, bucket: str, warehouse_prefix: str) -> Snapsh
             object_key="", watermark_ms=0, table=table,
         )
         sql, params = build_split_query(probe_split)
-        rows = await execute_split_query(sql, params, split_index=i)
+        rows = await execute_split_query(sql, params, split_index=i, connection=table.connection_id)
         chash = _rows_hash(rows, table.schema)
         object_key = f"{table_path}/data/split-{i}-{chash}.parquet"
         # Content-addressed => IMMUTABLE. If this exact content was already
@@ -132,6 +131,8 @@ async def materialize_table(table, bucket: str, warehouse_prefix: str) -> Snapsh
         metadata_key=f"{table_path}/metadata/v1.metadata.json",
         version_hint_key=f"{table_path}/metadata/version-hint.text",
         table=table,
+        table_path=table_path,
+        legacy_table_path=legacy_path,
         uuid=snap_uuid,
     )
     for s in splits:
@@ -142,7 +143,7 @@ async def materialize_table(table, bucket: str, warehouse_prefix: str) -> Snapsh
 
 
 def _finalize_versioned_keys(snap: SnapshotState, version: int) -> None:
-    table_path = f"{config.WAREHOUSE_PREFIX}/{snap.table.name}"
+    table_path = snap.table_path
     snap.version = version
     snap.sequence_number = version
     snap.metadata_key = f"{table_path}/metadata/v{version}.metadata.json"
@@ -195,27 +196,29 @@ async def probe_change_token(table) -> str | None:
     falls through.
     """
     src = table.source_table
-    url = config.DB_URL.lower()
+    url = config.effective_db_url(table.connection_id).lower()
     try:
-        engine = get_engine()
-        async with engine.connect() as conn:
-            if "sqlite" in url:
-                v = (await conn.execute(text("PRAGMA data_version"))).scalar()
-                return f"dv:{v}"
-            if "postgres" in url:
-                v = (await conn.execute(text(
-                    "SELECT (n_tup_ins + n_tup_upd + n_tup_del) "
-                    "FROM pg_stat_user_tables WHERE relid = to_regclass(:t)"
-                ), {"t": src})).scalar()
-                return None if v is None else f"pg:{v}"
-            if "mssql" in url:
-                v = (await conn.execute(text(
-                    "SELECT MAX(last_user_update) FROM sys.dm_db_index_usage_stats "
-                    "WHERE database_id = DB_ID() AND object_id = OBJECT_ID(:t)"
-                ), {"t": src})).scalar()
-                if v is None:
-                    return None
-                return f"ms:{v.isoformat() if hasattr(v, 'isoformat') else v}"
+        if "sqlite" in url:
+            v = await execute_scalar("PRAGMA data_version", connection=table.connection_id)
+            return f"dv:{v}"
+        if "postgres" in url:
+            v = await execute_scalar(
+                "SELECT (n_tup_ins + n_tup_upd + n_tup_del) "
+                "FROM pg_stat_user_tables WHERE relid = to_regclass(:t)",
+                {"t": src},
+                connection=table.connection_id,
+            )
+            return None if v is None else f"pg:{v}"
+        if "mssql" in url:
+            v = await execute_scalar(
+                "SELECT MAX(last_user_update) FROM sys.dm_db_index_usage_stats "
+                "WHERE database_id = DB_ID() AND object_id = OBJECT_ID(:t)",
+                {"t": src},
+                connection=table.connection_id,
+            )
+            if v is None:
+                return None
+            return f"ms:{v.isoformat() if hasattr(v, 'isoformat') else v}"
     except Exception as exc:  # noqa: BLE001 - best-effort probe
         log.warning("refresh_probe_failed", table=table.name, error=str(exc))
         return None

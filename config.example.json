@@ -1,33 +1,116 @@
 {
-  "_comment": "Copy to config.json and edit. Precedence: env var > config.json > default. Set CONFIG_FILE to use a different path. table_format is 'iceberg' (default) or 'delta' (native _delta_log, no conversion). See CONFIGURATION.md for the full field list.",
+  "_comment": "DEPRECATED: Monolithic config.json is no longer supported. Use separate config files instead: config.system.json, config.connection.json, config.performance.json, config.freshness.json, config.tables.json. See config.*.example.json for templates. Environment variables still take precedence: env var > config.{section}.json > default.",
 
-  "bucket": "fabric-iceberg-poc",
-  "db_url": "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb",
-  "num_splits": 8,
-  "query_max_rows": 500000,
-  "require_sigv4": false,
-  "table_format": "iceberg",
+  "system": {
+    "_comment": "S3, server binding, artifact store, fleet coordination, control plane, HA",
+    "bucket": "fabric-iceberg-poc",
+    "warehouse_prefix": "iceberg",
+    "object_path_layout": "canonical",
+    "enable_legacy_path_aliases": false,
+    "access_key_id": "",
+    "secret_access_key": "",
+    "require_sigv4": false,
+    "host": "127.0.0.1",
+    "port": 8000,
+    "enable_config_builder": true,
+    "enable_monitor": true,
+    "artifact_store_backend": "local",
+    "artifact_store_dir": "./artifacts",
+    "artifact_store_serving": false,
+    "publish_serving_image": false,
+    "agent_count": 1,
+    "agent_shard_index": 0,
+    "agent_shard_count": 1,
+    "shard_strategy": "modulo",
+    "enable_gateway": false,
+    "materialize_wait_seconds": 30,
+    "manager_url": "",
+    "agent_id": "",
+    "control_host": "127.0.0.1",
+    "control_port": 9000,
+    "heartbeat_ms": 5000,
+    "heartbeat_miss_limit": 3,
+    "agent_restart_backoff_seconds": 5,
+    "agent_max_rapid_restarts": 5,
+    "manager_ha": false,
+    "leader_lease_ttl_ms": 10000,
+    "leader_lease_renew_ms": 5000,
+    "retention_gc": false,
+    "retention_gc_interval_seconds": 3600,
+    "rolling_restart_health_timeout": 120,
+    "enable_admin_ui": false,
+    "admin_token": ""
+  },
+
+  "connection": {
+    "_comment": "Database connection, query limits, resilience. Update db_url with your SQL Server, PostgreSQL, or Oracle credentials.",
+    "db_url": "mssql+aioodbc://sa:YourPassword@localhost/source_db?driver=ODBC+Driver+18+for+SQL+Server",
+    "source_table": "dbo.orders",
+    "key_column": "order_id",
+    "table_name": "orders",
+    "query_timeout_seconds": 300,
+    "query_max_rows": 500000,
+    "db_max_retries": 3,
+    "db_retry_backoff_seconds": 1,
+    "validate_source_schema": true
+  },
+
+  "performance": {
+    "_comment": "Splits, streaming, concurrency, caching, output format",
+    "table_format": "iceberg",
+    "num_splits": 8,
+    "split_strategy": "modulo",
+    "split_target_rows": 100000,
+    "split_count_min": 1,
+    "split_count_max": 256,
+    "streaming_parquet": false,
+    "stream_batch_rows": 50000,
+    "source_max_concurrency": 0,
+    "max_concurrent_generations": 4,
+    "timestamp_assume_utc": true,
+    "pin_materialized_splits": true,
+    "parquet_disk_cache": false,
+    "parquet_disk_cache_dir": "./.parquet_cache",
+    "parquet_cache_max_bytes": 268435456,
+    "parquet_cache_ttl": 300,
+    "metadata_cache_ttl": 60,
+    "request_trace": true,
+    "trace_buffer_size": 5000,
+    "iceberg_manifest_stats": false,
+    "iceberg_snapshot_history": false,
+    "snapshot_history_limit": 10,
+    "concurrent_startup_materialization": true
+  },
+
+  "freshness": {
+    "_comment": "Data refresh strategy",
+    "auto_refresh": false,
+    "refresh_poll_seconds": 600,
+    "refresh_strategy": "auto",
+    "refresh_allow_full_pull": false,
+    "refresh_ttl_seconds": 1200
+  },
 
   "tables": [
     {
       "name": "orders",
-      "source_table": "public.orders",
+      "source_table": "dbo.orders",
       "key_column": "order_id"
     },
     {
       "name": "customers",
-      "source_table": "public.customers",
+      "source_table": "dbo.customers",
       "key_column": "customer_id",
       "num_splits": 4
     },
     {
       "name": "events",
-      "source_table": "analytics.events",
+      "source_table": "dbo.events",
       "key_column": "event_id",
       "schema": [
         { "field_id": 1, "name": "event_id", "type": "long", "nullable": false },
         { "field_id": 2, "name": "occurred", "type": "timestamp" },
-        { "field_id": 3, "name": "payload",  "type": "string" }
+        { "field_id": 3, "name": "payload", "type": "string" }
       ]
     }
   ]

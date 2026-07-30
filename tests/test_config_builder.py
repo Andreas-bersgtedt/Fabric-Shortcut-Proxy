@@ -14,7 +14,9 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import db.reflect as reflect
 from db.reflect import build_url, detect_key_column, UnsupportedDialect
+from configbuilder.router import _clean_error
 from configbuilder.router import router as cb_router
 
 _DB = pathlib.Path(__file__).parent / "test_cfgbuilder.db"
@@ -40,9 +42,52 @@ def test_build_url_mssql_adds_driver_and_cert():
     assert "TrustServerCertificate" in s
 
 
+def test_build_url_mssql_prefers_installed_driver(monkeypatch):
+    monkeypatch.setattr(reflect, "_installed_sql_server_odbc_drivers",
+                        lambda: ["ODBC Driver 17 for SQL Server"])
+    url = build_url(dialect="mssql", host="h", database="db", username="u", password="p")
+    assert url.query["driver"] == "ODBC Driver 17 for SQL Server"
+
+
+def test_clean_error_im002_adds_driver_hint(monkeypatch):
+    monkeypatch.setattr(
+        "configbuilder.router._installed_sql_server_odbc_drivers",
+        lambda: ["ODBC Driver 17 for SQL Server"],
+    )
+    err = Exception(
+        "(pyodbc.InterfaceError) ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] "
+        "Data source name not found and no default driver specified (0) (SQLDriverConnect)')"
+    )
+    msg = _clean_error(err)
+    assert "Hint:" in msg
+    assert "ODBC Driver 17 for SQL Server" in msg
+
+
+def test_build_url_oracle_defaults_port():
+    url = build_url(dialect="oracle", host="orcl-host", database="ORCLPDB1",
+                    username="u", password="p")
+    s = url.render_as_string(hide_password=False)
+    assert s.startswith("oracle+oracledb://u:")
+    assert "@orcl-host:1521/ORCLPDB1" in s
+
+
+def test_build_url_databricks_with_http_path():
+    url = build_url(
+        dialect="databricks",
+        host="dbc.example.com",
+        username="token",
+        password="dapi-example",
+        query={"http_path": "/sql/1.0/warehouses/abc"},
+    )
+    s = url.render_as_string(hide_password=False)
+    assert s.startswith("databricks://token:")
+    assert "@dbc.example.com:443" in s
+    assert "http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc" in s
+
+
 def test_build_url_rejects_unknown_dialect():
     with pytest.raises(UnsupportedDialect):
-        build_url(dialect="oracle", host="h", database="db")
+        build_url(dialect="not-a-real-dialect", host="h", database="db")
 
 
 def test_detect_key_column():
@@ -122,6 +167,17 @@ async def test_settings_api(app):
     assert {"num_splits", "pin_materialized_splits", "auto_refresh", "require_sigv4"} <= keys
 
 
+async def test_bootstrap_api_prefills_running_builder_config(app):
+    async with _client(app) as c:
+        r = await c.get("/_config/api/bootstrap")
+    assert r.status_code == 200
+    b = r.json()["builder"]
+    assert isinstance(b.get("bucket"), str)
+    assert isinstance(b.get("num_splits"), int)
+    assert b.get("table_format") in ("iceberg", "delta")
+    assert isinstance(b.get("tables"), list)
+
+
 async def test_connect_lists_tables(app, db_path):
     async with _client(app) as c:
         r = await c.post("/_config/api/connect",
@@ -131,13 +187,26 @@ async def test_connect_lists_tables(app, db_path):
     assert data["ok"] is True
     assert "gadgets" in [t["name"] for t in data["tables"]]
     assert data["db_url"].startswith("sqlite+aiosqlite")
+    assert data["capabilities"]["flavor"] == "sqlite"
+    assert data["capabilities"]["execution_mode"] == "async-native"
 
 
 async def test_connect_bad_dialect(app):
     async with _client(app) as c:
-        r = await c.post("/_config/api/connect", json={"dialect": "oracle", "database": "x"})
+        r = await c.post("/_config/api/connect", json={"dialect": "bad", "database": "x"})
     assert r.status_code == 400
     assert r.json()["ok"] is False
+
+
+async def test_connect_databricks_requires_http_path(app):
+    async with _client(app) as c:
+        r = await c.post("/_config/api/connect", json={
+            "dialect": "databricks",
+            "host": "dbc.example.com",
+            "token": "dapi-example",
+        })
+    assert r.status_code == 400
+    assert "http_path" in r.json()["error"]
 
 
 async def test_inspect_reflects_and_detects_key(app, db_path):

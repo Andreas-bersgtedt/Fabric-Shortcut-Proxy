@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +44,28 @@ def _request_shutdown() -> None:
         log.info("graceful_shutdown_requested")
 
 
+def _source_connect_hint(exc: Exception) -> str:
+    """A concise, credential-redacted message when a source DB can't be reached at startup."""
+    conns: dict[str, str] = {}
+    for t in config.TABLES:
+        cid = getattr(t, "connection_id", "default")
+        if cid not in conns:
+            conns[cid] = config.redact_db_url(config.effective_db_url(cid))
+    lines = "\n".join(f"    - {cid}: {url}" for cid, url in conns.items())
+    err = config.redact_db_url(str(exc))[:300]
+    return (
+        "Cannot reach the source database at startup (schema reflection failed).\n"
+        "  Connection(s) used by your tables:\n" + lines + "\n"
+        f"  Underlying error: {err}\n"
+        "  Likely causes:\n"
+        "    - Wrong username/password (SQL Server error 18456 = the server rejected the login).\n"
+        "    - A named source is missing its DB_URL_<ID> environment variable (password stripped).\n"
+        "    - The database host/port is unreachable or blocked by a firewall.\n"
+        "  Fix the credentials via the config builder, the DB_URL env var (Manager.ps1 -DbUrl),\n"
+        "  or config.connection.json, then restart."
+    )
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -62,13 +86,23 @@ async def lifespan(app: FastAPI):
     # Resolve each table's schema (reflected from source metadata unless declared
     # explicitly) and split key column, in place, before snapshots are built.
     from db.executor import resolve_tables
-    await resolve_tables(config.TABLES)
-
-    # Fail fast (H6) if any source table doesn't expose every declared column.
-    if config.VALIDATE_SOURCE_SCHEMA:
-        from db.executor import validate_source_schema
-        for table in config.TABLES:
-            await validate_source_schema(table)
+    try:
+        await resolve_tables(config.TABLES)
+        # Fail fast (H6) if any source table doesn't expose every declared column.
+        if config.VALIDATE_SOURCE_SCHEMA:
+            from db.executor import validate_source_schema
+            for table in config.TABLES:
+                await validate_source_schema(table)
+    except Exception as exc:  # noqa: BLE001 - turn a raw driver stack trace into a clear message
+        hint = _source_connect_hint(exc)
+        log.error("source_connect_failed", detail=hint)
+        # A bad credential / unreachable source is a PERMANENT config error, not a
+        # transient crash. Exit with EX_CONFIG (78) and no traceback so the
+        # supervisor stops restarting (see control/supervisor.py) instead of
+        # crash-looping the whole fleet. The Manager UI (/_config) stays up to fix it.
+        print("\n[startup] " + hint + "\n", file=sys.stderr, flush=True)
+        sys.stderr.flush()
+        os._exit(78)
 
     if config.AUTO_REFRESH:
         # Data-freshness path (content-addressed snapshots + background poller).
@@ -103,9 +137,18 @@ async def lifespan(app: FastAPI):
                      "or the SQL endpoint may never converge on the latest version.",
             )
     else:
+        runtime_tables = list(config.TABLES)
+
+        # Phase 2 split planner v2 (opt-in): dynamic split-count selection from
+        # row-target planning with min/max guardrails.
+        if config.SPLIT_TARGET_ROWS > 0:
+            from planner.split_planner import choose_table_num_splits
+            for t in runtime_tables:
+                t.num_splits = await choose_table_num_splits(t)
+
         # Build the Iceberg snapshot for every configured table (F1 — multi-table).
         snapshots = build_all_snapshots(
-            config.TABLES,
+            runtime_tables,
             bucket=config.BUCKET_NAME,
             warehouse_prefix=config.WAREHOUSE_PREFIX,
         )
@@ -119,7 +162,7 @@ async def lifespan(app: FastAPI):
         # contiguous key range (from the source MIN/MAX) so materialization reads
         # only its slice off the PK index instead of a full-table modulo scan.
         # Best-effort: falls back to modulo per table on empty/non-integer keys.
-        if config.SPLIT_STRATEGY == "range":
+        if config.SPLIT_STRATEGY in ("range", "date", "auto") or config.SPLIT_TARGET_ROWS > 0:
             from planner.split_planner import plan_ranges_for_snapshot
             for snap in snapshots:
                 await plan_ranges_for_snapshot(snap)
@@ -144,11 +187,44 @@ async def lifespan(app: FastAPI):
 
         _mat_sem = asyncio.Semaphore(config.MAX_CONCURRENT_GENERATIONS)
 
+        # Size-weighted split ownership (devplan/shardweight.md). When enabled with
+        # >1 shard and a shared store, compute a per-table LPT assignment from the
+        # prior run's observed split sizes so each shard gets a balanced share of
+        # BYTES, not just count. Falls back to modulo per split when absent.
+        _weight_store = None
+        _shard_assignment: dict | None = None
+        if config.SHARD_STRATEGY == "weighted" and config.AGENT_SHARD_COUNT > 1:
+            from planner import shard_weight as _sw
+            from runtime.artifact_store import build_store as _build_store
+            try:
+                _weight_store = _build_store(config.ARTIFACT_STORE_BACKEND,
+                                             local_dir=config.ARTIFACT_STORE_DIR)
+                _weights = _sw.load_weights(_weight_store)
+                _shard_assignment = _sw.build_assignment(snapshots, config.AGENT_SHARD_COUNT, _weights)
+                log.info("shard_assignment", strategy="weighted",
+                         shard_index=config.AGENT_SHARD_INDEX,
+                         shard_count=config.AGENT_SHARD_COUNT,
+                         warm=bool(_weights),
+                         loads=_sw.shard_loads(_shard_assignment, config.AGENT_SHARD_COUNT, _weights))
+            except Exception as exc:  # noqa: BLE001 - never let weighting break startup
+                log.warning("shard_weight_disabled", error=str(exc))
+                _weight_store = None
+                _shard_assignment = None
+
         def _owns_split(split) -> bool:
             """Phase 3: this Agent's shard owns (materializes) the split. With a
-            single shard every split is owned (single-Agent / known-good path)."""
+            single shard every split is owned (single-Agent / known-good path).
+            When a weighted assignment is active, it decides ownership; otherwise
+            (or for an unseen split) fall back to round-robin by split index."""
             n = config.AGENT_SHARD_COUNT
-            return n <= 1 or (split.split_index % n == config.AGENT_SHARD_INDEX)
+            if n <= 1:
+                return True
+            if _shard_assignment is not None:
+                from planner.shard_weight import stable_key
+                owner = _shard_assignment.get(stable_key(split.table.name, split.split_index))
+                if owner is not None:
+                    return owner == config.AGENT_SHARD_INDEX
+            return split.split_index % n == config.AGENT_SHARD_INDEX
 
         async def _wait_for_store(key: str) -> bytes | None:
             """Poll the artifact store for a split another shard is generating.
@@ -195,12 +271,14 @@ async def lifespan(app: FastAPI):
                     batches = stream_split_query(
                         sql, params, split_index=split.split_index,
                         batch_rows=config.STREAM_BATCH_ROWS,
+                        connection=split.table.connection_id,
                     )
                     pq_bytes, nrows = await stream_rows_to_parquet(
                         batches, split_index=split.split_index, columns=split.table.schema
                     )
                 else:
-                    rows = await execute_split_query(sql, params, split_index=split.split_index)
+                    rows = await execute_split_query(sql, params, split_index=split.split_index,
+                                                     connection=split.table.connection_id)
                     pq_bytes = rows_to_parquet(
                         rows, split_index=split.split_index, columns=split.table.schema
                     )
@@ -223,6 +301,20 @@ async def lifespan(app: FastAPI):
             snap.total_records = sum(counts)
             log.info("splits_materialized", table=snap.table.name,
                      total_records=snap.total_records, splits=len(snap.splits))
+
+        # Persist this run's observed split sizes so the next run can balance by
+        # bytes (weighted strategy). Shard 0 writes the full map — after the loop
+        # every Agent knows all sizes (owned=generated, non-owned=fetched). Idempotent.
+        if (config.SHARD_STRATEGY == "weighted" and _weight_store is not None
+                and config.AGENT_SHARD_INDEX == 0):
+            from planner.shard_weight import stable_key, save_weights
+            sizes = {
+                stable_key(snap.table.name, s.split_index): int(s.file_size_in_bytes)
+                for snap in snapshots for s in snap.splits
+                if s.file_size_in_bytes
+            }
+            if save_weights(_weight_store, sizes):
+                log.info("shard_weights_saved", entries=len(sizes))
 
         # Correctness guard for multi-table: Fabric's Iceberg->Delta conversion +
         # SQL-endpoint sync can run for MINUTES. If the in-memory Parquet cache
@@ -327,16 +419,15 @@ async def lifespan(app: FastAPI):
     if config.AUTO_REFRESH:
         from iceberg import freshness
         await freshness.stop_poller()
-    # Dispose the DB engine cleanly
-    from db.executor import get_engine
-    engine = get_engine()
-    await engine.dispose()
+    # Dispose DB engines cleanly (async-native and sync-fallback modes).
+    from db.executor import dispose_engines
+    await dispose_engines()
 
 
 app = FastAPI(
     title="Fabric Shortcut Proxy (POC)",
     description="Virtual Iceberg-over-S3 proxy that serves SQL pushdown as Parquet",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -358,30 +449,68 @@ app.add_middleware(
 _AUTH_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/_admin", "/_config", "/_monitor", "/_manager", "/favicon.ico")
 
 
+def _bucket_key_from_path(path: str) -> tuple[str, str]:
+    """Split ``/{bucket}/{key}`` into (bucket, key); ('', '') for the service root."""
+    p = path.lstrip("/")
+    if not p:
+        return "", ""
+    parts = p.split("/", 1)
+    return parts[0], (parts[1] if len(parts) > 1 else "")
+
+
 @app.middleware("http")
 async def sigv4_auth_middleware(request, call_next):
-    if config.REQUIRE_SIGV4 and request.method != "OPTIONS":
-        path = request.url.path
-        if not any(path == p or path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
-            try:
-                verify_signature(
-                    request.method,
-                    request.url.path,
-                    request.url.query,
-                    request.headers,
-                    access_key_id=config.ACCESS_KEY_ID,
-                    secret_access_key=config.SECRET_ACCESS_KEY,
-                )
-            except SigV4Error as exc:
-                from s3.xml_responses import error_response
-                from fastapi.responses import Response as _Response
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    path = request.url.path
+    if any(path == p or path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
 
-                log.warning("sigv4_rejected", code=exc.code, path=path)
-                return _Response(
-                    content=error_response(exc.code, exc.message, path),
-                    status_code=403,
-                    media_type="application/xml",
-                )
+    from s3.xml_responses import error_response
+    from fastapi.responses import Response as _Response
+    from security import access_keys
+
+    bucket, key = _bucket_key_from_path(path)
+    mounted = False
+    if bucket:
+        try:
+            from storage.mounts import get_mount
+            mounted = get_mount(bucket) is not None
+        except Exception:  # noqa: BLE001 - proxy lookup must never break the front door
+            mounted = False
+
+    # A secured proxy forces auth on mounted buckets even if the global flag is off.
+    require = config.REQUIRE_SIGV4 or (mounted and config.ENFORCE_MOUNT_AUTH)
+    if require:
+        try:
+            identity = verify_signature(
+                request.method,
+                request.url.path,
+                request.url.query,
+                request.headers,
+                secret_resolver=access_keys.resolve_secret,
+            )
+        except SigV4Error as exc:
+            log.warning("sigv4_rejected", code=exc.code, path=path)
+            if mounted:
+                from observability import audit
+                audit.record(identity="-", client=(request.client.host if request.client else ""),
+                             bucket=bucket, key=key, backend="mount", method=request.method,
+                             action="auth", status=403, reason=exc.code)
+            return _Response(content=error_response(exc.code, exc.message, path),
+                             status_code=403, media_type="application/xml")
+
+        denial = access_keys.authorize(identity, bucket, key, request.method)
+        if denial is not None:
+            log.warning("authz_denied", identity=identity, bucket=bucket, reason=denial)
+            if mounted:
+                from observability import audit
+                audit.record(identity=identity, client=(request.client.host if request.client else ""),
+                             bucket=bucket, key=key, backend="mount", method=request.method,
+                             action="authz", status=403, reason=denial)
+            return _Response(content=error_response("AccessDenied", denial, path),
+                             status_code=403, media_type="application/xml")
+        request.state.identity = identity
     return await call_next(request)
 
 
@@ -577,7 +706,15 @@ if __name__ == "__main__":
     import uvicorn
     # Run via an explicit Server (app object, not "main:app") so the in-process
     # Agent link can request a graceful drain by setting server.should_exit.
-    _uv_config = uvicorn.Config(app, host=config.HOST, port=config.PORT, log_level="info")
+    _tls = {}
+    if config.TLS_CERT_FILE and config.TLS_KEY_FILE:
+        _tls = {"ssl_certfile": config.TLS_CERT_FILE, "ssl_keyfile": config.TLS_KEY_FILE}
+        log.info("tls_enabled", cert=config.TLS_CERT_FILE)
+    elif config.REQUIRE_SIGV4 or config.ENABLE_STORAGE_PROXY:
+        # SigV4 read signatures give no confidentiality over plain HTTP.
+        log.warning("tls_not_configured",
+                    hint="set tls_cert_file + tls_key_file, or terminate TLS at a fronting LB")
+    _uv_config = uvicorn.Config(app, host=config.HOST, port=config.PORT, log_level="info", **_tls)
     _server = uvicorn.Server(_uv_config)
     _set_uvicorn_server(_server)
     _server.run()

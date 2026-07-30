@@ -77,21 +77,22 @@ class SchemaReflector:
 | Route | Body | Returns |
 |---|---|---|
 | `GET /_config/` | — | the SPA HTML |
+| `GET /_config/api/settings` | — | full settings catalog (key/env/type/default/category/help/secret) |
+| `GET /_config/api/current` | — | effective running settings with source (`env`/`file`/`default`), secrets redacted |
+| `GET /_config/api/bootstrap` | — | builder bootstrap snapshot (non-secret defaults + active table mappings) |
+| `POST /_config/api/save` | `{settings:{key:value,...}}` | validate + persist updates into `config.json` |
 | `POST /_config/api/connect` | `{dialect, host, port?, database, username, password, driver?, trust_cert?, schema?}` | `{ok, server_version?, schemas[], tables:[{schema,name,kind}]}` or `{ok:false, error}` |
 | `POST /_config/api/inspect` | `{connection…, tables:[{schema,name}]}` | per table: `{name, source_table, detected_key, integer_keys[], columns:[{name,type,nullable}], approx_rows?}` |
-| `POST /_config/api/build` | `{connection…, include_password, bucket, num_splits, flags…, tables:[{name,source_table,key_column,num_splits?}]}` | `{config: {…}, filename: "config.json"}` |
 
 - **Stateless**: the SPA re‑sends connection params on each call (creds live only in
   the browser for the session). No server‑side secret storage.
-- `/build` produces the canonical `db_url` (correct encoding). If
-  `include_password` is false, it emits a masked `db_url` and a note to set the
-  `DB_URL` env var at runtime.
+- Live-mode saves write to `config.json`; environment variables still take
+  precedence at runtime (`env > file > default`).
 
 ### 3.3 Config flags ([config.py](config.py))
 
 ```
 ENABLE_CONFIG_BUILDER      (bool, default 0)   # mounts the /_config surface
-CONFIG_BUILDER_ALLOW_REMOTE(bool, default 0)   # else warn/refuse non-loopback binds
 ```
 
 ---
@@ -161,7 +162,7 @@ with the existing loader with zero changes.
 - `db/reflect.py` (or extend `db/executor.py`) — `SchemaReflector`.
 
 **Edited**
-- `config.py` — `ENABLE_CONFIG_BUILDER` (+ remote flag).
+- `config.py` — `ENABLE_CONFIG_BUILDER`.
 - `main.py` — conditionally include the router; extend SigV4 exempt prefixes.
 - README / CONFIGURATION.md — a short "Config Builder" section.
 
@@ -169,7 +170,7 @@ with the existing loader with zero changes.
 - URL builder encodes special chars (`URL.create`), allowlist rejects unknown dialects.
 - `/api/connect` against a temp **SQLite** DB → lists tables.
 - `/api/inspect` → detects key + maps column types.
-- `/api/build` → valid JSON matching the loader; password‑omit path.
+- `/api/save` + `/api/current` + `/api/bootstrap` → valid persisted+loaded config flow.
 - `GET /_config/` → 200 HTML smoke. (Optional later: Playwright click‑through.)
 
 SQLite is used purely to exercise the endpoints in CI without a live PG/MSSQL.

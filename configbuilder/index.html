@@ -10,13 +10,24 @@
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
          font:14px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-  header { padding:18px 24px; border-bottom:1px solid var(--line); }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   header h1 { margin:0; font-size:18px; }
   header p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+  .navbtn { display:inline-block; text-decoration:none; border-radius:8px; padding:8px 12px;
+            border:1px solid var(--line); color:var(--fg); font-size:12px; font-weight:600;
+            background:#0b1220; }
+  .navbtn:hover { border-color:var(--accent2); color:#dff4ff; }
   .warn-banner { background:#3b2f14; border:1px solid var(--warn); color:#fcd34d;
                  padding:8px 12px; border-radius:8px; margin:12px 24px; font-size:12px; }
-  main { display:grid; grid-template-columns: 1fr 1fr; gap:16px; padding:16px 24px 40px; }
-  @media (max-width: 900px){ main { grid-template-columns:1fr; } }
+  .tabs { display:flex; gap:0; border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg); }
+  .tab-btn { appearance:none; background:none; border:none; color:var(--muted); padding:14px 16px;
+            font:inherit; font-weight:600; cursor:pointer; font-size:12px; letter-spacing:.04em;
+            text-transform:uppercase; border-bottom:2px solid transparent; margin-bottom:-1px;
+            transition:all 0.2s; }
+  .tab-btn:hover { color:var(--fg); }
+  .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .tab-content { display:none; padding:24px; }
+  .tab-content.active { display:block; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
   .card h2 { margin:0 0 12px; font-size:14px; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); }
   label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
@@ -40,11 +51,38 @@
   .trow { display:flex; align-items:center; gap:8px; padding:6px 10px; border-top:1px solid var(--line); }
   .trow .name { flex:1; }
   .trow .kind { font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
-  .cfgrow { display:grid; grid-template-columns: 1fr auto auto; gap:8px; align-items:center;
+  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto; gap:8px; align-items:center;
             padding:8px 10px; border-top:1px solid var(--line); }
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
   .cfgrow .rows { font-size:11px; color:var(--muted); }
+  .pill { display:inline-block; font-size:10px; padding:0 6px; border:1px solid var(--accent);
+          color:var(--accent); border-radius:20px; vertical-align:middle; }
+  .connlist { display:flex; flex-direction:column; gap:8px; }
+  .connrow { display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;
+             padding:10px 12px; border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+  .connrow:hover { border-color:var(--accent2); }
+  .connrow.active { border-color:var(--accent); background:rgba(56,189,248,.07); }
+  .connrow .cid { font-weight:600; font-size:13px; }
+  .connrow .meta { font-size:11px; color:var(--muted); margin-top:2px; word-break:break-all; }
+  .connacts { display:flex; gap:6px; }
+  .badge { display:inline-block; font-size:10px; padding:0 6px; border-radius:20px;
+           border:1px solid var(--line); color:var(--muted); vertical-align:middle; }
+  .badge.ok { color:var(--ok); border-color:var(--ok); }
+  .badge.warn { color:var(--warn); border-color:var(--warn); }
+  .iconbtn { background:transparent; border:1px solid var(--line); color:var(--muted);
+             border-radius:6px; padding:3px 9px; cursor:pointer; font-size:12px; }
+  .iconbtn:hover { border-color:var(--err); color:var(--err); }
+  /* Collapsible per-connection table groups */
+  .tgroup { border:1px solid var(--line); border-radius:8px; margin-bottom:10px; overflow:hidden; }
+  .tghead { display:flex; align-items:center; gap:8px; padding:9px 12px; cursor:pointer;
+            background:var(--card); font-size:13px; font-weight:600; user-select:none; }
+  .tghead:hover { background:var(--bg); }
+  .tgcaret { display:inline-block; transition:transform .12s; color:var(--muted); }
+  .tgroup.open .tgcaret { transform:rotate(90deg); }
+  .tgcount { color:var(--muted); font-weight:400; font-size:12px; margin-left:auto; }
+  .tgbody { display:none; }
+  .tgroup.open .tgbody { display:block; }
   .mini { width:90px; } .keysel { width:150px; }
   .invalid { color:var(--err); font-size:11px; }
   pre { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:12px;
@@ -55,171 +93,483 @@
   .checkbox input { width:auto; }
   .setcat { margin:14px 0 4px; color:var(--muted); font-size:11px; text-transform:uppercase;
             letter-spacing:.04em; font-weight:700; }
-  .setrow { display:grid; grid-template-columns:190px 130px 1fr; gap:10px; align-items:center;
+  .live-badge { display:inline-block; font-size:10px; font-weight:700; border-radius:4px;
+                padding:1px 5px; margin-left:6px; vertical-align:middle; }
+  .live-badge.live { background:#14532d; color:#4ade80; border:1px solid #16a34a; }
+  .live-badge.restart { background:#431407; color:#fb923c; border:1px solid #c2410c; }
+  .setrow { display:grid; grid-template-columns:220px 130px 1fr; gap:10px; align-items:center;
             padding:5px 0; border-top:1px solid var(--line); }
   .setrow > label { margin:0; color:var(--fg); font-family:ui-monospace,Consolas,monospace;
                     font-size:12px; word-break:break-all; }
   .setrow input, .setrow select { padding:5px 8px; }
   .setrow .sethelp { color:var(--muted); font-size:11px; }
-  #allSettings { max-height:460px; overflow:auto; margin-top:6px; }
+  .tab-settings { max-height:460px; overflow:auto; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Config Builder</h1>
-  <p>Connect to SQL Server / PostgreSQL, pick tables, download <code>config.json</code>.</p>
+  <div>
+    <h1>Config Builder</h1>
+    <p>Connect to SQL sources, pick tables, download <code>config.json</code>.</p>
+  </div>
+  <a class="navbtn" href="/_manager">Back to Manager</a>
 </header>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
 
-<div class="card" id="liveCard" style="margin:16px;">
-  <h2>Live server configuration <span style="font-weight:400;text-transform:none;">(read current · push changes · scale the fleet)</span></h2>
-  <div class="hint">Shows what this server is <b>actually running</b> (env / config.json / default). Change a value and
-    <b>Save</b> it to <code>config.json</code> — most settings apply on the next restart. When opened on the
-    <b>Manager</b>, you can also scale the number of Agents <b>live</b>.</div>
-
-  <div id="fleetScale" style="display:none; margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
-    <b>Fleet size</b> — Agents supervised: <span id="fleetCount">?</span>
-    &nbsp;&nbsp;<label>Agents <input id="agentCount" type="number" min="1" style="width:66px;" /></label>
-    <label style="margin-left:8px;">admin token <input id="scaleToken" type="password" size="12" placeholder="(if set)" /></label>
-    <button class="btn primary" id="btnScale">Apply live</button>
-    <span class="status" id="scaleStatus" style="display:inline; margin-left:8px;"></span>
-  </div>
-
-  <div class="tablebar" style="margin-top:10px;">
-    <input id="liveSearch" placeholder="Filter settings…" />
-    <button class="btn ghost" id="btnReloadLive">Reload</button>
-    <button class="btn primary" id="btnSaveLive">Save changes to config.json</button>
-  </div>
-  <div class="status" id="liveStatus"></div>
-  <div id="liveSettings" style="max-height:420px; overflow:auto; margin-top:8px;"><div class="hint">Loading…</div></div>
+<div class="tabs">
+  <button class="tab-btn active" data-tab="connection">Connection</button>
+  <button class="tab-btn" data-tab="tables">Tables</button>
+  <button class="tab-btn" data-tab="storage">Storage</button>
+  <button class="tab-btn" data-tab="settings">Settings</button>
+  <button class="tab-btn" data-tab="advanced">Advanced</button>
+  <button class="tab-btn" data-tab="operational">Operational</button>
 </div>
 
-<main>
-  <!-- LEFT: connect + tables -->
-  <div>
-    <div class="card">
-      <h2>1 · Connect</h2>
-      <label>Dialect</label>
-      <select id="dialect">
-        <option value="postgresql">PostgreSQL</option>
-        <option value="mssql">SQL Server</option>
-      </select>
-      <div class="row">
-        <div><label>Host</label><input id="host" placeholder="db.example.com" /></div>
-        <div><label>Port</label><input id="port" placeholder="(default)" /></div>
-      </div>
-      <label>Database</label><input id="database" placeholder="salesdb" />
-      <div class="row">
-        <div><label>Username</label><input id="username" autocomplete="off" /></div>
-        <div><label>Password</label><input id="password" type="password" autocomplete="off" /></div>
-      </div>
-      <details class="adv">
-        <summary>Advanced</summary>
-        <label>ODBC driver (SQL Server)</label>
-        <input id="driver" placeholder="ODBC Driver 18 for SQL Server" />
-        <div class="checkbox"><input type="checkbox" id="trust_cert" checked />
-          <span>TrustServerCertificate (SQL Server, dev)</span></div>
-      </details>
-      <div class="actions">
-        <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
-      </div>
-      <div class="status" id="connStatus"></div>
-    </div>
-
-    <div class="card" id="tablesCard" style="margin-top:16px; display:none;">
-      <h2>2 · Pick tables</h2>
-      <div class="tablebar">
-        <input id="tableSearch" placeholder="Filter tables…" />
-        <button class="btn ghost" id="selAll">All</button>
-        <button class="btn ghost" id="selNone">None</button>
-      </div>
-      <div class="tables" id="tableList"></div>
+<!-- CONNECTION TAB -->
+<div id="connection-tab" class="tab-content active">
+  <div class="card">
+    <h2>Connections</h2>
+    <div class="hint" style="margin-bottom:12px;">Your <b>default</b> connection is your primary database (saved as <code>db_url</code>) and is <b>always present</b> — configure it with your main source and put your tables on it. Only <b>+ Add connection</b> when you need a <b>second, different</b> database; those extra sources are saved to <code>connections[]</code> and a restart loads them.</div>
+    <div id="connList" class="connlist"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn ghost" id="btnAddConn">+ Add connection</button>
+      <button class="btn ghost" id="btnSaveConnection">💾 Save all connections to config</button>
     </div>
   </div>
 
-  <!-- RIGHT: per-table config + settings + preview -->
-  <div>
-    <div class="card" id="selectedCard" style="display:none;">
-      <h2>Selected tables</h2>
-      <div id="selectedList"></div>
+  <div class="card" style="margin-top:16px;">
+    <h2 id="connEditTitle">Edit connection</h2>
+    <div class="hint" style="margin-bottom:14px;">Enter the source details, then <b>Test connection</b> to verify it and list its tables.</div>
+    <label>Connection id</label>
+    <input id="connId" value="default" placeholder="default" />
+    <div class="hint" id="connIdHint" style="margin:-6px 0 12px;">The <code>default</code> id is the reserved primary source and can't be renamed or deleted. If you only have one database, configure <code>default</code> and skip adding connections. Named sources (e.g. <code>warehouse_pg</code>) are only for additional databases.</div>
+    <label>Dialect</label>
+    <select id="dialect">
+      <option value="postgresql">PostgreSQL</option>
+      <option value="mssql">SQL Server</option>
+      <option value="oracle">Oracle</option>
+      <option value="databricks">Databricks SQL Warehouse</option>
+    </select>
+    <div class="row">
+      <div><label>Host</label><input id="host" placeholder="db.example.com" /></div>
+      <div><label>Port</label><input id="port" placeholder="(default)" /></div>
+    </div>
+    <label>Database</label><input id="database" placeholder="salesdb" />
+    <div class="row">
+      <div><label>Username</label><input id="username" autocomplete="off" /></div>
+      <div><label>Password</label><input id="password" type="password" autocomplete="off" /></div>
+    </div>
+    <details class="adv">
+      <summary>Advanced</summary>
+      <label>ODBC driver (SQL Server)</label>
+      <input id="driver" placeholder="ODBC Driver 18 for SQL Server" />
+      <div class="checkbox"><input type="checkbox" id="trust_cert" checked />
+        <span>TrustServerCertificate (SQL Server, dev)</span></div>
+      <label>Token (Databricks)</label>
+      <input id="token" type="password" placeholder="dapi..." />
+      <label>HTTP Path (Databricks)</label>
+      <input id="http_path" placeholder="/sql/1.0/warehouses/<id>" />
+      <div class="row">
+        <div><label>Catalog (Databricks)</label><input id="catalog" placeholder="optional" /></div>
+        <div><label>Schema (Databricks)</label><input id="schema" placeholder="optional" /></div>
+      </div>
+    </details>
+    <div class="actions">
+      <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
+      <button class="btn ghost" id="btnSaveCred" title="Encrypt this connection's password in the Manager credential store so it survives a restart">🔒 Save credentials to Manager</button>
+    </div>
+    <div class="hint" id="credHint" style="margin-top:8px;">Passwords are never written to config files. <b>Save credentials to Manager</b> encrypts the password (Windows DPAPI / Fernet) so the connection survives a restart — no env var needed.</div>
+    <div class="status" id="connStatus"></div>
+  </div>
+</div>
+
+<!-- TABLES TAB -->
+<div id="tables-tab" class="tab-content">
+  <div class="card">
+    <h2>Select Tables</h2>
+    <div class="hint" style="margin-bottom:14px;">Choose which tables to include in the configuration. Once selected, key columns will be auto-detected.</div>
+    <div class="tablebar">
+      <input id="tableSearch" placeholder="Filter tables…" />
+      <button class="btn ghost" id="selAll">All</button>
+      <button class="btn ghost" id="selNone">None</button>
+    </div>
+    <div class="tables" id="tableList"></div>
+  </div>
+
+  <div class="card" id="selectedCard" style="margin-top:16px; display:none;">
+    <h2>Per-Table Configuration</h2>
+    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Adjust the key column and split count, or remove a table with ✕.</div>
+    <div id="selectedList"></div>
+    <div class="actions">
+      <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
+    </div>
+    <div class="status" id="tableStatus"></div>
+  </div>
+</div>
+
+<!-- STORAGE TAB -->
+<div id="storage-tab" class="tab-content">
+  <div class="card">
+    <h2>Storage Proxy <span style="font-weight:400;text-transform:none;">(secured file / object passthrough)</span></h2>
+    <div class="hint" style="margin-bottom:12px;">Serve <b>existing files</b> from a storage backend through this proxy's S3 endpoint,
+      <b>alongside</b> your database tables. Backends: <code>local</code> — a filesystem path (an
+      <b>OS-mounted NFS or SMB share</b>, e.g. <code>\\server\share</code> or <code>/mnt/share</code>);
+      <code>s3</code> — a native upstream <b>S3 / MinIO / S3-compatible</b> bucket; and
+      <code>azure</code> — a native <b>Azure Blob / ADLS Gen2</b> container. Each mount maps one S3 <b>bucket</b>
+      to a backend and is served <b>read-only</b>. Changes save to <code>config.mounts.json</code> and apply on the next restart.</div>
+
+    <div class="checkbox" style="margin:6px 0 14px;">
+      <input type="checkbox" id="storageEnabled" />
+      <span>Enable storage proxy (<code>ENABLE_STORAGE_PROXY</code>)</span>
     </div>
 
-    <div class="card" style="margin-top:16px;">
-      <h2>3 · Settings &amp; download</h2>
-      <div class="row">
-        <div><label>Bucket</label><input id="bucket" value="fabric-iceberg-poc" /></div>
-        <div><label>Default splits</label><input id="numSplits" value="8" /></div>
+    <div id="mountList" class="connlist"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn ghost" id="btnAddMount">+ Add mount</button>
+      <button class="btn primary" id="btnSaveMounts">💾 Save mounts to config</button>
+    </div>
+    <div class="status" id="mountStatus"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2 id="mountEditTitle">Edit mount</h2>
+    <div class="hint" style="margin-bottom:12px;">Fill in the details, <b>Test</b> to verify the backend is reachable, then <b>Add / update</b>.</div>
+    <label>Bucket <span class="hint">(the S3 bucket name Fabric/clients will use)</span></label>
+    <input id="mountBucket" placeholder="secure-nfs" />
+    <label>Backend</label>
+    <select id="mountBackend"></select>
+    <label id="mountRootLabel">Root path</label>
+    <input id="mountRoot" placeholder="Z:\finance   ·   /mnt/share   ·   \\server\share" />
+    <label>Prefix <span class="hint">(optional — confine serving to this subfolder)</span></label>
+    <input id="mountPrefix" placeholder="reports/" />
+
+    <!-- S3-only connection + auth fields -->
+    <div id="s3Conn" style="display:none;">
+      <hr style="border:none;border-top:1px solid var(--border,#2a2a3a);margin:14px 0;" />
+      <label>Endpoint <span class="hint">(optional — MinIO/Ceph/R2/…; blank = AWS S3)</span></label>
+      <input id="mountEndpoint" placeholder="https://minio.local:9000" />
+      <label>Region <span class="hint">(optional)</span></label>
+      <input id="mountRegion" placeholder="us-east-1" />
+      <label>Addressing style</label>
+      <select id="mountAddressing">
+        <option value="">auto (path for custom endpoints)</option>
+        <option value="path">path — MinIO / Ceph</option>
+        <option value="virtual">virtual-hosted</option>
+      </select>
+      <label>Signature version</label>
+      <select id="mountSigVer">
+        <option value="">default (SigV4)</option>
+        <option value="s3v4">s3v4</option>
+        <option value="s3">s3 (SigV2 — legacy)</option>
+      </select>
+      <label>Verify TLS <span class="hint">(blank = verify · <code>false</code> = skip · or a CA bundle path)</span></label>
+      <input id="mountVerify" placeholder="false   ·   /etc/ssl/minio-ca.pem" />
+      <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="mountFips" /><span>Use FIPS endpoints</span></div>
+      <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="mountDualstack" /><span>Use dual-stack endpoints</span></div>
+
+      <label>Authentication</label>
+      <select id="mountAuthSource">
+        <option value="credential">Stored credential (recommended)</option>
+        <option value="anonymous">Anonymous — public bucket</option>
+        <option value="instance">Instance role / default provider chain</option>
+      </select>
+
+      <div id="s3CredBox">
+        <label>Credential id <span class="hint">(names the encrypted secret this mount uses)</span></label>
+        <input id="mountCredential" placeholder="s3vault" />
+        <div class="hint" style="margin:4px 0 10px;">Enter the upstream secret below and <b>Save S3 credential</b> to store it encrypted in the Manager. The secret is never written to <code>config.mounts.json</code>.</div>
+        <label>Auth type</label>
+        <select id="s3AuthMode">
+          <option value="static">static — access key + secret</option>
+          <option value="session">session — keys + session token (STS)</option>
+          <option value="assume_role">assume_role — STS role (auto-refresh)</option>
+          <option value="web_identity">web_identity — OIDC / EKS IRSA</option>
+          <option value="profile">profile — a named ~/.aws profile</option>
+          <option value="sso">sso — IAM Identity Center profile</option>
+          <option value="process">process — credential_process command</option>
+        </select>
+        <div class="s3f" data-modes="static session"><label>Access key</label><input id="s3AccessKey" placeholder="AKIA…" /></div>
+        <div class="s3f" data-modes="static session"><label>Secret key</label><input id="s3SecretKey" type="password" placeholder="Enter secret_access_key" /></div>
+        <div class="s3f" data-modes="session"><label>Session token</label><input id="s3SessionToken" type="password" placeholder="STS session token" /></div>
+        <div class="s3f" data-modes="assume_role web_identity"><label>Role ARN</label><input id="s3RoleArn" placeholder="arn:aws:iam::123456789012:role/reader" /></div>
+        <div class="s3f" data-modes="assume_role"><label>External id <span class="hint">(optional)</span></label><input id="s3ExternalId" /></div>
+        <div class="s3f" data-modes="assume_role web_identity"><label>Session name <span class="hint">(optional)</span></label><input id="s3SessionName" placeholder="fsp-proxy" /></div>
+        <div class="s3f" data-modes="web_identity"><label>Web identity token file</label><input id="s3TokenFile" placeholder="/var/run/secrets/eks.amazonaws.com/serviceaccount/token" /></div>
+        <div class="s3f" data-modes="profile sso"><label>Profile</label><input id="s3Profile" placeholder="default" /></div>
+        <div class="s3f" data-modes="process"><label>credential_process command</label><input id="s3Process" placeholder="/usr/local/bin/cred-helper --json" /></div>
+        <div class="actions"><button class="btn ghost" id="btnSaveS3Cred">🔒 Save S3 credential</button></div>
+        <div class="status" id="s3CredStatus"></div>
       </div>
+    </div>
+
+    <!-- Azure-only connection + auth fields -->
+    <div id="azConn" style="display:none;">
+      <hr style="border:none;border-top:1px solid var(--border,#2a2a3a);margin:14px 0;" />
+      <label>Storage account <span class="hint">(the account name — omit only if using a connection string or a full account URL)</span></label>
+      <input id="mountAzAccount" placeholder="mystorageacct" />
+      <label>Account URL <span class="hint">(optional — Azurite / sovereign clouds; overrides the account name)</span></label>
+      <input id="mountAzEndpoint" placeholder="https://mystorageacct.blob.core.windows.net" />
+      <label>Endpoint suffix <span class="hint">(optional — e.g. <code>blob.core.chinacloudapi.cn</code>)</span></label>
+      <input id="mountAzSuffix" placeholder="blob.core.windows.net" />
+
+      <label>Authentication</label>
+      <select id="mountAzAuthSource">
+        <option value="credential">Stored credential (recommended)</option>
+        <option value="default">DefaultAzureCredential (env / MI / CLI)</option>
+        <option value="managed_identity">Managed identity</option>
+        <option value="anonymous">Anonymous — public container</option>
+      </select>
+
+      <div id="azCredBox">
+        <label>Credential id <span class="hint">(names the encrypted secret this mount uses)</span></label>
+        <input id="mountAzCredential" placeholder="blobvault" />
+        <div class="hint" style="margin:4px 0 10px;">Enter the upstream secret below and <b>Save Azure credential</b> to store it encrypted in the Manager. The secret is never written to <code>config.mounts.json</code>.</div>
+        <label>Auth type</label>
+        <select id="azAuthMode">
+          <option value="account_key">account_key — storage account shared key</option>
+          <option value="sas">sas — account/service SAS token</option>
+          <option value="connection_string">connection_string — full connection string</option>
+          <option value="aad_client_secret">aad_client_secret — service principal</option>
+          <option value="managed_identity">managed_identity — user-assigned client id</option>
+        </select>
+        <div class="azf" data-modes="account_key"><label>Account key</label><input id="azAccountKey" type="password" placeholder="base64 shared key" /></div>
+        <div class="azf" data-modes="sas"><label>SAS token</label><input id="azSasToken" type="password" placeholder="sv=2022-…&sig=…" /></div>
+        <div class="azf" data-modes="connection_string"><label>Connection string</label><input id="azConnString" type="password" placeholder="DefaultEndpointsProtocol=https;AccountName=…;AccountKey=…" /></div>
+        <div class="azf" data-modes="aad_client_secret"><label>Tenant id</label><input id="azTenantId" placeholder="00000000-0000-0000-0000-000000000000" /></div>
+        <div class="azf" data-modes="aad_client_secret"><label>Client id</label><input id="azClientId" placeholder="app (client) id" /></div>
+        <div class="azf" data-modes="aad_client_secret"><label>Client secret</label><input id="azClientSecret" type="password" placeholder="client secret value" /></div>
+        <div class="azf" data-modes="managed_identity"><label>Client id <span class="hint">(optional — user-assigned MI)</span></label><input id="azMiClientId" placeholder="leave blank for system-assigned" /></div>
+        <div class="actions"><button class="btn ghost" id="btnSaveAzCred">🔒 Save Azure credential</button></div>
+        <div class="status" id="azCredStatus"></div>
+      </div>
+    </div>
+
+    <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="mountReadOnly" checked disabled />
+      <span>Read-only</span></div>
+    <div class="actions">
+      <button class="btn ghost" id="btnTestMount">Test</button>
+      <button class="btn primary" id="btnApplyMount">Add / update mount</button>
+    </div>
+    <div class="status" id="mountEditStatus"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2>Access keys <span style="font-weight:400;text-transform:none;">(per-key authorization)</span></h2>
+    <div class="hint" style="margin-bottom:12px;">Issue scoped S3 access keys so each client/tenant can reach only the buckets it's allowed.
+      Keys are stored <b>encrypted</b> in the Manager; the secret is shown <b>once</b> at creation. When any key exists it governs SigV4 auth
+      (the legacy single key still works until then). Mounts are forced to require auth via <code>enforce_mount_auth</code>.</div>
+    <div id="akList" class="connlist"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn ghost" id="btnAddAccessKey">+ New access key</button>
+    </div>
+    <div class="status" id="akStatus"></div>
+
+    <div id="akEdit" style="margin-top:14px;display:none;">
+      <hr style="border:none;border-top:1px solid var(--border,#2a2a3a);margin:8px 0 14px;" />
+      <h3 id="akEditTitle" style="margin:0 0 10px;">New access key</h3>
+      <label>Access key id <span class="hint">(blank on create = auto-generated)</span></label>
+      <input id="akId" placeholder="FSP… (leave blank to generate)" />
+      <label>Label</label>
+      <input id="akLabel" placeholder="finance-reader" />
+      <label>Allowed buckets <span class="hint">(comma-separated; <code>*</code> = all)</span></label>
+      <input id="akBuckets" placeholder="secure-nfs, s3vault" />
+      <label>Allowed prefixes <span class="hint">(optional — <code>bucket=prefix1,prefix2;bucket2=…</code>)</span></label>
+      <input id="akPrefixes" placeholder="s3vault=2026/,2025/" />
+      <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="akEnabled" checked /><span>Enabled</span></div>
+      <div class="actions">
+        <button class="btn primary" id="btnSaveAccessKey">Save access key</button>
+        <button class="btn ghost" id="btnCancelAccessKey">Cancel</button>
+      </div>
+      <div class="status" id="akEditStatus"></div>
+    </div>
+  </div>
+</div>
+<div id="settings-tab" class="tab-content">
+  <div class="card">
+    <h2>Global Settings</h2>
+    <div class="hint" style="margin-bottom:14px;">Refresh settings apply instantly via <b>Apply now</b>. Bucket, table format, and auth settings require <b>Download + restart</b> to take effect.</div>
+    <div class="row">
+      <div><label>Bucket</label><input id="bucket" value="fabric-iceberg-poc" /></div>
+      <div><label>Default splits</label><input id="numSplits" value="8" /></div>
+    </div>
+    <div class="row">
+      <div><label>Table format</label>
+        <select id="tableFormat">
+          <option value="iceberg">iceberg — Fabric virtualizes to Delta</option>
+          <option value="delta">delta — native, no conversion (lower lag)</option>
+        </select>
+      </div>
+    </div>
+    <div class="hint" id="fmtHint" style="display:none;">
+      Native Delta output — Fabric reads <code>_delta_log/</code> directly with no
+      Iceberg→Delta conversion layer. Lower lag &amp; fewer conversion bugs.</div>
+    <div class="checkbox"><input type="checkbox" id="requireSigv4" /><span>require_sigv4</span></div>
+    <div class="checkbox"><input type="checkbox" id="includePassword" checked />
+      <span>Include password in db_url</span></div>
+    <div class="hint" id="pwHint" style="display:none;">
+      Password omitted — set <code>DB_URL</code> as an environment variable at runtime.</div>
+
+    <div class="checkbox" style="margin-top:6px;"><input type="checkbox" id="autoRefresh" />
+      <span>auto_refresh — re-read source &amp; publish new snapshots on change</span></div>
+    <div id="refreshOpts" style="display:none;">
       <div class="row">
-        <div><label>Table format</label>
-          <select id="tableFormat">
-            <option value="iceberg">iceberg — Fabric virtualizes to Delta</option>
-            <option value="delta">delta — native, no conversion (lower lag)</option>
+        <div><label>Poll seconds</label><input id="refreshPoll" value="600" /></div>
+        <div><label>Strategy</label>
+          <select id="refreshStrategy">
+            <option value="auto">auto</option>
+            <option value="dialect_probe">dialect_probe</option>
+            <option value="content_hash">content_hash</option>
+            <option value="ttl">ttl</option>
+            <option value="manual">manual</option>
           </select>
         </div>
       </div>
-      <div class="hint" id="fmtHint" style="display:none;">
-        Native Delta output — Fabric reads <code>_delta_log/</code> directly with no
-        Iceberg→Delta conversion layer. Lower lag &amp; fewer conversion bugs.</div>
-      <div class="checkbox"><input type="checkbox" id="requireSigv4" /><span>require_sigv4</span></div>
-      <div class="checkbox"><input type="checkbox" id="includePassword" checked />
-        <span>Include password in db_url</span></div>
-      <div class="hint" id="pwHint" style="display:none;">
-        Password omitted — set <code>DB_URL</code> as an environment variable at runtime.</div>
-
-      <div class="checkbox" style="margin-top:6px;"><input type="checkbox" id="autoRefresh" />
-        <span>auto_refresh — re-read source &amp; publish new snapshots on change</span></div>
-      <div id="refreshOpts" style="display:none;">
-        <div class="row">
-          <div><label>Poll seconds</label><input id="refreshPoll" value="600" /></div>
-          <div><label>Strategy</label>
-            <select id="refreshStrategy">
-              <option value="auto">auto</option>
-              <option value="dialect_probe">dialect_probe</option>
-              <option value="content_hash">content_hash</option>
-              <option value="ttl">ttl</option>
-              <option value="manual">manual</option>
-            </select>
-          </div>
-        </div>
-        <div class="row">
-          <div><label>TTL seconds (ttl strategy)</label><input id="refreshTtl" value="1200" /></div>
-        </div>
-        <div class="checkbox"><input type="checkbox" id="refreshFullPull" />
-          <span>refresh_allow_full_pull (auto: full read when probe unavailable)</span></div>
+      <div class="row">
+        <div><label>TTL seconds (ttl strategy)</label><input id="refreshTtl" value="1200" /></div>
       </div>
-
-      <label style="margin-top:14px;">config.json preview</label>
-      <pre id="preview">{}</pre>
-      <div class="actions">
-        <button class="btn primary" id="btnDownload">Download config.json</button>
-        <button class="btn ghost" id="btnCopy">Copy</button>
-      </div>
-      <div class="status" id="buildStatus"></div>
+      <div class="checkbox"><input type="checkbox" id="refreshFullPull" />
+        <span>refresh_allow_full_pull (auto: full read when probe unavailable)</span></div>
     </div>
 
-    <div class="card" style="margin-top:16px;">
-      <h2>4 · All settings <span style="font-weight:400;text-transform:none;">(advanced — defaults shown)</span></h2>
-      <div class="hint">Every global configuration setting with its built-in default. Leave a field blank to
-        keep the default; only changed values are written to <code>config.json</code>. Connection, bucket,
-        splits, tables and freshness are configured above.</div>
-      <input id="settingsSearch" placeholder="Filter settings…" style="margin:10px 0;" />
-      <div id="allSettings"><div class="hint">Loading…</div></div>
+    <label style="margin-top:14px;">config.json preview</label>
+    <pre id="preview">{}</pre>
+    <div class="actions">
+      <button class="btn primary" id="btnApplySettings">⚡ Apply now</button>
+      <button class="btn ghost" id="btnSaveSettings">Save to config.json</button>
+      <button class="btn ghost" id="btnDownload">Download config.json</button>
+      <button class="btn ghost" id="btnCopy">Copy</button>
     </div>
+    <div class="status" id="buildStatus"></div>
   </div>
-</main>
+</div>
+
+<!-- ADVANCED TAB -->
+<div id="advanced-tab" class="tab-content">
+  <div class="card">
+    <h2>All Settings</h2>
+    <div class="hint" style="margin-bottom:14px;">Every global configuration setting with its built-in default. Leave a field blank to keep the default; only changed values are written to <code>config.json</code>.</div>
+    <input id="settingsSearch" placeholder="Filter settings…" style="margin:10px 0;" />
+    <div id="allSettings" class="tab-settings"><div class="hint">Loading…</div></div>
+    <div class="actions">
+      <button class="btn primary" id="btnApplyAdvanced">⚡ Apply changes</button>
+      <button class="btn ghost" id="btnSaveAdvanced">Save to config.json</button>
+    </div>
+    <div class="status" id="advancedStatus"></div>
+  </div>
+</div>
+
+<!-- OPERATIONAL TAB -->
+<div id="operational-tab" class="tab-content">
+  <div class="card">
+    <h2>Operational Configuration <span style="font-weight:400;text-transform:none;">(read current · push changes · scale the fleet)</span></h2>
+    <div class="hint">Shows what this server is <b>actually running</b> (env / config.json / default). Change a value and
+      <b>Save</b> it to <code>config.json</code> — most settings apply on the next restart. When opened on the
+      <b>Manager</b>, you can also scale the number of Agents <b>live</b>.</div>
+
+    <div style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+      <b>S3 secret key</b> <span id="s3SecretState" class="hint" style="margin-left:6px;">(checking...)</span>
+      <div class="hint">Write-only field. Value is never shown back; status only.</div>
+      <div class="tablebar" style="margin-top:8px;">
+        <input id="s3SecretInput" type="password" placeholder="Enter new S3 secret_access_key" />
+        <button class="btn primary" id="btnSaveS3Secret">Replace & save</button>
+        <button class="btn ghost" id="btnClearS3Secret">Clear & save</button>
+      </div>
+      <div class="status" id="s3SecretStatus"></div>
+    </div>
+
+    <div style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+      <b>SigV4 diagnostics</b>
+      <div class="hint">Effective authentication values used by this running process.</div>
+      <div style="margin-top:8px; display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; align-items:center;">
+        <div class="hint">require_sigv4</div><div id="diagRequireSigv4">-</div>
+        <div class="hint">access_key_id</div><div id="diagAccessKey">-</div>
+        <div class="hint">access_key source</div><div id="diagAccessKeySource">-</div>
+        <div class="hint">secret_access_key</div><div id="diagSecretStatus">-</div>
+        <div class="hint">secret source</div><div id="diagSecretSource">-</div>
+        <div class="hint">config file</div><div id="diagConfigFile">-</div>
+      </div>
+      <div class="status" id="diagWarning" style="margin-top:8px;"></div>
+    </div>
+
+    <div id="fleetScale" style="display:none; margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+      <b>Fleet size</b> — Agents supervised: <span id="fleetCount">?</span>
+      &nbsp;&nbsp;<label>Agents <input id="agentCount" type="number" min="1" style="width:66px;" /></label>
+      <label style="margin-left:8px;">admin token <input id="scaleToken" type="password" size="12" placeholder="(if set)" /></label>
+      <button class="btn primary" id="btnScale">Apply live</button>
+      <button class="btn ghost" id="btnSaveFleetSize">Save to config.json</button>
+      <span class="status" id="scaleStatus" style="display:inline; margin-left:8px;"></span>
+    </div>
+
+    <div class="tablebar" style="margin-top:10px;">
+      <input id="liveSearch" placeholder="Filter settings…" />
+      <button class="btn ghost" id="btnReloadLive">Reload</button>
+      <button class="btn ghost" id="btnSaveLive">Save to config.json</button>
+      <button class="btn primary" id="btnApplyLive">⚡ Apply now</button>
+    </div>
+    <div class="hint" style="margin-top:6px;">
+      <span style="color:#4ade80;">⚡ live</span> settings apply immediately.
+      <span style="color:#fb923c;">↺ restart</span> settings are saved to <code>config.json</code> and apply on next restart.
+    </div>
+    <div class="status" id="liveStatus"></div>
+    <div id="liveSettings" style="max-height:420px; overflow:auto; margin-top:8px;"><div class="hint">Loading…</div></div>
+  </div>
+</div>
 
 <script>
+// ---- Tab switching ----
+function initTabs(){
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabName = btn.dataset.tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(tabName + '-tab').classList.add('active');
+    });
+  });
+}
+
 const $ = (id) => document.getElementById(id);
-const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433" };
-const PERSIST = ["dialect","host","port","database","username","driver","bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
+const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443" };
+// Connection fields live in the per-connection manager; only global builder
+// settings are persisted through the generic form store.
+const PERSIST = ["bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
+// Editable connection form fields (password is in-memory only, never persisted).
+const CONN_FIELDS = ["dialect","host","port","database","username","password","driver","token","http_path","catalog","schema"];
 
 const state = {
-  connection: null,   // last-used connection fields
   db_url: "", db_url_masked: "",
-  tables: [],         // [{schema,name,kind}]
-  selected: new Map() // key `${schema}.${name}` -> {name, source_table, key_column, num_splits, integer_keys, columns, approx_rows, invalid}
+  activeConnId: "default",   // the connection currently loaded in the edit form
+  connections: new Map(),    // id -> connObj (see newConn)
+  tables: [],                // [{schema,name,kind}] for the ACTIVE connection
+  connection: null,          // active conn's form snapshot (for /inspect)
+  selected: new Map(),       // key `${connId}::${source_table}` -> table cfg
+  expandedGroups: new Set(), // connection ids whose table group is expanded in the Tables tab
+  storedCreds: new Set(),    // connection ids with an encrypted credential in the Manager store
+  credBackend: "",           // encryption backend the Manager store is using
+  credAvailable: false       // whether the Manager can encrypt/persist credentials
 };
+
+// Composite key so same-named tables from different sources never collide.
+function selKey(connId, source){ return (connId||"default") + "::" + source; }
+
+// SECURITY: passwords must never be written into config files (the startup gate
+// rejects inline credentials in db_url). Strip the password from a URL and
+// detect whether one was present so we can point the operator at an env var.
+function stripPw(url){
+  if(!url) return url || "";
+  return url.replace(/(:\/\/[^:/@]+):[^@/]*@/, "$1@");
+}
+function hasPw(url){ return /:\/\/[^:/@]+:[^@/]*@/.test(url||""); }
+// A masked URL (redacted password rendered as ***) must never be saved as a real credential.
+function looksMasked(url){ return /:\*\*\*@/.test(url||""); }
+function envVarFor(id){ return id==="default" ? "DB_URL" : ("DB_URL_" + String(id).replace(/[^A-Za-z0-9]+/g,"_").toUpperCase()); }
+
+function newConn(id){
+  return { id, dialect:"postgresql", host:"", port:"", database:"", username:"", password:"",
+    driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"",
+    db_url:"", db_url_masked:"", flavor:"", tested:false };
+}
 
 // ---- persistence (never the password) ----
 function saveForm(){ const o={}; PERSIST.forEach(id=>o[id]=$(id).value);
@@ -227,8 +577,37 @@ function saveForm(){ const o={}; PERSIST.forEach(id=>o[id]=$(id).value);
 function loadForm(){ try{ const o=JSON.parse(localStorage.getItem("cfgbuilder")||"{}");
   PERSIST.forEach(id=>{ if(o[id]!==undefined) $(id).value=o[id]; }); }catch(e){} }
 
+function persistConns(){
+  // Connection/table state mirrors the LIVE config (bootstrap) — intentionally
+  // NOT persisted, so a removed connection/table can't reappear as a stale ghost.
+  try{ localStorage.removeItem("cfgbuilder_conns"); }catch(e){}
+}
+function loadConns(){ /* no-op: the running config is the single source of truth */ }
+function ensureDefaultConn(){
+  if(!state.connections.has("default")) state.connections.set("default", newConn("default"));
+  if(!state.connections.has(state.activeConnId)) state.activeConnId = "default";
+}
+
+// Read the form into the active connection object (and vice versa).
+function readFormIntoConn(c){
+  if(!c) return;
+  CONN_FIELDS.forEach(f => c[f] = $(f).value);
+  c.trust_cert = $("trust_cert").checked;
+}
+function writeFormFromConn(c){
+  if(!c) return;
+  CONN_FIELDS.forEach(f => $(f).value = (c[f]!=null ? c[f] : ""));
+  $("trust_cert").checked = c.trust_cert !== false;
+  $("connId").value = c.id;
+  $("connId").disabled = (c.id === "default");
+  $("port").placeholder = "(default "+DEFAULT_PORTS[c.dialect||"postgresql"]+")";
+  $("connEditTitle").textContent = "Edit connection — " + c.id;
+}
+function commitActive(){ readFormIntoConn(state.connections.get(state.activeConnId)); }
+
 function connFields(){
   return {
+    id: ($("connId").value.trim() || "default"),
     dialect: $("dialect").value,
     host: $("host").value.trim(),
     port: $("port").value.trim() || null,
@@ -237,7 +616,191 @@ function connFields(){
     password: $("password").value,
     driver: $("driver").value.trim() || null,
     trust_cert: $("trust_cert").checked,
+    token: $("token").value,
+    http_path: $("http_path").value.trim() || null,
+    catalog: $("catalog").value.trim() || null,
+    schema: $("schema").value.trim() || null,
   };
+}
+
+// ---- connection manager ----
+function selectConn(id){
+  if(!state.connections.has(id)) return;
+  commitActive();
+  state.activeConnId = id;
+  const c = state.connections.get(id);
+  state.db_url = c.db_url; state.db_url_masked = c.db_url_masked;
+  writeFormFromConn(c);
+  $("connStatus").textContent=""; $("connStatus").className="status";
+  renderConnList(); renderSelected(); persistConns();
+}
+function addConn(){
+  commitActive();
+  let n = 1, id = "source_"+n;
+  while(state.connections.has(id)){ n++; id = "source_"+n; }
+  state.connections.set(id, newConn(id));
+  state.activeConnId = id;
+  writeFormFromConn(state.connections.get(id));
+  renderConnList(); persistConns();
+  $("connId").focus(); $("connId").select();
+  const s=$("connStatus"); s.className="status"; s.textContent="New connection — set an id + details, then Test connection.";
+}
+function clearConnTables(id){
+  const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
+  if(!n){ const s=$("connStatus"); s.className="status"; s.textContent="No tables are assigned to '"+id+"'."; return; }
+  if(!confirm(`Remove all ${n} table(s) from '${id}'?`)) return;
+  for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
+  renderConnList(); renderSelected(); updatePreview();
+}
+function removeConn(id){
+  const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
+  const label = id === "default" ? "the default connection" : `connection '${id}'`;
+  if(!confirm(`Remove ${label}`+(n?` and its ${n} selected table(s)`:"")+"?")) return;
+  for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
+  state.connections.delete(id);
+  // Never leave the manager empty — a default slot must always exist.
+  if(state.connections.size === 0) state.connections.set("default", newConn("default"));
+  if(!state.connections.has(state.activeConnId)) state.activeConnId = state.connections.keys().next().value;
+  const c = state.connections.get(state.activeConnId);
+  state.db_url = c.db_url; state.db_url_masked = c.db_url_masked;
+  writeFormFromConn(c);
+  renderConnList(); renderSelected(); updatePreview(); persistConns();
+}
+function renameActive(newId){
+  newId = (newId||"").trim();
+  const oldId = state.activeConnId;
+  if(oldId === "default"){ $("connId").value = "default"; return; }   // default is fixed
+  if(!newId || newId === oldId) return;
+  const s = $("connStatus");
+  if(newId === "default" || state.connections.has(newId)){
+    s.className="status err"; s.textContent="✗ id '"+newId+"' is reserved or already in use.";
+    $("connId").value = oldId; return;
+  }
+  const c = state.connections.get(oldId);
+  state.connections.delete(oldId); c.id = newId; state.connections.set(newId, c);
+  for(const [k,v] of [...state.selected.entries()]){
+    if((v.connection||"default") === oldId){
+      v.connection = newId; state.selected.delete(k); state.selected.set(selKey(newId, v.source_table), v);
+    }
+  }
+  state.activeConnId = newId;
+  writeFormFromConn(c);
+  renderConnList(); renderSelected(); updatePreview(); persistConns();
+}
+function renderConnList(){
+  const wrap = $("connList"); wrap.innerHTML = "";
+  for(const c of state.connections.values()){
+    const n = [...state.selected.values()].filter(s=>(s.connection||"default")===c.id).length;
+    const row = document.createElement("div");
+    row.className = "connrow" + (c.id === state.activeConnId ? " active" : "");
+    const left = document.createElement("div");
+    const idLabel = c.id === "default"
+      ? `${c.id} <span class="badge">primary</span>`
+      : c.id;
+    const testBadge = c.tested ? '<span class="badge ok">tested</span>' : '<span class="badge warn">not tested</span>';
+    const storedBadge = state.storedCreds.has(c.id) ? ' <span class="badge ok" title="Password saved (encrypted) in the Manager — survives a restart">🔒 stored</span>' : '';
+    const urlLine = c.db_url_masked
+      ? c.db_url_masked
+      : (c.host ? (c.dialect + " · " + c.host + (c.database ? "/"+c.database : "")) : "not configured yet");
+    left.innerHTML = `<div class="cid">${idLabel} ${testBadge}${storedBadge}</div>`
+      + `<div class="meta">${c.flavor || c.dialect || ""} · ${urlLine}</div>`
+      + `<div class="meta">${n} table(s) selected</div>`;
+    const acts = document.createElement("div"); acts.className = "connacts";
+    const rm = document.createElement("button"); rm.className = "iconbtn";
+    if(c.id === "default"){
+      // The default connection is the reserved primary (the db_url) and is always
+      // present — you can't delete it, only clear the tables assigned to it.
+      rm.textContent = "Clear tables";
+      rm.title = "Remove the tables assigned to the primary connection (it can't be deleted — it's the db_url)";
+      rm.onclick = (e)=>{ e.stopPropagation(); clearConnTables("default"); };
+    } else {
+      rm.textContent = "Remove";
+      rm.title = "Remove this connection and its tables";
+      rm.onclick = (e)=>{ e.stopPropagation(); removeConn(c.id); };
+    }
+    acts.appendChild(rm);
+    row.append(left, acts);
+    row.onclick = ()=> selectConn(c.id);
+    wrap.appendChild(row);
+  }
+}
+
+function applyBootstrap(builder){
+  if(!builder) return;
+  // Prime the main builder form from runtime config.
+  if(builder.bucket) $("bucket").value = String(builder.bucket);
+  if(builder.num_splits!=null) $("numSplits").value = String(builder.num_splits);
+  if(builder.table_format) $("tableFormat").value = String(builder.table_format);
+  $("requireSigv4").checked = !!builder.require_sigv4;
+  $("autoRefresh").checked = !!builder.auto_refresh;
+  if(builder.refresh_poll_seconds!=null) $("refreshPoll").value = String(builder.refresh_poll_seconds);
+  if(builder.refresh_strategy) $("refreshStrategy").value = String(builder.refresh_strategy);
+  if(builder.refresh_ttl_seconds!=null) $("refreshTtl").value = String(builder.refresh_ttl_seconds);
+  $("refreshFullPull").checked = !!builder.refresh_allow_full_pull;
+
+  // Authoritative: the builder mirrors the LIVE config exactly, so nothing stale
+  // lingers — a connection/table removed from config can't silently reappear, and
+  // tables always show under the connection the config actually assigns them to.
+  state.connections.clear();
+  state.selected.clear();
+
+  const d = newConn("default");
+  // Only the MASKED url is known from bootstrap; leave db_url empty so the masked
+  // value can never be mistaken for a real, connectable URL (or saved as a secret).
+  if(builder.has_db_url && builder.db_url_masked){ d.db_url_masked = builder.db_url_masked; }
+  state.connections.set("default", d);
+  for(const c of (builder.connections||[])){
+    if(!c || !c.id) continue;
+    const nc = newConn(String(c.id));
+    nc.db_url_masked = c.db_url_masked || ""; nc.flavor = c.flavor || "";
+    state.connections.set(nc.id, nc);
+  }
+  if(!state.connections.has(state.activeConnId)) state.activeConnId = "default";
+
+  // Mirror the configured table -> connection assignments.
+  for(const t of (builder.tables||[])){
+    if(!t || !t.source_table) continue;
+    const source = String(t.source_table);
+    const name = String(t.name || source.split(".").pop() || "table");
+    const connId = String(t.connection || "default");
+    state.selected.set(selKey(connId, source), {
+      name,
+      schema: null,
+      source_table: source,
+      connection: connId,
+      key_column: t.key_column || null,
+      num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
+      integer_keys: t.key_column ? [t.key_column] : [],
+      columns: [],
+      approx_rows: null,
+      invalid: !t.key_column,
+      pending: false,
+    });
+  }
+
+  const active = state.connections.get(state.activeConnId);
+  state.db_url = active.db_url || ""; state.db_url_masked = active.db_url_masked || "";
+  if(builder.has_db_url){
+    $("includePassword").checked = false;
+    $("pwHint").style.display = "block";
+  }
+  $("refreshOpts").style.display = $("autoRefresh").checked ? "block" : "none";
+  $("fmtHint").style.display = $("tableFormat").value === "delta" ? "block" : "none";
+  writeFormFromConn(active);
+  renderConnList();
+  renderSelected();
+  saveForm();
+  persistConns();
+}
+
+async function loadBuilderBootstrap(){
+  try{
+    const r = await fetch("/_config/api/bootstrap", {cache:"no-store"});
+    const d = await r.json();
+    if(r.ok) applyBootstrap(d.builder || {});
+  }catch(e){ /* keep local/default form when bootstrap is unavailable */ }
+  await refreshCredStatus();
+  renderConnList();
 }
 
 async function api(path, body){
@@ -248,20 +811,136 @@ async function api(path, body){
   return data;
 }
 
-// ---- connect ----
+// ---- connect / test ----
 $("btnConnect").onclick = async () => {
-  saveForm();
+  commitActive();
   const s = $("connStatus"); s.className="status"; s.textContent="Connecting…";
   $("btnConnect").disabled = true;
   const conn = connFields();
   const data = await api("/_config/api/connect", conn);
   $("btnConnect").disabled = false;
   if(!data.ok){ s.className="status err"; s.textContent="✗ " + (data.error||"connection failed"); return; }
+  const connId = conn.id || "default";
+  state.activeConnId = connId;
+  const c = state.connections.get(connId) || newConn(connId);
+  readFormIntoConn(c);
+  c.db_url = data.db_url; c.db_url_masked = data.db_url_masked;
+  c.flavor = (data.capabilities && data.capabilities.flavor) || conn.dialect; c.tested = true;
+  state.connections.set(connId, c);
   state.connection = conn; state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
-  state.tables = data.tables || []; state.selected.clear();
+  state.tables = data.tables || [];
+  // Re-listing this source: drop only ITS prior selections.
+  for(const k of [...state.selected.keys()]){
+    if(k.startsWith(connId + "::")) state.selected.delete(k);
+  }
   s.className="status ok";
-  s.textContent = `✓ Connected${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
-  renderTables(); $("tablesCard").style.display="block"; renderSelected();
+  s.textContent = `✓ Connected as '${connId}'${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
+  renderConnList(); renderTables(); persistConns();
+  document.querySelector('[data-tab="tables"]').click(); renderSelected();
+};
+
+// ---- credential store (persist DB passwords in the Manager, encrypted) ----
+async function refreshCredStatus(){
+  try{
+    const r = await fetch("/_config/api/credentials").then(x=>x.json());
+    state.credAvailable = !!r.available;
+    state.credBackend = r.backend || "";
+    state.storedCreds = new Set((r.connections||[]).map(c=>c.id));
+  }catch(e){ state.storedCreds = new Set(); }
+  const h = $("credHint");
+  if(h){
+    if(state.credAvailable){
+      h.innerHTML = `Passwords are never written to config files. <b>Save credentials to Manager</b> encrypts the password `
+        + `(<code>${state.credBackend}</code>) so the connection survives a restart — no env var needed.`;
+    } else {
+      h.innerHTML = `⚠ The Manager can't encrypt credentials on this host (no backend). Install <code>cryptography</code> `
+        + `or set <code>FSP_CRED_KEY</code>, or supply the password via the <code>DB_URL</code> env var.`;
+    }
+  }
+}
+
+$("btnSaveCred").onclick = async () => {
+  commitActive();
+  const c = state.connections.get(state.activeConnId);
+  const s = $("connStatus");
+  if(!c || !c.tested || !c.db_url || !hasPw(c.db_url) || looksMasked(c.db_url)){
+    s.className="status err";
+    s.textContent="Enter the real password and Test connection first — the form currently holds a masked/untested value, so there's no password to save.";
+    return;
+  }
+  $("btnSaveCred").disabled = true;
+  s.className="status"; s.textContent="Saving encrypted credential to the Manager…";
+  const r = await api("/_config/api/credentials", { connection_id:c.id, db_url:c.db_url, apply:true });
+  $("btnSaveCred").disabled = false;
+  if(!r.ok){ s.className="status err"; s.textContent="✗ "+(r.error||"could not save credential"); return; }
+  s.className="status ok";
+  s.textContent = `🔒 Saved (${r.backend}) as ${r.env_var}.`
+    + (r.restarted ? ` Restarted ${r.restarted} agent(s) — the credential is live.` : ` ${r.note||""}`);
+  await refreshCredStatus();
+  renderConnList();
+};
+
+// ---- add a new connection ----
+$("btnAddConn").onclick = addConn;
+
+// ---- save all connections to config ----
+$("btnSaveConnection").onclick = async () => {
+  commitActive();
+  const s = $("connStatus"); s.className="status"; s.textContent="Saving connections…";
+  $("btnSaveConnection").disabled = true;
+  // Only persist connections tested this session (real URLs). Passwords are
+  // STRIPPED before writing — the security gate rejects inline credentials in
+  // config files — and the operator is pointed at the matching env var.
+  const settings = {};
+  const envHints = [];
+  const dflt = state.connections.get("default");
+  if(dflt && dflt.tested && dflt.db_url){
+    settings.db_url = stripPw(dflt.db_url);
+    if(hasPw(dflt.db_url)) envHints.push(envVarFor("default"));
+  }
+  const named = [];
+  for(const c of state.connections.values()){
+    if(c.id==="default" || !c.tested || !c.db_url) continue;
+    named.push({id:c.id, db_url: stripPw(c.db_url)});
+    if(hasPw(c.db_url)) envHints.push(envVarFor(c.id));
+  }
+  if(named.length) settings.connections = named;
+  if(!Object.keys(settings).length){
+    $("btnSaveConnection").disabled = false;
+    s.className="status err";
+    s.textContent="✗ Nothing to save — Test at least one connection first (it needs a live URL).";
+    return;
+  }
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings})
+    });
+    const result = await r.json();
+    if(!r.ok){
+      $("btnSaveConnection").disabled = false;
+      s.className="status err";
+      s.textContent="✗ Save failed: " + ((result.errors&&result.errors.join("; "))||result.error||r.status);
+      return;
+    }
+    $("btnSaveConnection").disabled = false;
+    s.className="status ok";
+    const parts = [];
+    if(settings.db_url) parts.push("default");
+    if(named.length) parts.push(`${named.length} named source${named.length>1?"s":""}`);
+    let msg = "✓ Saved " + parts.join(" + ") + " to config.connection.json (restart to apply).";
+    if(envHints.length){
+      const uniq = [...new Set(envHints)];
+      msg += " Passwords were omitted for security — set " + uniq.join(", ")
+           + " as environment variable(s) before starting (e.g. .\\Manager.ps1 -DbUrl \"<full URL>\" for the default).";
+    }
+    s.textContent = msg;
+  }catch(e){
+    $("btnSaveConnection").disabled = false;
+    s.className="status err";
+    s.textContent = "✗ Save error: " + e;
+  }
 };
 
 // ---- table list ----
@@ -281,7 +960,7 @@ function renderTables(){
       const key = (t.schema? t.schema+"." : "") + t.name;
       const row = document.createElement("div"); row.className="trow";
       const cb = document.createElement("input"); cb.type="checkbox";
-      cb.checked = state.selected.has(key);
+      cb.checked = state.selected.has(selKey(state.activeConnId, key));
       cb.onchange = () => toggleTable(t, cb.checked);
       const name = document.createElement("div"); name.className="name"; name.textContent = key;
       const kind = document.createElement("span"); kind.className="kind"; kind.textContent = t.kind;
@@ -297,17 +976,18 @@ function bulk(on){
   for(const t of state.tables){
     const label = (t.schema? t.schema+"." : "") + t.name;
     if(q && !label.toLowerCase().includes(q)) continue;
-    const key = label;
+    const key = selKey(state.activeConnId, label);
     if(on && !state.selected.has(key)) state.selected.set(key, stub(t));
     if(!on) state.selected.delete(key);
   }
   renderTables(); scheduleInspect(); renderSelected();
 }
 function stub(t){ return { name:t.name, schema:t.schema||null,
-  source_table:(t.schema? t.schema+"." : "")+t.name, key_column:null, num_splits:null,
+  source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
+  key_column:null, num_splits:null,
   integer_keys:[], columns:[], approx_rows:null, pending:true }; }
 function toggleTable(t, on){
-  const key = (t.schema? t.schema+"." : "") + t.name;
+  const key = selKey(state.activeConnId, (t.schema? t.schema+"." : "") + t.name);
   if(on) state.selected.set(key, stub(t)); else state.selected.delete(key);
   scheduleInspect(); renderSelected();
 }
@@ -316,14 +996,14 @@ function toggleTable(t, on){
 let inspectTimer=null;
 function scheduleInspect(){ clearTimeout(inspectTimer); inspectTimer=setTimeout(runInspect, 250); }
 async function runInspect(){
-  const pending = [...state.selected.values()].filter(s=>s.pending);
+  // Only inspect the ACTIVE source's pending tables (uses the active connection).
+  const pending = [...state.selected.values()].filter(s=>s.pending && (s.connection||"default")===state.activeConnId);
   if(pending.length===0) return;
   const refs = pending.map(s=>({schema:s.schema, name:s.name}));
   const data = await api("/_config/api/inspect", {connection: state.connection, tables: refs});
   if(!data.ok){ $("buildStatus").className="status err"; $("buildStatus").textContent="✗ "+(data.error||"inspect failed"); return; }
   for(const meta of data.tables){
-    // match by source_table
-    const entry = [...state.selected.values()].find(s=>s.source_table===meta.source_table);
+    const entry = state.selected.get(selKey(state.activeConnId, meta.source_table));
     if(!entry) continue;
     entry.integer_keys = meta.integer_keys || [];
     entry.columns = meta.columns || [];
@@ -341,25 +1021,61 @@ function renderSelected(){
   const items = [...state.selected.values()];
   card.style.display = items.length? "block":"none";
   wrap.innerHTML="";
+
+  // Group the selected tables by their source connection.
+  const groups = new Map();
   for(const s of items){
-    const row = document.createElement("div"); row.className="cfgrow";
-    const src = document.createElement("div"); src.className="src";
-    src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
-      s.approx_rows!=null? " · ~"+Intl.NumberFormat().format(s.approx_rows)+" rows":""}</span>`;
-    if(s.pending){ src.innerHTML += `<br><span class="rows">reflecting…</span>`; }
-    if(s.invalid){ src.innerHTML += `<br><span class="invalid">no integer key — cannot split</span>`; }
+    const cid = s.connection || "default";
+    if(!groups.has(cid)) groups.set(cid, []);
+    groups.get(cid).push(s);
+  }
 
-    const keysel = document.createElement("select"); keysel.className="keysel";
-    const keys = s.integer_keys.length? s.integer_keys : (s.key_column? [s.key_column]: []);
-    for(const k of keys){ const o=document.createElement("option"); o.value=k; o.textContent=k;
-      if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
-    if(keys.length===0){ const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true; }
-    keysel.onchange = ()=>{ s.key_column=keysel.value; updatePreview(); };
+  for(const [cid, list] of groups){
+    const open = state.expandedGroups.has(cid);
+    const grp = document.createElement("div"); grp.className = "tgroup" + (open ? " open" : "");
 
-    const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
-    splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
+    const head = document.createElement("div"); head.className = "tghead";
+    const needKey = list.filter(s=>s.invalid || !s.key_column).length;
+    const primary = cid === "default" ? ' <span class="badge">primary</span>' : "";
+    head.innerHTML = `<span class="tgcaret">▸</span><span>${cid}${primary}</span>`
+      + `<span class="tgcount">${list.length} table${list.length!==1?"s":""}`
+      + (needKey ? ` · ${needKey} need a key` : "") + `</span>`;
+    head.onclick = ()=>{
+      if(state.expandedGroups.has(cid)) state.expandedGroups.delete(cid);
+      else state.expandedGroups.add(cid);
+      renderSelected();
+    };
 
-    row.append(src, keysel, splits); wrap.appendChild(row);
+    const body = document.createElement("div"); body.className = "tgbody";
+    for(const s of list){
+      const key = selKey(s.connection, s.source_table);
+      const row = document.createElement("div"); row.className="cfgrow";
+      const src = document.createElement("div"); src.className="src";
+      src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
+        s.approx_rows!=null? " · ~"+Intl.NumberFormat().format(s.approx_rows)+" rows":""}</span>`;
+      if(s.pending){ src.innerHTML += `<br><span class="rows">reflecting…</span>`; }
+      if(s.invalid){ src.innerHTML += `<br><span class="invalid">no integer key — cannot split</span>`; }
+
+      const keysel = document.createElement("select"); keysel.className="keysel";
+      const keys = s.integer_keys.length? s.integer_keys : (s.key_column? [s.key_column]: []);
+      for(const k of keys){ const o=document.createElement("option"); o.value=k; o.textContent=k;
+        if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
+      if(keys.length===0){ const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true; }
+      keysel.onchange = ()=>{ s.key_column=keysel.value; updatePreview(); persistConns(); };
+
+      const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
+      splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
+
+      const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
+      rm.onclick = ()=>{
+        state.selected.delete(key);
+        renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
+      };
+
+      row.append(src, keysel, splits, rm); body.appendChild(row);
+    }
+
+    grp.append(head, body); wrap.appendChild(grp);
   }
   updatePreview();
 }
@@ -367,7 +1083,19 @@ function renderSelected(){
 // ---- config assembly + preview ----
 function buildConfig(){
   const cfg = {};
-  cfg.db_url = $("includePassword").checked ? state.db_url : state.db_url_masked;
+  const withPw = $("includePassword").checked;
+  // Never emit the "user:***@host" masked form (it also trips the security gate);
+  // when a password is excluded OR the url is masked, strip it to a credential-free URL.
+  const urlOf = (c) => {
+    const full = c.db_url || c.db_url_masked || "";
+    if(looksMasked(full)) return stripPw(full);   // masked = no real password to include
+    return withPw ? full : stripPw(full);
+  };
+  const dflt = state.connections.get("default");
+  cfg.db_url = dflt ? urlOf(dflt) : (withPw ? state.db_url : stripPw(state.db_url || state.db_url_masked));
+  // Named sources -> connections[] (the reserved 'default' stays as db_url).
+  const named = [...state.connections.values()].filter(c=>c.id!=="default");
+  if(named.length) cfg.connections = named.map(c=>({ id:c.id, db_url: urlOf(c) }));
   const ns = parseInt($("numSplits").value)||8; cfg.num_splits = ns;
   const bucket = $("bucket").value.trim();
   if(bucket && bucket!=="fabric-iceberg-poc") cfg.bucket = bucket;
@@ -387,6 +1115,7 @@ function buildConfig(){
   cfg.tables = [...state.selected.values()].filter(s=>!s.invalid && s.key_column).map(s=>{
     const e = { name:s.name, source_table:s.source_table, key_column:s.key_column };
     if(s.num_splits) e.num_splits = s.num_splits;
+    if(s.connection && s.connection!=="default") e.connection = s.connection;
     return e;
   });
   // Advanced overrides (section 4). Only emit values changed from their default.
@@ -414,6 +1143,7 @@ function updatePreview(){
 });
 
 // ---- download / copy ----
+$("btnApplyTables").onclick = applyTables;
 $("btnDownload").onclick = () => {
   if(!state.db_url){ flash("Connect first."); return; }
   const cfg = buildConfig();
@@ -428,12 +1158,169 @@ $("btnCopy").onclick = async () => {
   catch(e){ flash("Copy failed"); }
 };
 function flash(msg, ok){ const s=$("buildStatus"); s.className="status "+(ok?"ok":"err"); s.textContent=msg;
-  setTimeout(()=>{ s.textContent=""; s.className="status"; }, 3000); }
+  setTimeout(()=>{ s.textContent=""; s.className="status"; }, 4000); }
 
-// ---- dialect default port ----
+async function applySettings(){
+  // Build the settings dict from the curated form — only live-applicable settings
+  // (bucket, require_sigv4 are structural; saved to config.json but require restart).
+  const settings = {};
+  const ns = parseInt($("numSplits").value); if(ns) settings.num_splits = ns;
+  const fmt = $("tableFormat").value; if(fmt) settings.table_format = fmt;
+  settings.auto_refresh   = $("autoRefresh").checked;
+  if($("autoRefresh").checked){
+    const poll = parseInt($("refreshPoll").value); if(poll) settings.refresh_poll_seconds = poll;
+    settings.refresh_strategy = $("refreshStrategy").value;
+    settings.refresh_allow_full_pull = $("refreshFullPull").checked;
+    const ttl = parseInt($("refreshTtl").value); if(ttl) settings.refresh_ttl_seconds = ttl;
+  }
+  if(!Object.keys(settings).length){ flash("Nothing to apply. (Only refresh settings are live-applicable here.)", true); return; }
+  flash("Applying settings…", true);
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings})
+    });
+    const d = await r.json();
+    if(!r.ok){ flash("Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    let msg = "";
+    if(d.applied_live && d.applied_live.length)
+      msg += "⚡ Applied live: "+d.applied_live.join(", ")+". ";
+    if(d.restart_required && d.restart_required.length)
+      msg += "↺ To change bucket/sigv4, save to config.json and restart.";
+    flash(msg || "✓ Done.", true);
+  }catch(e){ flash("Apply error: "+e); }
+}
+
+async function saveSettings(){
+  // Save all settings from form to config.json (including non-live like bucket, require_sigv4)
+  const settings = {};
+  const bucket = $("bucket").value.trim();
+  if(bucket && bucket !== "fabric-iceberg-poc") settings.bucket = bucket;
+  const ns = parseInt($("numSplits").value); if(ns) settings.num_splits = ns;
+  const fmt = $("tableFormat").value; if(fmt && fmt !== "iceberg") settings.table_format = fmt;
+  if($("requireSigv4").checked) settings.require_sigv4 = true;
+  settings.auto_refresh = $("autoRefresh").checked;
+  if($("autoRefresh").checked){
+    const poll = parseInt($("refreshPoll").value); if(poll) settings.refresh_poll_seconds = poll;
+    settings.refresh_strategy = $("refreshStrategy").value;
+    settings.refresh_allow_full_pull = $("refreshFullPull").checked;
+    const ttl = parseInt($("refreshTtl").value); if(ttl) settings.refresh_ttl_seconds = ttl;
+  }
+  if(!Object.keys(settings).length){ flash("Nothing to save. (All values at defaults.)", true); return; }
+  flash("Saving settings to config.json…", true);
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings})
+    });
+    const d = await r.json();
+    if(!r.ok){ flash("Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    let msg = "✓ Saved to config.json. ";
+    if(d.restart_required && d.restart_required.length)
+      msg += "Restart required: "+d.restart_required.join(", ");
+    else
+      msg += "Live settings applied immediately.";
+    flash(msg, true);
+  }catch(e){ flash("Save error: "+e); }
+}
+
+async function applyTables(){
+  const status = $("tableStatus");
+  const valid = [...state.selected.values()].filter(s=>!s.invalid && s.key_column);
+  const tables = valid.map(s=>{
+    const e = { name:s.name, source_table:s.source_table, key_column:s.key_column };
+    if(s.num_splits) e.num_splits = parseInt(s.num_splits);
+    if(s.connection && s.connection!=="default") e.connection = s.connection;
+    return e;
+  });
+  if(!tables.length){
+    status.className="status err";
+    status.textContent="Select at least one table with a valid key column to apply.";
+    return;
+  }
+  // Table names are the virtual Iceberg table id and must be unique across ALL
+  // sources — the same table selected under two connections would collide.
+  const names = tables.map(t=>t.name);
+  const dups = [...new Set(names.filter((n,i)=>names.indexOf(n)!==i))];
+  if(dups.length){
+    status.className="status err";
+    status.textContent="Duplicate table name(s): "+dups.join(", ")
+      +". Names must be unique across every source — remove the copies (e.g. the same table added under two connections).";
+    return;
+  }
+  // Every referenced named source must be tested so it can be written with a real URL.
+  const refIds = [...new Set(valid.map(s=>s.connection||"default"))].filter(c=>c!=="default");
+  const notReady = refIds.filter(cid=>{ const c=state.connections.get(cid); return !c || !c.tested || !c.db_url; });
+  if(notReady.length){
+    status.className="status err";
+    status.textContent="These sources aren't tested yet: "+notReady.join(", ")
+      +". Open the Connection tab, Test each one, then apply again.";
+    return;
+  }
+  // Persist the referenced named sources alongside the tables (passwords stripped)
+  // so config.tables.json never references an undefined connection.
+  const connections = [...state.connections.values()]
+    .filter(c=>c.id!=="default" && c.tested && c.db_url)
+    .map(c=>({id:c.id, db_url: stripPw(c.db_url)}));
+  const settings = {tables};
+  if(connections.length) settings.connections = connections;
+
+  status.className="status";
+  status.textContent="Applying "+tables.length+" table(s)…";
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings})
+    });
+    const d = await r.json();
+    if(!r.ok){
+      status.className="status err";
+      status.textContent="Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status);
+      return;
+    }
+    status.className="status ok";
+    let msg = "✓ Applied "+tables.length+" table(s)";
+    if(connections.length) msg += " + "+connections.length+" named source"+(connections.length>1?"s":"");
+    msg += " to config (restart to apply).";
+    const envHints = refIds.map(cid=>{ const c=state.connections.get(cid); return hasPw(c.db_url)?envVarFor(cid):null; }).filter(Boolean);
+    if(envHints.length) msg += " Set "+[...new Set(envHints)].join(", ")+" for the password(s).";
+    status.textContent = msg;
+    setTimeout(()=>{ status.textContent=""; status.className="status"; }, 6000);
+  }catch(e){
+    status.className="status err";
+    status.textContent="Apply error: "+e;
+  }
+}
+
+// ---- dialect default port & field refresh ----
 $("dialect").addEventListener("change", ()=>{
-  if(!$("port").value.trim()) $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
+  const newDialect = $("dialect").value;
+  // Update port placeholder
+  $("port").placeholder = "(default "+DEFAULT_PORTS[newDialect]+")";
+  // Clear connection fields when dialect changes (poor UX to keep old values)
+  $("database").value = "";
+  $("username").value = "";
+  $("password").value = "";
+  $("driver").value = "";
+  $("token").value = "";
+  $("http_path").value = "";
+  $("catalog").value = "";
+  $("schema").value = "";
+  $("trust_cert").checked = true;
+  onConnFormEdit();
 });
+
+// Keep the connection list in sync as the operator edits the active source.
+function onConnFormEdit(){
+  const c = state.connections.get(state.activeConnId);
+  if(!c) return;
+  readFormIntoConn(c);
+  c.tested = false;            // edits invalidate a prior successful test
+  renderConnList(); persistConns();
+}
+CONN_FIELDS.forEach(f => { const el = $(f); if(el) el.addEventListener("input", onConnFormEdit); });
+$("trust_cert").addEventListener("change", onConnFormEdit);
+$("connId").addEventListener("change", ()=> renameActive($("connId").value));
 
 // ---- all-settings catalog (section 4) ----
 // Keys already configured by the curated controls above are hidden here to
@@ -465,6 +1352,10 @@ function renderSettings(){
     if(s.type==="bool"){
       inp=document.createElement("select");
       inp.innerHTML=`<option value="">default (${s.default})</option><option value="true">true</option><option value="false">false</option>`;
+    } else if(Array.isArray(s.choices) && s.choices.length){
+      inp=document.createElement("select");
+      inp.innerHTML=`<option value="">default (${s.default})</option>`
+        + s.choices.map(c=>`<option value="${c}">${c}</option>`).join("");
     } else {
       inp=document.createElement("input");
       inp.type=(s.type==="int"||s.type==="float")?"number":"text";
@@ -479,24 +1370,495 @@ function renderSettings(){
 }
 $("settingsSearch").addEventListener("input", renderSettings);
 
+// ---- storage proxy mounts (Storage tab) ----
+const mountState = { mounts: [], enabled: false, reserved: "", supported: ["local"] };
+const BACKEND_LABELS = {
+  local: "local — filesystem / NFS / SMB mount",
+  s3: "s3 — AWS S3 / MinIO / S3-compatible",
+  azure: "azure — Azure Blob / ADLS Gen2",
+};
+
+async function loadMounts(){
+  try{
+    const r = await fetch("/_config/api/mounts", {cache:"no-store"}).then(x=>x.json());
+    if(r.ok){
+      mountState.mounts = r.mounts || [];
+      mountState.enabled = !!r.enabled;
+      mountState.reserved = r.reserved_bucket || "";
+      mountState.supported = r.supported_backends || ["local"];
+      $("storageEnabled").checked = mountState.enabled;
+    }
+  }catch(e){ /* keep empty on failure */ }
+  populateBackendOptions();
+  renderMounts();
+}
+
+function populateBackendOptions(){
+  const sel = $("mountBackend");
+  const cur = sel.value;
+  sel.innerHTML = "";
+  for(const b of mountState.supported){
+    const o = document.createElement("option");
+    o.value = b; o.textContent = BACKEND_LABELS[b] || b;
+    sel.appendChild(o);
+  }
+  if(cur && mountState.supported.includes(cur)) sel.value = cur;
+}
+
+function renderMounts(){
+  const wrap = $("mountList"); wrap.innerHTML = "";
+  if(!mountState.mounts.length){
+    wrap.innerHTML = '<div class="hint">No mounts yet. Add one below to serve a file share or S3 bucket.</div>';
+    return;
+  }
+  for(const m of mountState.mounts){
+    const row = document.createElement("div"); row.className = "connrow";
+    const left = document.createElement("div");
+    const where = m.backend === "s3"
+      ? (m.endpoint ? m.endpoint + "/" : "s3://") + m.root
+      : m.backend === "azure"
+        ? (m.endpoint || ("az://" + (m.account || "") + "/")) + (m.endpoint ? "/" + m.root : m.root)
+        : (m.root || "");
+    const authBadge = (m.backend === "s3" || m.backend === "azure")
+      ? ` <span class="badge">${m.credential ? ("cred:"+m.credential) : (m.auth || "auth?")}</span>` : "";
+    left.innerHTML = `<div class="cid">${m.bucket} <span class="badge">${m.backend}</span> <span class="badge ok">read-only</span>${authBadge}</div>`
+      + `<div class="meta">${where}${m.prefix?(" · /"+m.prefix):""}</div>`;
+    const acts = document.createElement("div"); acts.className = "connacts";
+    const ed = document.createElement("button"); ed.className = "iconbtn"; ed.textContent = "Edit";
+    ed.onclick = () => editMount(m.bucket);
+    const rm = document.createElement("button"); rm.className = "iconbtn"; rm.textContent = "Remove";
+    rm.onclick = () => { mountState.mounts = mountState.mounts.filter(x => x.bucket !== m.bucket); renderMounts(); };
+    acts.append(ed, rm);
+    row.append(left, acts); wrap.appendChild(row);
+  }
+}
+
+function applyBackendVisibility(){
+  const backend = $("mountBackend").value;
+  const isS3 = backend === "s3";
+  const isAz = backend === "azure";
+  $("s3Conn").style.display = isS3 ? "" : "none";
+  $("azConn").style.display = isAz ? "" : "none";
+  $("mountRootLabel").textContent = isS3 ? "Upstream bucket" : (isAz ? "Container" : "Root path");
+  $("mountRoot").placeholder = isS3
+    ? "reports-bucket"
+    : isAz
+      ? "my-container"
+      : "Z:\\finance   ·   /mnt/share   ·   \\\\server\\share";
+  $("btnTestMount").textContent = (isS3 || isAz) ? "Test connection" : "Test path";
+  if(isS3) applyAuthSourceVisibility();
+  if(isAz) applyAzAuthSourceVisibility();
+}
+
+function applyAuthSourceVisibility(){
+  const src = $("mountAuthSource").value;
+  $("s3CredBox").style.display = (src === "credential") ? "" : "none";
+  if(src === "credential") applyS3AuthModeVisibility();
+}
+
+function applyS3AuthModeVisibility(){
+  const mode = $("s3AuthMode").value;
+  for(const el of document.querySelectorAll("#s3CredBox .s3f")){
+    const modes = (el.getAttribute("data-modes") || "").split(/\s+/);
+    el.style.display = modes.includes(mode) ? "" : "none";
+  }
+}
+
+function applyAzAuthSourceVisibility(){
+  const src = $("mountAzAuthSource").value;
+  $("azCredBox").style.display = (src === "credential") ? "" : "none";
+  if(src === "credential") applyAzAuthModeVisibility();
+}
+
+function applyAzAuthModeVisibility(){
+  const mode = $("azAuthMode").value;
+  for(const el of document.querySelectorAll("#azCredBox .azf")){
+    const modes = (el.getAttribute("data-modes") || "").split(/\s+/);
+    el.style.display = modes.includes(mode) ? "" : "none";
+  }
+}
+
+function editMount(bucket){
+  const m = mountState.mounts.find(x => x.bucket === bucket);
+  if(!m) return;
+  $("mountBucket").value = m.bucket;
+  $("mountBackend").value = m.backend || "local";
+  $("mountRoot").value = m.root || "";
+  $("mountPrefix").value = m.prefix || "";
+  // s3 connection knobs
+  $("mountEndpoint").value = m.endpoint || "";
+  $("mountRegion").value = m.region || "";
+  $("mountAddressing").value = m.addressing_style || "";
+  $("mountSigVer").value = m.signature_version || "";
+  $("mountVerify").value = m.verify_tls || "";
+  $("mountFips").checked = !!m.use_fips;
+  $("mountDualstack").checked = !!m.use_dualstack;
+  $("mountAuthSource").value = m.credential ? "credential" : (m.auth || "credential");
+  $("mountCredential").value = m.credential || "";
+  // azure connection knobs
+  $("mountAzAccount").value = m.account || "";
+  $("mountAzEndpoint").value = (m.backend === "azure") ? (m.endpoint || "") : $("mountAzEndpoint").value;
+  $("mountAzSuffix").value = m.endpoint_suffix || "";
+  $("mountAzAuthSource").value = m.credential ? "credential" : (m.auth || "credential");
+  $("mountAzCredential").value = (m.backend === "azure") ? (m.credential || "") : $("mountAzCredential").value;
+  applyBackendVisibility();
+  $("mountEditTitle").textContent = "Edit mount — " + m.bucket;
+  $("mountEditStatus").textContent = "";
+}
+
+function readMountForm(){
+  const backend = $("mountBackend").value;
+  const m = {
+    bucket: $("mountBucket").value.trim(),
+    backend: backend,
+    root: $("mountRoot").value.trim(),
+    prefix: $("mountPrefix").value.trim().replace(/^\/+|\/+$/g, ""),
+    read_only: true,
+  };
+  if(backend === "s3"){
+    m.endpoint = $("mountEndpoint").value.trim();
+    m.region = $("mountRegion").value.trim();
+    m.addressing_style = $("mountAddressing").value;
+    m.signature_version = $("mountSigVer").value;
+    m.verify_tls = $("mountVerify").value.trim();
+    m.use_fips = $("mountFips").checked;
+    m.use_dualstack = $("mountDualstack").checked;
+    const src = $("mountAuthSource").value;
+    if(src === "credential"){ m.credential = $("mountCredential").value.trim(); m.auth = ""; }
+    else { m.credential = ""; m.auth = src; }
+  }
+  if(backend === "azure"){
+    m.account = $("mountAzAccount").value.trim();
+    m.endpoint = $("mountAzEndpoint").value.trim();
+    m.endpoint_suffix = $("mountAzSuffix").value.trim();
+    const src = $("mountAzAuthSource").value;
+    if(src === "credential"){ m.credential = $("mountAzCredential").value.trim(); m.auth = ""; }
+    else { m.credential = ""; m.auth = src; }
+  }
+  return m;
+}
+
+function readAzAuthForm(){
+  const mode = $("azAuthMode").value;
+  const a = { mode };
+  if(mode === "account_key") a.account_key = $("azAccountKey").value;
+  else if(mode === "sas") a.sas_token = $("azSasToken").value;
+  else if(mode === "connection_string") a.connection_string = $("azConnString").value;
+  else if(mode === "aad_client_secret"){
+    a.tenant_id = $("azTenantId").value.trim();
+    a.client_id = $("azClientId").value.trim();
+    a.client_secret = $("azClientSecret").value;
+  }else if(mode === "managed_identity"){
+    a.client_id = $("azMiClientId").value.trim();
+  }
+  return a;
+}
+
+function readS3AuthForm(){
+  const mode = $("s3AuthMode").value;
+  const a = { mode };
+  if(mode === "static" || mode === "session"){
+    a.access_key = $("s3AccessKey").value.trim();
+    a.secret_key = $("s3SecretKey").value;
+    if(mode === "session") a.session_token = $("s3SessionToken").value;
+  }else if(mode === "assume_role"){
+    a.role_arn = $("s3RoleArn").value.trim();
+    a.external_id = $("s3ExternalId").value.trim();
+    a.session_name = $("s3SessionName").value.trim();
+  }else if(mode === "web_identity"){
+    a.role_arn = $("s3RoleArn").value.trim();
+    a.web_identity_token_file = $("s3TokenFile").value.trim();
+    a.session_name = $("s3SessionName").value.trim();
+  }else if(mode === "profile" || mode === "sso"){
+    a.profile = $("s3Profile").value.trim();
+  }else if(mode === "process"){
+    a.credential_process = $("s3Process").value.trim();
+  }
+  return a;
+}
+
+$("mountBackend").onchange = applyBackendVisibility;
+$("mountAuthSource").onchange = applyAuthSourceVisibility;
+$("s3AuthMode").onchange = applyS3AuthModeVisibility;
+$("mountAzAuthSource").onchange = applyAzAuthSourceVisibility;
+$("azAuthMode").onchange = applyAzAuthModeVisibility;
+
+$("btnAddMount").onclick = () => {
+  $("mountBucket").value = ""; $("mountRoot").value = ""; $("mountPrefix").value = "";
+  $("mountBackend").value = mountState.supported[0] || "local";
+  $("mountEndpoint").value = ""; $("mountRegion").value = ""; $("mountAddressing").value = "";
+  $("mountSigVer").value = ""; $("mountVerify").value = ""; $("mountFips").checked = false;
+  $("mountDualstack").checked = false; $("mountAuthSource").value = "credential";
+  $("mountCredential").value = "";
+  $("mountAzAccount").value = ""; $("mountAzEndpoint").value = ""; $("mountAzSuffix").value = "";
+  $("mountAzAuthSource").value = "credential"; $("mountAzCredential").value = "";
+  applyBackendVisibility();
+  $("mountEditTitle").textContent = "Add mount";
+  $("mountEditStatus").textContent = ""; $("mountBucket").focus();
+};
+
+$("btnApplyMount").onclick = () => {
+  const m = readMountForm();
+  const s = $("mountEditStatus"); s.className = "status";
+  if(!m.bucket){ s.className = "status err"; s.textContent = "Bucket is required."; return; }
+  if(!/^[a-z0-9][a-z0-9.\-]{1,62}$/.test(m.bucket)){
+    s.className = "status err"; s.textContent = "Not a valid S3 bucket name (lowercase letters, digits, '.', '-')."; return; }
+  if(mountState.reserved && m.bucket === mountState.reserved){
+    s.className = "status err"; s.textContent = `'${m.bucket}' is reserved for the database warehouse bucket.`; return; }
+  if(m.backend === "local" && !m.root){
+    s.className = "status err"; s.textContent = "Root path is required for the local backend."; return; }
+  if(m.backend === "s3"){
+    if(!m.root){ s.className = "status err"; s.textContent = "Upstream bucket is required for the s3 backend."; return; }
+    if(!m.credential && !m.auth){
+      s.className = "status err"; s.textContent = "Choose an authentication source (stored credential, anonymous, or instance)."; return; }
+    if(m.credential === "" && $("mountAuthSource").value === "credential"){
+      s.className = "status err"; s.textContent = "Enter a credential id (and Save S3 credential) or pick anonymous/instance."; return; }
+  }
+  if(m.backend === "azure"){
+    if(!m.root){ s.className = "status err"; s.textContent = "Container is required for the azure backend."; return; }
+    const connCred = m.credential && !m.auth;
+    if(!m.account && !m.endpoint && !connCred){
+      s.className = "status err"; s.textContent = "Provide a storage account name or an account URL (unless using a connection string)."; return; }
+    if(!m.credential && !m.auth){
+      s.className = "status err"; s.textContent = "Choose an authentication source (stored credential, default, managed identity, or anonymous)."; return; }
+    if(m.credential === "" && $("mountAzAuthSource").value === "credential"){
+      s.className = "status err"; s.textContent = "Enter a credential id (and Save Azure credential) or pick default/managed_identity/anonymous."; return; }
+  }
+  const idx = mountState.mounts.findIndex(x => x.bucket === m.bucket);
+  if(idx >= 0) mountState.mounts[idx] = m; else mountState.mounts.push(m);
+  renderMounts();
+  s.className = "status ok"; s.textContent = `Mount '${m.bucket}' ${idx >= 0 ? "updated" : "added"}. Remember to Save mounts to config.`;
+};
+
+$("btnSaveS3Cred").onclick = async () => {
+  const s = $("s3CredStatus"); s.className = "status";
+  const cid = $("mountCredential").value.trim();
+  if(!cid){ s.className = "status err"; s.textContent = "Enter a credential id first."; return; }
+  const auth = readS3AuthForm();
+  s.textContent = "Saving credential…";
+  const r = await api("/_config/api/s3-credentials", { credential_id: cid, auth });
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + ((r.errors && r.errors.join("; ")) || r.error || "could not save"); return; }
+  s.className = "status ok"; s.textContent = `🔒 Saved '${cid}' (${r.mode}, ${r.backend}). ${r.note || ""}`;
+};
+
+$("btnSaveAzCred").onclick = async () => {
+  const s = $("azCredStatus"); s.className = "status";
+  const cid = $("mountAzCredential").value.trim();
+  if(!cid){ s.className = "status err"; s.textContent = "Enter a credential id first."; return; }
+  const auth = readAzAuthForm();
+  s.textContent = "Saving credential…";
+  const r = await api("/_config/api/azure-credentials", { credential_id: cid, auth });
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + ((r.errors && r.errors.join("; ")) || r.error || "could not save"); return; }
+  s.className = "status ok"; s.textContent = `🔒 Saved '${cid}' (${r.mode}, ${r.backend}). ${r.note || ""}`;
+};
+
+$("btnTestMount").onclick = async () => {
+  const m = readMountForm();
+  const s = $("mountEditStatus"); s.className = "status"; s.textContent = "Testing…";
+  const r = await api("/_config/api/mounts/test", m);
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + (r.error || "backend not reachable"); return; }
+  const sample = (r.sample && r.sample.length) ? " (" + r.sample.slice(0, 6).join(", ") + (r.sample.length > 6 ? "…" : "") + ")" : "";
+  const where = r.path || (r.bucket ? ("s3://" + r.bucket) : "backend");
+  s.className = "status ok";
+  s.textContent = `✓ Reachable: ${where} — ${r.sample_count} entr${r.sample_count === 1 ? "y" : "ies"}${sample}`;
+};
+
+$("storageEnabled").onchange = () => { mountState.enabled = $("storageEnabled").checked; };
+
+$("btnSaveMounts").onclick = async () => {
+  const s = $("mountStatus"); s.className = "status"; s.textContent = "Saving mounts…";
+  $("btnSaveMounts").disabled = true;
+  const r = await api("/_config/api/mounts", { mounts: mountState.mounts, enabled: $("storageEnabled").checked });
+  $("btnSaveMounts").disabled = false;
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + ((r.errors && r.errors.join("; ")) || r.error || "could not save"); return; }
+  const en = (r.enabled != null) ? (" · storage proxy " + (r.enabled ? "enabled" : "disabled")) : "";
+  s.className = "status ok"; s.textContent = `💾 Saved ${r.count} mount(s)${en}. ${r.note || ""}`;
+};
+
+// ---- proxy access keys (Storage tab) ----
+const akState = { keys: [] };
+
+async function loadAccessKeys(){
+  try{
+    const r = await fetch("/_config/api/access-keys", {cache:"no-store"}).then(x=>x.json());
+    akState.keys = (r.ok && r.keys) ? r.keys : [];
+  }catch(e){ akState.keys = []; }
+  renderAccessKeys();
+}
+
+function renderAccessKeys(){
+  const wrap = $("akList"); wrap.innerHTML = "";
+  if(!akState.keys.length){
+    wrap.innerHTML = '<div class="hint">No access keys. The legacy single key governs SigV4 until you add one.</div>';
+    return;
+  }
+  for(const k of akState.keys){
+    const row = document.createElement("div"); row.className = "connrow";
+    const left = document.createElement("div");
+    const scope = (k.allowed_buckets||[]).join(", ") || "—";
+    const en = k.enabled ? '<span class="badge ok">enabled</span>' : '<span class="badge">disabled</span>';
+    left.innerHTML = `<div class="cid">${k.access_key_id} ${en} <span class="badge">${k.permissions||"read"}</span></div>`
+      + `<div class="meta">${k.label ? (k.label+" · ") : ""}buckets: ${scope}</div>`;
+    const acts = document.createElement("div"); acts.className = "connacts";
+    const ed = document.createElement("button"); ed.className = "iconbtn"; ed.textContent = "Edit";
+    ed.onclick = () => editAccessKey(k.access_key_id);
+    const rot = document.createElement("button"); rot.className = "iconbtn"; rot.textContent = "Rotate";
+    rot.onclick = () => rotateAccessKey(k.access_key_id);
+    const rm = document.createElement("button"); rm.className = "iconbtn"; rm.textContent = "Remove";
+    rm.onclick = () => removeAccessKey(k.access_key_id);
+    acts.append(ed, rot, rm);
+    row.append(left, acts); wrap.appendChild(row);
+  }
+}
+
+function _prefixesToText(ap){
+  return Object.entries(ap||{}).map(([b, ps]) => b + "=" + (ps||[]).join(",")).join("; ");
+}
+function _textToPrefixes(t){
+  const out = {};
+  for(const part of (t||"").split(";")){
+    const seg = part.trim(); if(!seg) continue;
+    const eq = seg.indexOf("="); if(eq < 0) continue;
+    const b = seg.slice(0, eq).trim();
+    const ps = seg.slice(eq+1).split(",").map(x => x.trim().replace(/^\/+|\/+$/g,"")).filter(Boolean);
+    if(b) out[b] = ps;
+  }
+  return out;
+}
+
+function _openAkEdit(title){ $("akEditTitle").textContent = title; $("akEdit").style.display = ""; $("akEditStatus").textContent = ""; }
+
+$("btnAddAccessKey").onclick = () => {
+  $("akId").value = ""; $("akId").disabled = false; $("akLabel").value = "";
+  $("akBuckets").value = ""; $("akPrefixes").value = ""; $("akEnabled").checked = true;
+  _openAkEdit("New access key"); $("akLabel").focus();
+};
+$("btnCancelAccessKey").onclick = () => { $("akEdit").style.display = "none"; };
+
+function editAccessKey(id){
+  const k = akState.keys.find(x => x.access_key_id === id);
+  if(!k) return;
+  $("akId").value = k.access_key_id; $("akId").disabled = true;
+  $("akLabel").value = k.label || "";
+  $("akBuckets").value = (k.allowed_buckets||[]).join(", ");
+  $("akPrefixes").value = _prefixesToText(k.allowed_prefixes);
+  $("akEnabled").checked = k.enabled !== false;
+  _openAkEdit("Edit access key — " + id);
+}
+
+$("btnSaveAccessKey").onclick = async () => {
+  const s = $("akEditStatus"); s.className = "status";
+  const buckets = $("akBuckets").value.split(",").map(x => x.trim()).filter(Boolean);
+  if(!buckets.length){ s.className = "status err"; s.textContent = "List at least one allowed bucket (or *)."; return; }
+  const payload = {
+    access_key_id: $("akId").value.trim(),
+    label: $("akLabel").value.trim(),
+    allowed_buckets: buckets,
+    allowed_prefixes: _textToPrefixes($("akPrefixes").value),
+    permissions: "read",
+    enabled: $("akEnabled").checked,
+  };
+  s.textContent = "Saving…";
+  const r = await api("/_config/api/access-keys", payload);
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + ((r.errors && r.errors.join("; ")) || r.error || "could not save"); return; }
+  if(r.generated && r.secret_key){
+    s.className = "status ok";
+    s.innerHTML = `🔑 Created <b>${r.access_key_id}</b>. Secret (shown once): <code>${r.secret_key}</code> — copy it now.`;
+  }else{
+    s.className = "status ok"; s.textContent = `✓ Saved ${r.access_key_id}. ${r.note || ""}`;
+  }
+  await loadAccessKeys();
+};
+
+async function rotateAccessKey(id){
+  const s = $("akStatus"); s.className = "status"; s.textContent = "Rotating…";
+  const r = await api("/_config/api/access-keys/" + encodeURIComponent(id) + "/rotate", {});
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + (r.error || "could not rotate"); return; }
+  s.className = "status ok";
+  s.innerHTML = `🔑 Rotated <b>${id}</b>. New secret (shown once): <code>${r.secret_key}</code> — copy it now.`;
+}
+
+async function removeAccessKey(id){
+  const r = await fetch("/_config/api/access-keys/" + encodeURIComponent(id), {method:"DELETE"}).then(x=>x.json());
+  const s = $("akStatus"); s.className = r.ok ? "status ok" : "status err";
+  s.textContent = r.ok ? `Removed ${id}.` : ("✗ " + (r.error || "could not remove"));
+  await loadAccessKeys();
+}
+
 loadForm();
+loadConns();
+ensureDefaultConn();
+writeFormFromConn(state.connections.get(state.activeConnId));
+renderConnList();
 loadSettings();
+loadMounts();
+loadAccessKeys();
 $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
+loadBuilderBootstrap();
 
 // ---- Phase 5.1: live server config (read current · save · scale fleet) ----
-const live = { settings: [], edits: {} };
+const live = { settings: [], edits: {}, configFile: "" };
 
 function liveFlash(el, msg, ok){ el.className="status "+(ok?"ok":"err"); el.textContent=msg;
   if(ok) setTimeout(()=>{ el.textContent=""; el.className="status"; }, 4000); }
+
+function settingByKey(key){ return (live.settings||[]).find(s => s.key === key) || null; }
+
+function renderS3SecretState(){
+  const s = settingByKey("secret_access_key");
+  if(!s){ $("s3SecretState").textContent = "(not available)"; return; }
+  const isSet = String(s.value || "") === "***set***";
+  const src = s.source || "default";
+  $("s3SecretState").textContent = isSet ? `(set via ${src})` : "(not set)";
+}
+
+function renderSigv4Diagnostics(){
+  const req = settingByKey("require_sigv4");
+  const ak = settingByKey("access_key_id");
+  const sec = settingByKey("secret_access_key");
+
+  $("diagRequireSigv4").textContent = req ? String(req.value) : "-";
+  $("diagAccessKey").textContent = ak ? (String(ak.value || "") || "(blank)") : "-";
+  $("diagAccessKeySource").textContent = ak ? (ak.source || "default") : "-";
+  if(sec){
+    const isSet = String(sec.value || "") === "***set***";
+    $("diagSecretStatus").textContent = isSet ? "set" : "not set";
+    $("diagSecretSource").textContent = sec.source || "default";
+  } else {
+    $("diagSecretStatus").textContent = "-";
+    $("diagSecretSource").textContent = "-";
+  }
+  $("diagConfigFile").textContent = live.configFile || "config.json";
+
+  const envOverrides = [];
+  if(ak && ak.source === "env") envOverrides.push("access_key_id");
+  if(sec && sec.source === "env") envOverrides.push("secret_access_key");
+  if(req && req.source === "env") envOverrides.push("require_sigv4");
+
+  if(envOverrides.length){
+    liveFlash(
+      $("diagWarning"),
+      "Environment override active for: " + envOverrides.join(", ") +
+      ". Saving config.json will not change runtime values until env vars are updated and the Manager restarts.",
+      false,
+    );
+  } else {
+    $("diagWarning").textContent = "";
+    $("diagWarning").className = "status";
+  }
+}
 
 async function loadCurrent(){
   try{
     const r = await fetch("/_config/api/current", {cache:"no-store"});
     const d = await r.json();
     live.settings = d.settings || [];
+    live.configFile = d.config_file || "config.json";
     live.edits = {};                             // discard stale edits after a fresh read
-  }catch(e){ live.settings = []; liveFlash($("liveStatus"), "Failed to read current config: "+e); }
+  }catch(e){ live.settings = []; live.configFile = ""; liveFlash($("liveStatus"), "Failed to read current config: "+e); }
   renderLive();
+  renderS3SecretState();
+  renderSigv4Diagnostics();
   // Detect Manager (fleet endpoint) to enable live scaling.
   try{
     const fr = await fetch("/_manager/api/fleet", {cache:"no-store"});
@@ -506,6 +1868,57 @@ async function loadCurrent(){
       if(!$("agentCount").value) $("agentCount").value = f.agents_total;
     }
   }catch(e){ /* not on a Manager — hide scaling */ }
+}
+
+async function saveS3Secret(){
+  const raw = ($("s3SecretInput").value || "").trim();
+  if(!raw){ liveFlash($("s3SecretStatus"), "Enter a secret value to replace, or click Clear.", false); return; }
+  liveFlash($("s3SecretStatus"), "Saving S3 secret to config.json...", true);
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings:{secret_access_key: raw}})
+    });
+    const d = await r.json();
+    if(!r.ok){ liveFlash($("s3SecretStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status), false); return; }
+    $("s3SecretInput").value = "";
+    liveFlash($("s3SecretStatus"), "✓ S3 secret saved to config.json (restart to apply).", true);
+    setTimeout(loadCurrent, 400);
+  }catch(e){ liveFlash($("s3SecretStatus"), "Save error: "+e, false); }
+}
+
+async function clearS3Secret(){
+  if(!confirm("Clear S3 secret_access_key in config.json?")) return;
+  liveFlash($("s3SecretStatus"), "Clearing S3 secret from config.json...", true);
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings:{secret_access_key: ""}})
+    });
+    const d = await r.json();
+    if(!r.ok){ liveFlash($("s3SecretStatus"), "Clear failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status), false); return; }
+    $("s3SecretInput").value = "";
+    liveFlash($("s3SecretStatus"), "✓ S3 secret cleared in config.json (restart to apply).", true);
+    setTimeout(loadCurrent, 400);
+  }catch(e){ liveFlash($("s3SecretStatus"), "Clear error: "+e, false); }
+}
+
+async function saveFleetSize(){
+  const count = parseInt($("agentCount").value);
+  if(!count || count < 1){ liveFlash($("scaleStatus"), "Enter a count >= 1 to save.", false); return; }
+  liveFlash($("scaleStatus"), "Saving to config.json...", true);
+  try{
+    const r = await fetch("/_config/api/apply", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({settings:{agent_count: count}})
+    });
+    const d = await r.json();
+    if(!r.ok){ liveFlash($("scaleStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status), false); return; }
+    liveFlash($("scaleStatus"), "✓ Fleet size saved to config.json (applies on restart).", true);
+  }catch(e){ liveFlash($("scaleStatus"), "Save error: "+e, false); }
 }
 
 function effStr(s){ return (s.value===null||s.value===undefined)?"":String(s.value); }
@@ -532,7 +1945,13 @@ function renderLive(){
     if(q && !(s.key.includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
     if(s.category!==cat){ cat=s.category; const h=document.createElement("div"); h.className="setcat"; h.textContent=cat; wrap.appendChild(h); }
     const row=document.createElement("div"); row.className="setrow";
-    const lab=document.createElement("label"); lab.textContent=s.key;
+    const lab=document.createElement("label");
+    const badge=document.createElement("span");
+    badge.className = s.live ? "live-badge live" : "live-badge restart";
+    badge.textContent = s.live ? "⚡ live" : "↺ restart";
+    badge.title = s.live ? "Applies immediately without restart" : "Requires restart to take effect";
+    lab.textContent=s.key;
+    lab.appendChild(badge);
     lab.title=(s.env?("env "+s.env+"  ·  "):"")+(s.help||"");
     let inp;
     const cur = effStr(s);
@@ -540,6 +1959,8 @@ function renderLive(){
     const shown = (live.edits[s.key]!==undefined) ? String(live.edits[s.key]) : cur;
     if(s.type==="bool"){ inp=document.createElement("select");
       ["true","false"].forEach(v=>{ const o=document.createElement("option"); o.value=v; o.textContent=v; if(v===shown) o.selected=true; inp.appendChild(o); });
+    } else if(Array.isArray(s.choices) && s.choices.length){ inp=document.createElement("select");
+      s.choices.forEach(v=>{ const o=document.createElement("option"); o.value=v; o.textContent=v; if(String(v)===shown) o.selected=true; inp.appendChild(o); });
     } else { inp=document.createElement("input"); inp.value=shown; }
     inp.dataset.key=s.key; inp.dataset.type=s.type; inp.dataset.orig=cur;
     if(shown!==cur) inp.style.outline="2px solid #f5a623";   // highlight unsaved edit
@@ -567,7 +1988,12 @@ function collectLiveChanges(){
 
 function updateSaveBadge(){
   const n=Object.keys(collectLiveChanges()).length;
-  $("btnSaveLive").textContent = n ? ("Save "+n+" change"+(n>1?"s":"")+" to config.json") : "Save changes to config.json";
+  const liveN = Object.keys(collectLiveChanges()).filter(k=>{
+    const s = live.settings.find(x=>x.key===k); return s && s.live;
+  }).length;
+  const restartN = n - liveN;
+  $("btnApplyLive").textContent = n ? ("⚡ Apply "+n+" change"+(n>1?"s":"")) : "⚡ Apply now";
+  $("btnSaveLive").textContent = n ? ("Save "+n+" to config.json") : "Save to config.json";
 }
 
 async function saveLive(){
@@ -585,6 +2011,26 @@ async function saveLive(){
   }catch(e){ liveFlash($("liveStatus"), "Save error: "+e); }
 }
 
+async function applyLive(){
+  const changes=collectLiveChanges();
+  const n=Object.keys(changes).length;
+  if(!n){ liveFlash($("liveStatus"), "No changes to apply. (Edit a value first.)"); return; }
+  liveFlash($("liveStatus"), "Applying "+n+" change(s)…", true);
+  try{
+    const r=await fetch("/_config/api/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:changes})});
+    const d=await r.json();
+    if(!r.ok){ liveFlash($("liveStatus"), "Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    let msg = "";
+    if(d.applied_live && d.applied_live.length)
+      msg += "⚡ Applied live: "+d.applied_live.join(", ")+". ";
+    if(d.restart_required && d.restart_required.length)
+      msg += "↺ Saved (restart needed): "+d.restart_required.join(", ")+".";
+    liveFlash($("liveStatus"), msg || "✓ Done.", true);
+    live.edits = {};
+    setTimeout(loadCurrent, 500);
+  }catch(e){ liveFlash($("liveStatus"), "Apply error: "+e); }
+}
+
 async function applyScale(){
   const count=parseInt($("agentCount").value);
   if(!count||count<1){ liveFlash($("scaleStatus"), "Enter a count >= 1"); return; }
@@ -600,11 +2046,68 @@ async function applyScale(){
   }catch(e){ liveFlash($("scaleStatus"), "Scale error: "+e); }
 }
 
+function collectAdvancedChanges(){
+  const out={};
+  document.querySelectorAll('#allSettings [data-key]').forEach(inp=>{
+    const raw = (inp.value||"").trim();
+    if(raw==="") return;                       // blank => keep default
+    const key = inp.dataset.key, type = inp.dataset.type, def = inp.dataset.default;
+    let val;
+    if(type==="bool") val = (raw==="true");
+    else if(type==="int"){ val = parseInt(raw); if(isNaN(val)) return; }
+    else if(type==="float"){ val = parseFloat(raw); if(isNaN(val)) return; }
+    else val = raw;
+    if(String(val) === String(def)) return;    // equals default => don't write
+    out[key] = val;
+  });
+  return out;
+}
+
+async function applyAdvanced(){
+  const changes = collectAdvancedChanges();
+  const n = Object.keys(changes).length;
+  if(!n){ liveFlash($("advancedStatus"), "No changes to apply. (Edit a value first.)"); return; }
+  liveFlash($("advancedStatus"), "Applying "+n+" change(s)…", true);
+  try{
+    const r=await fetch("/_config/api/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:changes})});
+    const d=await r.json();
+    if(!r.ok){ liveFlash($("advancedStatus"), "Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    let msg = "";
+    if(d.applied_live && d.applied_live.length)
+      msg += "⚡ Applied live: "+d.applied_live.join(", ")+". ";
+    if(d.restart_required && d.restart_required.length)
+      msg += "↺ Saved (restart needed): "+d.restart_required.join(", ")+".";
+    liveFlash($("advancedStatus"), msg || "✓ Done.", true);
+  }catch(e){ liveFlash($("advancedStatus"), "Apply error: "+e); }
+}
+
+async function saveAdvanced(){
+  const changes = collectAdvancedChanges();
+  const n = Object.keys(changes).length;
+  if(!n){ liveFlash($("advancedStatus"), "No changes to save. (Edit a value first.)"); return; }
+  liveFlash($("advancedStatus"), "Saving "+n+" change(s)…", true);
+  try{
+    const r=await fetch("/_config/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:changes})});
+    const d=await r.json();
+    if(!r.ok){ liveFlash($("advancedStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
+    liveFlash($("advancedStatus"), "✓ Saved "+d.changed.join(", ")+" to config.json (restart to apply).", true);
+  }catch(e){ liveFlash($("advancedStatus"), "Save error: "+e); }
+}
+
 $("liveSearch").addEventListener("input", renderLive);
 $("btnReloadLive").onclick = loadCurrent;
 $("btnSaveLive").onclick = saveLive;
+$("btnApplyLive").onclick = applyLive;
+$("btnApplySettings").onclick = applySettings;
+$("btnSaveSettings").onclick = saveSettings;
 $("btnScale").onclick = applyScale;
+$("btnSaveFleetSize").onclick = saveFleetSize;
+$("btnSaveS3Secret").onclick = saveS3Secret;
+$("btnClearS3Secret").onclick = clearS3Secret;
+$("btnApplyAdvanced").onclick = applyAdvanced;
+$("btnSaveAdvanced").onclick = saveAdvanced;
 loadCurrent();
+initTabs();
 </script>
 </body>
 </html>

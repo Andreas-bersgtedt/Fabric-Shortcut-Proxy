@@ -159,6 +159,7 @@ async def admin_schemas(table: str | None = None) -> dict:
         out.append({
             "table": t.name,
             "source_table": t.source_table,
+            "connection": t.connection_id,
             "key_column": t.key_column,
             "num_splits": t.num_splits,
             "version": getattr(snap, "version", 1),

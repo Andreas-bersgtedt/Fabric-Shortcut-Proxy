@@ -21,15 +21,17 @@ def _modified(ts_ms: int | None = None) -> str:
     return _iso_now()
 
 
-def list_buckets_response(bucket_name: str, created_ms: int | None = None) -> bytes:
+def list_buckets_response(bucket_name: str, created_ms: int | None = None,
+                          *, extra_buckets: list[str] | None = None) -> bytes:
     root = ET.Element("ListAllMyBucketsResult", xmlns="http://s3.amazonaws.com/doc/2006-03-01/")
     owner = ET.SubElement(root, "Owner")
     ET.SubElement(owner, "ID").text = "poc-owner"
     ET.SubElement(owner, "DisplayName").text = "poc-owner"
     buckets_el = ET.SubElement(root, "Buckets")
-    bucket_el = ET.SubElement(buckets_el, "Bucket")
-    ET.SubElement(bucket_el, "Name").text = bucket_name
-    ET.SubElement(bucket_el, "CreationDate").text = _modified(created_ms)
+    for name in [bucket_name, *(extra_buckets or [])]:
+        bucket_el = ET.SubElement(buckets_el, "Bucket")
+        ET.SubElement(bucket_el, "Name").text = name
+        ET.SubElement(bucket_el, "CreationDate").text = _modified(created_ms)
     return b'<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode").encode()
 
 
@@ -40,12 +42,17 @@ def list_objects_v2_response(
     *,
     delimiter: str = "",
     common_prefixes: list[str] | None = None,
+    max_keys: int = 1000,
+    is_truncated: bool = False,
+    next_continuation_token: str | None = None,
 ) -> bytes:
     """
     Build a ListObjectsV2 XML response body.
 
     `objects` is the flat list of matched object descriptors.
     `common_prefixes` is the list of virtual directory prefixes (if delimiter used).
+    `max_keys` / `is_truncated` / `next_continuation_token` carry S3 pagination;
+    the defaults reproduce a single, complete (non-truncated) page.
     """
     root = ET.Element("ListBucketResult", xmlns="http://s3.amazonaws.com/doc/2006-03-01/")
 
@@ -53,8 +60,10 @@ def list_objects_v2_response(
     ET.SubElement(root, "Prefix").text = prefix
     # KeyCount matches AWS S3: number of keys returned = Contents + CommonPrefixes.
     ET.SubElement(root, "KeyCount").text = str(len(objects) + len(common_prefixes or []))
-    ET.SubElement(root, "MaxKeys").text = "1000"
-    ET.SubElement(root, "IsTruncated").text = "false"
+    ET.SubElement(root, "MaxKeys").text = str(max_keys)
+    ET.SubElement(root, "IsTruncated").text = "true" if is_truncated else "false"
+    if next_continuation_token:
+        ET.SubElement(root, "NextContinuationToken").text = next_continuation_token
     if delimiter:
         ET.SubElement(root, "Delimiter").text = delimiter
 

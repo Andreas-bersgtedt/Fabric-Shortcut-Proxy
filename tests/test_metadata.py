@@ -41,12 +41,18 @@ def test_decimal_type_serializes_as_iceberg_string():
 
 @pytest.fixture
 def snap():
-    return build_snapshot(
+    saved_bucket = config.BUCKET_NAME
+    config.BUCKET_NAME = "test-bucket"
+    snap = build_snapshot(
         table_name="sales",
         num_splits=4,
         bucket="test-bucket",
         warehouse_prefix="warehouse/db",
     )
+    try:
+        yield snap
+    finally:
+        config.BUCKET_NAME = saved_bucket
 
 
 def test_metadata_json_format_version(snap):

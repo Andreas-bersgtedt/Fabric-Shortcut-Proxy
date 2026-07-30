@@ -63,6 +63,7 @@ async def summary() -> dict:
                 "splits": len(snap.splits),
                 "total_records": snap.total_records,
                 "last_modified_ms": snap.watermark_ms,
+                "connection": getattr(snap.table, "connection_id", "default"),
             }
 
     names = set(snap_by_table) | set(tl) | set(qtables)
@@ -82,6 +83,7 @@ async def summary() -> dict:
             "table": name,
             "version": s.get("version"),
             "snapshot_id": s.get("snapshot_id"),
+            "connection": s.get("connection", "default"),
             "splits": s.get("splits"),
             "total_records": s.get("total_records"),
             # request mix (from the trace)
@@ -117,6 +119,7 @@ async def summary() -> dict:
         "table_format": config.TABLE_FORMAT,
         "totals": {
             "tables": len(tables),
+            "connections": len({t["connection"] for t in tables}),
             "cache_hit_ratio": m.get("cache_hit_ratio"),
             "parquet_generations": _counter_total(m, "parquet_generations_total"),
             "bytes_served": _counter_total(m, "s3_bytes_served_total"),

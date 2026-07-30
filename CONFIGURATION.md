@@ -31,7 +31,8 @@ At startup the proxy:
 2. For every table, **reflects the source columns** and maps them to Iceberg
    types (or uses your explicit schema, if you provided one).
 3. Resolves the **split key column** (explicit `KEY_COLUMN`, else the primary key).
-4. Materializes split Parquet files and serves them under `warehouse/db/<name>/…`.
+4. Materializes split Parquet files and serves them under canonical paths
+  `db/<server>/<database>/<schema>/<object>/…`.
 
 > A **single table** needs only environment variables. **Multiple tables** are
 > cleanest via `config.json` (no Python editing at all).
@@ -76,8 +77,10 @@ file from a UI:
 ```powershell
 $env:ENABLE_CONFIG_BUILDER = "1"
 .\Manager.ps1 -SkipInstall
-# open http://localhost:9000/_config/
+# open http://localhost:9200/_config/   # Manager control-plane surface
 ```
+
+If you run standalone `python main.py` (no Manager), use `http://localhost:9000/_config/`.
 
 Enter host / user / password → pick tables (key column auto‑detected, overridable)
 → **Download config.json**. It's **off by default** and accepts DB credentials, so
@@ -116,8 +119,18 @@ mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&
 
 ### 3.2 The key column (`KEY_COLUMN`) — the only thing you must choose
 
-Each table is sharded into `NUM_SPLITS` Parquet files by a modulo on an integer
-column:
+By default, split count is dynamic (`split_target_rows=100000`) and planning uses
+contiguous key ranges for index-pruned reads when possible. The legacy modulo
+predicate remains as deterministic fallback.
+
+Range form (preferred):
+
+```sql
+WHERE <key> >= :key_lo AND <key> < :key_hi
+ORDER BY <key>
+```
+
+Modulo fallback form:
 
 ```sql
 WHERE (CAST(<key> AS BIGINT) % :num_splits) = :split_index
@@ -127,9 +140,8 @@ ORDER BY <key>
 - If `KEY_COLUMN` is set, that column is the split key **and** its presence turns
   on automatic schema reflection.
 - If it is not set, the proxy uses the table's **primary key** (auto‑detected).
-- The key **must be an integer column** (`int`/`long`). A monotonic id gives the
-  most even split distribution. Startup fails with a clear message if the key is
-  missing or not integer.
+- Integer keys are preferred for range planning. For non-integer keys, the planner
+  falls back to deterministic row-number sharding.
 
 > **Views** usually have no primary key — always pass `KEY_COLUMN` for a view.
 
@@ -197,7 +209,7 @@ CREATE TABLE public.orders (
 $env:DB_URL          = "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb"
 $env:DB_SOURCE_TABLE = "public.orders"   # table or view
 $env:KEY_COLUMN      = "order_id"        # integer split key -> enables auto-schema
-$env:TABLE_NAME      = "orders"          # Iceberg name -> warehouse/db/orders
+$env:TABLE_NAME      = "orders"          # Iceberg name (path is canonical by default)
 $env:NUM_SPLITS      = "8"
 .\Manager.ps1 -SkipInstall
 ```
@@ -209,7 +221,7 @@ SQL (PostgreSQL dialect):
 ```sql
 SELECT "order_id", "customer", "amount", "created", "is_paid"
 FROM "public"."orders"
-WHERE (CAST("order_id" AS BIGINT) % :num_splits) = :split_index
+WHERE "order_id" >= :key_lo AND "order_id" < :key_hi
 ORDER BY "order_id"
 LIMIT :max_rows
 ```
@@ -218,7 +230,7 @@ LIMIT :max_rows
 
 ```powershell
 curl http://localhost:9000/readyz
-curl "http://localhost:9000/fabric-iceberg-poc/warehouse/db/orders/metadata/v1.metadata.json"
+curl "http://localhost:9000/fabric-iceberg-poc/db/<server>/<database>/<schema>/orders/metadata/v1.metadata.json"
 
 $env:S3EMU_SERVER = "http://127.0.0.1:9000"
 .\.venv\Scripts\python.exe validate_pyiceberg.py   # (edit meta path for non-'sales' tables)
@@ -230,7 +242,7 @@ $env:S3EMU_SERVER = "http://127.0.0.1:9000"
 |---|---|
 | URL | `http://<proxy-host>:9000` |
 | Bucket | `fabric-iceberg-poc` |
-| Sub path | `warehouse/db/orders/metadata/v1.metadata.json` |
+| Sub path | `db/<server>/<database>/<schema>/orders/metadata/v1.metadata.json` |
 
 ---
 
@@ -269,10 +281,11 @@ Per‑table JSON fields:
 | Field | Required | Notes |
 |---|---|---|
 | `source_table` | yes | Table/view; schema‑qualified allowed |
-| `name` | no | Defaults to the source table's last segment; sets the `warehouse/db/<name>` path |
+| `name` | no | Defaults to the source table's last segment; canonical path is derived from source identity |
 | `key_column` | no | Integer split key; defaults to the primary key |
 | `num_splits` | no | Defaults to the top‑level `num_splits` / `NUM_SPLITS` |
 | `schema` | no | Explicit override: `[{ "field_id", "name", "type", "nullable" }]` |
+| `connection` | no | Source connection id (see §5.4). Defaults to `default` |
 
 **Or** the equivalent `config.py` (`TABLES` list) — one line per table:
 
@@ -287,15 +300,60 @@ TABLES: list[TableDef] = [
 `schema` is omitted → reflected from each source. `key_column` is optional if the
 table has a primary key (auto‑detected); pass it for views or composite keys.
 
-### 5.3 Launch & verify
+### 5.4 Multiple sources / dialects (one proxy, many databases)
+
+Tables can be served from **different source databases of different dialects** at
+once. Declare each extra source in a `connections` array in
+[config.connection.json](config.connection.example.json), then bind a table to
+one with its `connection` field.
+
+```jsonc
+// config.connection.json
+{
+  "connection": {                              // the DEFAULT source (id "default")
+    "db_url": "mssql+aioodbc://user:pass@sql-host/erp?driver=ODBC+Driver+18+for+SQL+Server"
+  },
+  "connections": [                             // additional named sources
+    { "id": "warehouse_pg",  "db_url": "postgresql+asyncpg://user:pass@pg-host:5432/salesdb" },
+    { "id": "legacy_oracle", "db_url": "oracle+oracledb://user:pass@ora-host:1521/ORCLPDB1" }
+  ]
+}
+```
+
+```jsonc
+// config.tables.json
+{
+  "tables": [
+    { "name": "orders",    "source_table": "dbo.orders",       "key_column": "order_id" },                              // default (SQL Server)
+    { "name": "shipments", "source_table": "public.shipments", "key_column": "shipment_id", "connection": "warehouse_pg" }, // PostgreSQL
+    { "name": "invoices",  "source_table": "FIN.INVOICES",     "key_column": "invoice_id",  "connection": "legacy_oracle" } // Oracle
+  ]
+}
+```
+
+Notes:
+- The id `default` is **reserved** and always derived from `db_url` / `DB_URL`;
+  `connections[]` entries must use other ids.
+- Each connection gets its **own** engine pool, dialect, capability profile, and
+  `SOURCE_MAX_CONCURRENCY` backpressure gate — one busy source can't starve
+  another.
+- Per-connection `query_timeout_seconds`, `query_max_rows`, `db_max_retries`, and
+  `db_retry_backoff_seconds` are optional overrides; unset values fall back to the
+  global defaults.
+- Canonical object paths are namespaced by each source's server/database, so
+  tables from different connections never collide.
+- Credentials in `connections[]` are credential-gated exactly like the default
+  section — prefer environment variables / secret stores for passwords.
+
+### 5.5 Launch & verify
 
 ```powershell
 $env:DB_URL = "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb"
 .\Manager.ps1 -SkipInstall
 
-curl "http://localhost:9000/fabric-iceberg-poc/warehouse/db/orders/metadata/v1.metadata.json"
-curl "http://localhost:9000/fabric-iceberg-poc/warehouse/db/customers/metadata/v1.metadata.json"
-curl "http://localhost:9000/fabric-iceberg-poc?list-type=2&prefix=warehouse/db/&delimiter=/"
+curl "http://localhost:9000/fabric-iceberg-poc/db/<server>/<database>/<schema>/orders/metadata/v1.metadata.json"
+curl "http://localhost:9000/fabric-iceberg-poc/db/<server>/<database>/<schema>/customers/metadata/v1.metadata.json"
+curl "http://localhost:9000/fabric-iceberg-poc?list-type=2&prefix=db/&delimiter=/"
 ```
 
 Create one Fabric shortcut per table (`…/orders/…`, `…/customers/…`).
@@ -389,7 +447,7 @@ Create one Fabric shortcut per table.
 | `DB_URL` | `sqlite+aiosqlite:///./poc_source.db` | Scheme selects the dialect |
 | `DB_SOURCE_TABLE` | `sales` | Source table/view; schema‑qualified allowed |
 | `KEY_COLUMN` | *(unset)* | Integer split key; **set it to enable auto‑schema** for your table |
-| `TABLE_NAME` | `sales` | Iceberg name → `warehouse/db/<name>` |
+| `TABLE_NAME` | `sales` | Iceberg name; canonical path defaults to `db/<server>/<database>/<schema>/<object>` |
 | `NUM_SPLITS` | `8` | Split count |
 | `TABLE_FORMAT` | `iceberg` | Output format served to Fabric: `iceberg` (Fabric virtualizes to Delta) or `delta` (native `_delta_log`, no conversion — lower lag). See §13 |
 | `QUERY_MAX_ROWS` | `500000` | Max rows per split |
@@ -397,7 +455,12 @@ Create one Fabric shortcut per table.
 | `S3_BUCKET` | `fabric-iceberg-poc` | Bucket Fabric connects to |
 | `PORT` | `9000` | HTTP listen port |
 | `VALIDATE_SOURCE_SCHEMA` | `1` | Validate declared columns exist (no‑op for reflected schemas) |
-| `REQUIRE_SIGV4` | `0` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`) |
+| `REQUIRE_SIGV4` | `0` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
+| `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough — see §14 |
+| `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
+| `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |
+| `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy when both are set |
 
 > The single‑table shortcut above is env‑only. **Multiple** tables use the
 > `tables` array in `config.json` (§1.1) or the `TABLES` list in `config.py`
@@ -549,7 +612,84 @@ after old snapshot data is pruned. A stale Fabric reader may still ask for a
 prior version's data file until it re-syncs the log; those files stay pinned and
 served (within `SNAPSHOT_HISTORY_LIMIT`), so you don't get "underlying location
 does not exist" errors mid-refresh. Point your Fabric S3 shortcut at
-`warehouse/db/<table>` exactly as before — Fabric auto-detects the `_delta_log/`.
+`db/<server>/<database>/<schema>/<object>` — Fabric auto-detects the `_delta_log/`.
 
 > Design notes and the full action layout: [DELTA_FORMAT.md](DELTA_FORMAT.md).
+
+## 14. Storage proxy — mounted buckets (files & object stores)
+
+Independently of the DB→table virtualization, the same S3 endpoint can serve
+**existing files** from a storage backend as **read-only byte passthrough**. This
+is **additive**: a bucket with a **mount** streams bytes from its backend; every
+other bucket (including the DB warehouse) resolves exactly as before. Grounded in
+[storage/mounts.py](storage/mounts.py), [storage/passthrough.py](storage/passthrough.py),
+and [config.mounts.example.json](config.mounts.example.json).
+
+Turn it on with `ENABLE_STORAGE_PROXY=1` and a `config.mounts.json` (gitignored),
+or use the config-builder **Storage** tab.
+
+### 14.1 Mount table (`config.mounts.json`)
+
+```jsonc
+{
+  "mounts": [
+    // NFS/SMB share mounted by the OS — zero extra deps.
+    { "bucket": "secure-nfs", "backend": "local", "root": "/mnt/finance", "read_only": true },
+
+    // Native S3 / MinIO / S3-compatible bucket ('root' = upstream bucket).
+    { "bucket": "s3vault", "backend": "s3", "root": "reports-bucket", "prefix": "2026/",
+      "endpoint": "https://minio.local:9000", "region": "us-east-1",
+      "addressing_style": "path", "credential": "s3vault", "read_only": true },
+
+    // Native Azure Blob / ADLS Gen2 container ('root' = container).
+    { "bucket": "blobvault", "backend": "azure", "root": "reports",
+      "account": "mystorageacct", "credential": "blobvault", "read_only": true },
+
+    // Public bucket needs an explicit credential-less auth mode.
+    { "bucket": "adls-open", "backend": "azure", "root": "public",
+      "account": "opendatalake", "auth": "default", "read_only": true }
+  ]
+}
+```
+
+- `bucket` — the S3 bucket Fabric/clients use; must differ from `S3_BUCKET` and be
+  a valid S3 name.
+- `root` — filesystem path (`local`) / upstream bucket (`s3`) / container (`azure`).
+- `prefix` — optional; confine serving to a subtree (also `..`-hardened).
+- `credential` — id of an encrypted upstream credential in the store (never inline).
+- `auth` — for a credential-less mount, an explicit mode (S3: `anonymous`/`instance`;
+  Azure: `default`/`managed_identity`/`anonymous`).
+- Mounts are **read-only** in v1.
+
+Install the SDK for native backends: `pip install '.[s3proxy]'` (S3),
+`pip install '.[azureblob]'` (Azure). `local` needs nothing.
+
+### 14.2 Backends & install extras
+
+| Backend | `root` is | Extra | Auth modes (via `credential` blob or `auth`) |
+|---|---|---|---|
+| `local` | a filesystem path (NFS/SMB mount) | — | n/a |
+| `s3` | the upstream S3 bucket | `.[s3proxy]` | static, session, assume_role, web_identity, profile, sso, instance, process, anonymous |
+| `azure` | the container | `.[azureblob]` | connection_string, account_key, sas, aad_client_secret, managed_identity, default, anonymous |
+
+Upstream secrets live encrypted in the credential store and are set in the config
+builder (**Storage → mount editor**) or via `/_config/api/{s3,azure}-credentials`.
+
+### 14.3 Access keys & authorization
+
+When a mount exists, issue scoped **access keys** so each client reaches only its
+allowed buckets/prefixes:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets |
+| `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounts even when `REQUIRE_SIGV4=0` |
+| `REQUIRE_SIGV4` | `0` | Enforce SigV4 on **all** buckets |
+| `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access |
+| `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |
+
+Manage keys in the config-builder **Storage → Access keys** panel (create returns
+the secret once; rotate/delete supported). The legacy single key stays a wildcard
+until the first access key is created. Full security model: [SECURITY.md](SECURITY.md).
 

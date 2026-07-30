@@ -106,6 +106,22 @@ async def test_save_endpoint_persists_and_validates(tmp_path, monkeypatch):
         assert empty.status_code == 400
 
 
+async def test_save_endpoint_allows_secret_replace_and_clear(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    monkeypatch.setenv("CONFIG_FILE", str(cfg))
+
+    async with _client(_cb_app()) as c:
+        rep = await c.post("/_config/api/save", json={"settings": {"secret_access_key": "new-secret"}})
+        assert rep.status_code == 200 and rep.json()["ok"]
+        after_replace = json.loads(cfg.read_text())
+        assert after_replace["secret_access_key"] == "new-secret"
+
+        clr = await c.post("/_config/api/save", json={"settings": {"secret_access_key": ""}})
+        assert clr.status_code == 200 and clr.json()["ok"]
+        after_clear = json.loads(cfg.read_text())
+        assert after_clear["secret_access_key"] == ""
+
+
 # ---------------------------------------------------------------------------
 # Manager live-scale endpoint
 # ---------------------------------------------------------------------------

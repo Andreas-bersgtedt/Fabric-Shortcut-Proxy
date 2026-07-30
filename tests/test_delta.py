@@ -9,23 +9,15 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import pathlib
 
 import pytest
 import pyarrow.parquet as pq
 
 _TEST_DB = pathlib.Path(__file__).parent / "test_delta.db"
-os.environ["DB_URL"] = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
-os.environ["NUM_SPLITS"] = "4"
-os.environ["S3_BUCKET"] = "delta-bucket"
 
 import httpx
 import config
-
-config.DB_URL = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
-config.NUM_SPLITS = 4
-config.BUCKET_NAME = "delta-bucket"
 
 from main import app
 from config import ColumnDef
@@ -76,7 +68,9 @@ def _mk_snap(table, version, hashes):
         snapshot_id=version * 1000, sequence_number=version,
         watermark_ms=1_700_000_000_000 + version,
         manifest_list_key="", manifest_file_key="", metadata_key="",
-        version_hint_key="", table=table, version=version, uuid="x",
+        version_hint_key="", table=table,
+        table_path=tp, legacy_table_path=tp,
+        version=version, uuid="x",
     )
     snap.splits = [
         SplitDescriptor(
@@ -143,6 +137,37 @@ def test_previous_version_files_stay_servable_after_refresh():
         delta_log.reset()
 
 
+def test_delta_log_keys_follow_snapshot_table_path_in_canonical_layout():
+    """Delta commit files must be emitted under the snapshot's active table path.
+
+    Regression: commits were emitted under db/<table>/_delta_log even when data
+    files used canonical db/<server>/<database>/<schema>/<object>/data paths.
+    """
+    import iceberg.state_store as ss
+    from config import TableDef
+
+    ss._snapshots.clear(); ss._history.clear()
+    delta_log.reset()
+
+    saved_layout = config.OBJECT_PATH_LAYOUT
+    try:
+        config.OBJECT_PATH_LAYOUT = "canonical"
+        tbl = TableDef(name="Address", source_table="SalesLT.Address", schema=config.TABLE_SCHEMA)
+        snap = ss.build_table_snapshot(tbl, bucket="delta-bucket", warehouse_prefix=config.WAREHOUSE_PREFIX)
+        delta_log.sync_all()
+        objs = delta_log.delta_log_objects()
+
+        expected_log_key = f"{snap.table_path}/_delta_log/00000000000000000000.json"
+        legacy_log_key = f"{config.WAREHOUSE_PREFIX}/{tbl.name}/_delta_log/00000000000000000000.json"
+
+        assert expected_log_key in objs
+        assert legacy_log_key not in objs
+    finally:
+        config.OBJECT_PATH_LAYOUT = saved_layout
+        ss._snapshots.clear(); ss._history.clear()
+        delta_log.reset()
+
+
 # ---------------------------------------------------------------------------
 # Router integration in delta mode
 # ---------------------------------------------------------------------------
@@ -155,11 +180,20 @@ async def delta_client():
 
     # Set config in the fixture (not at module scope) so cross-module import
     # ordering can't clobber these values before the tests run.
-    saved = (config.DB_URL, config.NUM_SPLITS, config.BUCKET_NAME, config.TABLE_FORMAT)
+    saved = (
+        config.DB_URL,
+        config.NUM_SPLITS,
+        config.BUCKET_NAME,
+        config.TABLE_FORMAT,
+        config.OBJECT_PATH_LAYOUT,
+        config.ENABLE_LEGACY_PATH_ALIASES,
+    )
     config.DB_URL = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
     config.NUM_SPLITS = 4
     config.BUCKET_NAME = "delta-bucket"
     config.TABLE_FORMAT = "delta"
+    config.OBJECT_PATH_LAYOUT = "canonical"
+    config.ENABLE_LEGACY_PATH_ALIASES = False
 
     _executor._engine = None
     await seed_demo_database()
@@ -181,7 +215,14 @@ async def delta_client():
         await _executor._engine.dispose()
         _executor._engine = None
     delta_log.reset()
-    config.DB_URL, config.NUM_SPLITS, config.BUCKET_NAME, config.TABLE_FORMAT = saved
+    (
+        config.DB_URL,
+        config.NUM_SPLITS,
+        config.BUCKET_NAME,
+        config.TABLE_FORMAT,
+        config.OBJECT_PATH_LAYOUT,
+        config.ENABLE_LEGACY_PATH_ALIASES,
+    ) = saved
     if _TEST_DB.exists():
         _TEST_DB.unlink(missing_ok=True)
 
@@ -194,7 +235,7 @@ def _extract_keys(xml_bytes: bytes) -> list[str]:
 
 
 async def test_list_serves_delta_log_and_parquet_not_iceberg(delta_client):
-    r = await delta_client.get("/delta-bucket?list-type=2&prefix=warehouse/")
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     assert r.status_code == 200
     keys = _extract_keys(r.content)
     assert any(k.endswith("_delta_log/00000000000000000000.json") for k in keys)
@@ -206,7 +247,7 @@ async def test_list_serves_delta_log_and_parquet_not_iceberg(delta_client):
 
 
 async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
-    r = await delta_client.get("/delta-bucket?list-type=2&prefix=warehouse/")
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)
     commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
 
@@ -234,7 +275,7 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
 
 
 async def test_get_data_parquet_in_delta_mode(delta_client):
-    r = await delta_client.get("/delta-bucket?list-type=2&prefix=warehouse/")
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)
     parquet_key = next(k for k in keys if k.endswith(".parquet"))
 
@@ -250,3 +291,27 @@ async def test_unknown_delta_log_file_404(delta_client):
     key = f"{config.WAREHOUSE_PREFIX}/{config.TABLE_NAME}/_delta_log/_last_checkpoint"
     r = await delta_client.get(f"/delta-bucket/{key}")
     assert r.status_code == 404
+
+
+async def test_delta_listing_is_canonical_and_hides_legacy_when_aliases_disabled(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    assert r.status_code == 200
+    keys = _extract_keys(r.content)
+
+    assert keys, "expected at least one listed key in delta mode"
+    assert any("/_delta_log/" in k for k in keys)
+    assert any("/data/split-" in k for k in keys)
+
+    # Canonical paths should include db/<server>/<database>/<schema>/<object>/...
+    # => at least 6 path segments before _delta_log or data.
+    roots = []
+    for k in keys:
+        parts = k.split("/")
+        if "_delta_log" in parts:
+            roots.append(parts[:parts.index("_delta_log")])
+        elif "data" in parts:
+            roots.append(parts[:parts.index("data")])
+    assert roots and all(len(rp) >= 5 for rp in roots)
+
+    # Legacy db/<table>/... shape would have only 2 segments before data/_delta_log.
+    assert not any(len(rp) == 2 for rp in roots)

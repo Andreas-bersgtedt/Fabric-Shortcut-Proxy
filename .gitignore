@@ -38,10 +38,10 @@ config.json
 # Persistent Parquet cache (F5)
 .parquet_cache/
 
-# Artifact store (Phase 0 — local backend default dir)
+# Artifact store (Phase 0 - local backend default dir)
 .artifacts/
 
-# C++ Agent build artifacts (Phase 6 — source is committed, binaries are not)
+# C++ Agent build artifacts (Phase 6 - source is committed, binaries are not)
 agent-cpp/*.exe
 agent-cpp/*.obj
 agent-cpp/*.pdb
@@ -54,3 +54,23 @@ agent-cpp/agent
 .idea/
 .DS_Store
 Thumbs.db
+*.swp
+config.py.backup
+
+# Local development plans / notes - DO NOT commit
+devplan/
+
+# Local per-deployment config files - DO NOT commit
+# Credentials come from environment variables; table lists are environment-specific.
+# Fresh installs fall back to built-in defaults (SQLite poc_source.db + 'sales' table).
+config.connection.json
+config.system.json
+config.performance.json
+config.tables.json
+config.mounts.json
+*.env
+.env.local
+secrets.json
+
+# Encrypted credential store (Manager-owned; DPAPI/Fernet ciphertext + key file)
+secrets/

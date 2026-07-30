@@ -31,7 +31,12 @@ import config
 import cache.lru_cache as cache
 from iceberg.manifest import build_manifest_file, build_manifest_list
 from iceberg.metadata import build_metadata_json
-from iceberg.state_store import get_all_snapshots, get_split_by_key
+from iceberg.state_store import (
+    active_to_legacy_key,
+    alias_to_active_key,
+    get_all_snapshots,
+    get_split_by_key,
+)
 from db.executor import execute_split_query, SourceUnavailable
 from parquet.generator import rows_to_parquet
 from planner.split_planner import build_split_query
@@ -48,12 +53,54 @@ router = APIRouter()
 _generation_semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_GENERATIONS)
 
 
+def _mount_for(bucket: str):
+    """Return the storage-proxy Mount for a bucket (when enabled), else None.
+
+    Additive: a mounted bucket is served as byte passthrough; every other bucket
+    (including the DB warehouse) resolves through the existing Iceberg path.
+    """
+    try:
+        from storage.mounts import get_mount
+        return get_mount(bucket)
+    except Exception:  # noqa: BLE001 - the storage proxy must never break DB serving
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _object_etag(data: bytes) -> str:
     return f'"{hashlib.md5(data, usedforsecurity=False).hexdigest()}"'
+
+
+def _warehouse_alias_enabled() -> bool:
+    return config.ENABLE_LEGACY_PATH_ALIASES and not config.WAREHOUSE_PREFIX.startswith("warehouse/")
+
+
+def _normalize_incoming_key(key: str) -> str:
+    """Map legacy aliases to active object keys."""
+    k = alias_to_active_key(key)
+    if _warehouse_alias_enabled() and k.startswith("warehouse/"):
+        k = k[len("warehouse/"):]
+    return k
+
+
+def _normalize_incoming_prefix(prefix: str) -> tuple[str, bool]:
+    """Map legacy list prefixes to active prefixes.
+
+    Returns (normalized_prefix, requested_warehouse_alias).
+    """
+    requested_warehouse_alias = _warehouse_alias_enabled() and prefix.startswith("warehouse/")
+    p = prefix[len("warehouse/"):] if requested_warehouse_alias else prefix
+    p = alias_to_active_key(p)
+    return p, requested_warehouse_alias
+
+
+def _display_key_for_prefix(key: str, *, warehouse_alias: bool) -> str:
+    if warehouse_alias and not key.startswith("warehouse/"):
+        return f"warehouse/{key}"
+    return key
 
 
 def _apply_range(data: bytes, range_header: str | None) -> tuple[bytes, int, int, bool]:
@@ -203,6 +250,14 @@ def _objects_for_snapshot(snap) -> dict[str, dict]:
             "content_type": "application/octet-stream",
         }
 
+    if config.OBJECT_PATH_LAYOUT == "canonical" and config.ENABLE_LEGACY_PATH_ALIASES:
+        aliases: dict[str, dict] = {}
+        for k, v in objects.items():
+            ak = active_to_legacy_key(snap, k)
+            if ak != k:
+                aliases[ak] = dict(v)
+        objects.update(aliases)
+
     return objects
 
 
@@ -235,6 +290,7 @@ def _version_hint_bytes(key: str) -> bytes:
 
 def _resolve_snapshot_for_key(key: str):
     """Return the snapshot owning a metadata/manifest key, or None."""
+    key = alias_to_active_key(key)
     for snap in get_all_snapshots():
         if key in (snap.metadata_key, snap.version_hint_key,
                    snap.manifest_list_key, snap.manifest_file_key):
@@ -251,8 +307,17 @@ async def list_buckets() -> FastAPIResponse:
     """Handle S3 ListBuckets — Fabric calls this first when browsing."""
     snapshots = get_all_snapshots()
     created_ms = snapshots[0].watermark_ms if snapshots else 0
-    body = list_buckets_response(config.BUCKET_NAME, created_ms=created_ms)
-    log.info("list_buckets", bucket=config.BUCKET_NAME)
+    # Advertise mounted storage-proxy buckets alongside the DB warehouse so they
+    # appear in Fabric's bucket picker (they resolve via passthrough).
+    extra: list[str] = []
+    try:
+        from storage.mounts import enabled, mount_ids
+        if enabled():
+            extra = mount_ids()
+    except Exception:  # noqa: BLE001 - the storage proxy must never break ListBuckets
+        extra = []
+    body = list_buckets_response(config.BUCKET_NAME, created_ms=created_ms, extra_buckets=extra)
+    log.info("list_buckets", bucket=config.BUCKET_NAME, mounts=extra)
     return FastAPIResponse(content=body, media_type="application/xml")
 
 
@@ -265,6 +330,10 @@ async def head_service() -> FastAPIResponse:
 @router.head("/{bucket}")
 async def head_bucket(bucket: str) -> FastAPIResponse:
     """S3 HeadBucket — confirm the bucket exists."""
+    _m = _mount_for(bucket)
+    if _m is not None:
+        from storage import passthrough
+        return passthrough.head_bucket(_m)
     if bucket != config.BUCKET_NAME:
         return FastAPIResponse(status_code=404)
     log.info("head_bucket", bucket=bucket)
@@ -277,6 +346,10 @@ async def list_objects_v2(
     request: Request,
 ) -> FastAPIResponse:
     """Handle ListObjectsV2 (list-type=2) and legacy ListObjects."""
+    _m = _mount_for(bucket)
+    if _m is not None:
+        from storage import passthrough
+        return passthrough.list_objects(_m, request)
     if bucket != config.BUCKET_NAME:
         return FastAPIResponse(
             content=error_response("NoSuchBucket", f"Bucket {bucket!r} does not exist."),
@@ -286,8 +359,9 @@ async def list_objects_v2(
 
     metrics.record_s3_request("list")
     list_type = request.query_params.get("list-type")
-    prefix    = request.query_params.get("prefix", "")
+    prefix_in = request.query_params.get("prefix", "")
     delimiter = request.query_params.get("delimiter", "")
+    prefix, warehouse_alias = _normalize_incoming_prefix(prefix_in)
 
     all_objects = _snapshot_objects()
 
@@ -307,26 +381,27 @@ async def list_objects_v2(
             delim_pos = remainder.find(delimiter)
             if delim_pos == -1:
                 flat_objects.append({
-                    "key": k,
+                    "key": _display_key_for_prefix(k, warehouse_alias=warehouse_alias),
                     "size": all_objects[k]["size"],
                     "last_modified_ms": all_objects[k]["last_modified_ms"],
                 })
             else:
-                common_prefix_set.add(prefix + remainder[: delim_pos + len(delimiter)])
+                cp = prefix + remainder[: delim_pos + len(delimiter)]
+                common_prefix_set.add(_display_key_for_prefix(cp, warehouse_alias=warehouse_alias))
 
         common_prefixes = sorted(common_prefix_set)
-        log.info("list_objects", bucket=bucket, list_type=list_type, prefix=prefix, delimiter=delimiter,
+        log.info("list_objects", bucket=bucket, list_type=list_type, prefix=prefix_in, delimiter=delimiter,
                  matched=len(flat_objects), common_prefixes=len(common_prefixes))
-        body = list_objects_v2_response(bucket, prefix, flat_objects,
+        body = list_objects_v2_response(bucket, prefix_in, flat_objects,
                                         delimiter=delimiter, common_prefixes=common_prefixes)
     else:
         flat_objects = [
-            {"key": k, "size": all_objects[k]["size"],
+            {"key": _display_key_for_prefix(k, warehouse_alias=warehouse_alias), "size": all_objects[k]["size"],
              "last_modified_ms": all_objects[k]["last_modified_ms"]}
             for k in matched_keys
         ]
-        log.info("list_objects", bucket=bucket, prefix=prefix, matched=len(flat_objects))
-        body = list_objects_v2_response(bucket, prefix, flat_objects)
+        log.info("list_objects", bucket=bucket, prefix=prefix_in, matched=len(flat_objects))
+        body = list_objects_v2_response(bucket, prefix_in, flat_objects)
     return FastAPIResponse(content=body, media_type="application/xml")
 
 
@@ -336,10 +411,15 @@ async def head_object(
     key: str,
     request: Request,
 ) -> FastAPIResponse:
+    _m = _mount_for(bucket)
+    if _m is not None:
+        from storage import passthrough
+        return passthrough.head_object(_m, key, request)
     if bucket != config.BUCKET_NAME:
         return FastAPIResponse(status_code=404)
 
     metrics.record_s3_request("head", metrics.classify_key(key))
+    key = _normalize_incoming_key(key)
     all_objects = _snapshot_objects()
     obj = all_objects.get(key)
     if obj is not None:
@@ -378,6 +458,10 @@ async def get_object(
     An empty key (trailing slash on bucket, e.g. /bucket/) is treated as
     a ListObjectsV2 request so Fabric's folder browser works correctly.
     """
+    _m = _mount_for(bucket)
+    if _m is not None:
+        from storage import passthrough
+        return passthrough.get_object(_m, key, request)
     if bucket != config.BUCKET_NAME:
         return FastAPIResponse(
             content=error_response("NoSuchBucket", f"Bucket {bucket!r} does not exist."),
@@ -391,6 +475,7 @@ async def get_object(
         return await list_objects_v2(bucket, request)
 
     metrics.record_s3_request("get", metrics.classify_key(key))
+    key = _normalize_incoming_key(key)
     range_header = request.headers.get("range")
     log.info("get_object", bucket=bucket, key=key, range=range_header)
 
@@ -467,7 +552,8 @@ async def get_object(
         async with _generation_semaphore:
             sql, params = build_split_query(split)
             _t_sql0 = time.perf_counter()
-            rows = await execute_split_query(sql, params, split_index=split.split_index)
+            rows = await execute_split_query(sql, params, split_index=split.split_index,
+                                             connection=split.table.connection_id)
             _sql_ms = (time.perf_counter() - _t_sql0) * 1000.0
             _t_gen0 = time.perf_counter()
             parquet_bytes = rows_to_parquet(

@@ -32,7 +32,7 @@ _HOP_BY_HOP = {"transfer-encoding", "connection", "keep-alive", "content-encodin
 # (when the console is disabled) or /favicon.ico to an Agent, whose S3 SigV4 auth
 # rejects them with a confusing ``AccessDenied`` 403. None are valid S3 buckets
 # (bucket names can't start with ``_``), so reserving them is safe.
-_RESERVED_PREFIXES = ("/_manager", "/_config", "/control", "/healthz", "/readyz", "/agents")
+_RESERVED_PREFIXES = ("/_manager", "/_config", "/_monitor", "/control", "/healthz", "/readyz", "/agents")
 
 
 def _is_reserved(path: str) -> bool:

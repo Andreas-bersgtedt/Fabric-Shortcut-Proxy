@@ -38,7 +38,8 @@ def test_head_and_exists(store):
     assert store.head(KEY) is None
     assert store.exists(KEY) is False
     store.put(KEY, BODY)
-    assert store.head(KEY) == ObjectStat(KEY, len(BODY))
+    stat = store.head(KEY)
+    assert stat.key == KEY and stat.size == len(BODY)   # mtime_ms is optional/backend-dependent
     assert store.exists(KEY) is True
 
 

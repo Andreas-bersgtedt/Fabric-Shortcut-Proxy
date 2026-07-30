@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fabric-shortcut-proxy"
-version = "1.0.0"
+version = "2.0.0"
 description = "Fabric Shortcut Proxy for Microsoft Fabric (POC)"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,9 +15,11 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",          # SQLite async driver (demo / dev)
     "aioodbc>=0.5",            # SQL Server async driver (production)
+    "databricks-sqlalchemy>=2.0",  # Databricks SQLAlchemy dialect/plugin
     "structlog>=24.1",
     "tzdata>=2024.1",          # IANA tz data (Windows) — needed to read tz-aware timestamp values
-    "httpx>=0.27",          # for integration tests
+    "psutil>=5.9",             # Process memory/CPU monitoring
+    "httpx>=0.27",             # runtime HTTP client: gateway proxy, control plane, monitor scrape, heartbeat
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
@@ -29,6 +31,19 @@ dev = [
     "pyiceberg[pyarrow]>=0.6",
     "botocore>=1.34",
 ]
+# Source-DB drivers loaded by SQLAlchemy via the URL scheme. Kept out of core so
+# SQLite/SQL Server installs stay lean; install the extra for the source you use.
+postgres = ["asyncpg>=0.29"]        # postgresql+asyncpg://
+oracle = ["oracledb>=2.0"]          # oracle+oracledb://
+# Encrypted credential store: Fernet backend for non-Windows hosts (Windows uses
+# DPAPI via ctypes, no extra needed).
+credentials = ["cryptography>=42.0"]
+# Native S3 / MinIO / S3-compatible mount backend (storage proxy, Phase 2). Kept
+# out of core so local/NFS/SMB mounts install without a cloud SDK.
+s3proxy = ["boto3>=1.34"]
+# Native Azure Blob / ADLS Gen2 mount backend (storage proxy, Phase 3). azure-identity
+# powers the AAD auth modes (service principal, managed identity, default chain).
+azureblob = ["azure-storage-blob>=12.19", "azure-identity>=1.15"]
 
 [tool.setuptools]
 py-modules = ["main", "config", "manager"]
@@ -44,6 +59,7 @@ packages = [
     "planner",
     "runtime",
     "s3",
+    "storage",
 ]
 
 [tool.pytest.ini_options]

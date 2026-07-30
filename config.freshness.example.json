@@ -1,0 +1,11 @@
+{
+  "_comment": "Freshness configuration — data refresh strategy. Place as config.freshness.json or included in config.json.",
+  "freshness": {
+    "_comment": "Data refresh strategy",
+    "auto_refresh": false,
+    "refresh_poll_seconds": 600,
+    "refresh_strategy": "auto",
+    "refresh_allow_full_pull": false,
+    "refresh_ttl_seconds": 1200
+  }
+}

@@ -52,6 +52,21 @@
     Serve the /_manager operator console (fleet monitor + start/stop/restart/drain)
     on the control port. Sets ENABLE_ADMIN_UI=1.
 
+.PARAMETER ConfigUi
+    Serve the config builder UI/API at /_config on the control port.
+    Sets ENABLE_CONFIG_BUILDER=1.
+
+.PARAMETER AllowConfigDbCreds
+    Deprecated / no-op: allowing an inline db_url in the local (gitignored)
+    config.connection.json is now the Manager.ps1 default. Use
+    -StrictDbCredentials to opt back into the strict startup gate.
+
+.PARAMETER StrictDbCredentials
+    Enforce the secure-by-default startup gate that REJECTS an inline DB
+    credential in config.connection.json db_url. By default this local launcher
+    ALLOWS it (config files are local, gitignored, per-deployment). Pass this to
+    require the DB_URL env var (-DbUrl) or passwordless auth instead.
+
 .PARAMETER AdminToken
     Token required for mutating /_manager actions (X-Admin-Token header or ?token=).
     Sets ADMIN_TOKEN. Reads stay open; blank = no auth.
@@ -94,6 +109,19 @@
 .PARAMETER SkipInstall
     Skip dependency installation entirely (fastest start; assumes venv is ready).
 
+.PARAMETER AutoStash
+    When switching branches, automatically stash local tracked and untracked
+    changes if needed. The script does NOT auto-pop the stash; it prints how to
+    restore it after startup.
+
+.PARAMETER ObjectPathLayout
+    Virtual object path layout: 'legacy' (db/<table>) or 'canonical'
+    (db/<server>/<database>/<schema>/<object>). Overrides OBJECT_PATH_LAYOUT.
+
+.PARAMETER DisableLegacyAliases
+    Disable serving legacy object aliases when canonical layout is enabled.
+    Sets ENABLE_LEGACY_PATH_ALIASES=0.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -119,6 +147,9 @@ param(
     [int]$AgentCount,
     [switch]$Gateway,
     [switch]$AdminUi,
+    [switch]$ConfigUi,
+    [switch]$AllowConfigDbCreds,
+    [switch]$StrictDbCredentials,
     [string]$AdminToken,
     [switch]$Ha,
     [switch]$RetentionGc,
@@ -128,7 +159,11 @@ param(
     [switch]$NoPull,
     [switch]$Reinstall,
     [switch]$Recreate,
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$AutoStash,
+    [ValidateSet("legacy", "canonical")]
+    [string]$ObjectPathLayout,
+    [switch]$DisableLegacyAliases
 )
 
 $ErrorActionPreference = "Stop"
@@ -148,18 +183,44 @@ function Write-Step {
 
 # Run git safely: git writes progress to stderr, which under
 # $ErrorActionPreference='Stop' becomes a terminating NativeCommandError even with
-# 2>$null. Force 'Continue' inside this scope and return exit code + stdout so the
+# stderr output. Force 'Continue' inside this scope and return exit code + output so the
 # caller decides what to do.
 function Invoke-Git {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $out = & git @GitArgs 2>$null
+        $out = & git @GitArgs 2>&1
         return [pscustomobject]@{ Output = (($out -join "`n").Trim()); ExitCode = $LASTEXITCODE }
     } finally {
         $ErrorActionPreference = $prev
     }
+}
+
+function Ensure-CleanOrAutoStash {
+    param(
+        [switch]$AllowAutoStash,
+        [ref]$DidStash,
+        [ref]$StashRef
+    )
+
+    $dirty = (Invoke-Git status --porcelain)
+    $isDirty = ($dirty.ExitCode -eq 0 -and [string]::IsNullOrWhiteSpace($dirty.Output) -eq $false)
+    if (-not $isDirty) { return }
+
+    if (-not $AllowAutoStash) {
+        throw "Local changes are present. Commit, stash, or rerun with -AutoStash.`nLocal changes:`n$($dirty.Output)"
+    }
+
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $stashMsg = "manager-autostash-$stamp"
+    Write-Step "Local changes detected - auto-stashing"
+    $r = Invoke-Git stash push -u -m $stashMsg
+    if ($r.ExitCode -ne 0) {
+        throw "git stash push failed:`n$($r.Output)"
+    }
+    $DidStash.Value = $true
+    $StashRef.Value = "stash^{/$stashMsg}"
 }
 
 # ---------------------------------------------------------------------------
@@ -176,6 +237,9 @@ if ($NoPull) {
 } elseif (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Warning "git not found on PATH - skipping codebase sync."
 } else {
+    $autoStashCreated = $false
+    $autoStashRef = ""
+
     $inside = Invoke-Git rev-parse --is-inside-work-tree
     $isRepo = ($inside.ExitCode -eq 0 -and $inside.Output -eq "true")
 
@@ -195,10 +259,21 @@ if ($NoPull) {
             if ($Branch) {
                 $current = (Invoke-Git rev-parse --abbrev-ref HEAD).Output
                 if ($current -ne $Branch) {
+                    $branchExistsLocal = ((Invoke-Git show-ref --verify --quiet "refs/heads/$Branch").ExitCode -eq 0)
+                    $branchExistsRemote = ((Invoke-Git show-ref --verify --quiet "refs/remotes/$Remote/$Branch").ExitCode -eq 0)
+                    Ensure-CleanOrAutoStash -AllowAutoStash:$AutoStash -DidStash ([ref]$autoStashCreated) -StashRef ([ref]$autoStashRef)
+
                     Write-Step "Checking out branch '$Branch'"
-                    $r = Invoke-Git checkout $Branch
+                    if ($branchExistsLocal) {
+                        $r = Invoke-Git checkout $Branch
+                    } elseif ($branchExistsRemote) {
+                        $r = Invoke-Git checkout -B $Branch --track "$Remote/$Branch"
+                    } else {
+                        throw "Branch '$Branch' was not found locally or on '$Remote'."
+                    }
+
                     if ($r.ExitCode -ne 0) {
-                        throw "git checkout '$Branch' failed (commit or stash local changes first - the script never discards your work):`n$($r.Output)"
+                        throw "git checkout '$Branch' failed:`n$($r.Output)"
                     }
                 }
             }
@@ -207,6 +282,9 @@ if ($NoPull) {
             if ($curBranch -eq "HEAD") {
                 Write-Warning "Detached HEAD - skipping pull. Pass -Branch to check out a branch."
             } else {
+                # Even when no branch switch is needed, local edits can block
+                # ff-only pulls. Apply the same safety policy here.
+                Ensure-CleanOrAutoStash -AllowAutoStash:$AutoStash -DidStash ([ref]$autoStashCreated) -StashRef ([ref]$autoStashRef)
                 Write-Step "Pulling '$curBranch' (fast-forward only)"
                 $r = Invoke-Git pull --ff-only $Remote $curBranch
                 if ($r.ExitCode -ne 0) {
@@ -220,6 +298,10 @@ if ($NoPull) {
                 if (-not $SkipInstall -and (Test-Path $StampFile)) { Remove-Item -Force $StampFile }
             } else {
                 Write-Step "Repo already up to date"
+            }
+
+            if ($autoStashCreated) {
+                Write-Warning "AutoStash created and kept for safety. Restore later with: git stash pop $autoStashRef"
             }
         }
     } else {
@@ -326,9 +408,16 @@ if ($PSBoundParameters.ContainsKey("HeartbeatMs"))   { $env:HEARTBEAT_MS = "$Hea
 if ($PSBoundParameters.ContainsKey("AgentCount"))    { $env:AGENT_COUNT  = "$AgentCount" }
 if ($Gateway)                                        { $env:ENABLE_GATEWAY = "1" }
 if ($AdminUi)                                        { $env:ENABLE_ADMIN_UI = "1" }
+if ($ConfigUi)                                       { $env:ENABLE_CONFIG_BUILDER = "1" }
+# Local launcher: config.connection.json is a local, gitignored per-deployment file, so allow
+# an inline db_url by default. -StrictDbCredentials re-enables the secure startup gate.
+$env:ALLOW_CONFIG_DB_CREDENTIALS = "1"
+if ($StrictDbCredentials)                            { $env:ALLOW_CONFIG_DB_CREDENTIALS = "0" }
 if ($PSBoundParameters.ContainsKey("AdminToken"))    { $env:ADMIN_TOKEN  = $AdminToken }
 if ($Ha)                                             { $env:MANAGER_HA = "1" }
 if ($RetentionGc)                                    { $env:RETENTION_GC = "1" }
+if ($PSBoundParameters.ContainsKey("ObjectPathLayout")) { $env:OBJECT_PATH_LAYOUT = $ObjectPathLayout }
+if ($DisableLegacyAliases)                           { $env:ENABLE_LEGACY_PATH_ALIASES = "0" }
 
 $effCtlHost   = if ($env:CONTROL_HOST) { $env:CONTROL_HOST } else { "127.0.0.1" }
 $effCtlPort   = if ($env:CONTROL_PORT) { $env:CONTROL_PORT } else { "9200" }
@@ -338,7 +427,10 @@ $effFormat    = if ($env:TABLE_FORMAT) { $env:TABLE_FORMAT } else { "iceberg" }
 $effCount     = if ($env:AGENT_COUNT) { [int]$env:AGENT_COUNT } else { 1 }
 $effGateway   = ($env:ENABLE_GATEWAY -eq "1")
 $effAdminUi   = ($env:ENABLE_ADMIN_UI -eq "1")
+$effConfigUi  = ($env:ENABLE_CONFIG_BUILDER -eq "1")
 $effHa        = ($env:MANAGER_HA -eq "1")
+$effLayout    = if ($env:OBJECT_PATH_LAYOUT) { $env:OBJECT_PATH_LAYOUT } else { "canonical" }
+$effAliases   = if ($env:ENABLE_LEGACY_PATH_ALIASES) { ($env:ENABLE_LEGACY_PATH_ALIASES -eq "1") } else { $false }
 
 # Address a client (Fabric) would use to reach an Agent / the gateway when bound 0.0.0.0.
 $agentDialHost = if ($effAgentHost -in @("0.0.0.0", "::")) { "127.0.0.1" } else { $effAgentHost }
@@ -358,6 +450,9 @@ Write-Host "    Manager control : http://${ctlDialHost}:${effCtlPort}   (/health
 if ($effAdminUi) {
     Write-Host "    Operator console: http://${ctlDialHost}:${effCtlPort}/_manager   <- start/stop/restart/drain + monitor" -ForegroundColor Green
 }
+if ($effConfigUi) {
+    Write-Host "    Config builder  : http://${ctlDialHost}:${effCtlPort}/_config    <- live config UI/API" -ForegroundColor Green
+}
 if ($effHa) {
     Write-Host "    Manager HA      : leader lease (primary supervises; run a 2nd -Ha Manager as standby)" -ForegroundColor DarkGray
 }
@@ -371,6 +466,7 @@ if ($effGateway) {
     }
 }
 Write-Host "    Table format    : $effFormat" -ForegroundColor DarkGray
+Write-Host "    Object paths    : layout=$effLayout legacy_aliases=$effAliases" -ForegroundColor DarkGray
 Write-Host "    Source DB       : $dbUrlMasked" -ForegroundColor DarkGray
 Write-Host "    The Manager restarts any Agent automatically if it crashes." -ForegroundColor DarkGray
 Write-Host "    Press Ctrl+C to stop (also stops the supervised Agents)." -ForegroundColor DarkGray

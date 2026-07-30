@@ -10,24 +10,71 @@ table objects and generates Parquet files on demand from SQL pushdown queries.
 
 ## Architecture recap
 
+```mermaid
+flowchart LR
+  Fabric[Microsoft Fabric / S3 clients]
+
+  subgraph Proxy["Fabric Shortcut Proxy (FastAPI)"]
+    AUTH["Auth middleware<br/>SigV4 (multi-key) + per-key ACL<br/>+ forced mount auth"]
+    RT["s3/router.py<br/>GET / HEAD / ListObjectsV2 (+ range)"]
+    subgraph WH["Warehouse bucket — DB to table"]
+      RES["Iceberg / Delta resolver"]
+      GEN["SQL pushdown to Parquet<br/>planner + db + parquet"]
+    end
+    subgraph MNT["Mounted buckets — storage proxy"]
+      PT["passthrough<br/>byte streaming + range"]
+      LOC["local — NFS / SMB"]
+      S3B["s3 / MinIO"]
+      AZ["azure Blob / ADLS"]
+    end
+    AUD["audit log"]
+  end
+
+  SRC[(Source RDBMS)]
+  UP[(Upstream S3 / Azure / file share)]
+
+  Fabric -->|S3 + SigV4| AUTH --> RT
+  RT -->|warehouse bucket| RES --> GEN -->|SQL| SRC
+  RT -->|mounted bucket| PT --> LOC & S3B & AZ --> UP
+  AUTH -. denials .-> AUD
+  PT -. access .-> AUD
 ```
-Fabric ──S3 GET/HEAD/List──▶ FastAPI proxy
-                                │
-                    ┌───────────┼────────────────┐
-                    ▼           ▼                ▼
-             table metadata/log         data/*.parquet
-            (Iceberg or Delta)      (SQL → Parquet on demand)
-                                               │
-                                        SQLAlchemy async
-                                               │
-                                         Source RDBMS
-```
+
+A bucket with **no mount** resolves through the Iceberg/Delta path exactly as before;
+a bucket **with a mount** streams bytes straight from its backend. Both share the same
+SigV4 front door. See [Storage Proxy](#storage-proxy--secured-file--object-passthrough).
+
+## Storage Proxy — secured file / object passthrough
+
+Alongside the DB→table virtualization, the same S3 endpoint can serve **existing files**
+from a storage backend as **read-only byte passthrough**. It is **additive**: a bucket with
+a **mount** streams bytes from its backend; every other bucket resolves through the
+Iceberg/Delta path unchanged, so a single deployment exposes the DB warehouse *and* file
+shares/object stores at once.
+
+**Backends** (`config.mounts.json`, gitignored — see [config.mounts.example.json](config.mounts.example.json)):
+
+| Backend | Serves | Notes |
+|---|---|---|
+| `local` | a filesystem path | an OS-mounted **NFS/SMB** share (UNC or mount point); zero extra deps |
+| `s3` | a native **S3 / MinIO / S3-compatible** bucket | ranged streaming + list pagination (`pip install '.[s3proxy]'`) |
+| `azure` | a native **Azure Blob / ADLS Gen2** container | flat blob + hierarchical namespace (`pip install '.[azureblob]'`) |
+
+**Security (Phase 4):**
+- **Per-key authorization** — issue scoped S3 **access keys** (allowed buckets/prefixes, read-only), stored encrypted; SigV4 is verified against them. The legacy single key stays a wildcard until you add a key.
+- **Forced auth on mounts** — `ENFORCE_MOUNT_AUTH` (default on) requires SigV4 on mounted buckets even when `REQUIRE_SIGV4` is off.
+- **Upstream credential mediation** — clients never see upstream S3/Azure secrets; they're held encrypted (DPAPI/Fernet) and resolved by id. Outbound S3 covers static/session/assume-role/web-identity/profile/SSO/instance/process/anonymous; Azure covers connection-string/account-key/SAS/AAD/managed-identity/default/anonymous.
+- **TLS** — terminate HTTPS at the proxy (`TLS_CERT_FILE` + `TLS_KEY_FILE`) or a fronting LB.
+- **Audit** — every mounted-object access (identity, bucket, key, bytes) is logged when `ENABLE_AUDIT_LOG` is on; recent events at `GET /_config/api/audit`.
+
+Enable it in the config-builder **Storage** tab, or set `ENABLE_STORAGE_PROXY=1` and drop a
+`config.mounts.json`. Design, phasing, and diagrams: [devplan/StorageProxy.md](devplan/StorageProxy.md).
 
 ## Project layout
 
 ```
 s3emulator/
-├── main.py                  FastAPI app + lifespan startup + SigV4 middleware
+├── main.py                  FastAPI app + lifespan + auth middleware (SigV4 multi-key + mount enforcement) + TLS
 ├── manager.py               Manager entrypoint (control plane + local Agent supervision)
 ├── config.py                All tunables (env / config.json / defaults) + validation
 ├── config.example.json      Template for the optional config.json
@@ -38,10 +85,11 @@ s3emulator/
 ├── SCALE_ARCHITECTURE_PLAN.md  Manager/Agent cluster rewrite for scale (10⁸+ rows)
 ├── CONFIGURATION.md         Full configuration manual (PostgreSQL / SQL Server)
 ├── DELTA_FORMAT.md          Native Delta output design (TABLE_FORMAT=delta)
+├── ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md  Real Oracle/Databricks operations + smoke tests
 ├── s3/
-│   ├── router.py            GET / HEAD / ListObjectsV2 endpoints
-│   ├── auth.py              AWS SigV4 verification (H3, behind REQUIRE_SIGV4)
-│   └── xml_responses.py     S3 XML body builders
+│   ├── router.py            GET / HEAD / ListObjectsV2 endpoints (warehouse + mount routing)
+│   ├── auth.py              AWS SigV4 verification (multi-key resolver; H3)
+│   └── xml_responses.py     S3 XML body builders (+ ListObjectsV2 pagination)
 ├── iceberg/
 │   ├── schema.py            Iceberg ↔ PyArrow type mapping
 │   ├── metadata.py          Build metadata.json (+ snapshot history, F2)
@@ -66,7 +114,19 @@ s3emulator/
 │   ├── metrics.py           stdlib Prometheus-style metrics (H1)
 │   ├── endpoints.py         /healthz /readyz /metrics /_admin (H1/H2)
 │   ├── trace.py             Fabric request-timeline ring buffer
-│   └── querystats.py        Per-request SQL vs Parquet query-lag
+│   ├── querystats.py        Per-request SQL vs Parquet query-lag
+│   └── audit.py             Storage-proxy access audit log (Phase 4)
+├── security/
+│   ├── access_keys.py       Scoped proxy access keys + per-key ACL (Phase 4)
+│   ├── credential_store.py  Encrypted store (DPAPI/Fernet): DB URLs + upstream S3/Azure creds + access keys
+│   └── credentials.py       Secret scrubbing helpers
+├── storage/
+│   ├── mounts.py            Mount registry (local | s3 | azure) + validation
+│   ├── passthrough.py       Read-only S3 passthrough (list / head / ranged get) + audit
+│   ├── s3_store.py          Native S3 / MinIO backend (ranged streaming + pagination)
+│   ├── s3_auth.py           Outbound S3 auth (static / session / assume_role / web_identity / …)
+│   ├── azure_store.py       Native Azure Blob / ADLS Gen2 backend
+│   └── azure_auth.py        Outbound Azure auth (account_key / SAS / AAD / managed_identity / …)
 ├── demo/
 │   └── seed_db.py           Seed SQLite with 50k demo sales rows
 ├── configbuilder/           Optional config-builder UI (ENABLE_CONFIG_BUILDER)
@@ -75,7 +135,7 @@ s3emulator/
 ├── monitor/                 Optional monitoring dashboard (ENABLE_MONITOR)
 │   ├── router.py            /_monitor API (summary / reset)
 │   └── index.html           the dashboard SPA
-└── tests/                   pytest suite (244 tests)
+└── tests/                   pytest suite (S3 API, storage proxy, auth/ACL, credential store, …)
     ├── test_s3_api.py           S3 API + Parquet round-trip
     ├── test_metadata.py         metadata.json / manifest structure
     ├── test_parquet_gen.py      Parquet generation
@@ -93,8 +153,30 @@ s3emulator/
     ├── test_pinning.py          Split pinning (no size drift)
     ├── test_trace.py            Request-timeline classification
     ├── test_monitor.py          Monitor dashboard API
-    └── test_delta.py            Native Delta output + refresh diffs
+    ├── test_delta.py            Native Delta output + refresh diffs
+    ├── test_capabilities.py     Per-flavor capability matrix tests
+    ├── test_executor_sync_fallback.py  Sync-driver query fallback coverage
+    ├── test_integration_oracle_databricks.py  Real Oracle/Databricks smoke (env-gated)
+    ├── test_storage_proxy.py       Storage proxy P1: local mount + passthrough + coexistence
+    ├── test_storage_proxy_s3.py    Storage proxy P2: native S3/MinIO (auth, streaming, pagination)
+    ├── test_storage_proxy_azure.py Storage proxy P3: native Azure Blob/ADLS
+    ├── test_access_control.py      Storage proxy P4: access keys + ACL + audit + mount enforcement
+    └── test_credential_store.py    Encrypted credential store (DPAPI/Fernet)
 ```
+
+  ## Oracle + Databricks Integration Coverage
+
+  Real-environment integration smoke tests are available in
+  [tests/test_integration_oracle_databricks.py](tests/test_integration_oracle_databricks.py).
+  These tests are opt-in and skipped unless the required environment variables
+  are present.
+
+  ```powershell
+  .\.venv\Scripts\python.exe -m pytest tests/test_integration_oracle_databricks.py -q
+  ```
+
+  For setup, day-2 operations, troubleshooting, and rollback, use
+  [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
 ## Quick start
 
@@ -227,15 +309,28 @@ Use a subpath that matches your selected `TABLE_FORMAT`:
 
 | Mode | Fabric shortcut subpath |
 |---|---|
-| `iceberg` | `warehouse/db/sales/metadata/v1.metadata.json` |
-| `delta` | `warehouse/db/sales` |
+| `iceberg` | `db/<server>/<database>/<schema>/<object>/metadata/v1.metadata.json` |
+| `delta` | `db/<server>/<database>/<schema>/<object>` |
 
 Fabric auto-discovers the remaining table objects from that entry point.
+
+For strict canonical-only behavior (no legacy aliases), start Manager with:
+
+```powershell
+.\Manager.ps1 -ObjectPathLayout canonical -DisableLegacyAliases
+```
 
 > By default the proxy does **not** verify credentials (`REQUIRE_SIGV4=0`), so any
 > Access Key ID / Secret works. If you set `REQUIRE_SIGV4=1`, the shortcut's
 > credentials must match the proxy's `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`
 > exactly, or requests are rejected with `403`.
+
+> **Storage proxy note:** mounted buckets are always authenticated when
+> `ENFORCE_MOUNT_AUTH=1` (the default), regardless of `REQUIRE_SIGV4`. Issue scoped
+> per-tenant **access keys** (config-builder → Storage → *Access keys*) so each
+> Fabric shortcut can reach only its allowed buckets/prefixes; the legacy single
+> key keeps working as a wildcard until the first access key is created. Put the
+> proxy behind TLS (`TLS_CERT_FILE`/`TLS_KEY_FILE` or an LB) before enabling auth.
 
 ## Connecting a real SQL database
 
@@ -246,7 +341,7 @@ Point the proxy at a table/view and a **key column** — the table schema is
 $env:DB_URL          = "postgresql+asyncpg://user:pass@host:5432/dbname"  # or mssql+aioodbc://...
 $env:DB_SOURCE_TABLE = "public.orders"   # table or view (schema-qualified ok)
 $env:KEY_COLUMN      = "order_id"        # integer split key -> enables auto-schema
-$env:TABLE_NAME      = "orders"          # -> warehouse/db/orders
+$env:TABLE_NAME      = "orders"          # canonical path derived from source identity
 .\Manager.ps1 -SkipInstall
 ```
 
@@ -291,8 +386,10 @@ web page that connects to your database, lists tables, and downloads a
 ```powershell
 $env:ENABLE_CONFIG_BUILDER = "1"
 .\Manager.ps1 -SkipInstall
-# then open http://localhost:9000/_config/
+# then open http://localhost:9200/_config/   # Manager control-plane surface
 ```
+
+If you run standalone `python main.py` (no Manager), open `http://localhost:9000/_config/`.
 
 Enter host / user / password, pick tables (the key column is auto-detected and
 overridable), and click **Download config.json**. It's **off by default** and
@@ -317,7 +414,7 @@ automatically:
 
 The proxy can expose several virtual tables from one instance (F1).
 Each is described by a `TableDef` in `config.py`'s `TABLES` list and served under
-`warehouse/db/<name>`. Schemas are reflected from the source — just name the
+`db/<server>/<database>/<schema>/<object>`. Schemas are reflected from the source — just name the
 table and its key column:
 
 ```python
@@ -332,7 +429,7 @@ By default `TABLES` contains just the single demo `sales` table. `key_column` is
 optional when the source has a primary key (auto-detected); pass it for views.
 Each table gets its own deterministic snapshot lineage, format-specific metadata/log,
 and on-demand Parquet splits. Create one Fabric shortcut per table pointing at its
-`warehouse/db/<name>` prefix.
+canonical table prefix.
 
 ## Key environment variables
 
@@ -353,7 +450,11 @@ and on-demand Parquet splits. Create one Fabric shortcut per table pointing at i
 | `DB_RETRY_BACKOFF`    | `0.5`                                    | Linear backoff base (seconds) between retries |
 | `VALIDATE_SOURCE_SCHEMA` | `1`                                   | Fail fast at startup if a declared column is missing |
 | `REQUIRE_SIGV4`       | `0`                                      | Enforce AWS SigV4 request signatures (403 on mismatch) |
-| `ENABLE_CONFIG_BUILDER` | `0`                                    | Serve the config-builder UI at `/_config/` (local admin only) |
+| `ENABLE_STORAGE_PROXY` | `0`                                     | Serve mounted buckets (`config.mounts.json`) as read-only byte passthrough (local / s3 / azure) |
+| `ENFORCE_MOUNT_AUTH`  | `1`                                      | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` (a secured mount is never anonymous) |
+| `ENABLE_AUDIT_LOG`    | `1`                                      | Emit a structured audit event per mounted-object access (identity, bucket, key, bytes) |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)*                     | Serve HTTPS from the proxy when both are set (else terminate TLS at a fronting LB) |
+| `ENABLE_CONFIG_BUILDER` | `0`                                    | Serve the config-builder UI (typically via Manager at `http://localhost:9200/_config/`) |
 | `PARQUET_DISK_CACHE`  | `0`                                      | Persist generated Parquet to disk; warm restarts skip regeneration (F5) |
 | `PARQUET_DISK_CACHE_DIR` | `./.parquet_cache`                    | Directory for the persistent Parquet cache |
 | `CONCURRENT_STARTUP_MATERIALIZATION` | `1`                       | Materialize splits in parallel at startup (F4) |
@@ -369,6 +470,27 @@ and on-demand Parquet splits. Create one Fabric shortcut per table pointing at i
 > This is a curated subset. **Every** setting — with defaults, categories, and help
 > text — is documented in [CONFIGURATION.md](CONFIGURATION.md) and browsable in the
 > config-builder UI's "All settings" panel.
+
+## Documentation freshness
+
+Use this order when docs appear to conflict:
+
+1. **Runtime source of truth**: [config.py](config.py) (defaults, validation, effective-setting sources) and API/router modules.
+2. **Operator docs (kept current)**:
+  - [README.md](README.md) for setup and quick operations.
+  - [CONFIGURATION.md](CONFIGURATION.md) for complete settings and behavior.
+  - [DELTA_FORMAT.md](DELTA_FORMAT.md) for `TABLE_FORMAT=delta` semantics.
+3. **Design/history docs (may describe prior states)**:
+  - [PLANNING.md](PLANNING.md)
+  - [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md)
+  - [CONFIG_BUILDER_PLAN.md](CONFIG_BUILDER_PLAN.md)
+
+Current defaults and behavior to assume unless overridden:
+
+- Canonical object paths are enabled by default: `db/<server>/<database>/<schema>/<object>`.
+- Legacy path aliases are disabled by default.
+- Split planning is row-targeted by default (`split_target_rows=100000`) and prefers range-based slices.
+- In Manager mode, the config UI is served from the control plane (`http://localhost:9200/_config/`).
 
 ## Operational endpoints
 

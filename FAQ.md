@@ -12,6 +12,30 @@ The proxy presents data from a relational database to Microsoft Fabric through a
 
 The source database remains the system of record. The proxy is a read-path virtualization layer; it is not a general query engine, database, or full S3 implementation.
 
+## Can it also serve existing files or object storage, not just databases?
+
+Yes. Alongside the database-to-table virtualization, the same S3 endpoint can act as a **secured storage proxy**: a **mounted** bucket streams existing files straight from a storage backend as **read-only byte passthrough**, while every other bucket (including the database warehouse) resolves through the Iceberg/Delta path unchanged.
+
+This is **additive** — a single deployment can expose the relational warehouse *and* file shares/object stores at once, behind one authenticated front door. It is enabled per bucket through a mount table (`config.mounts.json`) or the config-builder **Storage** tab, and is off by default (`ENABLE_STORAGE_PROXY`).
+
+## Which storage backends can the proxy front?
+
+Three, all served read-only with ranged reads and one-level folder browsing:
+
+| Backend | Serves | Notes |
+| --- | --- | --- |
+| `local` | a filesystem path | an OS-mounted **NFS/SMB** share (UNC path or mount point); no extra dependencies |
+| `s3` | a native **S3 / MinIO / S3-compatible** bucket | ranged streaming + list pagination |
+| `azure` | an **Azure Blob / ADLS Gen2** container | flat blob and hierarchical namespace |
+
+Upstream credentials are **mediated**: clients never see them. They are held encrypted (DPAPI on Windows, Fernet elsewhere) and resolved by id. Outbound S3 supports static keys, session tokens, assume-role, web-identity (OIDC/IRSA), profiles, SSO, instance role, credential-process, and anonymous; Azure supports connection string, account key, SAS, service principal, managed identity, DefaultAzureCredential, and anonymous.
+
+## How is access to mounted buckets secured?
+
+The front door verifies AWS SigV4 against **scoped access keys**, not just one static pair. Each key is authorized to specific buckets/prefixes and is read-only. Mounted buckets are authenticated even when global signature enforcement is off (`ENFORCE_MOUNT_AUTH`, default on), so a secured mount is never served anonymously. Keys are managed in the config-builder **Storage → Access keys** panel; the legacy single key remains a wildcard until the first scoped key is created.
+
+Transport can be secured with TLS at the proxy (`TLS_CERT_FILE` / `TLS_KEY_FILE`) or a fronting load balancer, and every mounted-object access (identity, bucket, key, bytes) is written to an audit log. Details are in [SECURITY.md](SECURITY.md) and [CONFIGURATION.md](CONFIGURATION.md) §14.
+
 ## How are source-data changes tracked?
 
 The proxy publishes versioned Iceberg snapshots or Delta commits. Data is divided into deterministic splits, and each split is identified by a hash of its logical row content. When a split changes, it receives a new object path and the proxy publishes updated table metadata. Unchanged splits retain their existing paths.
@@ -51,9 +75,9 @@ The target architecture separates the Manager control plane from stateless Agent
 
 A production deployment would also need, at minimum:
 
-- HTTPS/TLS termination and restricted network access.
-- Strong S3 request authentication and read-only source credentials.
-- Secrets stored outside configuration files.
+- HTTPS/TLS termination and restricted network access. *(TLS termination at the proxy is available via `TLS_CERT_FILE`/`TLS_KEY_FILE`, or terminate at a load balancer.)*
+- Strong S3 request authentication and read-only source credentials. *(Scoped, per-tenant SigV4 access keys with bucket/prefix ACLs are available; enable `REQUIRE_SIGV4` and/or `ENFORCE_MOUNT_AUTH`.)*
+- Secrets stored outside configuration files. *(An encrypted credential store holds DB URLs, upstream S3/Azure credentials, and access keys.)*
 - A durable shared artifact and state store.
 - Monitoring, capacity limits, backups, upgrade procedures, and high-availability planning.
 
@@ -61,6 +85,6 @@ The repository contains pieces of this architecture, but its roadmap still lists
 
 ## What is the current overall position?
 
-The project demonstrates a technically viable pattern and includes substantial implementation for Iceberg and Delta metadata, SQL-to-Parquet generation, caching, freshness, monitoring, and a Manager/Agent model. It should still be positioned as open-source reference code rather than a managed Fabric capability.
+The project demonstrates a technically viable pattern and includes substantial implementation for Iceberg and Delta metadata, SQL-to-Parquet generation, caching, freshness, monitoring, a Manager/Agent model, and a secured storage proxy (local/S3/Azure passthrough with per-key authorization, TLS, and audit). It should still be positioned as open-source reference code rather than a managed Fabric capability.
 
 The clearest description is: **a customer-operated virtualization gateway that makes relational data appear as shortcut-readable table objects in Fabric without requiring a conventional copy pipeline first.**

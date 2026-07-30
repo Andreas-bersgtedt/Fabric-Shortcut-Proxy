@@ -228,6 +228,16 @@ class AgentSupervisor:
                     # Child exited. If we didn't ask it to stop, it crashed.
                     if not self._running:
                         break
+                    # EX_CONFIG (78): a PERMANENT config/connectivity error (e.g. a
+                    # bad source-DB credential). Restarting can't fix it, so stop this
+                    # agent cleanly instead of crash-looping — the Manager UI stays up.
+                    if rc == 78:
+                        log.error("agent_config_error", name=self.name,
+                                  pid=proc.pid if proc else None, returncode=rc,
+                                  hint="source DB/config error — not restarting; fix the "
+                                       "connection (config builder / DB_URL) then restart the Manager")
+                        self._emit("config_error", returncode=rc)
+                        break
                     log.warning("agent_exited", name=self.name, pid=proc.pid if proc else None,
                                 returncode=rc)
                     self._emit("crash", returncode=rc)

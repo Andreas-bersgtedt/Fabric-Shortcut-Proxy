@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,7 +96,13 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - turn a raw driver stack trace into a clear message
         hint = _source_connect_hint(exc)
         log.error("source_connect_failed", detail=hint)
-        raise RuntimeError(hint) from exc
+        # A bad credential / unreachable source is a PERMANENT config error, not a
+        # transient crash. Exit with EX_CONFIG (78) and no traceback so the
+        # supervisor stops restarting (see control/supervisor.py) instead of
+        # crash-looping the whole fleet. The Manager UI (/_config) stays up to fix it.
+        print("\n[startup] " + hint + "\n", file=sys.stderr, flush=True)
+        sys.stderr.flush()
+        os._exit(78)
 
     if config.AUTO_REFRESH:
         # Data-freshness path (content-addressed snapshots + background poller).

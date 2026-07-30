@@ -384,6 +384,8 @@ function stripPw(url){
   return url.replace(/(:\/\/[^:/@]+):[^@/]*@/, "$1@");
 }
 function hasPw(url){ return /:\/\/[^:/@]+:[^@/]*@/.test(url||""); }
+// A masked URL (redacted password rendered as ***) must never be saved as a real credential.
+function looksMasked(url){ return /:\*\*\*@/.test(url||""); }
 function envVarFor(id){ return id==="default" ? "DB_URL" : ("DB_URL_" + String(id).replace(/[^A-Za-z0-9]+/g,"_").toUpperCase()); }
 
 function newConn(id){
@@ -566,12 +568,14 @@ function applyBootstrap(builder){
   state.selected.clear();
 
   const d = newConn("default");
-  if(builder.has_db_url && builder.db_url_masked){ d.db_url_masked = builder.db_url_masked; d.db_url = builder.db_url_masked; }
+  // Only the MASKED url is known from bootstrap; leave db_url empty so the masked
+  // value can never be mistaken for a real, connectable URL (or saved as a secret).
+  if(builder.has_db_url && builder.db_url_masked){ d.db_url_masked = builder.db_url_masked; }
   state.connections.set("default", d);
   for(const c of (builder.connections||[])){
     if(!c || !c.id) continue;
     const nc = newConn(String(c.id));
-    nc.db_url_masked = c.db_url_masked || ""; nc.db_url = c.db_url_masked || ""; nc.flavor = c.flavor || "";
+    nc.db_url_masked = c.db_url_masked || ""; nc.flavor = c.flavor || "";
     state.connections.set(nc.id, nc);
   }
   if(!state.connections.has(state.activeConnId)) state.activeConnId = "default";
@@ -682,9 +686,9 @@ $("btnSaveCred").onclick = async () => {
   commitActive();
   const c = state.connections.get(state.activeConnId);
   const s = $("connStatus");
-  if(!c || !c.db_url || !hasPw(c.db_url)){
+  if(!c || !c.tested || !c.db_url || !hasPw(c.db_url) || looksMasked(c.db_url)){
     s.className="status err";
-    s.textContent="Test the connection with a password first, then save it to the Manager.";
+    s.textContent="Enter the real password and Test connection first — the form currently holds a masked/untested value, so there's no password to save.";
     return;
   }
   $("btnSaveCred").disabled = true;
@@ -904,8 +908,12 @@ function buildConfig(){
   const cfg = {};
   const withPw = $("includePassword").checked;
   // Never emit the "user:***@host" masked form (it also trips the security gate);
-  // when a password is excluded, strip it entirely to a credential-free URL.
-  const urlOf = (c) => { const full = c.db_url || c.db_url_masked || ""; return withPw ? full : stripPw(full); };
+  // when a password is excluded OR the url is masked, strip it to a credential-free URL.
+  const urlOf = (c) => {
+    const full = c.db_url || c.db_url_masked || "";
+    if(looksMasked(full)) return stripPw(full);   // masked = no real password to include
+    return withPw ? full : stripPw(full);
+  };
   const dflt = state.connections.get("default");
   cfg.db_url = dflt ? urlOf(dflt) : (withPw ? state.db_url : stripPw(state.db_url || state.db_url_masked));
   // Named sources -> connections[] (the reserved 'default' stays as db_url).

@@ -98,6 +98,36 @@ def test_set_url_rejects_empty(tmp_path):
         st.set_url("default", "")
 
 
+def test_set_url_rejects_masked(tmp_path):
+    st = _fake_store(tmp_path)
+    with pytest.raises(ValueError):
+        st.set_url("default", "mssql+aioodbc://SQL2IB:***@host:1433/db")
+
+
+def test_looks_masked_helper():
+    assert cs.looks_masked("mssql+aioodbc://u:***@h/db") is True
+    assert cs.looks_masked("mssql+aioodbc://u:realpw@h/db") is False
+    assert cs.looks_masked("") is False
+
+
+def test_env_overrides_skip_masked_entries(tmp_path):
+    # Simulate a store polluted by an older buggy save (masked password on disk).
+    st = _fake_store(tmp_path)
+    st.set_url("default", "postgresql+asyncpg://u:realpw@h/db")
+    # Inject a masked entry directly, bypassing the set_url guard.
+    data = st._load()
+    import base64 as _b64
+    data["connections"]["warehouse"] = {
+        "enc": _b64.b64encode(_FakeCipher().encrypt(
+            b"mssql+aioodbc://u:***@h/db")).decode("ascii"),
+        "updated_at": "x",
+    }
+    st._save(data)
+    ov = st.env_overrides()
+    assert ov.get("DB_URL") == "postgresql+asyncpg://u:realpw@h/db"
+    assert "DB_URL_WAREHOUSE" not in ov          # masked value is never hydrated
+
+
 def test_unavailable_store_refuses_to_store_plaintext(tmp_path, monkeypatch):
     monkeypatch.setattr(cs, "_select_cipher", lambda _p: None)
     st = CredentialStore(str(tmp_path / "credentials.json"))
@@ -223,3 +253,13 @@ async def test_endpoint_rejects_empty(cred_app):
         r = await c.post("/_config/api/credentials", json={"connection_id": "default"})
         assert r.status_code == 400
         assert r.json()["ok"] is False
+
+
+async def test_endpoint_rejects_masked_url(cred_app):
+    async with _client(cred_app) as c:
+        r = await c.post("/_config/api/credentials", json={
+            "connection_id": "default",
+            "db_url": "mssql+aioodbc://SQL2IB:***@host:1433/db",
+        })
+        assert r.status_code == 400
+        assert "***" in r.json()["error"]

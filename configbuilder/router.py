@@ -29,7 +29,7 @@ from db.reflect import (
     UnsupportedDialect,
 )
 from observability.logging import get_logger
-from security.credential_store import CredentialStore, env_var_for
+from security.credential_store import CredentialStore, env_var_for, looks_masked
 
 log = get_logger(__name__)
 
@@ -328,6 +328,10 @@ async def save_credential(request: Request) -> JSONResponse:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     if not db_url:
         return JSONResponse({"ok": False, "error": "provide db_url or connection fields"}, status_code=400)
+    if looks_masked(db_url):
+        return JSONResponse({"ok": False, "error": (
+            "that looks like a masked URL (contains '***'). Enter the real password and "
+            "Test the connection first, then save it.")}, status_code=400)
 
     st = _store()
     if not st.available:

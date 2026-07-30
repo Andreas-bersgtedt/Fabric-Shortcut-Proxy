@@ -50,6 +50,15 @@ def env_var_for(connection_id: str | None) -> str:
     return "DB_URL_" + re.sub(r"[^A-Za-z0-9]+", "_", cid).upper()
 
 
+def looks_masked(url: str) -> bool:
+    """True if the URL's password was redacted to ``***`` (i.e. not a real secret).
+
+    ``redact_db_url`` renders ``user:password@host`` as ``user:***@host``; such a
+    value must never be stored or hydrated as a credential.
+    """
+    return bool(url) and (":***@" in url or ":%2A%2A%2A@" in url)
+
+
 def _repo_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -246,6 +255,10 @@ class CredentialStore:
         cid = (connection_id or "").strip() or "default"
         if not db_url or not db_url.strip():
             raise ValueError("db_url must be a non-empty connection string")
+        if looks_masked(db_url):
+            raise ValueError(
+                "db_url is masked (contains '***'); supply the real password "
+                "(test the connection) before saving the credential")
         token = base64.b64encode(self._cipher.encrypt(db_url.encode("utf-8"))).decode("ascii")
         data = self._load()
         if not self._backend_matches(data) and data.get("connections"):
@@ -319,7 +332,9 @@ class CredentialStore:
             return out
         for cid in data.get("connections", {}):
             url = self.get_url(cid)
-            if url:
+            # Never hydrate a masked value left by an older buggy save — it would
+            # make the Agent try to log in with the literal password '***'.
+            if url and not looks_masked(url):
                 out[env_var_for(cid)] = url
         return out
 

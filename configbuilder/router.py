@@ -375,6 +375,148 @@ async def delete_credential(connection_id: str) -> JSONResponse:
     return JSONResponse({"ok": True, "connection_id": connection_id, "removed": removed})
 
 
+# ---------------------------------------------------------------------------
+# Storage proxy mounts (config.mounts.json)
+# ---------------------------------------------------------------------------
+
+def _mounts_file_path() -> str:
+    return os.environ.get("MOUNTS_CONFIG_FILE", "config.mounts.json")
+
+
+def _write_mounts_file(mounts: list) -> str:
+    import json
+    import tempfile
+    path = _mounts_file_path()
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".mounts-", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"mounts": mounts}, fh, indent=2)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    return path
+
+
+def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
+    import storage.mounts as sm
+    errors: list[str] = []
+    clean: list[dict] = []
+    seen: set[str] = set()
+    if not isinstance(mounts, list):
+        return [], ["'mounts' must be a list"]
+    for i, e in enumerate(mounts):
+        if not isinstance(e, dict):
+            errors.append(f"mounts[{i}]: must be an object")
+            continue
+        bucket = str(e.get("bucket") or "").strip()
+        backend = str(e.get("backend") or "local").strip().lower()
+        root = str(e.get("root") or "").strip()
+        prefix = str(e.get("prefix") or "").strip().strip("/")
+        if not bucket:
+            errors.append(f"mounts[{i}]: 'bucket' is required")
+            continue
+        if not sm._VALID_BUCKET.match(bucket):
+            errors.append(f"mounts[{i}]: {bucket!r} is not a valid S3 bucket name")
+            continue
+        if bucket == config.BUCKET_NAME:
+            errors.append(f"mounts[{i}]: {bucket!r} is reserved for the DB warehouse bucket")
+            continue
+        if bucket in seen:
+            errors.append(f"mounts[{i}]: duplicate bucket {bucket!r}")
+            continue
+        if backend not in sm._SUPPORTED_BACKENDS:
+            errors.append(f"mounts[{i}]: backend {backend!r} not supported (use one of {list(sm._SUPPORTED_BACKENDS)})")
+            continue
+        if backend == "local" and not root:
+            errors.append(f"mounts[{i}]: local backend needs 'root'")
+            continue
+        seen.add(bucket)
+        clean.append({"bucket": bucket, "backend": backend, "root": root,
+                      "prefix": prefix, "read_only": True})
+    return clean, errors
+
+
+@router.get("/api/mounts")
+async def list_mounts() -> JSONResponse:
+    """Current storage-proxy mount table + enable flag (config.mounts.json)."""
+    import storage.mounts as sm
+    mounts = [{"bucket": m.bucket, "backend": m.backend, "root": m.root,
+               "prefix": m.prefix.rstrip("/"), "read_only": m.read_only}
+              for m in sm.MOUNTS.values()]
+    return JSONResponse({
+        "ok": True,
+        "enabled": bool(config.ENABLE_STORAGE_PROXY),
+        "supported_backends": list(sm._SUPPORTED_BACKENDS),
+        "reserved_bucket": config.BUCKET_NAME,
+        "mounts": mounts,
+    })
+
+
+@router.post("/api/mounts")
+async def save_mounts(request: Request) -> JSONResponse:
+    """Validate + persist the mount table to config.mounts.json (restart to apply).
+
+    Optionally also flips ``enable_storage_proxy`` in config.system.json.
+    """
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    clean, errors = _validate_mounts_payload(body.get("mounts"))
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+
+    enabled = body.get("enabled")
+    enable_result = None
+    if isinstance(enabled, bool):
+        clean_s, errs = config.validate_setting_updates({"enable_storage_proxy": enabled})
+        if not errs:
+            try:
+                config.write_config_updates(clean_s)
+                enable_result = enabled
+            except (OSError, ValueError) as exc:
+                log.warning("mounts_enable_persist_failed", error=str(exc))
+
+    try:
+        path = _write_mounts_file(clean)
+    except OSError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("mounts_saved", path=path, count=len(clean), enabled=enable_result)
+    return JSONResponse({"ok": True, "path": path, "count": len(clean),
+                         "enabled": enable_result, "restart_required": True,
+                         "note": "Saved to config.mounts.json. Restart the Manager/Agents to apply."})
+
+
+@router.post("/api/mounts/test")
+async def test_mount(request: Request) -> JSONResponse:
+    """Verify a mount's backend path is reachable (local backend: a directory)."""
+    body = await request.json()
+    backend = str(body.get("backend") or "local").strip().lower()
+    root = str(body.get("root") or "").strip()
+    prefix = str(body.get("prefix") or "").strip().strip("/")
+    if backend != "local":
+        return JSONResponse({"ok": False, "error": f"backend {backend!r} not testable in Phase 1 (use 'local')"})
+    if not root:
+        return JSONResponse({"ok": False, "error": "root path is required"})
+    base = os.path.join(root, *prefix.split("/")) if prefix else root
+    if not os.path.isdir(base):
+        return JSONResponse({"ok": False, "error": f"not a directory: {base!r} (mount the share first)"})
+    entries: list[str] = []
+    try:
+        with os.scandir(base) as it:
+            for i, ent in enumerate(it):
+                if i >= 20:
+                    break
+                entries.append(ent.name + ("/" if ent.is_dir() else ""))
+    except OSError as exc:
+        return JSONResponse({"ok": False, "error": f"cannot read {base!r}: {exc}"})
+    return JSONResponse({"ok": True, "path": base, "sample": entries, "sample_count": len(entries)})
+
+
 @router.post("/api/connect")
 async def connect(request: Request) -> JSONResponse:
     body = await request.json()

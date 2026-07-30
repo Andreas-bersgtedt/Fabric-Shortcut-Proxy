@@ -175,3 +175,62 @@ async def test_coexistence_db_bucket_still_served(proxy_app):
         # An unknown, unmounted bucket is a NoSuchBucket, proving mounts don't hijack.
         r2 = await c.get("/some-random-bucket?list-type=2")
         assert r2.status_code == 404 and "NoSuchBucket" in r2.text
+
+
+# ---------------------------------------------------------------------------
+# config-builder mount endpoints (Storage tab wiring)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def cb_app():
+    from fastapi import FastAPI as _FastAPI
+    from configbuilder.router import router as cb_router
+    a = _FastAPI()
+    a.include_router(cb_router)
+    return a
+
+
+async def test_mounts_endpoint_get(cb_app):
+    async with _client(cb_app) as c:
+        r = await c.get("/_config/api/mounts")
+        d = r.json()
+        assert d["ok"] is True
+        assert "local" in d["supported_backends"]
+        assert d["reserved_bucket"] == config.BUCKET_NAME
+        assert isinstance(d["mounts"], list)
+
+
+async def test_mounts_endpoint_save_and_reject(cb_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("MOUNTS_CONFIG_FILE", str(tmp_path / "config.mounts.json"))
+    async with _client(cb_app) as c:
+        # Valid save (omit 'enabled' so config.system.json isn't touched).
+        r = await c.post("/_config/api/mounts", json={"mounts": [
+            {"bucket": "secure-nfs", "backend": "local", "root": str(tmp_path), "prefix": "reports"}]})
+        d = r.json()
+        assert d["ok"] is True and d["count"] == 1 and d["restart_required"] is True
+        written = (tmp_path / "config.mounts.json").read_text(encoding="utf-8")
+        assert "secure-nfs" in written and "reports" in written
+
+        # Reserved bucket rejected.
+        r2 = await c.post("/_config/api/mounts", json={"mounts": [
+            {"bucket": config.BUCKET_NAME, "backend": "local", "root": str(tmp_path)}]})
+        assert r2.status_code == 400 and "reserved" in " ".join(r2.json()["errors"]).lower()
+
+        # Invalid bucket name rejected.
+        r3 = await c.post("/_config/api/mounts", json={"mounts": [
+            {"bucket": "Bad_Name", "backend": "local", "root": str(tmp_path)}]})
+        assert r3.status_code == 400
+
+
+async def test_mount_test_endpoint(cb_app, tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.txt").write_bytes(b"x")
+    async with _client(cb_app) as c:
+        r = await c.post("/_config/api/mounts/test",
+                         json={"backend": "local", "root": str(tmp_path)})
+        d = r.json()
+        assert d["ok"] is True and d["sample_count"] >= 2
+
+        r2 = await c.post("/_config/api/mounts/test",
+                          json={"backend": "local", "root": str(tmp_path / "missing")})
+        assert r2.json()["ok"] is False

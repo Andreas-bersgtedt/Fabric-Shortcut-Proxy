@@ -119,6 +119,7 @@
 <div class="tabs">
   <button class="tab-btn active" data-tab="connection">Connection</button>
   <button class="tab-btn" data-tab="tables">Tables</button>
+  <button class="tab-btn" data-tab="storage">Storage</button>
   <button class="tab-btn" data-tab="settings">Settings</button>
   <button class="tab-btn" data-tab="advanced">Advanced</button>
   <button class="tab-btn" data-tab="operational">Operational</button>
@@ -203,6 +204,52 @@
       <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
     </div>
     <div class="status" id="tableStatus"></div>
+  </div>
+</div>
+
+<!-- STORAGE TAB -->
+<div id="storage-tab" class="tab-content">
+  <div class="card">
+    <h2>Storage Proxy <span style="font-weight:400;text-transform:none;">(secured NFS/SMB passthrough)</span></h2>
+    <div class="hint" style="margin-bottom:12px;">Serve <b>existing files</b> from a storage backend through this proxy's S3 endpoint,
+      <b>alongside</b> your database tables. Phase 1 supports the <code>local</code> backend — a filesystem path, which covers an
+      <b>OS-mounted NFS or SMB share</b> (a UNC path like <code>\\server\share</code> or a mount point like <code>/mnt/share</code>).
+      Each mount maps one S3 <b>bucket</b> to a backend path and is served <b>read-only</b>. Changes save to
+      <code>config.mounts.json</code> and apply on the next restart.</div>
+
+    <div class="checkbox" style="margin:6px 0 14px;">
+      <input type="checkbox" id="storageEnabled" />
+      <span>Enable storage proxy (<code>ENABLE_STORAGE_PROXY</code>)</span>
+    </div>
+
+    <div id="mountList" class="connlist"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn ghost" id="btnAddMount">+ Add mount</button>
+      <button class="btn primary" id="btnSaveMounts">💾 Save mounts to config</button>
+    </div>
+    <div class="status" id="mountStatus"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2 id="mountEditTitle">Edit mount</h2>
+    <div class="hint" style="margin-bottom:12px;">Fill in the details, <b>Test path</b> to verify the share is reachable, then <b>Add / update</b>.</div>
+    <label>Bucket <span class="hint">(the S3 bucket name Fabric/clients will use)</span></label>
+    <input id="mountBucket" placeholder="secure-nfs" />
+    <label>Backend</label>
+    <select id="mountBackend">
+      <option value="local">local — filesystem / NFS / SMB mount</option>
+    </select>
+    <label>Root path</label>
+    <input id="mountRoot" placeholder="Z:\finance   ·   /mnt/share   ·   \\server\share" />
+    <label>Prefix <span class="hint">(optional — confine serving to this subfolder)</span></label>
+    <input id="mountPrefix" placeholder="reports/" />
+    <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="mountReadOnly" checked disabled />
+      <span>Read-only (Phase 1 serves read-only)</span></div>
+    <div class="actions">
+      <button class="btn ghost" id="btnTestMount">Test path</button>
+      <button class="btn primary" id="btnApplyMount">Add / update mount</button>
+    </div>
+    <div class="status" id="mountEditStatus"></div>
   </div>
 </div>
 
@@ -1193,12 +1240,116 @@ function renderSettings(){
 }
 $("settingsSearch").addEventListener("input", renderSettings);
 
+// ---- storage proxy mounts (Storage tab) ----
+const mountState = { mounts: [], enabled: false, reserved: "", supported: ["local"] };
+
+async function loadMounts(){
+  try{
+    const r = await fetch("/_config/api/mounts", {cache:"no-store"}).then(x=>x.json());
+    if(r.ok){
+      mountState.mounts = r.mounts || [];
+      mountState.enabled = !!r.enabled;
+      mountState.reserved = r.reserved_bucket || "";
+      mountState.supported = r.supported_backends || ["local"];
+      $("storageEnabled").checked = mountState.enabled;
+    }
+  }catch(e){ /* keep empty on failure */ }
+  renderMounts();
+}
+
+function renderMounts(){
+  const wrap = $("mountList"); wrap.innerHTML = "";
+  if(!mountState.mounts.length){
+    wrap.innerHTML = '<div class="hint">No mounts yet. Add one below to serve a file share as an S3 bucket.</div>';
+    return;
+  }
+  for(const m of mountState.mounts){
+    const row = document.createElement("div"); row.className = "connrow";
+    const left = document.createElement("div");
+    left.innerHTML = `<div class="cid">${m.bucket} <span class="badge">${m.backend}</span> <span class="badge ok">read-only</span></div>`
+      + `<div class="meta">${m.root||""}${m.prefix?(" · /"+m.prefix):""}</div>`;
+    const acts = document.createElement("div"); acts.className = "connacts";
+    const ed = document.createElement("button"); ed.className = "iconbtn"; ed.textContent = "Edit";
+    ed.onclick = () => editMount(m.bucket);
+    const rm = document.createElement("button"); rm.className = "iconbtn"; rm.textContent = "Remove";
+    rm.onclick = () => { mountState.mounts = mountState.mounts.filter(x => x.bucket !== m.bucket); renderMounts(); };
+    acts.append(ed, rm);
+    row.append(left, acts); wrap.appendChild(row);
+  }
+}
+
+function editMount(bucket){
+  const m = mountState.mounts.find(x => x.bucket === bucket);
+  if(!m) return;
+  $("mountBucket").value = m.bucket;
+  $("mountBackend").value = m.backend || "local";
+  $("mountRoot").value = m.root || "";
+  $("mountPrefix").value = m.prefix || "";
+  $("mountEditTitle").textContent = "Edit mount — " + m.bucket;
+  $("mountEditStatus").textContent = "";
+}
+
+function readMountForm(){
+  return {
+    bucket: $("mountBucket").value.trim(),
+    backend: $("mountBackend").value,
+    root: $("mountRoot").value.trim(),
+    prefix: $("mountPrefix").value.trim().replace(/^\/+|\/+$/g, ""),
+    read_only: true,
+  };
+}
+
+$("btnAddMount").onclick = () => {
+  $("mountBucket").value = ""; $("mountRoot").value = ""; $("mountPrefix").value = "";
+  $("mountBackend").value = "local"; $("mountEditTitle").textContent = "Add mount";
+  $("mountEditStatus").textContent = ""; $("mountBucket").focus();
+};
+
+$("btnApplyMount").onclick = () => {
+  const m = readMountForm();
+  const s = $("mountEditStatus"); s.className = "status";
+  if(!m.bucket){ s.className = "status err"; s.textContent = "Bucket is required."; return; }
+  if(!/^[a-z0-9][a-z0-9.\-]{1,62}$/.test(m.bucket)){
+    s.className = "status err"; s.textContent = "Not a valid S3 bucket name (lowercase letters, digits, '.', '-')."; return; }
+  if(mountState.reserved && m.bucket === mountState.reserved){
+    s.className = "status err"; s.textContent = `'${m.bucket}' is reserved for the database warehouse bucket.`; return; }
+  if(m.backend === "local" && !m.root){
+    s.className = "status err"; s.textContent = "Root path is required for the local backend."; return; }
+  const idx = mountState.mounts.findIndex(x => x.bucket === m.bucket);
+  if(idx >= 0) mountState.mounts[idx] = m; else mountState.mounts.push(m);
+  renderMounts();
+  s.className = "status ok"; s.textContent = `Mount '${m.bucket}' ${idx >= 0 ? "updated" : "added"}. Remember to Save mounts to config.`;
+};
+
+$("btnTestMount").onclick = async () => {
+  const m = readMountForm();
+  const s = $("mountEditStatus"); s.className = "status"; s.textContent = "Testing path…";
+  const r = await api("/_config/api/mounts/test", { backend: m.backend, root: m.root, prefix: m.prefix });
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + (r.error || "path not reachable"); return; }
+  const sample = (r.sample && r.sample.length) ? " (" + r.sample.slice(0, 6).join(", ") + (r.sample.length > 6 ? "…" : "") + ")" : "";
+  s.className = "status ok";
+  s.textContent = `✓ Reachable: ${r.path} — ${r.sample_count} entr${r.sample_count === 1 ? "y" : "ies"}${sample}`;
+};
+
+$("storageEnabled").onchange = () => { mountState.enabled = $("storageEnabled").checked; };
+
+$("btnSaveMounts").onclick = async () => {
+  const s = $("mountStatus"); s.className = "status"; s.textContent = "Saving mounts…";
+  $("btnSaveMounts").disabled = true;
+  const r = await api("/_config/api/mounts", { mounts: mountState.mounts, enabled: $("storageEnabled").checked });
+  $("btnSaveMounts").disabled = false;
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + ((r.errors && r.errors.join("; ")) || r.error || "could not save"); return; }
+  const en = (r.enabled != null) ? (" · storage proxy " + (r.enabled ? "enabled" : "disabled")) : "";
+  s.className = "status ok"; s.textContent = `💾 Saved ${r.count} mount(s)${en}. ${r.note || ""}`;
+};
+
 loadForm();
 loadConns();
 ensureDefaultConn();
 writeFormFromConn(state.connections.get(state.activeConnId));
 renderConnList();
 loadSettings();
+loadMounts();
 $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
 loadBuilderBootstrap();
 

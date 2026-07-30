@@ -83,7 +83,7 @@ async def test_execute_split_query_raises_source_unavailable(monkeypatch):
 
     attempts = {"n": 0}
 
-    async def always_fail(sql, params, split_index):
+    async def always_fail(sql, params, split_index, connection="default"):
         attempts["n"] += 1
         raise RuntimeError("db down")
 

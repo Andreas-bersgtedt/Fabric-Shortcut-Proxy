@@ -204,12 +204,14 @@ async def lifespan(app: FastAPI):
                     batches = stream_split_query(
                         sql, params, split_index=split.split_index,
                         batch_rows=config.STREAM_BATCH_ROWS,
+                        connection=split.table.connection_id,
                     )
                     pq_bytes, nrows = await stream_rows_to_parquet(
                         batches, split_index=split.split_index, columns=split.table.schema
                     )
                 else:
-                    rows = await execute_split_query(sql, params, split_index=split.split_index)
+                    rows = await execute_split_query(sql, params, split_index=split.split_index,
+                                                     connection=split.table.connection_id)
                     pq_bytes = rows_to_parquet(
                         rows, split_index=split.split_index, columns=split.table.schema
                     )

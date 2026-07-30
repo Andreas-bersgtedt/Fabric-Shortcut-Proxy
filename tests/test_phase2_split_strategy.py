@@ -81,7 +81,7 @@ async def test_plan_ranges_date_strategy_assigns_date_bounds(monkeypatch):
     monkeypatch.setattr(config, "SPLIT_STRATEGY", "date", raising=False)
     monkeypatch.setattr("planner.split_planner.capabilities_for_db_url", lambda _u: _Caps())
 
-    async def _fake_bounds(_table: str, _col: str):
+    async def _fake_bounds(_table: str, _col: str, connection: str = "default"):
         return date(2024, 1, 1), date(2024, 1, 13)
 
     monkeypatch.setattr("db.executor.fetch_column_bounds", _fake_bounds)
@@ -109,7 +109,7 @@ async def test_plan_ranges_auto_prefers_temporal_when_no_integer(monkeypatch):
     monkeypatch.setattr(config, "SPLIT_STRATEGY", "auto", raising=False)
     monkeypatch.setattr("planner.split_planner.capabilities_for_db_url", lambda _u: _Caps())
 
-    async def _fake_temporal_bounds(_table: str, _col: str):
+    async def _fake_temporal_bounds(_table: str, _col: str, connection: str = "default"):
         return (
             datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
             datetime(2024, 1, 1, 0, 0, 12, tzinfo=timezone.utc),
@@ -160,7 +160,7 @@ async def test_plan_ranges_promotes_modulo_when_row_target_enabled(monkeypatch):
     monkeypatch.setattr(config, "SPLIT_TARGET_ROWS", 100_000, raising=False)
     monkeypatch.setattr("planner.split_planner.capabilities_for_db_url", lambda _u: _Caps())
 
-    async def _fake_bounds(_table: str, _col: str):
+    async def _fake_bounds(_table: str, _col: str, connection: str = "default"):
         return 1, 400_000
 
     monkeypatch.setattr("db.executor.fetch_key_bounds", _fake_bounds)
@@ -213,7 +213,7 @@ async def test_choose_table_num_splits_uses_row_target(monkeypatch):
     monkeypatch.setattr(config, "SPLIT_COUNT_MIN", 1, raising=False)
     monkeypatch.setattr(config, "SPLIT_COUNT_MAX", 64, raising=False)
 
-    async def _fake_count(_source: str):
+    async def _fake_count(_source: str, connection: str = "default"):
         return 1_200_000
 
     monkeypatch.setattr("db.executor.fetch_table_row_count", _fake_count)

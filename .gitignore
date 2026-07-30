@@ -57,6 +57,9 @@ Thumbs.db
 *.swp
 config.py.backup
 
+# Local development plans / notes - DO NOT commit
+devplan/
+
 # Local per-deployment config files - DO NOT commit
 # Credentials come from environment variables; table lists are environment-specific.
 # Fresh installs fall back to built-in defaults (SQLite poc_source.db + 'sales' table).

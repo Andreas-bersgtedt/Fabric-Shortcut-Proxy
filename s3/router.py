@@ -514,7 +514,8 @@ async def get_object(
         async with _generation_semaphore:
             sql, params = build_split_query(split)
             _t_sql0 = time.perf_counter()
-            rows = await execute_split_query(sql, params, split_index=split.split_index)
+            rows = await execute_split_query(sql, params, split_index=split.split_index,
+                                             connection=split.table.connection_id)
             _sql_ms = (time.perf_counter() - _t_sql0) * 1000.0
             _t_gen0 = time.perf_counter()
             parquet_bytes = rows_to_parquet(

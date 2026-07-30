@@ -1,5 +1,5 @@
 {
-  "_comment": "Tables configuration — multi-table registry. Place as config.tables.json or included in config.json.",
+  "_comment": "Tables configuration — multi-table registry. Place as config.tables.json or included in config.json. Each table may bind to a source via 'connection' (a connection id from config.connection.json); defaults to 'default'.",
   "tables": [
     {
       "name": "orders",
@@ -11,6 +11,13 @@
       "source_table": "dbo.customers",
       "key_column": "customer_id",
       "num_splits": 4
+    },
+    {
+      "_comment": "Served from a DIFFERENT source (id 'warehouse_pg' in config.connection.json).",
+      "name": "shipments",
+      "source_table": "public.shipments",
+      "key_column": "shipment_id",
+      "connection": "warehouse_pg"
     },
     {
       "name": "events",

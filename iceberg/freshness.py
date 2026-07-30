@@ -88,7 +88,7 @@ async def materialize_table(table, bucket: str, warehouse_prefix: str) -> Snapsh
             object_key="", watermark_ms=0, table=table,
         )
         sql, params = build_split_query(probe_split)
-        rows = await execute_split_query(sql, params, split_index=i)
+        rows = await execute_split_query(sql, params, split_index=i, connection=table.connection_id)
         chash = _rows_hash(rows, table.schema)
         object_key = f"{table_path}/data/split-{i}-{chash}.parquet"
         # Content-addressed => IMMUTABLE. If this exact content was already
@@ -196,16 +196,17 @@ async def probe_change_token(table) -> str | None:
     falls through.
     """
     src = table.source_table
-    url = config.DB_URL.lower()
+    url = config.effective_db_url(table.connection_id).lower()
     try:
         if "sqlite" in url:
-            v = await execute_scalar("PRAGMA data_version")
+            v = await execute_scalar("PRAGMA data_version", connection=table.connection_id)
             return f"dv:{v}"
         if "postgres" in url:
             v = await execute_scalar(
                 "SELECT (n_tup_ins + n_tup_upd + n_tup_del) "
                 "FROM pg_stat_user_tables WHERE relid = to_regclass(:t)",
                 {"t": src},
+                connection=table.connection_id,
             )
             return None if v is None else f"pg:{v}"
         if "mssql" in url:
@@ -213,6 +214,7 @@ async def probe_change_token(table) -> str | None:
                 "SELECT MAX(last_user_update) FROM sys.dm_db_index_usage_stats "
                 "WHERE database_id = DB_ID() AND object_id = OBJECT_ID(:t)",
                 {"t": src},
+                connection=table.connection_id,
             )
             if v is None:
                 return None

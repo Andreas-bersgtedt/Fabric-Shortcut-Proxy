@@ -49,7 +49,29 @@ from connection_config import (
     QUERY_TIMEOUT_SECONDS, QUERY_MAX_ROWS,
     DB_MAX_RETRIES, DB_RETRY_BACKOFF_SECONDS, VALIDATE_SOURCE_SCHEMA,
     redact_db_url,
+    Connection, CONNECTIONS, get_connection, connection_ids,
 )
+
+
+def effective_db_url(connection_id: str | None = "default") -> str:
+    """Return the SQLAlchemy URL for a connection id.
+
+    The ``"default"`` connection resolves to the live module-level ``DB_URL``
+    (so tests/monkeypatching of ``config.DB_URL`` keep working); named
+    connections resolve from the registry.
+    """
+    if not connection_id or connection_id == "default":
+        return DB_URL
+    conn = CONNECTIONS.get(connection_id)
+    return conn.db_url if conn else DB_URL
+
+
+def effective_query_max_rows(connection_id: str | None = "default") -> int:
+    """Max rows per split query for a connection id (default tracks live config)."""
+    if not connection_id or connection_id == "default":
+        return QUERY_MAX_ROWS
+    conn = CONNECTIONS.get(connection_id)
+    return conn.query_max_rows if conn else QUERY_MAX_ROWS
 
 
 # ---------------------------------------------------------------------------
@@ -273,10 +295,13 @@ class TableDef:
     schema: list[ColumnDef] | None = None
     num_splits: int | None = None
     key_column: str | None = None
+    connection_id: str = "default"
 
     def __post_init__(self):
         if self.num_splits is None:
             self.num_splits = NUM_SPLITS
+        if not self.connection_id:
+            self.connection_id = "default"
 
 
 def _tabledef_from_json(d: dict) -> "TableDef":
@@ -301,6 +326,7 @@ def _tabledef_from_json(d: dict) -> "TableDef":
         schema=schema,
         num_splits=int(d.get("num_splits", NUM_SPLITS)),
         key_column=d.get("key_column") or None,
+        connection_id=str(d.get("connection") or d.get("connection_id") or "default"),
     )
 
 
@@ -419,6 +445,16 @@ def validate_config() -> None:
                 problems.append(f"Table {t.name!r}: source_table must be non-empty.")
             if t.num_splits < 1:
                 problems.append(f"Table {t.name!r}: num_splits must be >= 1.")
+            if t.connection_id not in CONNECTIONS:
+                problems.append(
+                    f"Table {t.name!r}: connection {t.connection_id!r} is not defined "
+                    f"(known: {sorted(CONNECTIONS)})."
+                )
+
+    for cid, conn in CONNECTIONS.items():
+        url = DB_URL if cid == "default" else conn.db_url
+        if not url:
+            problems.append(f"Connection {cid!r}: db_url must be set (a SQLAlchemy URL).")
 
     if problems:
         raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(problems))

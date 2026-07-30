@@ -139,6 +139,7 @@ async def bootstrap_builder() -> JSONResponse:
         tables.append({
             "name": t.name,
             "source_table": t.source_table,
+            "connection": t.connection_id,
             "key_column": t.key_column,
             "num_splits": int(t.num_splits),
         })

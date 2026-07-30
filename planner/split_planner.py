@@ -174,7 +174,7 @@ async def choose_table_num_splits(table: TableDef) -> int:
     from db.executor import fetch_table_row_count
 
     try:
-        est = await fetch_table_row_count(table.source_table)
+        est = await fetch_table_row_count(table.source_table, connection=table.connection_id)
     except Exception as exc:  # noqa: BLE001 - startup should not fail here
         log.warning(
             "split_count_estimation_failed",
@@ -213,21 +213,23 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
 
     Returns all projected columns with a stable ORDER BY on the PK column.
     Identifier quoting, integer CAST type and the row-limit clause are all
-    delegated to the dialect adapter selected from ``config.DB_URL`` so the
-    same code targets SQLite, PostgreSQL and SQL Server (T-SQL: TOP vs LIMIT,
-    BIGINT vs INTEGER, bracket vs double-quote identifiers).
+    delegated to the dialect adapter selected from the split table's connection
+    URL, so the same code targets SQLite, PostgreSQL and SQL Server (T-SQL: TOP
+    vs LIMIT, BIGINT vs INTEGER, bracket vs double-quote identifiers) and lets
+    different tables target different source dialects in one proxy.
 
     When the split carries a range (``key_lo``/``key_hi``, set by range planning)
     it emits a ``pk >= lo AND pk < hi`` predicate that reads only this split's
     slice off the PK index; otherwise it falls back to the modulo predicate.
     """
     table: TableDef = split.table
-    dialect = get_dialect(config.DB_URL)
+    dialect = get_dialect(config.effective_db_url(table.connection_id))
     key_name = split.split_key_column or _pk_column(table)
     key_type = _column_type(table, key_name)
     pk = dialect.quote(key_name)
     projected = ", ".join(dialect.quote(col.name) for col in table.schema)
     source = dialect.quote_qualified(table.source_table)
+    max_rows = config.effective_query_max_rows(table.connection_id)
 
     if split.key_lo is not None and split.key_hi is not None:
         sql = dialect.build_select_range(
@@ -241,7 +243,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
         params = {
             "key_lo": split.key_lo,
             "key_hi": split.key_hi,
-            "max_rows": config.QUERY_MAX_ROWS,
+            "max_rows": max_rows,
         }
         return sql, params
 
@@ -257,7 +259,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
         params = {
             "num_splits": split.num_splits,
             "split_index": split.split_index,
-            "max_rows": config.QUERY_MAX_ROWS,
+            "max_rows": max_rows,
         }
         return sql, params
 
@@ -273,7 +275,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
     params = {
         "num_splits": split.num_splits,
         "split_index": split.split_index,
-        "max_rows": config.QUERY_MAX_ROWS,
+        "max_rows": max_rows,
     }
     return sql, params
 
@@ -305,7 +307,7 @@ async def plan_ranges_for_snapshot(snap) -> bool:
     for split in snap.splits:
         split.split_key_column = key
 
-    caps = capabilities_for_db_url(config.DB_URL)
+    caps = capabilities_for_db_url(config.effective_db_url(table.connection_id))
     if not caps.supports_range_key_bounds:
         log.warning("range_planning_fallback_modulo", table=table.name,
                     key=key, reason="flavor_capability")
@@ -313,7 +315,7 @@ async def plan_ranges_for_snapshot(snap) -> bool:
 
     if strategy in ("range", "auto") and key_type in _INTEGER_TYPES:
         try:
-            bounds = await fetch_key_bounds(table.source_table, key)
+            bounds = await fetch_key_bounds(table.source_table, key, connection=table.connection_id)
         except Exception as exc:  # noqa: BLE001 - planning must not break startup
             log.warning("range_planning_error_fallback_modulo", table=table.name, key=key, error=str(exc))
             bounds = None
@@ -332,7 +334,7 @@ async def plan_ranges_for_snapshot(snap) -> bool:
 
     if strategy in ("date", "auto") and key_type in _TEMPORAL_TYPES:
         try:
-            bounds = await fetch_column_bounds(table.source_table, key)
+            bounds = await fetch_column_bounds(table.source_table, key, connection=table.connection_id)
         except Exception as exc:  # noqa: BLE001 - planning must not break startup
             log.warning("date_range_planning_error_fallback_modulo", table=table.name, key=key, error=str(exc))
             bounds = None

@@ -285,6 +285,7 @@ Per‑table JSON fields:
 | `key_column` | no | Integer split key; defaults to the primary key |
 | `num_splits` | no | Defaults to the top‑level `num_splits` / `NUM_SPLITS` |
 | `schema` | no | Explicit override: `[{ "field_id", "name", "type", "nullable" }]` |
+| `connection` | no | Source connection id (see §5.4). Defaults to `default` |
 
 **Or** the equivalent `config.py` (`TABLES` list) — one line per table:
 
@@ -299,7 +300,52 @@ TABLES: list[TableDef] = [
 `schema` is omitted → reflected from each source. `key_column` is optional if the
 table has a primary key (auto‑detected); pass it for views or composite keys.
 
-### 5.3 Launch & verify
+### 5.4 Multiple sources / dialects (one proxy, many databases)
+
+Tables can be served from **different source databases of different dialects** at
+once. Declare each extra source in a `connections` array in
+[config.connection.json](config.connection.example.json), then bind a table to
+one with its `connection` field.
+
+```jsonc
+// config.connection.json
+{
+  "connection": {                              // the DEFAULT source (id "default")
+    "db_url": "mssql+aioodbc://user:pass@sql-host/erp?driver=ODBC+Driver+18+for+SQL+Server"
+  },
+  "connections": [                             // additional named sources
+    { "id": "warehouse_pg",  "db_url": "postgresql+asyncpg://user:pass@pg-host:5432/salesdb" },
+    { "id": "legacy_oracle", "db_url": "oracle+oracledb://user:pass@ora-host:1521/ORCLPDB1" }
+  ]
+}
+```
+
+```jsonc
+// config.tables.json
+{
+  "tables": [
+    { "name": "orders",    "source_table": "dbo.orders",       "key_column": "order_id" },                              // default (SQL Server)
+    { "name": "shipments", "source_table": "public.shipments", "key_column": "shipment_id", "connection": "warehouse_pg" }, // PostgreSQL
+    { "name": "invoices",  "source_table": "FIN.INVOICES",     "key_column": "invoice_id",  "connection": "legacy_oracle" } // Oracle
+  ]
+}
+```
+
+Notes:
+- The id `default` is **reserved** and always derived from `db_url` / `DB_URL`;
+  `connections[]` entries must use other ids.
+- Each connection gets its **own** engine pool, dialect, capability profile, and
+  `SOURCE_MAX_CONCURRENCY` backpressure gate — one busy source can't starve
+  another.
+- Per-connection `query_timeout_seconds`, `query_max_rows`, `db_max_retries`, and
+  `db_retry_backoff_seconds` are optional overrides; unset values fall back to the
+  global defaults.
+- Canonical object paths are namespaced by each source's server/database, so
+  tables from different connections never collide.
+- Credentials in `connections[]` are credential-gated exactly like the default
+  section — prefer environment variables / secret stores for passwords.
+
+### 5.5 Launch & verify
 
 ```powershell
 $env:DB_URL = "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb"

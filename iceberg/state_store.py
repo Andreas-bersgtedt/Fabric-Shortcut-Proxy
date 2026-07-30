@@ -105,9 +105,16 @@ def _split_source_table(source_table: str) -> tuple[str, str]:
     return "default", source_table or "table"
 
 
-def _connection_identity() -> tuple[str, str]:
+def _connection_identity(table: "config.TableDef | None" = None) -> tuple[str, str]:
+    """Return ``(server, database)`` for a table's source connection.
+
+    Multi-source aware: each table's canonical object path is namespaced by its
+    OWN connection's server/database, so tables from different sources never
+    collide. Falls back to the default connection when no table is given.
+    """
+    conn_id = getattr(table, "connection_id", "default") if table is not None else "default"
     try:
-        u = make_url(config.DB_URL)
+        u = make_url(config.effective_db_url(conn_id))
         server = _safe_segment(u.host, "local")
         database = _safe_segment(u.database, "default")
         return server, database
@@ -120,7 +127,7 @@ def legacy_table_path(table: "config.TableDef", warehouse_prefix: str) -> str:
 
 
 def canonical_table_path(table: "config.TableDef", warehouse_prefix: str) -> str:
-    server, database = _connection_identity()
+    server, database = _connection_identity(table)
     schema, obj = _split_source_table(table.source_table)
     return (
         f"{warehouse_prefix}/"

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from dataclasses import dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -24,8 +25,12 @@ import sys
 # ---------------------------------------------------------------------------
 
 def _load_config_file() -> dict:
-    """Load connection configuration from config.connection.json.
-    
+    """Load the raw config.connection.json document.
+
+    Returns the whole top-level object so both the singular ``connection``
+    section (back-compat) and the multi-source ``connections`` array can be
+    resolved from it.
+
     Precedence:
       1. config.connection.json
       2. empty dict (no fallback to monolithic config.json)
@@ -37,8 +42,7 @@ def _load_config_file() -> dict:
         if not isinstance(data, dict):
             print(f"[connection_config] {section_path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
             return {}
-        # Extract 'connection' section if present
-        return data.get("connection", data) if "connection" in data else data
+        return data
     except FileNotFoundError:
         print(f"[connection_config] {section_path}: file not found; using defaults only.", file=sys.stderr)
         return {}
@@ -47,8 +51,19 @@ def _load_config_file() -> dict:
         return {}
 
 
-_FILE_CFG: dict = _load_config_file()
-_CONN_CFG: dict = _FILE_CFG
+# Whole config.connection.json document (may hold a singular ``connection``
+# section and/or a ``connections`` array for multi-source deployments).
+_FILE_RAW: dict = _load_config_file()
+
+# Singular connection section drives the DEFAULT connection's scalar settings
+# (db_url, source_table, query limits). Back-compat: when there's no explicit
+# "connection" wrapper the whole file is treated as that section.
+_CONN_CFG: dict = _FILE_RAW.get("connection", _FILE_RAW) if "connection" in _FILE_RAW else _FILE_RAW
+if not isinstance(_CONN_CFG, dict):
+    _CONN_CFG = {}
+
+# Retained for the import-time credential gate (validates the default section).
+_FILE_CFG: dict = _CONN_CFG
 
 
 def _raw(env: str | None, key: str, default):
@@ -139,9 +154,99 @@ def redact_db_url(url: str) -> str:
     return scrub_database_url(url)
 
 
-# Validate on import: ensure no hardcoded credentials in config
+# ---------------------------------------------------------------------------
+# Multi-source connection registry
+# ---------------------------------------------------------------------------
+# The DEFAULT connection is derived from DB_URL (env / singular ``connection``
+# section) exactly as before. Additional named sources are declared in a
+# top-level ``connections`` array in config.connection.json; each table binds to
+# one via its ``connection`` id (default: "default"). Per-connection query
+# limits are optional and fall back to the global defaults above.
+
+
+@dataclass(frozen=True)
+class Connection:
+    """A single source database connection and its effective query limits."""
+    id: str
+    db_url: str
+    query_timeout_seconds: int
+    query_max_rows: int
+    db_max_retries: int
+    db_retry_backoff_seconds: float
+    validate_source_schema: bool
+
+
+def _connection_from_json(d: dict) -> Connection:
+    """Build a Connection from a ``connections[]`` entry (limits fall back to defaults)."""
+    cid = str(d.get("id") or d.get("name") or "").strip()
+    return Connection(
+        id=cid,
+        db_url=str(d.get("db_url") or ""),
+        query_timeout_seconds=int(d.get("query_timeout_seconds", QUERY_TIMEOUT_SECONDS)),
+        query_max_rows=int(d.get("query_max_rows", QUERY_MAX_ROWS)),
+        db_max_retries=int(d.get("db_max_retries", DB_MAX_RETRIES)),
+        db_retry_backoff_seconds=float(d.get("db_retry_backoff_seconds", DB_RETRY_BACKOFF_SECONDS)),
+        validate_source_schema=bool(d.get("validate_source_schema", VALIDATE_SOURCE_SCHEMA)),
+    )
+
+
+def _default_connection() -> Connection:
+    return Connection(
+        id="default",
+        db_url=DB_URL,
+        query_timeout_seconds=QUERY_TIMEOUT_SECONDS,
+        query_max_rows=QUERY_MAX_ROWS,
+        db_max_retries=DB_MAX_RETRIES,
+        db_retry_backoff_seconds=DB_RETRY_BACKOFF_SECONDS,
+        validate_source_schema=VALIDATE_SOURCE_SCHEMA,
+    )
+
+
+def _build_connections() -> dict[str, "Connection"]:
+    """Assemble the connection registry: the DEFAULT source plus named sources.
+
+    Each ``connections[]`` entry is credential-gated like the default section.
+    The id ``"default"`` is reserved (derived from DB_URL) and skipped here.
+    """
+    conns: dict[str, Connection] = {}
+    raw_list = _FILE_RAW.get("connections")
+    if isinstance(raw_list, list):
+        for entry in raw_list:
+            if not isinstance(entry, dict):
+                continue
+            validate_no_hardcoded_credentials(entry)
+            c = _connection_from_json(entry)
+            if not c.id:
+                print("[connection_config] connections[] entry missing 'id'; skipped.", file=sys.stderr)
+                continue
+            if c.id == "default":
+                print("[connection_config] connections[] id 'default' is reserved (use db_url/DB_URL); entry ignored.", file=sys.stderr)
+                continue
+            if not c.db_url:
+                print(f"[connection_config] connection {c.id!r} missing db_url; skipped.", file=sys.stderr)
+                continue
+            if c.id in conns:
+                print(f"[connection_config] duplicate connection id {c.id!r}; last wins.", file=sys.stderr)
+            conns[c.id] = c
+    conns["default"] = _default_connection()
+    return conns
+
+
+# Validate on import: ensure no hardcoded credentials in config, then build the
+# connection registry (each named entry is credential-gated in _build_connections).
 try:
     validate_no_hardcoded_credentials(_FILE_CFG)
+    CONNECTIONS: dict[str, Connection] = _build_connections()
 except ValueError as e:
     print(f"[connection_config] SECURITY ERROR: {e}", file=sys.stderr)
     sys.exit(1)
+
+
+def get_connection(connection_id: str | None) -> Connection | None:
+    """Return the Connection for an id (``None``/unknown -> the default)."""
+    return CONNECTIONS.get(connection_id or "default")
+
+
+def connection_ids() -> list[str]:
+    """All registered connection ids (always includes ``"default"``)."""
+    return list(CONNECTIONS.keys())

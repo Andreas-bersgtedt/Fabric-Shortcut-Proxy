@@ -6,6 +6,7 @@ canonical object paths are namespaced by each table's own connection.
 """
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 
@@ -128,3 +129,59 @@ def test_canonical_path_namespaced_by_connection(monkeypatch):
     assert p_default == "warehouse/db/pg-a/dba/sales/orders"
     assert p_named == "warehouse/db/pg-b/dbb/sales/orders"
     assert p_default != p_named
+
+
+# ---------------------------------------------------------------------------
+# Config-builder persistence contract for the connections[] array.
+# ---------------------------------------------------------------------------
+
+def test_validate_connections_setting():
+    clean, errors = config.validate_setting_updates(
+        {"connections": [{"id": "pg", "db_url": "postgresql+asyncpg://h/db"}]}
+    )
+    assert not errors
+    assert clean["connections"][0]["id"] == "pg"
+
+    _, reserved = config.validate_setting_updates(
+        {"connections": [{"id": "default", "db_url": "x"}]}
+    )
+    assert reserved and "reserved" in reserved[0]
+
+    _, missing = config.validate_setting_updates({"connections": [{"id": "pg"}]})
+    assert missing
+
+    _, dup = config.validate_setting_updates(
+        {"connections": [{"id": "pg", "db_url": "a"}, {"id": "pg", "db_url": "b"}]}
+    )
+    assert dup
+
+    _, not_list = config.validate_setting_updates({"connections": {"id": "pg"}})
+    assert not_list
+
+
+def test_write_connections_routes_to_connection_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config.write_config_updates({
+        "db_url": "sqlite+aiosqlite:///./a.db",
+        "connections": [{"id": "pg", "db_url": "postgresql+asyncpg://h/db"}],
+    })
+    data = json.loads((tmp_path / "config.connection.json").read_text(encoding="utf-8"))
+    # db_url stays in the singular section; connections[] lands at the top level.
+    assert data["connection"]["db_url"].endswith("a.db")
+    assert data["connections"][0]["id"] == "pg"
+    assert data["connections"][0]["db_url"] == "postgresql+asyncpg://h/db"
+
+
+def test_write_tables_with_connection(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config.write_config_updates({
+        "tables": [
+            {"name": "orders", "source_table": "dbo.orders", "key_column": "id"},
+            {"name": "ship", "source_table": "public.ship", "key_column": "id", "connection": "pg"},
+        ]
+    })
+    data = json.loads((tmp_path / "config.tables.json").read_text(encoding="utf-8"))
+    tbls = data["tables"]
+    assert tbls[1]["connection"] == "pg"
+    assert "connection" not in tbls[0]
+

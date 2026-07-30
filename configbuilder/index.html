@@ -56,6 +56,8 @@
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
   .cfgrow .rows { font-size:11px; color:var(--muted); }
+  .pill { display:inline-block; font-size:10px; padding:0 6px; border:1px solid var(--accent);
+          color:var(--accent); border-radius:20px; vertical-align:middle; }
   .mini { width:90px; } .keysel { width:150px; }
   .invalid { color:var(--err); font-size:11px; }
   pre { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:12px;
@@ -101,7 +103,10 @@
 <div id="connection-tab" class="tab-content active">
   <div class="card">
     <h2>Database Connection</h2>
-    <div class="hint" style="margin-bottom:14px;">Connect to your SQL source database to discover tables and generate configuration.</div>
+    <div class="hint" style="margin-bottom:14px;">Connect to your SQL source database to discover tables and generate configuration. To serve tables from <b>several sources</b>, give each a distinct <b>Connection id</b>, connect, pick its tables, then repeat for the next source.</div>
+    <label>Connection id</label>
+    <input id="connId" value="default" placeholder="default" />
+    <div class="hint" style="margin:-6px 0 12px;">Use <code>default</code> for the primary source (its URL is saved as <code>db_url</code>). Use a distinct id (e.g. <code>warehouse_pg</code>) for each additional source.</div>
     <label>Dialect</label>
     <select id="dialect">
       <option value="postgresql">PostgreSQL</option>
@@ -135,9 +140,15 @@
     </details>
     <div class="actions">
       <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
-      <button class="btn ghost" id="btnSaveConnection">Save connection to config</button>
+      <button class="btn ghost" id="btnSaveConnection">Save connection(s) to config</button>
     </div>
     <div class="status" id="connStatus"></div>
+  </div>
+
+  <div class="card" id="sourcesCard" style="margin-top:16px; display:none;">
+    <h2>Configured sources</h2>
+    <div class="hint" style="margin-bottom:12px;">Each source you connect to is remembered here. Tables you select are tagged with the active source's id. Named sources (not <code>default</code>) require a restart to load.</div>
+    <div id="sourcesList"></div>
   </div>
 </div>
 
@@ -313,14 +324,19 @@ function initTabs(){
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443" };
-const PERSIST = ["dialect","host","port","database","username","driver","http_path","catalog","schema","bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
+const PERSIST = ["connId","dialect","host","port","database","username","driver","http_path","catalog","schema","bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
 
 const state = {
   connection: null,   // last-used connection fields
   db_url: "", db_url_masked: "",
-  tables: [],         // [{schema,name,kind}]
-  selected: new Map() // key `${schema}.${name}` -> {name, source_table, key_column, num_splits, integer_keys, columns, approx_rows, invalid}
+  activeConnId: "default",   // the source id newly listed/selected tables are tagged with
+  connections: new Map(),    // id -> {id, db_url, db_url_masked, flavor, saved}
+  tables: [],         // [{schema,name,kind}] for the ACTIVE connection
+  selected: new Map() // key `${connId}::${source_table}` -> {name, source_table, connection, key_column, num_splits, integer_keys, columns, approx_rows, invalid}
 };
+
+// Composite key so same-named tables from different sources never collide.
+function selKey(connId, source){ return (connId||"default") + "::" + source; }
 
 // ---- persistence (never the password) ----
 function saveForm(){ const o={}; PERSIST.forEach(id=>o[id]=$(id).value);
@@ -330,6 +346,7 @@ function loadForm(){ try{ const o=JSON.parse(localStorage.getItem("cfgbuilder")|
 
 function connFields(){
   return {
+    id: ($("connId").value.trim() || "default"),
     dialect: $("dialect").value,
     host: $("host").value.trim(),
     port: $("port").value.trim() || null,
@@ -345,6 +362,27 @@ function connFields(){
   };
 }
 
+// ---- configured-sources panel ----
+function renderSources(){
+  const card = $("sourcesCard"); const wrap = $("sourcesList");
+  const items = [...state.connections.values()];
+  card.style.display = items.length ? "block" : "none";
+  wrap.innerHTML = "";
+  for(const c of items){
+    const n = [...state.selected.values()].filter(s=>(s.connection||"default")===c.id).length;
+    const row = document.createElement("div"); row.className = "cfgrow";
+    const active = c.id === state.activeConnId;
+    const left = document.createElement("div"); left.className = "src";
+    left.innerHTML = `<strong>${c.id}${active?' <span class="pill">active</span>':''}</strong>`
+      + `<br><span class="rows">${c.flavor||''} · ${c.db_url_masked||''}</span>`
+      + `<br><span class="rows">${n} table(s) selected</span>`;
+    const useBtn = document.createElement("button"); useBtn.className="btn ghost"; useBtn.textContent="Make active";
+    useBtn.onclick = ()=>{ state.activeConnId = c.id; $("connId").value = c.id;
+      state.db_url = c.db_url; state.db_url_masked = c.db_url_masked; renderSources(); renderSelected(); };
+    row.append(left, useBtn); wrap.appendChild(row);
+  }
+}
+
 function applyBootstrap(builder){
   if(!builder) return;
   // Prime the main builder form from runtime config.
@@ -358,16 +396,31 @@ function applyBootstrap(builder){
   if(builder.refresh_ttl_seconds!=null) $("refreshTtl").value = String(builder.refresh_ttl_seconds);
   $("refreshFullPull").checked = !!builder.refresh_allow_full_pull;
 
+  // Prefill configured sources (masked — real URLs come from re-connecting).
+  state.connections.clear();
+  if(builder.has_db_url && builder.db_url_masked){
+    state.connections.set("default", {id:"default", db_url:builder.db_url_masked,
+      db_url_masked:builder.db_url_masked, flavor:"", saved:true});
+  }
+  for(const c of (builder.connections||[])){
+    if(!c || !c.id) continue;
+    state.connections.set(String(c.id), {id:String(c.id), db_url:c.db_url_masked||"",
+      db_url_masked:c.db_url_masked||"", flavor:c.flavor||"", saved:true});
+  }
+  state.activeConnId = "default";
+
   // Prefill table mappings so the preview reflects what is currently running.
   state.selected.clear();
   for(const t of (builder.tables||[])){
     if(!t || !t.source_table) continue;
     const source = String(t.source_table);
     const name = String(t.name || source.split(".").pop() || "table");
-    state.selected.set(source, {
+    const connId = String(t.connection || "default");
+    state.selected.set(selKey(connId, source), {
       name,
       schema: null,
       source_table: source,
+      connection: connId,
       key_column: t.key_column || null,
       num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
       integer_keys: t.key_column ? [t.key_column] : [],
@@ -386,6 +439,7 @@ function applyBootstrap(builder){
   }
   $("refreshOpts").style.display = $("autoRefresh").checked ? "block" : "none";
   $("fmtHint").style.display = $("tableFormat").value === "delta" ? "block" : "none";
+  renderSources();
   renderSelected();
   saveForm();
 }
@@ -415,44 +469,72 @@ $("btnConnect").onclick = async () => {
   const data = await api("/_config/api/connect", conn);
   $("btnConnect").disabled = false;
   if(!data.ok){ s.className="status err"; s.textContent="✗ " + (data.error||"connection failed"); return; }
+  const connId = conn.id || "default";
+  state.activeConnId = connId;
   state.connection = conn; state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
-  state.tables = data.tables || []; state.selected.clear();
+  state.tables = data.tables || [];
+  // Remember this source; drop only THIS source's prior selections (re-listing it).
+  state.connections.set(connId, {
+    id: connId, db_url: data.db_url, db_url_masked: data.db_url_masked,
+    flavor: (data.capabilities && data.capabilities.flavor) || conn.dialect, saved: false,
+  });
+  for(const k of [...state.selected.keys()]){
+    if(k.startsWith(connId + "::")) state.selected.delete(k);
+  }
   s.className="status ok";
-  s.textContent = `✓ Connected${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
-  renderTables(); document.querySelector('[data-tab="tables"]').click(); renderSelected();
+  s.textContent = `✓ Connected as '${connId}'${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
+  renderSources(); renderTables(); document.querySelector('[data-tab="tables"]').click(); renderSelected();
 };
 
-// ---- save connection ----
+// ---- save connection(s) ----
 $("btnSaveConnection").onclick = async () => {
   saveForm();
   const s = $("connStatus"); s.className="status"; s.textContent="Saving connection…";
   $("btnSaveConnection").disabled = true;
   const conn = connFields();
   const data = await api("/_config/api/connect", conn);
-  if(!data.ok){ 
+  if(!data.ok){
     $("btnSaveConnection").disabled = false;
-    s.className="status err"; 
-    s.textContent="✗ Test failed: " + (data.error||"connection failed — fix and try again"); 
-    return; 
+    s.className="status err";
+    s.textContent="✗ Test failed: " + (data.error||"connection failed — fix and try again");
+    return;
   }
-  // Connection works — now save it
+  const connId = conn.id || "default";
+  state.activeConnId = connId;
+  state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
+  state.connections.set(connId, {
+    id: connId, db_url: data.db_url, db_url_masked: data.db_url_masked,
+    flavor: (data.capabilities && data.capabilities.flavor) || conn.dialect, saved: true,
+  });
+  renderSources();
+  // Persist: default -> db_url; every non-default remembered source -> connections[].
+  const settings = {};
+  const dflt = state.connections.get("default");
+  if(dflt) settings.db_url = dflt.db_url;
+  const named = [...state.connections.values()].filter(c=>c.id!=="default").map(c=>({id:c.id, db_url:c.db_url}));
+  if(named.length) settings.connections = named;
+  if(!Object.keys(settings).length){ 
+    $("btnSaveConnection").disabled = false;
+    s.className="status err"; s.textContent="✗ Nothing to save yet."; return;
+  }
   try{
     const r = await fetch("/_config/api/apply", {
-      method:"POST", 
+      method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({settings:{db_url: data.db_url}})
+      body: JSON.stringify({settings})
     });
     const result = await r.json();
-    if(!r.ok){ 
+    if(!r.ok){
       $("btnSaveConnection").disabled = false;
-      s.className="status err"; 
-      s.textContent="✗ Save failed: " + ((result.errors&&result.errors.join("; "))||result.error||r.status); 
-      return; 
+      s.className="status err";
+      s.textContent="✗ Save failed: " + ((result.errors&&result.errors.join("; "))||result.error||r.status);
+      return;
     }
     $("btnSaveConnection").disabled = false;
     s.className="status ok";
-    s.textContent = "✓ Connection saved to config.connection.json (restart required to apply)";
-    setTimeout(()=>{ s.textContent=""; s.className="status"; }, 4000);
+    const extra = named.length ? ` (+${named.length} named source${named.length>1?"s":""})` : "";
+    s.textContent = "✓ Saved to config.connection.json" + extra + " (restart required to apply)";
+    setTimeout(()=>{ s.textContent=""; s.className="status"; }, 4500);
   }catch(e){
     $("btnSaveConnection").disabled = false;
     s.className="status err";
@@ -477,7 +559,7 @@ function renderTables(){
       const key = (t.schema? t.schema+"." : "") + t.name;
       const row = document.createElement("div"); row.className="trow";
       const cb = document.createElement("input"); cb.type="checkbox";
-      cb.checked = state.selected.has(key);
+      cb.checked = state.selected.has(selKey(state.activeConnId, key));
       cb.onchange = () => toggleTable(t, cb.checked);
       const name = document.createElement("div"); name.className="name"; name.textContent = key;
       const kind = document.createElement("span"); kind.className="kind"; kind.textContent = t.kind;
@@ -493,17 +575,18 @@ function bulk(on){
   for(const t of state.tables){
     const label = (t.schema? t.schema+"." : "") + t.name;
     if(q && !label.toLowerCase().includes(q)) continue;
-    const key = label;
+    const key = selKey(state.activeConnId, label);
     if(on && !state.selected.has(key)) state.selected.set(key, stub(t));
     if(!on) state.selected.delete(key);
   }
   renderTables(); scheduleInspect(); renderSelected();
 }
 function stub(t){ return { name:t.name, schema:t.schema||null,
-  source_table:(t.schema? t.schema+"." : "")+t.name, key_column:null, num_splits:null,
+  source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
+  key_column:null, num_splits:null,
   integer_keys:[], columns:[], approx_rows:null, pending:true }; }
 function toggleTable(t, on){
-  const key = (t.schema? t.schema+"." : "") + t.name;
+  const key = selKey(state.activeConnId, (t.schema? t.schema+"." : "") + t.name);
   if(on) state.selected.set(key, stub(t)); else state.selected.delete(key);
   scheduleInspect(); renderSelected();
 }
@@ -512,14 +595,14 @@ function toggleTable(t, on){
 let inspectTimer=null;
 function scheduleInspect(){ clearTimeout(inspectTimer); inspectTimer=setTimeout(runInspect, 250); }
 async function runInspect(){
-  const pending = [...state.selected.values()].filter(s=>s.pending);
+  // Only inspect the ACTIVE source's pending tables (uses the active connection).
+  const pending = [...state.selected.values()].filter(s=>s.pending && (s.connection||"default")===state.activeConnId);
   if(pending.length===0) return;
   const refs = pending.map(s=>({schema:s.schema, name:s.name}));
   const data = await api("/_config/api/inspect", {connection: state.connection, tables: refs});
   if(!data.ok){ $("buildStatus").className="status err"; $("buildStatus").textContent="✗ "+(data.error||"inspect failed"); return; }
   for(const meta of data.tables){
-    // match by source_table
-    const entry = [...state.selected.values()].find(s=>s.source_table===meta.source_table);
+    const entry = state.selected.get(selKey(state.activeConnId, meta.source_table));
     if(!entry) continue;
     entry.integer_keys = meta.integer_keys || [];
     entry.columns = meta.columns || [];
@@ -540,7 +623,8 @@ function renderSelected(){
   for(const s of items){
     const row = document.createElement("div"); row.className="cfgrow";
     const src = document.createElement("div"); src.className="src";
-    src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
+    const connBadge = (s.connection && s.connection!=="default") ? ` <span class="pill">${s.connection}</span>` : "";
+    src.innerHTML = `<strong>${s.name}</strong>${connBadge}<br><span class="rows">${s.source_table}${
       s.approx_rows!=null? " · ~"+Intl.NumberFormat().format(s.approx_rows)+" rows":""}</span>`;
     if(s.pending){ src.innerHTML += `<br><span class="rows">reflecting…</span>`; }
     if(s.invalid){ src.innerHTML += `<br><span class="invalid">no integer key — cannot split</span>`; }
@@ -563,7 +647,13 @@ function renderSelected(){
 // ---- config assembly + preview ----
 function buildConfig(){
   const cfg = {};
-  cfg.db_url = $("includePassword").checked ? state.db_url : state.db_url_masked;
+  const withPw = $("includePassword").checked;
+  const urlOf = (c) => withPw ? c.db_url : c.db_url_masked;
+  const dflt = state.connections.get("default");
+  cfg.db_url = dflt ? urlOf(dflt) : (withPw ? state.db_url : state.db_url_masked);
+  // Named sources -> connections[] (the reserved 'default' stays as db_url).
+  const named = [...state.connections.values()].filter(c=>c.id!=="default");
+  if(named.length) cfg.connections = named.map(c=>({ id:c.id, db_url: urlOf(c) }));
   const ns = parseInt($("numSplits").value)||8; cfg.num_splits = ns;
   const bucket = $("bucket").value.trim();
   if(bucket && bucket!=="fabric-iceberg-poc") cfg.bucket = bucket;
@@ -583,6 +673,7 @@ function buildConfig(){
   cfg.tables = [...state.selected.values()].filter(s=>!s.invalid && s.key_column).map(s=>{
     const e = { name:s.name, source_table:s.source_table, key_column:s.key_column };
     if(s.num_splits) e.num_splits = s.num_splits;
+    if(s.connection && s.connection!=="default") e.connection = s.connection;
     return e;
   });
   // Advanced overrides (section 4). Only emit values changed from their default.
@@ -696,6 +787,7 @@ async function applyTables(){
   const tables = items.filter(s=>!s.invalid && s.key_column).map(s=>{
     const e = { name:s.name, source_table:s.source_table, key_column:s.key_column };
     if(s.num_splits) e.num_splits = parseInt(s.num_splits);
+    if(s.connection && s.connection!=="default") e.connection = s.connection;
     return e;
   });
   if(!tables.length){ 
@@ -707,6 +799,7 @@ async function applyTables(){
   const status = $("tableStatus");
   status.className="status"; 
   status.textContent="Applying "+tables.length+" table(s)…";
+  const usesNamed = tables.some(t=>t.connection);
   try{
     const r = await fetch("/_config/api/apply", {
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -719,8 +812,9 @@ async function applyTables(){
       return; 
     }
     status.className="status ok"; 
-    status.textContent="✓ Applied "+tables.length+" table(s) to config.tables.json"; 
-    setTimeout(()=>{ status.textContent=""; status.className="status"; }, 4000);
+    status.textContent="✓ Applied "+tables.length+" table(s) to config.tables.json"
+      + (usesNamed ? " — named sources take effect after restart (Save connection(s) to config first)." : "");
+    setTimeout(()=>{ status.textContent=""; status.className="status"; }, 5000);
   }catch(e){ 
     status.className="status err"; 
     status.textContent="Apply error: "+e; 

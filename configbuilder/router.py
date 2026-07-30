@@ -69,6 +69,12 @@ def _conn_fields(d: dict) -> dict:
     )
 
 
+def _flavor_from_url(db_url: str) -> str:
+    """Best-effort dialect label from a SQLAlchemy URL scheme (for UI display)."""
+    from db.capabilities import flavor_from_db_url
+    return flavor_from_db_url(db_url)
+
+
 def _clean_error(exc: Exception) -> str:
     """Redact any embedded credential and trim driver noise from an error."""
     msg = config.redact_db_url(str(exc))
@@ -144,6 +150,18 @@ async def bootstrap_builder() -> JSONResponse:
             "num_splits": int(t.num_splits),
         })
 
+    # Named source connections (exclude the reserved 'default', which is the db_url
+    # above). Passwords are masked — the builder never receives raw secrets.
+    connections = []
+    for cid, conn in config.CONNECTIONS.items():
+        if cid == "default":
+            continue
+        connections.append({
+            "id": cid,
+            "db_url_masked": config.redact_db_url(conn.db_url),
+            "flavor": _flavor_from_url(conn.db_url),
+        })
+
     return JSONResponse({
         "builder": {
             "db_url_masked": config.redact_db_url(config.DB_URL),
@@ -158,6 +176,7 @@ async def bootstrap_builder() -> JSONResponse:
             "refresh_allow_full_pull": bool(config.REFRESH_ALLOW_FULL_PULL),
             "refresh_ttl_seconds": int(config.REFRESH_TTL_SECONDS),
             "tables": tables,
+            "connections": connections,
         }
     })
 

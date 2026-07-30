@@ -816,7 +816,8 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
     """Validate a partial settings map. Returns ``(clean, errors)``.
     
     Special handling: "tables" is allowed as a non-scalar (array of table dicts)
-    and passes through without registry validation.
+    and "connections" as an array of ``{id, db_url}`` source definitions; both
+    pass through without registry validation.
     """
     clean: dict = {}
     errors: list[str] = []
@@ -828,7 +829,36 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
             else:
                 clean[k] = v  # Pass through as-is
             continue
-        
+
+        # Special case: "connections" is an array of named source definitions.
+        if k == "connections":
+            if not isinstance(v, list):
+                errors.append(f"{k}: must be a list")
+                continue
+            ok = True
+            seen: set[str] = set()
+            for i, e in enumerate(v):
+                if not isinstance(e, dict):
+                    errors.append(f"{k}[{i}]: must be an object with 'id' and 'db_url'")
+                    ok = False
+                    continue
+                cid = str(e.get("id", "")).strip()
+                url = str(e.get("db_url", "")).strip()
+                if not cid or not url:
+                    errors.append(f"{k}[{i}]: needs non-empty 'id' and 'db_url'")
+                    ok = False
+                elif cid == "default":
+                    errors.append(f"{k}[{i}]: id 'default' is reserved (use the db_url field)")
+                    ok = False
+                elif cid in seen:
+                    errors.append(f"{k}[{i}]: duplicate connection id {cid!r}")
+                    ok = False
+                else:
+                    seen.add(cid)
+            if ok:
+                clean[k] = v
+            continue
+
         reg = _SETTINGS_REGISTRY.get(k)
         if reg is None:
             errors.append(f"unknown setting {k!r}")
@@ -871,7 +901,8 @@ def write_config_updates(updates: dict) -> dict:
     """Validate + merge ``updates`` into the appropriate separate config files (atomic writes).
     
     Handles individual settings via _SETTINGS_TO_FILE_MAP plus special handling for
-    the "tables" array which goes to config.tables.json.
+    the "tables" array (config.tables.json) and the "connections" array of named
+    source definitions (top-level in config.connection.json).
     """
     # Validate all settings (including "tables" which is allowed as special case)
     clean, errors = validate_setting_updates(updates)
@@ -881,8 +912,9 @@ def write_config_updates(updates: dict) -> dict:
     if not clean:
         return {"path": "none", "changed": [], "config": {}}
 
-    # Extract "tables" from clean if present (special case, not a scalar setting)
+    # Extract array specials (not scalar settings) before per-key file routing.
     tables_update = clean.pop("tables", None)
+    connections_update = clean.pop("connections", None)
 
     # Group settings by their target config file
     settings_by_file: dict[str, dict] = {}
@@ -900,10 +932,19 @@ def write_config_updates(updates: dict) -> dict:
         # For tables, we store it directly as the section content (special case)
         settings_by_file["config.tables.json"]["_tables"] = tables_update
 
+    # Named connections live at the TOP LEVEL of config.connection.json (a sibling
+    # of the singular "connection" section), matching the loader's expectations.
+    if connections_update is not None:
+        if "config.connection.json" not in settings_by_file:
+            settings_by_file["config.connection.json"] = {}
+        settings_by_file["config.connection.json"]["_connections"] = connections_update
+
     # Write to each target file
     changed_keys = list(clean.keys())
     if tables_update is not None:
         changed_keys.append("tables")
+    if connections_update is not None:
+        changed_keys.append("connections")
     
     for target_file, file_settings in settings_by_file.items():
         try:
@@ -918,17 +959,22 @@ def write_config_updates(updates: dict) -> dict:
 
             # Extract the section (e.g., for config.system.json, the section is "system")
             section_name = target_file.split("config.")[-1].split(".json")[0]  # "system", "connection", etc.
-            if section_name not in existing:
-                existing[section_name] = {}
-            elif not isinstance(existing[section_name], dict):
-                existing[section_name] = {}
 
-            # Handle tables specially (comes in as "_tables" marker)
-            if "_tables" in file_settings:
-                existing[section_name] = file_settings["_tables"]
-            else:
-                # Merge new settings into the section
+            # Pull special array markers out so they don't merge into the section.
+            tables_marker = file_settings.pop("_tables", None)
+            connections_marker = file_settings.pop("_connections", None)
+
+            if tables_marker is not None:
+                # config.tables.json -> {"tables": [...]}
+                existing[section_name] = tables_marker
+            elif file_settings:
+                if not isinstance(existing.get(section_name), dict):
+                    existing[section_name] = {}
                 existing[section_name].update(file_settings)
+
+            if connections_marker is not None:
+                # Top-level "connections" array (sibling of the "connection" section).
+                existing["connections"] = connections_marker
 
             # Atomic write with temp file
             tmp = f"{target_file}.tmp"

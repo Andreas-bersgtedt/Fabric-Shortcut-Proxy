@@ -20,11 +20,19 @@ from runtime.artifact_store import ObjectNotFound
 from s3.xml_responses import error_response, list_objects_v2_response
 from storage.mounts import Mount, backend_for
 from observability import metrics
+from observability import audit
 from observability.logging import get_logger
 
 log = get_logger(__name__)
 
 _STREAM_CHUNK = 1 << 20
+
+
+def _identity(request: Request) -> tuple[str, str]:
+    """Authenticated access-key id + client ip from the request (set by the auth middleware)."""
+    ident = getattr(getattr(request, "state", None), "identity", "") or "-"
+    client = request.client.host if getattr(request, "client", None) else ""
+    return ident, client
 
 
 def _content_type(key: str) -> str:
@@ -93,6 +101,9 @@ def list_objects(mount: Mount, request: Request) -> Response:
 
     log.info("passthrough_list", bucket=mount.bucket, prefix=s3_prefix,
              delimiter=delimiter, matched=len(flat), common_prefixes=len(common))
+    ident, client = _identity(request)
+    audit.record(identity=ident, client=client, bucket=mount.bucket, key=s3_prefix,
+                 backend=mount.backend, method="GET", action="list", status=200)
     body = list_objects_v2_response(mount.bucket, s3_prefix, flat,
                                     delimiter=delimiter, common_prefixes=sorted(common))
     return Response(content=body, media_type="application/xml")
@@ -101,12 +112,18 @@ def list_objects(mount: Mount, request: Request) -> Response:
 def head_object(mount: Mount, key: str, request: Request) -> Response:
     metrics.record_s3_request("head", metrics.classify_key(key))
     store = backend_for(mount)
+    ident, client = _identity(request)
     try:
         stat = store.head(_backend_key(mount, key))
     except ValueError:
         log.warning("passthrough_confinement_block", bucket=mount.bucket, key=key)
+        audit.record(identity=ident, client=client, bucket=mount.bucket, key=key,
+                     backend=mount.backend, method="HEAD", action="head", status=403,
+                     reason="confinement")
         return Response(status_code=403)
     if stat is None:
+        audit.record(identity=ident, client=client, bucket=mount.bucket, key=key,
+                     backend=mount.backend, method="HEAD", action="head", status=404)
         return Response(status_code=404)
     headers = {
         "Content-Length": str(stat.size),
@@ -116,6 +133,9 @@ def head_object(mount: Mount, key: str, request: Request) -> Response:
     lm = _http_date(stat.mtime_ms)
     if lm:
         headers["Last-Modified"] = lm
+    audit.record(identity=ident, client=client, bucket=mount.bucket, key=key,
+                 backend=mount.backend, method="HEAD", action="head", status=200,
+                 bytes_=stat.size)
     return Response(status_code=200, headers=headers)
 
 
@@ -156,16 +176,22 @@ def get_object(mount: Mount, key: str, request: Request) -> Response:
         return list_objects(mount, request)
     metrics.record_s3_request("get", metrics.classify_key(key))
     store = backend_for(mount)
+    ident, client = _identity(request)
     bkey = _backend_key(mount, key)
     try:
         stat = store.head(bkey)
     except ValueError:
         log.warning("passthrough_confinement_block", bucket=mount.bucket, key=key)
+        audit.record(identity=ident, client=client, bucket=mount.bucket, key=key,
+                     backend=mount.backend, method="GET", action="get", status=403,
+                     reason="confinement")
         return Response(
             content=error_response("AccessDenied", "Key escapes the mount root.", f"/{mount.bucket}/{key}"),
             status_code=403, media_type="application/xml")
     if stat is None:
         log.debug("passthrough_not_found", bucket=mount.bucket, key=key)
+        audit.record(identity=ident, client=client, bucket=mount.bucket, key=key,
+                     backend=mount.backend, method="GET", action="get", status=404)
         return Response(
             content=error_response("NoSuchKey", f"Key {key!r} does not exist.", f"/{mount.bucket}/{key}"),
             status_code=404, media_type="application/xml")
@@ -197,4 +223,7 @@ def get_object(mount: Mount, key: str, request: Request) -> Response:
             return                          # raced deletion; connection ends
 
     log.info("passthrough_get", bucket=mount.bucket, key=key, bytes=sent, partial=partial)
+    audit.record(identity=ident, client=client, bucket=mount.bucket, key=key,
+                 backend=mount.backend, method="GET", action="get",
+                 status=206 if partial else 200, bytes_=sent)
     return StreamingResponse(_body(), status_code=206 if partial else 200, headers=headers)

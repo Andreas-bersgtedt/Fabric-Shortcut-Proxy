@@ -104,6 +104,11 @@ REQUIRE_SIGV4: bool = _get_bool("REQUIRE_SIGV4", "require_sigv4", False)
 HOST: str = _get_str("HOST", "host", "0.0.0.0")
 PORT: int = _get_int("PORT", "port", 9000)
 
+# TLS termination at the proxy (Phase 4). Provide BOTH a cert and key to serve
+# HTTPS; empty = plain HTTP (terminate TLS at a fronting LB instead).
+TLS_CERT_FILE: str = _get_str("TLS_CERT_FILE", "tls_cert_file", "")
+TLS_KEY_FILE: str = _get_str("TLS_KEY_FILE", "tls_key_file", "")
+
 # ---------------------------------------------------------------------------
 # Admin UIs / observability
 # ---------------------------------------------------------------------------
@@ -117,6 +122,12 @@ ENABLE_MONITOR: bool = _get_bool("ENABLE_MONITOR", "enable_monitor", False)
 # Storage proxy: serve mounted buckets (config.mounts.json) as byte passthrough
 # from S3/NFS/SMB backends, alongside the relational->Iceberg path. Off by default.
 ENABLE_STORAGE_PROXY: bool = _get_bool("ENABLE_STORAGE_PROXY", "enable_storage_proxy", False)
+
+# Storage proxy security (Phase 4). Force SigV4 auth on mounted buckets even when
+# the global REQUIRE_SIGV4 is off, and audit every mounted-object access.
+ENFORCE_MOUNT_AUTH: bool = _get_bool("ENFORCE_MOUNT_AUTH", "enforce_mount_auth", True)
+ENABLE_AUDIT_LOG: bool = _get_bool("ENABLE_AUDIT_LOG", "enable_audit_log", True)
+AUDIT_LOG_FILE: str = _get_str("AUDIT_LOG_FILE", "audit_log_file", "")
 
 # ---------------------------------------------------------------------------
 # Credential store (Manager-owned; persists DB URLs across restarts)

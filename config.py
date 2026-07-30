@@ -27,11 +27,11 @@ from system_config import (
     BUCKET_NAME, WAREHOUSE_PREFIX, OBJECT_PATH_LAYOUT, ENABLE_LEGACY_PATH_ALIASES,
     ACCESS_KEY_ID, SECRET_ACCESS_KEY, REQUIRE_SIGV4,
     # Server
-    HOST, PORT,
+    HOST, PORT, TLS_CERT_FILE, TLS_KEY_FILE,
     # Admin UIs
     ENABLE_CONFIG_BUILDER, ENABLE_MONITOR,
     # Storage proxy
-    ENABLE_STORAGE_PROXY,
+    ENABLE_STORAGE_PROXY, ENFORCE_MOUNT_AUTH, ENABLE_AUDIT_LOG, AUDIT_LOG_FILE,
     # Credential store
     ENABLE_CREDENTIAL_STORE, CREDENTIAL_STORE_PATH,
     # Artifact Store
@@ -152,6 +152,11 @@ _register("S3_ACCESS_KEY_ID", "access_key_id", "str", ACCESS_KEY_ID)
 _register("S3_SECRET_ACCESS_KEY", "secret_access_key", "str", SECRET_ACCESS_KEY)
 _register("REQUIRE_SIGV4", "require_sigv4", "bool", REQUIRE_SIGV4)
 _register("ENABLE_STORAGE_PROXY", "enable_storage_proxy", "bool", ENABLE_STORAGE_PROXY)
+_register("ENFORCE_MOUNT_AUTH", "enforce_mount_auth", "bool", ENFORCE_MOUNT_AUTH)
+_register("ENABLE_AUDIT_LOG", "enable_audit_log", "bool", ENABLE_AUDIT_LOG)
+_register("AUDIT_LOG_FILE", "audit_log_file", "str", AUDIT_LOG_FILE)
+_register("TLS_CERT_FILE", "tls_cert_file", "str", TLS_CERT_FILE)
+_register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 
@@ -502,6 +507,8 @@ SETTINGS_META: dict[str, dict] = {
     # Server
     "host": {"cat": "Server", "help": "Bind address."},
     "port": {"cat": "Server", "help": "Listen port."},
+    "tls_cert_file": {"cat": "Server", "help": "Path to a TLS certificate (PEM). Provide with tls_key_file to serve HTTPS."},
+    "tls_key_file": {"cat": "Server", "help": "Path to the TLS private key (PEM). Provide with tls_cert_file to serve HTTPS.", "secret": True},
     # Splits & query
     "num_splits": {"cat": "Splits & query", "help": "Virtual Parquet files per table."},
     "split_strategy": {"cat": "Splits & query", "help": "'modulo' (full-scan), 'range' (integer ranges), 'date' (temporal ranges), or 'auto' (range/date then deterministic fallback)."},
@@ -529,6 +536,9 @@ SETTINGS_META: dict[str, dict] = {
     "enable_config_builder": {"cat": "Admin & observability", "help": "Serve config builder at /_config."},
     "enable_monitor": {"cat": "Admin & observability", "help": "Serve the monitoring dashboard at /_monitor."},
     "enable_storage_proxy": {"cat": "Admin & observability", "help": "Serve mounted buckets (config.mounts.json) as byte passthrough from S3/NFS/SMB backends, alongside the DB->Iceberg path."},
+    "enforce_mount_auth": {"cat": "Admin & observability", "help": "Require SigV4 auth on mounted buckets even when require_sigv4 is off (a secured proxy never serves a mount unauthenticated)."},
+    "enable_audit_log": {"cat": "Admin & observability", "help": "Emit a structured audit event for every mounted-object access (identity, bucket, key, bytes), secrets scrubbed."},
+    "audit_log_file": {"cat": "Admin & observability", "help": "Optional file path for audit events (empty = the structured logger only)."},
     "request_trace": {"cat": "Admin & observability", "help": "Record the Fabric request timeline."},
     "trace_buffer_size": {"cat": "Admin & observability", "help": "Max request-trace records kept in memory."},
     # Iceberg advanced
@@ -598,6 +608,8 @@ LIVE_SETTINGS: frozenset[str] = frozenset({
     "parquet_disk_cache", "parquet_disk_cache_dir",
     # Observability
     "request_trace", "trace_buffer_size",
+    # Storage-proxy security (Phase 4) — read per request, safe to change live
+    "enforce_mount_auth", "enable_audit_log", "audit_log_file",
     # Iceberg
     "iceberg_manifest_stats", "iceberg_snapshot_history",
     "snapshot_history_limit", "concurrent_startup_materialization",
@@ -626,6 +638,11 @@ _KEY_TO_ATTR: dict[str, str] = {
     "pin_materialized_splits": "PIN_MATERIALIZED_SPLITS",
     "bucket": "BUCKET_NAME",
     "require_sigv4": "REQUIRE_SIGV4",
+    "enforce_mount_auth": "ENFORCE_MOUNT_AUTH",
+    "enable_audit_log": "ENABLE_AUDIT_LOG",
+    "audit_log_file": "AUDIT_LOG_FILE",
+    "tls_cert_file": "TLS_CERT_FILE",
+    "tls_key_file": "TLS_KEY_FILE",
     "agent_count": "AGENT_COUNT",
     "shard_strategy": "SHARD_STRATEGY",
     "table_format": "TABLE_FORMAT",
@@ -703,6 +720,11 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "enable_config_builder": "config.system.json",
     "enable_monitor": "config.system.json",
     "enable_storage_proxy": "config.system.json",
+    "enforce_mount_auth": "config.system.json",
+    "enable_audit_log": "config.system.json",
+    "audit_log_file": "config.system.json",
+    "tls_cert_file": "config.system.json",
+    "tls_key_file": "config.system.json",
     "artifact_store_backend": "config.system.json",
     "artifact_store_dir": "config.system.json",
     "artifact_store_serving": "config.system.json",

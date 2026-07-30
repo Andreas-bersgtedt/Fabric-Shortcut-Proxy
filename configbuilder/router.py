@@ -549,6 +549,115 @@ async def delete_azure_credential(credential_id: str) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Proxy access keys + per-key ACLs (Phase 4)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/access-keys")
+async def list_access_keys_endpoint() -> JSONResponse:
+    """Non-secret list of proxy access keys + their scope."""
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "enabled": False,
+                             "error": "credential store is disabled (ENABLE_CREDENTIAL_STORE=0)"})
+    from security import access_keys as ak
+    st = _store()
+    return JSONResponse({"ok": True, "enabled": True, "available": st.available,
+                         "backend": st.backend_name,
+                         "enforce_mount_auth": bool(config.ENFORCE_MOUNT_AUTH),
+                         "require_sigv4": bool(config.REQUIRE_SIGV4),
+                         "keys": ak.list_access_keys(store=st)})
+
+
+@router.post("/api/access-keys")
+async def save_access_key_endpoint(request: Request) -> JSONResponse:
+    """Create or update a proxy access key + ACL scope.
+
+    Body: ``{access_key_id?, secret_key?, label, allowed_buckets, allowed_prefixes,
+    permissions, enabled}``. Omitting ``access_key_id``/``secret_key`` on create
+    generates a fresh pair (the secret is returned once, then never again).
+    """
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled (ENABLE_CREDENTIAL_STORE=0)"},
+                            status_code=400)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+
+    from security import access_keys as ak
+    st = _store()
+    if not st.available:
+        return JSONResponse({"ok": False, "backend": st.backend_name,
+                             "error": "no encryption backend available; on non-Windows hosts install "
+                                      "'cryptography' or set FSP_CRED_KEY"}, status_code=400)
+
+    key_id = str(body.get("access_key_id") or "").strip()
+    secret = str(body.get("secret_key") or "")
+    generated = False
+    if not key_id:
+        key_id, secret = ak.generate_key()
+        generated = True
+    elif not secret:
+        # Update of an existing key that keeps its secret.
+        existing = ak.get_access_key(key_id, store=st)
+        if existing is not None:
+            secret = existing.secret_key
+
+    record = ak.parse_access_key({**body, "access_key_id": key_id, "secret_key": secret})
+    problems = ak.validate_access_key(record)
+    if problems:
+        return JSONResponse({"ok": False, "errors": problems}, status_code=400)
+    try:
+        ak.save_access_key(record, store=st)
+    except (RuntimeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    log.info("access_key_saved", access_key_id=key_id, generated=generated,
+             buckets=record.allowed_buckets)
+    resp = {"ok": True, "access_key_id": key_id, "generated": generated,
+            "backend": st.backend_name,
+            "note": "Saved (encrypted). Restart the Manager/Agents to apply to serving."}
+    # Return the secret exactly once, on generation, so the operator can copy it.
+    if generated:
+        resp["secret_key"] = secret
+    return JSONResponse(resp)
+
+
+@router.post("/api/access-keys/{access_key_id}/rotate")
+async def rotate_access_key_endpoint(access_key_id: str) -> JSONResponse:
+    """Rotate an existing key's secret (scope preserved). Returns the new secret once."""
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    from security import access_keys as ak
+    st = _store()
+    existing = ak.get_access_key(access_key_id, store=st)
+    if existing is None:
+        return JSONResponse({"ok": False, "error": f"access key {access_key_id!r} not found"}, status_code=404)
+    _new_id, new_secret = ak.generate_key()
+    existing.secret_key = new_secret
+    ak.save_access_key(existing, store=st)
+    log.info("access_key_rotated", access_key_id=access_key_id)
+    return JSONResponse({"ok": True, "access_key_id": access_key_id, "secret_key": new_secret,
+                         "note": "Rotated. Update the client, then restart the Manager/Agents."})
+
+
+@router.delete("/api/access-keys/{access_key_id}")
+async def delete_access_key_endpoint(access_key_id: str) -> JSONResponse:
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    from security import access_keys as ak
+    removed = ak.delete_access_key(access_key_id, store=_store())
+    log.info("access_key_deleted", access_key_id=access_key_id, removed=removed)
+    return JSONResponse({"ok": True, "access_key_id": access_key_id, "removed": removed})
+
+
+@router.get("/api/audit")
+async def recent_audit() -> JSONResponse:
+    """Most recent storage-proxy audit events (in-memory ring)."""
+    from observability import audit
+    return JSONResponse({"ok": True, "enabled": bool(config.ENABLE_AUDIT_LOG),
+                         "events": audit.recent(200)})
+
+
+# ---------------------------------------------------------------------------
 # Storage proxy mounts (config.mounts.json)
 # ---------------------------------------------------------------------------
 

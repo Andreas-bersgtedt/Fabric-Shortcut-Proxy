@@ -27,8 +27,11 @@ from control.manager_app import app
 if __name__ == "__main__":
     import uvicorn
 
+    _tls = {}
+    if config.TLS_CERT_FILE and config.TLS_KEY_FILE:
+        _tls = {"ssl_certfile": config.TLS_CERT_FILE, "ssl_keyfile": config.TLS_KEY_FILE}
     server = uvicorn.Server(
-        uvicorn.Config(app, host=config.CONTROL_HOST, port=config.CONTROL_PORT, log_level="info")
+        uvicorn.Config(app, host=config.CONTROL_HOST, port=config.CONTROL_PORT, log_level="info", **_tls)
     )
     # Expose the server so the /_manager "Shutdown" action can request a graceful
     # exit (stops all Agents via the lifespan, then quits the Manager).

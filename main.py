@@ -449,30 +449,68 @@ app.add_middleware(
 _AUTH_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/_admin", "/_config", "/_monitor", "/_manager", "/favicon.ico")
 
 
+def _bucket_key_from_path(path: str) -> tuple[str, str]:
+    """Split ``/{bucket}/{key}`` into (bucket, key); ('', '') for the service root."""
+    p = path.lstrip("/")
+    if not p:
+        return "", ""
+    parts = p.split("/", 1)
+    return parts[0], (parts[1] if len(parts) > 1 else "")
+
+
 @app.middleware("http")
 async def sigv4_auth_middleware(request, call_next):
-    if config.REQUIRE_SIGV4 and request.method != "OPTIONS":
-        path = request.url.path
-        if not any(path == p or path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
-            try:
-                verify_signature(
-                    request.method,
-                    request.url.path,
-                    request.url.query,
-                    request.headers,
-                    access_key_id=config.ACCESS_KEY_ID,
-                    secret_access_key=config.SECRET_ACCESS_KEY,
-                )
-            except SigV4Error as exc:
-                from s3.xml_responses import error_response
-                from fastapi.responses import Response as _Response
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    path = request.url.path
+    if any(path == p or path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
 
-                log.warning("sigv4_rejected", code=exc.code, path=path)
-                return _Response(
-                    content=error_response(exc.code, exc.message, path),
-                    status_code=403,
-                    media_type="application/xml",
-                )
+    from s3.xml_responses import error_response
+    from fastapi.responses import Response as _Response
+    from security import access_keys
+
+    bucket, key = _bucket_key_from_path(path)
+    mounted = False
+    if bucket:
+        try:
+            from storage.mounts import get_mount
+            mounted = get_mount(bucket) is not None
+        except Exception:  # noqa: BLE001 - proxy lookup must never break the front door
+            mounted = False
+
+    # A secured proxy forces auth on mounted buckets even if the global flag is off.
+    require = config.REQUIRE_SIGV4 or (mounted and config.ENFORCE_MOUNT_AUTH)
+    if require:
+        try:
+            identity = verify_signature(
+                request.method,
+                request.url.path,
+                request.url.query,
+                request.headers,
+                secret_resolver=access_keys.resolve_secret,
+            )
+        except SigV4Error as exc:
+            log.warning("sigv4_rejected", code=exc.code, path=path)
+            if mounted:
+                from observability import audit
+                audit.record(identity="-", client=(request.client.host if request.client else ""),
+                             bucket=bucket, key=key, backend="mount", method=request.method,
+                             action="auth", status=403, reason=exc.code)
+            return _Response(content=error_response(exc.code, exc.message, path),
+                             status_code=403, media_type="application/xml")
+
+        denial = access_keys.authorize(identity, bucket, key, request.method)
+        if denial is not None:
+            log.warning("authz_denied", identity=identity, bucket=bucket, reason=denial)
+            if mounted:
+                from observability import audit
+                audit.record(identity=identity, client=(request.client.host if request.client else ""),
+                             bucket=bucket, key=key, backend="mount", method=request.method,
+                             action="authz", status=403, reason=denial)
+            return _Response(content=error_response("AccessDenied", denial, path),
+                             status_code=403, media_type="application/xml")
+        request.state.identity = identity
     return await call_next(request)
 
 
@@ -668,7 +706,15 @@ if __name__ == "__main__":
     import uvicorn
     # Run via an explicit Server (app object, not "main:app") so the in-process
     # Agent link can request a graceful drain by setting server.should_exit.
-    _uv_config = uvicorn.Config(app, host=config.HOST, port=config.PORT, log_level="info")
+    _tls = {}
+    if config.TLS_CERT_FILE and config.TLS_KEY_FILE:
+        _tls = {"ssl_certfile": config.TLS_CERT_FILE, "ssl_keyfile": config.TLS_KEY_FILE}
+        log.info("tls_enabled", cert=config.TLS_CERT_FILE)
+    elif config.REQUIRE_SIGV4 or config.ENABLE_STORAGE_PROXY:
+        # SigV4 read signatures give no confidentiality over plain HTTP.
+        log.warning("tls_not_configured",
+                    hint="set tls_cert_file + tls_key_file, or terminate TLS at a fronting LB")
+    _uv_config = uvicorn.Config(app, host=config.HOST, port=config.PORT, log_level="info", **_tls)
     _server = uvicorn.Server(_uv_config)
     _set_uvicorn_server(_server)
     _server.run()

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from typing import Mapping
+from typing import Callable, Mapping
 from urllib.parse import quote, unquote
 
 _ALGORITHM = "AWS4-HMAC-SHA256"
@@ -105,14 +105,18 @@ def verify_signature(
     query_string: str,
     headers: Mapping[str, str],
     *,
-    access_key_id: str,
-    secret_access_key: str,
-) -> None:
+    access_key_id: str | None = None,
+    secret_access_key: str | None = None,
+    secret_resolver: Callable[[str], str | None] | None = None,
+) -> str:
     """Verify a SigV4-signed request. Raises :class:`SigV4Error` on any failure.
 
     ``headers`` must be a case-insensitive mapping of the request headers.
     ``path`` is the (already client-encoded) request path, ``query_string`` the
-    raw query string.
+    raw query string. Provide either a single ``access_key_id`` +
+    ``secret_access_key`` (legacy), or a ``secret_resolver`` that maps a presented
+    access-key id to its signing secret (multi-key / ACL mode). Returns the
+    verified access-key id (the caller's authenticated identity).
     """
     # Case-insensitive lookup helper.
     lower = {k.lower(): v for k, v in headers.items()}
@@ -125,10 +129,16 @@ def verify_signature(
     if len(cred_parts) != 5:
         raise SigV4Error("AccessDenied", "Malformed credential scope.")
     cred_key, date_stamp, region, service, terminator = cred_parts
-    if cred_key != access_key_id:
-        raise SigV4Error("InvalidAccessKeyId", "The access key id does not match.")
     if service != _SERVICE or terminator != "aws4_request":
         raise SigV4Error("AccessDenied", "Unexpected credential scope.")
+    if secret_resolver is not None:
+        secret = secret_resolver(cred_key)
+        if not secret:
+            raise SigV4Error("InvalidAccessKeyId", "The access key id is not recognized.")
+    else:
+        if cred_key != access_key_id:
+            raise SigV4Error("InvalidAccessKeyId", "The access key id does not match.")
+        secret = secret_access_key or ""
 
     amz_date = lower.get("x-amz-date")
     if not amz_date:
@@ -158,10 +168,11 @@ def verify_signature(
         f"{hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()}"
     )
 
-    signing_key = _derive_signing_key(secret_access_key, date_stamp, region, service)
+    signing_key = _derive_signing_key(secret, date_stamp, region, service)
     expected_sig = hmac.new(
         signing_key, string_to_sign.encode("utf-8"), hashlib.sha256
     ).hexdigest()
 
     if not hmac.compare_digest(expected_sig, provided_sig):
         raise SigV4Error("SignatureDoesNotMatch", "The request signature does not match.")
+    return cred_key

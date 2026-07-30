@@ -352,9 +352,38 @@
     </div>
     <div class="status" id="mountEditStatus"></div>
   </div>
-</div>
 
-<!-- SETTINGS TAB -->
+  <div class="card" style="margin-top:16px;">
+    <h2>Access keys <span style="font-weight:400;text-transform:none;">(per-key authorization)</span></h2>
+    <div class="hint" style="margin-bottom:12px;">Issue scoped S3 access keys so each client/tenant can reach only the buckets it's allowed.
+      Keys are stored <b>encrypted</b> in the Manager; the secret is shown <b>once</b> at creation. When any key exists it governs SigV4 auth
+      (the legacy single key still works until then). Mounts are forced to require auth via <code>enforce_mount_auth</code>.</div>
+    <div id="akList" class="connlist"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn ghost" id="btnAddAccessKey">+ New access key</button>
+    </div>
+    <div class="status" id="akStatus"></div>
+
+    <div id="akEdit" style="margin-top:14px;display:none;">
+      <hr style="border:none;border-top:1px solid var(--border,#2a2a3a);margin:8px 0 14px;" />
+      <h3 id="akEditTitle" style="margin:0 0 10px;">New access key</h3>
+      <label>Access key id <span class="hint">(blank on create = auto-generated)</span></label>
+      <input id="akId" placeholder="FSP… (leave blank to generate)" />
+      <label>Label</label>
+      <input id="akLabel" placeholder="finance-reader" />
+      <label>Allowed buckets <span class="hint">(comma-separated; <code>*</code> = all)</span></label>
+      <input id="akBuckets" placeholder="secure-nfs, s3vault" />
+      <label>Allowed prefixes <span class="hint">(optional — <code>bucket=prefix1,prefix2;bucket2=…</code>)</span></label>
+      <input id="akPrefixes" placeholder="s3vault=2026/,2025/" />
+      <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="akEnabled" checked /><span>Enabled</span></div>
+      <div class="actions">
+        <button class="btn primary" id="btnSaveAccessKey">Save access key</button>
+        <button class="btn ghost" id="btnCancelAccessKey">Cancel</button>
+      </div>
+      <div class="status" id="akEditStatus"></div>
+    </div>
+  </div>
+</div>
 <div id="settings-tab" class="tab-content">
   <div class="card">
     <h2>Global Settings</h2>
@@ -1646,6 +1675,116 @@ $("btnSaveMounts").onclick = async () => {
   s.className = "status ok"; s.textContent = `💾 Saved ${r.count} mount(s)${en}. ${r.note || ""}`;
 };
 
+// ---- proxy access keys (Storage tab) ----
+const akState = { keys: [] };
+
+async function loadAccessKeys(){
+  try{
+    const r = await fetch("/_config/api/access-keys", {cache:"no-store"}).then(x=>x.json());
+    akState.keys = (r.ok && r.keys) ? r.keys : [];
+  }catch(e){ akState.keys = []; }
+  renderAccessKeys();
+}
+
+function renderAccessKeys(){
+  const wrap = $("akList"); wrap.innerHTML = "";
+  if(!akState.keys.length){
+    wrap.innerHTML = '<div class="hint">No access keys. The legacy single key governs SigV4 until you add one.</div>';
+    return;
+  }
+  for(const k of akState.keys){
+    const row = document.createElement("div"); row.className = "connrow";
+    const left = document.createElement("div");
+    const scope = (k.allowed_buckets||[]).join(", ") || "—";
+    const en = k.enabled ? '<span class="badge ok">enabled</span>' : '<span class="badge">disabled</span>';
+    left.innerHTML = `<div class="cid">${k.access_key_id} ${en} <span class="badge">${k.permissions||"read"}</span></div>`
+      + `<div class="meta">${k.label ? (k.label+" · ") : ""}buckets: ${scope}</div>`;
+    const acts = document.createElement("div"); acts.className = "connacts";
+    const ed = document.createElement("button"); ed.className = "iconbtn"; ed.textContent = "Edit";
+    ed.onclick = () => editAccessKey(k.access_key_id);
+    const rot = document.createElement("button"); rot.className = "iconbtn"; rot.textContent = "Rotate";
+    rot.onclick = () => rotateAccessKey(k.access_key_id);
+    const rm = document.createElement("button"); rm.className = "iconbtn"; rm.textContent = "Remove";
+    rm.onclick = () => removeAccessKey(k.access_key_id);
+    acts.append(ed, rot, rm);
+    row.append(left, acts); wrap.appendChild(row);
+  }
+}
+
+function _prefixesToText(ap){
+  return Object.entries(ap||{}).map(([b, ps]) => b + "=" + (ps||[]).join(",")).join("; ");
+}
+function _textToPrefixes(t){
+  const out = {};
+  for(const part of (t||"").split(";")){
+    const seg = part.trim(); if(!seg) continue;
+    const eq = seg.indexOf("="); if(eq < 0) continue;
+    const b = seg.slice(0, eq).trim();
+    const ps = seg.slice(eq+1).split(",").map(x => x.trim().replace(/^\/+|\/+$/g,"")).filter(Boolean);
+    if(b) out[b] = ps;
+  }
+  return out;
+}
+
+function _openAkEdit(title){ $("akEditTitle").textContent = title; $("akEdit").style.display = ""; $("akEditStatus").textContent = ""; }
+
+$("btnAddAccessKey").onclick = () => {
+  $("akId").value = ""; $("akId").disabled = false; $("akLabel").value = "";
+  $("akBuckets").value = ""; $("akPrefixes").value = ""; $("akEnabled").checked = true;
+  _openAkEdit("New access key"); $("akLabel").focus();
+};
+$("btnCancelAccessKey").onclick = () => { $("akEdit").style.display = "none"; };
+
+function editAccessKey(id){
+  const k = akState.keys.find(x => x.access_key_id === id);
+  if(!k) return;
+  $("akId").value = k.access_key_id; $("akId").disabled = true;
+  $("akLabel").value = k.label || "";
+  $("akBuckets").value = (k.allowed_buckets||[]).join(", ");
+  $("akPrefixes").value = _prefixesToText(k.allowed_prefixes);
+  $("akEnabled").checked = k.enabled !== false;
+  _openAkEdit("Edit access key — " + id);
+}
+
+$("btnSaveAccessKey").onclick = async () => {
+  const s = $("akEditStatus"); s.className = "status";
+  const buckets = $("akBuckets").value.split(",").map(x => x.trim()).filter(Boolean);
+  if(!buckets.length){ s.className = "status err"; s.textContent = "List at least one allowed bucket (or *)."; return; }
+  const payload = {
+    access_key_id: $("akId").value.trim(),
+    label: $("akLabel").value.trim(),
+    allowed_buckets: buckets,
+    allowed_prefixes: _textToPrefixes($("akPrefixes").value),
+    permissions: "read",
+    enabled: $("akEnabled").checked,
+  };
+  s.textContent = "Saving…";
+  const r = await api("/_config/api/access-keys", payload);
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + ((r.errors && r.errors.join("; ")) || r.error || "could not save"); return; }
+  if(r.generated && r.secret_key){
+    s.className = "status ok";
+    s.innerHTML = `🔑 Created <b>${r.access_key_id}</b>. Secret (shown once): <code>${r.secret_key}</code> — copy it now.`;
+  }else{
+    s.className = "status ok"; s.textContent = `✓ Saved ${r.access_key_id}. ${r.note || ""}`;
+  }
+  await loadAccessKeys();
+};
+
+async function rotateAccessKey(id){
+  const s = $("akStatus"); s.className = "status"; s.textContent = "Rotating…";
+  const r = await api("/_config/api/access-keys/" + encodeURIComponent(id) + "/rotate", {});
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + (r.error || "could not rotate"); return; }
+  s.className = "status ok";
+  s.innerHTML = `🔑 Rotated <b>${id}</b>. New secret (shown once): <code>${r.secret_key}</code> — copy it now.`;
+}
+
+async function removeAccessKey(id){
+  const r = await fetch("/_config/api/access-keys/" + encodeURIComponent(id), {method:"DELETE"}).then(x=>x.json());
+  const s = $("akStatus"); s.className = r.ok ? "status ok" : "status err";
+  s.textContent = r.ok ? `Removed ${id}.` : ("✗ " + (r.error || "could not remove"));
+  await loadAccessKeys();
+}
+
 loadForm();
 loadConns();
 ensureDefaultConn();
@@ -1653,6 +1792,7 @@ writeFormFromConn(state.connections.get(state.activeConnId));
 renderConnList();
 loadSettings();
 loadMounts();
+loadAccessKeys();
 $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
 loadBuilderBootstrap();
 

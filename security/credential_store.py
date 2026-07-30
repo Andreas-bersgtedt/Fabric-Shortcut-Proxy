@@ -353,6 +353,56 @@ class CredentialStore:
     def list_secret_ids(self) -> list[str]:
         return sorted(self._load().get("secrets", {}).keys())
 
+    # -- access keys (encrypted proxy access-key + ACL records) -----------
+    def set_access_key(self, key_id: str, obj: dict) -> None:
+        """Encrypt and persist a proxy access-key record (secret + ACL scope)."""
+        if not self.available:
+            raise RuntimeError(
+                "credential store unavailable (no encryption backend). On non-Windows "
+                "hosts install 'cryptography' or set FSP_CRED_KEY.")
+        kid = (key_id or "").strip()
+        if not kid:
+            raise ValueError("access key id must be non-empty")
+        payload = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        token = base64.b64encode(self._cipher.encrypt(payload)).decode("ascii")
+        data = self._load()
+        if not self._backend_matches(data) and data.get("access_keys"):
+            data["access_keys"] = {}
+        data.setdefault("access_keys", {})[kid] = {
+            "enc": token,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        self._save(data)
+
+    def get_access_key(self, key_id: str) -> dict | None:
+        """Decrypt and return a proxy access-key record, or ``None`` if absent."""
+        if not self.available:
+            return None
+        data = self._load()
+        if not self._backend_matches(data):
+            return None
+        entry = data.get("access_keys", {}).get((key_id or "").strip())
+        if not isinstance(entry, dict) or not entry.get("enc"):
+            return None
+        try:
+            raw = self._cipher.decrypt(base64.b64decode(entry["enc"])).decode("utf-8")
+            return json.loads(raw)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[credential_store] could not decrypt access key {key_id!r}: {exc}", file=sys.stderr)
+            return None
+
+    def delete_access_key(self, key_id: str) -> bool:
+        kid = (key_id or "").strip()
+        data = self._load()
+        if kid in data.get("access_keys", {}):
+            del data["access_keys"][kid]
+            self._save(data)
+            return True
+        return False
+
+    def list_access_key_ids(self) -> list[str]:
+        return sorted(self._load().get("access_keys", {}).keys())
+
     def status(self) -> dict:
         """Non-secret summary for the UI (never returns plaintext URLs)."""
         data = self._load()

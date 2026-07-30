@@ -1,0 +1,19 @@
+{
+  "_comment": "Storage proxy mount table (Phase 1). Copy to config.mounts.json (gitignored) and set ENABLE_STORAGE_PROXY=1. Each mount serves an S3 bucket as read-only byte passthrough from a backend, ALONGSIDE the relational->Iceberg path. Phase 1 supports the 'local' backend: a filesystem path, which covers an NFS or SMB share mounted by the OS (UNC path on Windows, mount point on Linux). The bucket must differ from the DB warehouse bucket (S3_BUCKET).",
+  "mounts": [
+    {
+      "bucket": "secure-nfs",
+      "backend": "local",
+      "root": "/mnt/finance",
+      "prefix": "",
+      "read_only": true
+    },
+    {
+      "bucket": "team-smb",
+      "backend": "local",
+      "root": "\\\\fileserver01\\team",
+      "prefix": "reports/",
+      "read_only": true
+    }
+  ]
+}

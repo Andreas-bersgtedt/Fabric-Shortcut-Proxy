@@ -67,6 +67,7 @@ config.connection.json
 config.system.json
 config.performance.json
 config.tables.json
+config.mounts.json
 *.env
 .env.local
 secrets.json

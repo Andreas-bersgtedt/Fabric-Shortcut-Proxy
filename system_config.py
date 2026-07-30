@@ -114,6 +114,10 @@ ENABLE_CONFIG_BUILDER: bool = _get_bool("ENABLE_CONFIG_BUILDER", "enable_config_
 # Optional monitoring dashboard SPA at /_monitor
 ENABLE_MONITOR: bool = _get_bool("ENABLE_MONITOR", "enable_monitor", False)
 
+# Storage proxy: serve mounted buckets (config.mounts.json) as byte passthrough
+# from S3/NFS/SMB backends, alongside the relational->Iceberg path. Off by default.
+ENABLE_STORAGE_PROXY: bool = _get_bool("ENABLE_STORAGE_PROXY", "enable_storage_proxy", False)
+
 # ---------------------------------------------------------------------------
 # Credential store (Manager-owned; persists DB URLs across restarts)
 # ---------------------------------------------------------------------------

@@ -43,10 +43,15 @@ class ObjectStat:
     """Metadata for a stored object."""
     key: str
     size: int
+    mtime_ms: int | None = None      # last-modified epoch ms, when the backend knows it
 
 
 class ObjectNotFound(KeyError):
     """Raised by :meth:`ArtifactStore.get` when a key does not exist."""
+
+
+# Default streaming chunk size (1 MiB) for get_stream / passthrough serving.
+_STREAM_CHUNK = 1 << 20
 
 
 def _normalize_key(key: str) -> str:
@@ -110,6 +115,16 @@ class ArtifactStore(abc.ABC):
     @abc.abstractmethod
     def delete(self, key: str) -> bool:
         """Delete ``key``. Returns True if it existed, False otherwise."""
+
+    def get_stream(self, key: str, *, offset: int = 0, length: int | None = None,
+                   chunk_size: int = _STREAM_CHUNK):
+        """Yield the object's bytes in chunks (optionally a ``[offset, +length)`` slice).
+
+        Default: a single ``get()`` blob. Backends that can read incrementally
+        (e.g. a filesystem) override this so large objects stream without being
+        fully buffered. Raises :class:`ObjectNotFound` if the key is absent.
+        """
+        yield self.get(key, offset=offset, length=length)
 
 
 class MemoryStore(ArtifactStore):
@@ -207,9 +222,10 @@ class LocalDirStore(ArtifactStore):
     def head(self, key: str) -> ObjectStat | None:
         path = self._path(key)
         try:
-            return ObjectStat(_normalize_key(key), os.path.getsize(path))
+            stat = os.stat(path)
         except FileNotFoundError:
             return None
+        return ObjectStat(_normalize_key(key), stat.st_size, int(stat.st_mtime * 1000))
 
     def exists(self, key: str) -> bool:
         return os.path.isfile(self._path(key))
@@ -227,9 +243,10 @@ class LocalDirStore(ArtifactStore):
                 rel = os.path.relpath(full, self.root).replace(os.sep, "/")
                 if rel.startswith(pfx):
                     try:
-                        out.append(ObjectStat(rel, os.path.getsize(full)))
+                        st = os.stat(full)
                     except FileNotFoundError:
                         continue
+                    out.append(ObjectStat(rel, st.st_size, int(st.st_mtime * 1000)))
         out.sort(key=lambda s: s.key)
         return out
 
@@ -240,6 +257,29 @@ class LocalDirStore(ArtifactStore):
             return True
         except FileNotFoundError:
             return False
+
+    def get_stream(self, key: str, *, offset: int = 0, length: int | None = None,
+                   chunk_size: int = _STREAM_CHUNK):
+        """Stream the file in ``chunk_size`` blocks so large objects aren't buffered."""
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
+        path = self._path(key)
+        try:
+            fh = open(path, "rb")
+        except FileNotFoundError:
+            raise ObjectNotFound(_normalize_key(key)) from None
+        with fh:
+            if offset:
+                fh.seek(offset)
+            remaining = length
+            while remaining is None or remaining > 0:
+                to_read = chunk_size if remaining is None else min(chunk_size, remaining)
+                chunk = fh.read(to_read)
+                if not chunk:
+                    break
+                yield chunk
+                if remaining is not None:
+                    remaining -= len(chunk)
 
 
 # ---------------------------------------------------------------------------

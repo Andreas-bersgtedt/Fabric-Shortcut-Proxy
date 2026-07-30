@@ -53,6 +53,19 @@ router = APIRouter()
 _generation_semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_GENERATIONS)
 
 
+def _mount_for(bucket: str):
+    """Return the storage-proxy Mount for a bucket (when enabled), else None.
+
+    Additive: a mounted bucket is served as byte passthrough; every other bucket
+    (including the DB warehouse) resolves through the existing Iceberg path.
+    """
+    try:
+        from storage.mounts import get_mount
+        return get_mount(bucket)
+    except Exception:  # noqa: BLE001 - the storage proxy must never break DB serving
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -308,6 +321,10 @@ async def head_service() -> FastAPIResponse:
 @router.head("/{bucket}")
 async def head_bucket(bucket: str) -> FastAPIResponse:
     """S3 HeadBucket — confirm the bucket exists."""
+    _m = _mount_for(bucket)
+    if _m is not None:
+        from storage import passthrough
+        return passthrough.head_bucket(_m)
     if bucket != config.BUCKET_NAME:
         return FastAPIResponse(status_code=404)
     log.info("head_bucket", bucket=bucket)
@@ -320,6 +337,10 @@ async def list_objects_v2(
     request: Request,
 ) -> FastAPIResponse:
     """Handle ListObjectsV2 (list-type=2) and legacy ListObjects."""
+    _m = _mount_for(bucket)
+    if _m is not None:
+        from storage import passthrough
+        return passthrough.list_objects(_m, request)
     if bucket != config.BUCKET_NAME:
         return FastAPIResponse(
             content=error_response("NoSuchBucket", f"Bucket {bucket!r} does not exist."),
@@ -381,6 +402,10 @@ async def head_object(
     key: str,
     request: Request,
 ) -> FastAPIResponse:
+    _m = _mount_for(bucket)
+    if _m is not None:
+        from storage import passthrough
+        return passthrough.head_object(_m, key, request)
     if bucket != config.BUCKET_NAME:
         return FastAPIResponse(status_code=404)
 
@@ -424,6 +449,10 @@ async def get_object(
     An empty key (trailing slash on bucket, e.g. /bucket/) is treated as
     a ListObjectsV2 request so Fabric's folder browser works correctly.
     """
+    _m = _mount_for(bucket)
+    if _m is not None:
+        from storage import passthrough
+        return passthrough.get_object(_m, key, request)
     if bucket != config.BUCKET_NAME:
         return FastAPIResponse(
             content=error_response("NoSuchBucket", f"Bucket {bucket!r} does not exist."),

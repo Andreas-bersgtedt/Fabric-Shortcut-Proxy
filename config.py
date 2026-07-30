@@ -30,6 +30,8 @@ from system_config import (
     HOST, PORT,
     # Admin UIs
     ENABLE_CONFIG_BUILDER, ENABLE_MONITOR,
+    # Storage proxy
+    ENABLE_STORAGE_PROXY,
     # Credential store
     ENABLE_CREDENTIAL_STORE, CREDENTIAL_STORE_PATH,
     # Artifact Store
@@ -149,6 +151,7 @@ _register("BUCKET_NAME", "bucket", "str", BUCKET_NAME)
 _register("S3_ACCESS_KEY_ID", "access_key_id", "str", ACCESS_KEY_ID)
 _register("S3_SECRET_ACCESS_KEY", "secret_access_key", "str", SECRET_ACCESS_KEY)
 _register("REQUIRE_SIGV4", "require_sigv4", "bool", REQUIRE_SIGV4)
+_register("ENABLE_STORAGE_PROXY", "enable_storage_proxy", "bool", ENABLE_STORAGE_PROXY)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 
@@ -461,6 +464,14 @@ def validate_config() -> None:
         if not url:
             problems.append(f"Connection {cid!r}: db_url must be set (a SQLAlchemy URL).")
 
+    # Storage proxy: validate mounted buckets (config.mounts.json) when enabled.
+    if ENABLE_STORAGE_PROXY:
+        try:
+            from storage.mounts import validate_mounts
+            problems.extend(validate_mounts())
+        except Exception as exc:  # noqa: BLE001 - a mount config error must not mask others
+            problems.append(f"Storage proxy: mount config error: {exc}")
+
     if problems:
         raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(problems))
 
@@ -517,6 +528,7 @@ SETTINGS_META: dict[str, dict] = {
     # Admin UIs / observability
     "enable_config_builder": {"cat": "Admin & observability", "help": "Serve config builder at /_config."},
     "enable_monitor": {"cat": "Admin & observability", "help": "Serve the monitoring dashboard at /_monitor."},
+    "enable_storage_proxy": {"cat": "Admin & observability", "help": "Serve mounted buckets (config.mounts.json) as byte passthrough from S3/NFS/SMB backends, alongside the DB->Iceberg path."},
     "request_trace": {"cat": "Admin & observability", "help": "Record the Fabric request timeline."},
     "trace_buffer_size": {"cat": "Admin & observability", "help": "Max request-trace records kept in memory."},
     # Iceberg advanced
@@ -690,6 +702,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "port": "config.system.json",
     "enable_config_builder": "config.system.json",
     "enable_monitor": "config.system.json",
+    "enable_storage_proxy": "config.system.json",
     "artifact_store_backend": "config.system.json",
     "artifact_store_dir": "config.system.json",
     "artifact_store_serving": "config.system.json",

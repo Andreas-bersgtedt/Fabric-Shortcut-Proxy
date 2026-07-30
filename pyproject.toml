@@ -53,6 +53,7 @@ packages = [
     "planner",
     "runtime",
     "s3",
+    "storage",
 ]
 
 [tool.pytest.ini_options]

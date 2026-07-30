@@ -22,7 +22,7 @@ import os
 import re
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import system_config
 from runtime.artifact_store import ArtifactStore, LocalDirStore
@@ -31,7 +31,7 @@ from observability.logging import get_logger
 log = get_logger(__name__)
 
 _CONFIG_FILE = os.environ.get("MOUNTS_CONFIG_FILE", "config.mounts.json")
-_SUPPORTED_BACKENDS = ("local",)          # Phase 1; s3/smb/azure land later
+_SUPPORTED_BACKENDS = ("local", "s3")     # Phase 1 local; Phase 2 s3/MinIO. smb/azure later
 
 
 def _enabled() -> bool:
@@ -46,11 +46,20 @@ def _enabled() -> bool:
 class Mount:
     """One bucket served as passthrough from a storage backend."""
     bucket: str
-    backend: str                 # "local" (Phase 1)
-    root: str = ""               # local backend: filesystem path (NFS/SMB mount)
+    backend: str                 # "local" | "s3"
+    root: str = ""               # local: filesystem path (NFS/SMB mount); s3: upstream bucket
     prefix: str = ""             # confine serving to this subtree of the backend
     read_only: bool = True
-    credential: str = ""         # credential-store id for upstream creds (future)
+    credential: str = ""         # credential-store id for upstream creds
+    # s3 backend (non-secret connection knobs; secrets live in the credential store)
+    endpoint: str = ""           # custom endpoint URL (MinIO/Ceph/R2/...)
+    region: str = ""
+    addressing_style: str = ""   # auto | path | virtual
+    signature_version: str = ""  # s3v4 | s3 ("" = botocore default)
+    verify_tls: str = ""         # ""=default | "false"=skip | else CA bundle path
+    use_fips: bool = False
+    use_dualstack: bool = False
+    auth: str = ""               # credential-less mode: anonymous | instance
 
 
 def _norm_prefix(p: str) -> str:
@@ -66,6 +75,14 @@ def _mount_from_json(d: dict) -> Mount:
         prefix=_norm_prefix(d.get("prefix") or ""),
         read_only=bool(d.get("read_only", True)),
         credential=str(d.get("credential") or "").strip(),
+        endpoint=str(d.get("endpoint") or "").strip(),
+        region=str(d.get("region") or "").strip(),
+        addressing_style=str(d.get("addressing_style") or "").strip().lower(),
+        signature_version=str(d.get("signature_version") or "").strip().lower(),
+        verify_tls=str(d.get("verify_tls") or "").strip(),
+        use_fips=bool(d.get("use_fips", False)),
+        use_dualstack=bool(d.get("use_dualstack", False)),
+        auth=str(d.get("auth") or "").strip().lower(),
     )
 
 
@@ -108,9 +125,12 @@ def _build_mounts() -> dict[str, Mount]:
         if m.backend == "local" and not m.root:
             print(f"[mounts] local mount {m.bucket!r} missing 'root'; skipped.", file=sys.stderr)
             continue
+        if m.backend == "s3" and not m.root:
+            print(f"[mounts] s3 mount {m.bucket!r} missing 'root' (upstream bucket); skipped.", file=sys.stderr)
+            continue
         if not m.read_only:
             print(f"[mounts] mount {m.bucket!r}: read-write not supported yet; serving read-only.", file=sys.stderr)
-            m = Mount(m.bucket, m.backend, m.root, m.prefix, True, m.credential)
+            m = replace(m, read_only=True)
         if m.bucket in out:
             print(f"[mounts] duplicate mount bucket {m.bucket!r}; last wins.", file=sys.stderr)
         out[m.bucket] = m
@@ -151,6 +171,9 @@ def backend_for(mount: Mount) -> ArtifactStore:
 def _build_backend(mount: Mount) -> ArtifactStore:
     if mount.backend == "local":
         return LocalDirStore(mount.root)
+    if mount.backend == "s3":
+        from storage.s3_store import build_s3_store
+        return build_s3_store(mount)
     raise ValueError(f"unsupported mount backend: {mount.backend!r}")
 
 
@@ -168,4 +191,13 @@ def validate_mounts() -> list[str]:
                 problems.append(f"mount {bucket!r}: local backend needs 'root'")
             elif not os.path.isdir(m.root):
                 problems.append(f"mount {bucket!r}: root {m.root!r} is not a directory (mount it first)")
+        elif m.backend == "s3":
+            if not m.root:
+                problems.append(f"mount {bucket!r}: s3 backend needs 'root' (the upstream bucket)")
+            try:
+                from storage.s3_auth import resolve_s3_auth, validate_s3_auth
+                auth = resolve_s3_auth(m)
+                problems.extend(f"mount {bucket!r}: {p}" for p in validate_s3_auth(auth))
+            except Exception as exc:  # noqa: BLE001 - surface a clean message, never a secret
+                problems.append(f"mount {bucket!r}: {exc}")
     return problems

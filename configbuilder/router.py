@@ -432,12 +432,35 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
         if backend not in sm._SUPPORTED_BACKENDS:
             errors.append(f"mounts[{i}]: backend {backend!r} not supported (use one of {list(sm._SUPPORTED_BACKENDS)})")
             continue
-        if backend == "local" and not root:
-            errors.append(f"mounts[{i}]: local backend needs 'root'")
-            continue
+        entry = {"bucket": bucket, "backend": backend, "root": root,
+                 "prefix": prefix, "read_only": True}
+        if backend == "local":
+            if not root:
+                errors.append(f"mounts[{i}]: local backend needs 'root'")
+                continue
+        elif backend == "s3":
+            if not root:
+                errors.append(f"mounts[{i}]: s3 backend needs 'root' (the upstream bucket)")
+                continue
+            credential = str(e.get("credential") or "").strip()
+            auth = str(e.get("auth") or "").strip().lower()
+            if not credential and not auth:
+                errors.append(f"mounts[{i}]: s3 backend needs a 'credential' id or an explicit 'auth' "
+                              "mode ('anonymous' or 'instance')")
+                continue
+            entry.update({
+                "credential": credential,
+                "auth": auth,
+                "endpoint": str(e.get("endpoint") or "").strip(),
+                "region": str(e.get("region") or "").strip(),
+                "addressing_style": str(e.get("addressing_style") or "").strip().lower(),
+                "signature_version": str(e.get("signature_version") or "").strip().lower(),
+                "verify_tls": str(e.get("verify_tls") or "").strip(),
+                "use_fips": bool(e.get("use_fips", False)),
+                "use_dualstack": bool(e.get("use_dualstack", False)),
+            })
         seen.add(bucket)
-        clean.append({"bucket": bucket, "backend": backend, "root": root,
-                      "prefix": prefix, "read_only": True})
+        clean.append(entry)
     return clean, errors
 
 
@@ -445,9 +468,18 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
 async def list_mounts() -> JSONResponse:
     """Current storage-proxy mount table + enable flag (config.mounts.json)."""
     import storage.mounts as sm
-    mounts = [{"bucket": m.bucket, "backend": m.backend, "root": m.root,
-               "prefix": m.prefix.rstrip("/"), "read_only": m.read_only}
-              for m in sm.MOUNTS.values()]
+    mounts = []
+    for m in sm.MOUNTS.values():
+        entry = {"bucket": m.bucket, "backend": m.backend, "root": m.root,
+                 "prefix": m.prefix.rstrip("/"), "read_only": m.read_only}
+        if m.backend == "s3":
+            entry.update({"credential": m.credential, "auth": m.auth,
+                          "endpoint": m.endpoint, "region": m.region,
+                          "addressing_style": m.addressing_style,
+                          "signature_version": m.signature_version,
+                          "verify_tls": m.verify_tls, "use_fips": m.use_fips,
+                          "use_dualstack": m.use_dualstack})
+        mounts.append(entry)
     return JSONResponse({
         "ok": True,
         "enabled": bool(config.ENABLE_STORAGE_PROXY),
@@ -493,13 +525,15 @@ async def save_mounts(request: Request) -> JSONResponse:
 
 @router.post("/api/mounts/test")
 async def test_mount(request: Request) -> JSONResponse:
-    """Verify a mount's backend path is reachable (local backend: a directory)."""
+    """Verify a mount's backend is reachable (local: a directory; s3: list a prefix)."""
     body = await request.json()
     backend = str(body.get("backend") or "local").strip().lower()
     root = str(body.get("root") or "").strip()
     prefix = str(body.get("prefix") or "").strip().strip("/")
+    if backend == "s3":
+        return await _test_s3_mount(body, root, prefix)
     if backend != "local":
-        return JSONResponse({"ok": False, "error": f"backend {backend!r} not testable in Phase 1 (use 'local')"})
+        return JSONResponse({"ok": False, "error": f"backend {backend!r} not testable (use 'local' or 's3')"})
     if not root:
         return JSONResponse({"ok": False, "error": "root path is required"})
     base = os.path.join(root, *prefix.split("/")) if prefix else root
@@ -515,6 +549,32 @@ async def test_mount(request: Request) -> JSONResponse:
     except OSError as exc:
         return JSONResponse({"ok": False, "error": f"cannot read {base!r}: {exc}"})
     return JSONResponse({"ok": True, "path": base, "sample": entries, "sample_count": len(entries)})
+
+
+async def _test_s3_mount(body: dict, root: str, prefix: str) -> JSONResponse:
+    """Build the s3 backend from the posted mount and list one folder level."""
+    import storage.mounts as sm
+    from storage.s3_auth import resolve_s3_auth, validate_s3_auth
+    from storage.s3_store import build_s3_store
+
+    if not root:
+        return JSONResponse({"ok": False, "error": "s3 backend needs 'root' (the upstream bucket)"})
+    mount = sm._mount_from_json({**body, "backend": "s3", "prefix": prefix})
+    try:
+        auth = resolve_s3_auth(mount)
+    except Exception as exc:  # noqa: BLE001 - never leak secret material
+        return JSONResponse({"ok": False, "error": str(exc)})
+    problems = validate_s3_auth(auth)
+    if problems:
+        return JSONResponse({"ok": False, "error": "; ".join(problems)})
+    try:
+        store = build_s3_store(mount)
+        entries = store.list_dir(mount.prefix)
+        sample = [name + ("/" if is_dir else "") for name, is_dir, *_ in entries[:20]]
+    except Exception as exc:  # noqa: BLE001 - surface a clean, secret-free message
+        return JSONResponse({"ok": False, "error": str(exc)})
+    return JSONResponse({"ok": True, "bucket": root, "auth_mode": auth.mode,
+                         "sample": sample, "sample_count": len(sample)})
 
 
 @router.post("/api/connect")

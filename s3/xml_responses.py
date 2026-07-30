@@ -42,12 +42,17 @@ def list_objects_v2_response(
     *,
     delimiter: str = "",
     common_prefixes: list[str] | None = None,
+    max_keys: int = 1000,
+    is_truncated: bool = False,
+    next_continuation_token: str | None = None,
 ) -> bytes:
     """
     Build a ListObjectsV2 XML response body.
 
     `objects` is the flat list of matched object descriptors.
     `common_prefixes` is the list of virtual directory prefixes (if delimiter used).
+    `max_keys` / `is_truncated` / `next_continuation_token` carry S3 pagination;
+    the defaults reproduce a single, complete (non-truncated) page.
     """
     root = ET.Element("ListBucketResult", xmlns="http://s3.amazonaws.com/doc/2006-03-01/")
 
@@ -55,8 +60,10 @@ def list_objects_v2_response(
     ET.SubElement(root, "Prefix").text = prefix
     # KeyCount matches AWS S3: number of keys returned = Contents + CommonPrefixes.
     ET.SubElement(root, "KeyCount").text = str(len(objects) + len(common_prefixes or []))
-    ET.SubElement(root, "MaxKeys").text = "1000"
-    ET.SubElement(root, "IsTruncated").text = "false"
+    ET.SubElement(root, "MaxKeys").text = str(max_keys)
+    ET.SubElement(root, "IsTruncated").text = "true" if is_truncated else "false"
+    if next_continuation_token:
+        ET.SubElement(root, "NextContinuationToken").text = next_continuation_token
     if delimiter:
         ET.SubElement(root, "Delimiter").text = delimiter
 

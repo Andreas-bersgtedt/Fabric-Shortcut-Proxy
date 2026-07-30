@@ -302,6 +302,57 @@ class CredentialStore:
     def list_ids(self) -> list[str]:
         return sorted(self._load().get("connections", {}).keys())
 
+    # -- secrets (encrypted JSON blobs, e.g. upstream S3 auth) -------------
+    def set_secret(self, secret_id: str, obj: dict) -> None:
+        """Encrypt and persist an arbitrary JSON secret (e.g. an S3 auth blob)."""
+        if not self.available:
+            raise RuntimeError(
+                "credential store unavailable (no encryption backend). On non-Windows "
+                "hosts install 'cryptography' or set FSP_CRED_KEY.")
+        sid = (secret_id or "").strip()
+        if not sid:
+            raise ValueError("secret_id must be non-empty")
+        payload = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        token = base64.b64encode(self._cipher.encrypt(payload)).decode("ascii")
+        data = self._load()
+        if not self._backend_matches(data) and data.get("secrets"):
+            # Backend changed: old ciphertext is unreadable, so start fresh.
+            data["secrets"] = {}
+        data.setdefault("secrets", {})[sid] = {
+            "enc": token,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        self._save(data)
+
+    def get_secret(self, secret_id: str) -> dict | None:
+        """Decrypt and return a JSON secret, or ``None`` if absent/unreadable."""
+        if not self.available:
+            return None
+        data = self._load()
+        if not self._backend_matches(data):
+            return None
+        entry = data.get("secrets", {}).get((secret_id or "").strip())
+        if not isinstance(entry, dict) or not entry.get("enc"):
+            return None
+        try:
+            raw = self._cipher.decrypt(base64.b64decode(entry["enc"])).decode("utf-8")
+            return json.loads(raw)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[credential_store] could not decrypt secret {secret_id!r}: {exc}", file=sys.stderr)
+            return None
+
+    def delete_secret(self, secret_id: str) -> bool:
+        sid = (secret_id or "").strip()
+        data = self._load()
+        if sid in data.get("secrets", {}):
+            del data["secrets"][sid]
+            self._save(data)
+            return True
+        return False
+
+    def list_secret_ids(self) -> list[str]:
+        return sorted(self._load().get("secrets", {}).keys())
+
     def status(self) -> dict:
         """Non-secret summary for the UI (never returns plaintext URLs)."""
         data = self._load()

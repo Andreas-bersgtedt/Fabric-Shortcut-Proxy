@@ -70,3 +70,6 @@ config.tables.json
 *.env
 .env.local
 secrets.json
+
+# Encrypted credential store (Manager-owned; DPAPI/Fernet ciphertext + key file)
+secrets/

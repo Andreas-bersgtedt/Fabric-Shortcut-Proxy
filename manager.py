@@ -12,6 +12,14 @@ Standalone mode (no Manager) is still just ``python main.py``.
 """
 from __future__ import annotations
 
+# Hydrate DB credentials from the Manager's encrypted credential store into the
+# process environment BEFORE config is imported, so both the Manager and the
+# Agents it spawns see the full (password-bearing) DB URLs. An env var already
+# set (e.g. via -DbUrl) always wins; the store only fills what is missing.
+from security.credential_store import hydrate_environment
+
+hydrate_environment()
+
 import config
 from control.manager_app import app
 

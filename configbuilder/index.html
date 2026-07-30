@@ -175,7 +175,9 @@
     </details>
     <div class="actions">
       <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
+      <button class="btn ghost" id="btnSaveCred" title="Encrypt this connection's password in the Manager credential store so it survives a restart">🔒 Save credentials to Manager</button>
     </div>
+    <div class="hint" id="credHint" style="margin-top:8px;">Passwords are never written to config files. <b>Save credentials to Manager</b> encrypts the password (Windows DPAPI / Fernet) so the connection survives a restart — no env var needed.</div>
     <div class="status" id="connStatus"></div>
   </div>
 </div>
@@ -365,7 +367,10 @@ const state = {
   tables: [],                // [{schema,name,kind}] for the ACTIVE connection
   connection: null,          // active conn's form snapshot (for /inspect)
   selected: new Map(),       // key `${connId}::${source_table}` -> table cfg
-  expandedGroups: new Set()  // connection ids whose table group is expanded in the Tables tab
+  expandedGroups: new Set(), // connection ids whose table group is expanded in the Tables tab
+  storedCreds: new Set(),    // connection ids with an encrypted credential in the Manager store
+  credBackend: "",           // encryption backend the Manager store is using
+  credAvailable: false       // whether the Manager can encrypt/persist credentials
 };
 
 // Composite key so same-named tables from different sources never collide.
@@ -514,10 +519,11 @@ function renderConnList(){
       ? `${c.id} <span class="badge">primary</span>`
       : c.id;
     const testBadge = c.tested ? '<span class="badge ok">tested</span>' : '<span class="badge warn">not tested</span>';
+    const storedBadge = state.storedCreds.has(c.id) ? ' <span class="badge ok" title="Password saved (encrypted) in the Manager — survives a restart">🔒 stored</span>' : '';
     const urlLine = c.db_url_masked
       ? c.db_url_masked
       : (c.host ? (c.dialect + " · " + c.host + (c.database ? "/"+c.database : "")) : "not configured yet");
-    left.innerHTML = `<div class="cid">${idLabel} ${testBadge}</div>`
+    left.innerHTML = `<div class="cid">${idLabel} ${testBadge}${storedBadge}</div>`
       + `<div class="meta">${c.flavor || c.dialect || ""} · ${urlLine}</div>`
       + `<div class="meta">${n} table(s) selected</div>`;
     const acts = document.createElement("div"); acts.className = "connacts";
@@ -612,6 +618,8 @@ async function loadBuilderBootstrap(){
     const d = await r.json();
     if(r.ok) applyBootstrap(d.builder || {});
   }catch(e){ /* keep local/default form when bootstrap is unavailable */ }
+  await refreshCredStatus();
+  renderConnList();
 }
 
 async function api(path, body){
@@ -648,6 +656,47 @@ $("btnConnect").onclick = async () => {
   s.textContent = `✓ Connected as '${connId}'${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
   renderConnList(); renderTables(); persistConns();
   document.querySelector('[data-tab="tables"]').click(); renderSelected();
+};
+
+// ---- credential store (persist DB passwords in the Manager, encrypted) ----
+async function refreshCredStatus(){
+  try{
+    const r = await fetch("/_config/api/credentials").then(x=>x.json());
+    state.credAvailable = !!r.available;
+    state.credBackend = r.backend || "";
+    state.storedCreds = new Set((r.connections||[]).map(c=>c.id));
+  }catch(e){ state.storedCreds = new Set(); }
+  const h = $("credHint");
+  if(h){
+    if(state.credAvailable){
+      h.innerHTML = `Passwords are never written to config files. <b>Save credentials to Manager</b> encrypts the password `
+        + `(<code>${state.credBackend}</code>) so the connection survives a restart — no env var needed.`;
+    } else {
+      h.innerHTML = `⚠ The Manager can't encrypt credentials on this host (no backend). Install <code>cryptography</code> `
+        + `or set <code>FSP_CRED_KEY</code>, or supply the password via the <code>DB_URL</code> env var.`;
+    }
+  }
+}
+
+$("btnSaveCred").onclick = async () => {
+  commitActive();
+  const c = state.connections.get(state.activeConnId);
+  const s = $("connStatus");
+  if(!c || !c.db_url || !hasPw(c.db_url)){
+    s.className="status err";
+    s.textContent="Test the connection with a password first, then save it to the Manager.";
+    return;
+  }
+  $("btnSaveCred").disabled = true;
+  s.className="status"; s.textContent="Saving encrypted credential to the Manager…";
+  const r = await api("/_config/api/credentials", { connection_id:c.id, db_url:c.db_url, apply:true });
+  $("btnSaveCred").disabled = false;
+  if(!r.ok){ s.className="status err"; s.textContent="✗ "+(r.error||"could not save credential"); return; }
+  s.className="status ok";
+  s.textContent = `🔒 Saved (${r.backend}) as ${r.env_var}.`
+    + (r.restarted ? ` Restarted ${r.restarted} agent(s) — the credential is live.` : ` ${r.note||""}`);
+  await refreshCredStatus();
+  renderConnList();
 };
 
 // ---- add a new connection ----

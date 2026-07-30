@@ -13,6 +13,7 @@ The generated ``config.json`` is assembled client-side from these responses.
 """
 from __future__ import annotations
 
+import os
 import pathlib
 
 from fastapi import APIRouter, Request
@@ -28,6 +29,7 @@ from db.reflect import (
     UnsupportedDialect,
 )
 from observability.logging import get_logger
+from security.credential_store import CredentialStore, env_var_for
 
 log = get_logger(__name__)
 
@@ -266,6 +268,107 @@ async def apply_config(request: Request) -> JSONResponse:
             )
         ),
     })
+
+
+# ---------------------------------------------------------------------------
+# Credential store (persist DB credentials so they survive a restart)
+# ---------------------------------------------------------------------------
+
+def _store() -> CredentialStore:
+    return CredentialStore(config.CREDENTIAL_STORE_PATH or None)
+
+
+async def _restart_agents(request: Request) -> int:
+    """Restart supervised Agents so they re-read the updated environment.
+
+    Returns the number restarted (0 if this app supervises no Agents).
+    """
+    sups = getattr(request.app.state, "supervisors", None) or []
+    n = 0
+    for sup in sups:
+        try:
+            await sup.stop()
+            await sup.start()
+            n += 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cred_apply_restart_failed", agent=getattr(sup, "name", "?"), error=str(exc))
+    return n
+
+
+@router.get("/api/credentials")
+async def list_credentials() -> JSONResponse:
+    """Non-secret status of the Manager credential store (never returns URLs)."""
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "enabled": False,
+                             "error": "credential store is disabled (ENABLE_CREDENTIAL_STORE=0)"})
+    return JSONResponse({"ok": True, "enabled": True, **_store().status()})
+
+
+@router.post("/api/credentials")
+async def save_credential(request: Request) -> JSONResponse:
+    """Encrypt + persist a connection's DB URL so it survives a restart.
+
+    Body: ``{connection_id, db_url}`` OR ``{connection_id, connection: {..fields}}``.
+    Optional ``apply: true`` restarts the Agents so the new credential takes
+    effect now (otherwise it applies on the next Manager start).
+    """
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled (ENABLE_CREDENTIAL_STORE=0)"},
+                            status_code=400)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    cid = str(body.get("connection_id") or "default").strip() or "default"
+
+    db_url = str(body.get("db_url") or "").strip()
+    if not db_url and isinstance(body.get("connection"), dict):
+        try:
+            db_url = build_url(**_conn_fields(body["connection"])).render_as_string(hide_password=False)
+        except (UnsupportedDialect, ValueError) as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    if not db_url:
+        return JSONResponse({"ok": False, "error": "provide db_url or connection fields"}, status_code=400)
+
+    st = _store()
+    if not st.available:
+        return JSONResponse({"ok": False, "backend": st.backend_name,
+                             "error": "no encryption backend available; on non-Windows hosts install "
+                                      "'cryptography' or set FSP_CRED_KEY"}, status_code=400)
+    try:
+        st.set_url(cid, db_url)
+    except (RuntimeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    env_var = env_var_for(cid)
+    # Update THIS process's env so a subsequent Agent restart inherits the new URL.
+    os.environ[env_var] = db_url
+
+    apply_now = bool(body.get("apply"))
+    restarted = await _restart_agents(request) if apply_now else 0
+
+    log.info("credential_saved", connection=cid, env_var=env_var,
+             backend=st.backend_name, applied=apply_now, restarted=restarted)
+    return JSONResponse({
+        "ok": True,
+        "connection_id": cid,
+        "env_var": env_var,
+        "backend": st.backend_name,
+        "applied": apply_now,
+        "restarted": restarted,
+        "note": ("Saved and restarted Agents — the new credential is live."
+                 if apply_now else
+                 "Saved (encrypted). Restart the Manager/Agents to apply."),
+    })
+
+
+@router.delete("/api/credentials/{connection_id}")
+async def delete_credential(connection_id: str) -> JSONResponse:
+    """Remove a stored credential (running Agents keep it until the next restart)."""
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    removed = _store().delete(connection_id)
+    log.info("credential_deleted", connection=connection_id, removed=removed)
+    return JSONResponse({"ok": True, "connection_id": connection_id, "removed": removed})
 
 
 @router.post("/api/connect")

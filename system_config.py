@@ -115,6 +115,17 @@ ENABLE_CONFIG_BUILDER: bool = _get_bool("ENABLE_CONFIG_BUILDER", "enable_config_
 ENABLE_MONITOR: bool = _get_bool("ENABLE_MONITOR", "enable_monitor", False)
 
 # ---------------------------------------------------------------------------
+# Credential store (Manager-owned; persists DB URLs across restarts)
+# ---------------------------------------------------------------------------
+
+# Allow operators to save encrypted DB credentials via the config builder so they
+# survive a restart (hydrated into DB_URL / DB_URL_<ID> when the Manager starts).
+ENABLE_CREDENTIAL_STORE: bool = _get_bool("ENABLE_CREDENTIAL_STORE", "enable_credential_store", True)
+
+# Override the store file location ("" => <repo>/secrets/credentials.json).
+CREDENTIAL_STORE_PATH: str = _get_str("CREDENTIAL_STORE_PATH", "credential_store_path", "")
+
+# ---------------------------------------------------------------------------
 # Artifact Store (cluster seam — Phase 0)
 # ---------------------------------------------------------------------------
 

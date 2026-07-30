@@ -57,10 +57,15 @@
     Sets ENABLE_CONFIG_BUILDER=1.
 
 .PARAMETER AllowConfigDbCreds
-    Permit an inline DB credential in the local (gitignored) config.connection.json
-    db_url instead of hard-failing at startup. Sets ALLOW_CONFIG_DB_CREDENTIALS=1.
-    Prefer -DbUrl (DB_URL env var) or passwordless auth; only use this for a
-    local file you never commit.
+    Deprecated / no-op: allowing an inline db_url in the local (gitignored)
+    config.connection.json is now the Manager.ps1 default. Use
+    -StrictDbCredentials to opt back into the strict startup gate.
+
+.PARAMETER StrictDbCredentials
+    Enforce the secure-by-default startup gate that REJECTS an inline DB
+    credential in config.connection.json db_url. By default this local launcher
+    ALLOWS it (config files are local, gitignored, per-deployment). Pass this to
+    require the DB_URL env var (-DbUrl) or passwordless auth instead.
 
 .PARAMETER AdminToken
     Token required for mutating /_manager actions (X-Admin-Token header or ?token=).
@@ -144,6 +149,7 @@ param(
     [switch]$AdminUi,
     [switch]$ConfigUi,
     [switch]$AllowConfigDbCreds,
+    [switch]$StrictDbCredentials,
     [string]$AdminToken,
     [switch]$Ha,
     [switch]$RetentionGc,
@@ -403,7 +409,10 @@ if ($PSBoundParameters.ContainsKey("AgentCount"))    { $env:AGENT_COUNT  = "$Age
 if ($Gateway)                                        { $env:ENABLE_GATEWAY = "1" }
 if ($AdminUi)                                        { $env:ENABLE_ADMIN_UI = "1" }
 if ($ConfigUi)                                       { $env:ENABLE_CONFIG_BUILDER = "1" }
-if ($AllowConfigDbCreds)                             { $env:ALLOW_CONFIG_DB_CREDENTIALS = "1" }
+# Local launcher: config.connection.json is a local, gitignored per-deployment file, so allow
+# an inline db_url by default. -StrictDbCredentials re-enables the secure startup gate.
+$env:ALLOW_CONFIG_DB_CREDENTIALS = "1"
+if ($StrictDbCredentials)                            { $env:ALLOW_CONFIG_DB_CREDENTIALS = "0" }
 if ($PSBoundParameters.ContainsKey("AdminToken"))    { $env:ADMIN_TOKEN  = $AdminToken }
 if ($Ha)                                             { $env:MANAGER_HA = "1" }
 if ($RetentionGc)                                    { $env:RETENTION_GC = "1" }

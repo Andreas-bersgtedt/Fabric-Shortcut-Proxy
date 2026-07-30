@@ -80,14 +80,15 @@ def _get_float(env: str | None, key: str, default: float) -> float:
 # ---------------------------------------------------------------------------
 
 # SQLAlchemy async connection URL.
-# SECURITY: Load from DB_URL environment variable (never hardcode passwords).
+# SECURITY: For real databases, set the DB_URL environment variable (never hardcode
+# passwords). The default below is the credential-free local SQLite POC database.
 # Examples:
 #   PostgreSQL : postgresql+asyncpg://user:pass@host/db
 #   SQL Server : mssql+aioodbc://user:pass@host/db?driver=ODBC+Driver+18+for+SQL+Server
 #   Oracle     : oracle+oracledb://user:pass@host:1521/ORCL
 #   Databricks : databricks://token:dapi...@<server-hostname>/<catalog>/<schema>
 #   SQLite     : sqlite+aiosqlite:///./poc_source.db
-DB_URL: str = _get_str("DB_URL", "db_url", "")
+DB_URL: str = _get_str("DB_URL", "db_url", "sqlite+aiosqlite:///./poc_source.db")
 
 # Single-table mode defaults (legacy; prefer config.json "tables" array)
 DB_SOURCE_TABLE: str = _get_str("DB_SOURCE_TABLE", "source_table", "sales")

@@ -14,6 +14,7 @@ import urllib.request
 from pyiceberg.io import InputFile, InputStream, OutputFile, FileIO
 
 SERVER = os.environ.get("S3EMU_SERVER", "http://127.0.0.1:9000")
+BUCKET = os.environ.get("S3EMU_BUCKET", "fabric-iceberg-poc")
 
 
 def _to_http(location: str) -> str:
@@ -65,8 +66,33 @@ class _HTTPFileIO(FileIO):
         raise NotImplementedError("read-only")
 
 
+def _discover_metadata_location() -> str:
+    """Find the table's current root ``metadata.json`` via ListObjectsV2.
+
+    The served object layout (warehouse prefix, canonical vs legacy paths) is a
+    server-side detail, so we discover the metadata key from the bucket listing
+    instead of hardcoding it. Picks the highest ``vN.metadata.json``.
+    """
+    import xml.etree.ElementTree as ET
+
+    listing = urllib.request.urlopen(f"{SERVER}/{BUCKET}/?list-type=2").read()
+    root = ET.fromstring(listing)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    keys = [e.text or "" for e in root.findall(".//s3:Contents/s3:Key", ns)]
+    metas = [k for k in keys if k.endswith(".metadata.json")]
+    if not metas:
+        raise SystemExit(f"no *.metadata.json found in bucket {BUCKET!r}; keys={keys[:20]}")
+
+    def _version(key: str) -> int:
+        name = key.rsplit("/", 1)[-1]           # e.g. v3.metadata.json
+        digits = name[1:].split(".", 1)[0]
+        return int(digits) if name.startswith("v") and digits.isdigit() else -1
+
+    return f"s3://{BUCKET}/{max(metas, key=_version)}"
+
+
 def main() -> None:
-    meta_loc = "s3://fabric-iceberg-poc/warehouse/db/sales/metadata/v1.metadata.json"
+    meta_loc = _discover_metadata_location()
     print("Loading table from", meta_loc)
 
     from pyiceberg.serializers import FromInputFile

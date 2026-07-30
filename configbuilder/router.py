@@ -375,6 +375,97 @@ async def delete_credential(connection_id: str) -> JSONResponse:
     return JSONResponse({"ok": True, "connection_id": connection_id, "removed": removed})
 
 
+def _s3_auth_blob(auth) -> dict:
+    """Reduce a parsed S3AuthConfig to the minimal stored blob for its mode."""
+    blob: dict = {"mode": auth.mode}
+    if auth.mode in ("static", "session"):
+        blob["access_key"] = auth.access_key
+        blob["secret_key"] = auth.secret_key
+        if auth.mode == "session":
+            blob["session_token"] = auth.session_token
+    elif auth.mode == "assume_role":
+        blob["role_arn"] = auth.role_arn
+        if auth.external_id:
+            blob["external_id"] = auth.external_id
+        if auth.session_name:
+            blob["session_name"] = auth.session_name
+        if auth.duration_seconds:
+            blob["duration_seconds"] = auth.duration_seconds
+    elif auth.mode == "web_identity":
+        blob["role_arn"] = auth.role_arn
+        blob["web_identity_token_file"] = auth.web_identity_token_file
+        if auth.session_name:
+            blob["session_name"] = auth.session_name
+    elif auth.mode in ("profile", "sso"):
+        blob["profile"] = auth.profile
+    elif auth.mode == "process":
+        blob["credential_process"] = auth.credential_process
+    return blob
+
+
+@router.get("/api/s3-credentials")
+async def list_s3_credentials() -> JSONResponse:
+    """Non-secret list of stored upstream S3 credential ids."""
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "enabled": False,
+                             "error": "credential store is disabled (ENABLE_CREDENTIAL_STORE=0)"})
+    st = _store()
+    return JSONResponse({"ok": True, "enabled": True, "available": st.available,
+                         "backend": st.backend_name, "ids": st.list_secret_ids()})
+
+
+@router.post("/api/s3-credentials")
+async def save_s3_credential(request: Request) -> JSONResponse:
+    """Encrypt + persist an upstream S3 credential blob, keyed by an id.
+
+    Body: ``{credential_id, auth: {mode, ...}}``. Secrets are validated per mode
+    and stored encrypted; only the id is ever returned.
+    """
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled (ENABLE_CREDENTIAL_STORE=0)"},
+                            status_code=400)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    cid = str(body.get("credential_id") or "").strip()
+    if not cid:
+        return JSONResponse({"ok": False, "error": "credential_id is required"}, status_code=400)
+    auth_in = body.get("auth")
+    if not isinstance(auth_in, dict):
+        return JSONResponse({"ok": False, "error": "auth object is required"}, status_code=400)
+
+    from storage.s3_auth import parse_s3_auth, validate_s3_auth
+    auth = parse_s3_auth(auth_in)
+    problems = validate_s3_auth(auth)
+    if problems:
+        return JSONResponse({"ok": False, "errors": problems}, status_code=400)
+
+    st = _store()
+    if not st.available:
+        return JSONResponse({"ok": False, "backend": st.backend_name,
+                             "error": "no encryption backend available; on non-Windows hosts install "
+                                      "'cryptography' or set FSP_CRED_KEY"}, status_code=400)
+    try:
+        st.set_secret(cid, _s3_auth_blob(auth))
+    except (RuntimeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    log.info("s3_credential_saved", credential=cid, mode=auth.mode, backend=st.backend_name)
+    return JSONResponse({"ok": True, "credential_id": cid, "mode": auth.mode,
+                         "backend": st.backend_name,
+                         "note": "Saved (encrypted). Restart the Manager/Agents to apply to serving."})
+
+
+@router.delete("/api/s3-credentials/{credential_id}")
+async def delete_s3_credential(credential_id: str) -> JSONResponse:
+    """Remove a stored S3 credential (running Agents keep it until the next restart)."""
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    removed = _store().delete_secret(credential_id)
+    log.info("s3_credential_deleted", credential=credential_id, removed=removed)
+    return JSONResponse({"ok": True, "credential_id": credential_id, "removed": removed})
+
+
 # ---------------------------------------------------------------------------
 # Storage proxy mounts (config.mounts.json)
 # ---------------------------------------------------------------------------

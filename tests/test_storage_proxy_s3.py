@@ -259,3 +259,69 @@ async def test_s3_mount_advertised_in_listbuckets(s3_proxy_app):
     async with _client(s3_proxy_app) as c:
         r = await c.get("/")
         assert r.status_code == 200 and "s3vault" in r.text
+
+
+# ---------------------------------------------------------------------------
+# S3 credential endpoints (Storage tab wiring) + round-trip resolve
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def cb_app(tmp_path, monkeypatch):
+    from fastapi import FastAPI as _FastAPI
+    from configbuilder.router import router as cb_router
+    monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True, raising=False)
+    monkeypatch.setattr(config, "CREDENTIAL_STORE_PATH", str(tmp_path / "credentials.json"), raising=False)
+    a = _FastAPI()
+    a.include_router(cb_router)
+    return a
+
+
+async def test_s3_credential_save_list_resolve_delete(cb_app, tmp_path):
+    from security.credential_store import CredentialStore
+    if not CredentialStore(str(tmp_path / "credentials.json")).available:
+        pytest.skip("no encryption backend available on this host")
+    async with _client(cb_app) as c:
+        r = await c.post("/_config/api/s3-credentials", json={
+            "credential_id": "s3vault",
+            "auth": {"mode": "static", "access_key": "AKIA...", "secret_key": "SECRET"}})
+        d = r.json()
+        assert d["ok"] is True and d["mode"] == "static"
+
+        lst = (await c.get("/_config/api/s3-credentials")).json()
+        assert lst["ok"] is True and "s3vault" in lst["ids"]
+
+        # The saved secret resolves back for a mount referencing it.
+        store = CredentialStore(str(tmp_path / "credentials.json"))
+        auth = s3_auth.resolve_s3_auth(Mount("s3vault", "s3", root="up", credential="s3vault"), store=store)
+        assert auth.mode == "static" and auth.access_key == "AKIA..."
+
+        del_resp = (await c.request("DELETE", "/_config/api/s3-credentials/s3vault")).json()
+        assert del_resp["ok"] is True and del_resp["removed"] is True
+
+
+async def test_s3_credential_rejects_invalid(cb_app, tmp_path):
+    from security.credential_store import CredentialStore
+    if not CredentialStore(str(tmp_path / "credentials.json")).available:
+        pytest.skip("no encryption backend available on this host")
+    async with _client(cb_app) as c:
+        r = await c.post("/_config/api/s3-credentials", json={
+            "credential_id": "bad", "auth": {"mode": "static"}})   # missing keys
+        assert r.status_code == 400 and r.json()["ok"] is False
+
+
+async def test_s3_mount_save_persists_connection_knobs(cb_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("MOUNTS_CONFIG_FILE", str(tmp_path / "config.mounts.json"))
+    async with _client(cb_app) as c:
+        r = await c.post("/_config/api/mounts", json={"mounts": [{
+            "bucket": "s3vault", "backend": "s3", "root": "reports-bucket",
+            "endpoint": "https://minio.local:9000", "region": "us-east-1",
+            "addressing_style": "path", "credential": "s3vault", "prefix": "2026"}]})
+        d = r.json()
+        assert d["ok"] is True and d["count"] == 1
+        written = (tmp_path / "config.mounts.json").read_text(encoding="utf-8")
+        assert "minio.local" in written and "reports-bucket" in written and "path" in written
+
+        # s3 mount missing both credential and auth is rejected.
+        r2 = await c.post("/_config/api/mounts", json={"mounts": [{
+            "bucket": "noauth", "backend": "s3", "root": "b"}]})
+        assert r2.status_code == 400 and "credential" in " ".join(r2.json()["errors"]).lower()

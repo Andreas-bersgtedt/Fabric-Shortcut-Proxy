@@ -210,12 +210,12 @@
 <!-- STORAGE TAB -->
 <div id="storage-tab" class="tab-content">
   <div class="card">
-    <h2>Storage Proxy <span style="font-weight:400;text-transform:none;">(secured NFS/SMB passthrough)</span></h2>
+    <h2>Storage Proxy <span style="font-weight:400;text-transform:none;">(secured file / object passthrough)</span></h2>
     <div class="hint" style="margin-bottom:12px;">Serve <b>existing files</b> from a storage backend through this proxy's S3 endpoint,
-      <b>alongside</b> your database tables. Phase 1 supports the <code>local</code> backend — a filesystem path, which covers an
-      <b>OS-mounted NFS or SMB share</b> (a UNC path like <code>\\server\share</code> or a mount point like <code>/mnt/share</code>).
-      Each mount maps one S3 <b>bucket</b> to a backend path and is served <b>read-only</b>. Changes save to
-      <code>config.mounts.json</code> and apply on the next restart.</div>
+      <b>alongside</b> your database tables. Backends: <code>local</code> — a filesystem path (an
+      <b>OS-mounted NFS or SMB share</b>, e.g. <code>\\server\share</code> or <code>/mnt/share</code>); and
+      <code>s3</code> — a native upstream <b>S3 / MinIO / S3-compatible</b> bucket. Each mount maps one S3 <b>bucket</b>
+      to a backend and is served <b>read-only</b>. Changes save to <code>config.mounts.json</code> and apply on the next restart.</div>
 
     <div class="checkbox" style="margin:6px 0 14px;">
       <input type="checkbox" id="storageEnabled" />
@@ -232,21 +232,79 @@
 
   <div class="card" style="margin-top:16px;">
     <h2 id="mountEditTitle">Edit mount</h2>
-    <div class="hint" style="margin-bottom:12px;">Fill in the details, <b>Test path</b> to verify the share is reachable, then <b>Add / update</b>.</div>
+    <div class="hint" style="margin-bottom:12px;">Fill in the details, <b>Test</b> to verify the backend is reachable, then <b>Add / update</b>.</div>
     <label>Bucket <span class="hint">(the S3 bucket name Fabric/clients will use)</span></label>
     <input id="mountBucket" placeholder="secure-nfs" />
     <label>Backend</label>
-    <select id="mountBackend">
-      <option value="local">local — filesystem / NFS / SMB mount</option>
-    </select>
-    <label>Root path</label>
+    <select id="mountBackend"></select>
+    <label id="mountRootLabel">Root path</label>
     <input id="mountRoot" placeholder="Z:\finance   ·   /mnt/share   ·   \\server\share" />
     <label>Prefix <span class="hint">(optional — confine serving to this subfolder)</span></label>
     <input id="mountPrefix" placeholder="reports/" />
+
+    <!-- S3-only connection + auth fields -->
+    <div id="s3Conn" style="display:none;">
+      <hr style="border:none;border-top:1px solid var(--border,#2a2a3a);margin:14px 0;" />
+      <label>Endpoint <span class="hint">(optional — MinIO/Ceph/R2/…; blank = AWS S3)</span></label>
+      <input id="mountEndpoint" placeholder="https://minio.local:9000" />
+      <label>Region <span class="hint">(optional)</span></label>
+      <input id="mountRegion" placeholder="us-east-1" />
+      <label>Addressing style</label>
+      <select id="mountAddressing">
+        <option value="">auto (path for custom endpoints)</option>
+        <option value="path">path — MinIO / Ceph</option>
+        <option value="virtual">virtual-hosted</option>
+      </select>
+      <label>Signature version</label>
+      <select id="mountSigVer">
+        <option value="">default (SigV4)</option>
+        <option value="s3v4">s3v4</option>
+        <option value="s3">s3 (SigV2 — legacy)</option>
+      </select>
+      <label>Verify TLS <span class="hint">(blank = verify · <code>false</code> = skip · or a CA bundle path)</span></label>
+      <input id="mountVerify" placeholder="false   ·   /etc/ssl/minio-ca.pem" />
+      <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="mountFips" /><span>Use FIPS endpoints</span></div>
+      <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="mountDualstack" /><span>Use dual-stack endpoints</span></div>
+
+      <label>Authentication</label>
+      <select id="mountAuthSource">
+        <option value="credential">Stored credential (recommended)</option>
+        <option value="anonymous">Anonymous — public bucket</option>
+        <option value="instance">Instance role / default provider chain</option>
+      </select>
+
+      <div id="s3CredBox">
+        <label>Credential id <span class="hint">(names the encrypted secret this mount uses)</span></label>
+        <input id="mountCredential" placeholder="s3vault" />
+        <div class="hint" style="margin:4px 0 10px;">Enter the upstream secret below and <b>Save S3 credential</b> to store it encrypted in the Manager. The secret is never written to <code>config.mounts.json</code>.</div>
+        <label>Auth type</label>
+        <select id="s3AuthMode">
+          <option value="static">static — access key + secret</option>
+          <option value="session">session — keys + session token (STS)</option>
+          <option value="assume_role">assume_role — STS role (auto-refresh)</option>
+          <option value="web_identity">web_identity — OIDC / EKS IRSA</option>
+          <option value="profile">profile — a named ~/.aws profile</option>
+          <option value="sso">sso — IAM Identity Center profile</option>
+          <option value="process">process — credential_process command</option>
+        </select>
+        <div class="s3f" data-modes="static session"><label>Access key</label><input id="s3AccessKey" placeholder="AKIA…" /></div>
+        <div class="s3f" data-modes="static session"><label>Secret key</label><input id="s3SecretKey" type="password" placeholder="Enter secret_access_key" /></div>
+        <div class="s3f" data-modes="session"><label>Session token</label><input id="s3SessionToken" type="password" placeholder="STS session token" /></div>
+        <div class="s3f" data-modes="assume_role web_identity"><label>Role ARN</label><input id="s3RoleArn" placeholder="arn:aws:iam::123456789012:role/reader" /></div>
+        <div class="s3f" data-modes="assume_role"><label>External id <span class="hint">(optional)</span></label><input id="s3ExternalId" /></div>
+        <div class="s3f" data-modes="assume_role web_identity"><label>Session name <span class="hint">(optional)</span></label><input id="s3SessionName" placeholder="fsp-proxy" /></div>
+        <div class="s3f" data-modes="web_identity"><label>Web identity token file</label><input id="s3TokenFile" placeholder="/var/run/secrets/eks.amazonaws.com/serviceaccount/token" /></div>
+        <div class="s3f" data-modes="profile sso"><label>Profile</label><input id="s3Profile" placeholder="default" /></div>
+        <div class="s3f" data-modes="process"><label>credential_process command</label><input id="s3Process" placeholder="/usr/local/bin/cred-helper --json" /></div>
+        <div class="actions"><button class="btn ghost" id="btnSaveS3Cred">🔒 Save S3 credential</button></div>
+        <div class="status" id="s3CredStatus"></div>
+      </div>
+    </div>
+
     <div class="checkbox" style="margin:8px 0;"><input type="checkbox" id="mountReadOnly" checked disabled />
-      <span>Read-only (Phase 1 serves read-only)</span></div>
+      <span>Read-only</span></div>
     <div class="actions">
-      <button class="btn ghost" id="btnTestMount">Test path</button>
+      <button class="btn ghost" id="btnTestMount">Test</button>
       <button class="btn primary" id="btnApplyMount">Add / update mount</button>
     </div>
     <div class="status" id="mountEditStatus"></div>
@@ -1242,6 +1300,10 @@ $("settingsSearch").addEventListener("input", renderSettings);
 
 // ---- storage proxy mounts (Storage tab) ----
 const mountState = { mounts: [], enabled: false, reserved: "", supported: ["local"] };
+const BACKEND_LABELS = {
+  local: "local — filesystem / NFS / SMB mount",
+  s3: "s3 — AWS S3 / MinIO / S3-compatible",
+};
 
 async function loadMounts(){
   try{
@@ -1254,20 +1316,38 @@ async function loadMounts(){
       $("storageEnabled").checked = mountState.enabled;
     }
   }catch(e){ /* keep empty on failure */ }
+  populateBackendOptions();
   renderMounts();
+}
+
+function populateBackendOptions(){
+  const sel = $("mountBackend");
+  const cur = sel.value;
+  sel.innerHTML = "";
+  for(const b of mountState.supported){
+    const o = document.createElement("option");
+    o.value = b; o.textContent = BACKEND_LABELS[b] || b;
+    sel.appendChild(o);
+  }
+  if(cur && mountState.supported.includes(cur)) sel.value = cur;
 }
 
 function renderMounts(){
   const wrap = $("mountList"); wrap.innerHTML = "";
   if(!mountState.mounts.length){
-    wrap.innerHTML = '<div class="hint">No mounts yet. Add one below to serve a file share as an S3 bucket.</div>';
+    wrap.innerHTML = '<div class="hint">No mounts yet. Add one below to serve a file share or S3 bucket.</div>';
     return;
   }
   for(const m of mountState.mounts){
     const row = document.createElement("div"); row.className = "connrow";
     const left = document.createElement("div");
-    left.innerHTML = `<div class="cid">${m.bucket} <span class="badge">${m.backend}</span> <span class="badge ok">read-only</span></div>`
-      + `<div class="meta">${m.root||""}${m.prefix?(" · /"+m.prefix):""}</div>`;
+    const where = m.backend === "s3"
+      ? (m.endpoint ? m.endpoint + "/" : "s3://") + m.root
+      : (m.root || "");
+    const authBadge = m.backend === "s3"
+      ? ` <span class="badge">${m.credential ? ("cred:"+m.credential) : (m.auth || "auth?")}</span>` : "";
+    left.innerHTML = `<div class="cid">${m.bucket} <span class="badge">${m.backend}</span> <span class="badge ok">read-only</span>${authBadge}</div>`
+      + `<div class="meta">${where}${m.prefix?(" · /"+m.prefix):""}</div>`;
     const acts = document.createElement("div"); acts.className = "connacts";
     const ed = document.createElement("button"); ed.className = "iconbtn"; ed.textContent = "Edit";
     ed.onclick = () => editMount(m.bucket);
@@ -1278,6 +1358,32 @@ function renderMounts(){
   }
 }
 
+function applyBackendVisibility(){
+  const backend = $("mountBackend").value;
+  const isS3 = backend === "s3";
+  $("s3Conn").style.display = isS3 ? "" : "none";
+  $("mountRootLabel").textContent = isS3 ? "Upstream bucket" : "Root path";
+  $("mountRoot").placeholder = isS3
+    ? "reports-bucket"
+    : "Z:\\finance   ·   /mnt/share   ·   \\\\server\\share";
+  $("btnTestMount").textContent = isS3 ? "Test connection" : "Test path";
+  if(isS3) applyAuthSourceVisibility();
+}
+
+function applyAuthSourceVisibility(){
+  const src = $("mountAuthSource").value;
+  $("s3CredBox").style.display = (src === "credential") ? "" : "none";
+  if(src === "credential") applyS3AuthModeVisibility();
+}
+
+function applyS3AuthModeVisibility(){
+  const mode = $("s3AuthMode").value;
+  for(const el of document.querySelectorAll("#s3CredBox .s3f")){
+    const modes = (el.getAttribute("data-modes") || "").split(/\s+/);
+    el.style.display = modes.includes(mode) ? "" : "none";
+  }
+}
+
 function editMount(bucket){
   const m = mountState.mounts.find(x => x.bucket === bucket);
   if(!m) return;
@@ -1285,23 +1391,81 @@ function editMount(bucket){
   $("mountBackend").value = m.backend || "local";
   $("mountRoot").value = m.root || "";
   $("mountPrefix").value = m.prefix || "";
+  // s3 connection knobs
+  $("mountEndpoint").value = m.endpoint || "";
+  $("mountRegion").value = m.region || "";
+  $("mountAddressing").value = m.addressing_style || "";
+  $("mountSigVer").value = m.signature_version || "";
+  $("mountVerify").value = m.verify_tls || "";
+  $("mountFips").checked = !!m.use_fips;
+  $("mountDualstack").checked = !!m.use_dualstack;
+  $("mountAuthSource").value = m.credential ? "credential" : (m.auth || "credential");
+  $("mountCredential").value = m.credential || "";
+  applyBackendVisibility();
   $("mountEditTitle").textContent = "Edit mount — " + m.bucket;
   $("mountEditStatus").textContent = "";
 }
 
 function readMountForm(){
-  return {
+  const backend = $("mountBackend").value;
+  const m = {
     bucket: $("mountBucket").value.trim(),
-    backend: $("mountBackend").value,
+    backend: backend,
     root: $("mountRoot").value.trim(),
     prefix: $("mountPrefix").value.trim().replace(/^\/+|\/+$/g, ""),
     read_only: true,
   };
+  if(backend === "s3"){
+    m.endpoint = $("mountEndpoint").value.trim();
+    m.region = $("mountRegion").value.trim();
+    m.addressing_style = $("mountAddressing").value;
+    m.signature_version = $("mountSigVer").value;
+    m.verify_tls = $("mountVerify").value.trim();
+    m.use_fips = $("mountFips").checked;
+    m.use_dualstack = $("mountDualstack").checked;
+    const src = $("mountAuthSource").value;
+    if(src === "credential"){ m.credential = $("mountCredential").value.trim(); m.auth = ""; }
+    else { m.credential = ""; m.auth = src; }
+  }
+  return m;
 }
+
+function readS3AuthForm(){
+  const mode = $("s3AuthMode").value;
+  const a = { mode };
+  if(mode === "static" || mode === "session"){
+    a.access_key = $("s3AccessKey").value.trim();
+    a.secret_key = $("s3SecretKey").value;
+    if(mode === "session") a.session_token = $("s3SessionToken").value;
+  }else if(mode === "assume_role"){
+    a.role_arn = $("s3RoleArn").value.trim();
+    a.external_id = $("s3ExternalId").value.trim();
+    a.session_name = $("s3SessionName").value.trim();
+  }else if(mode === "web_identity"){
+    a.role_arn = $("s3RoleArn").value.trim();
+    a.web_identity_token_file = $("s3TokenFile").value.trim();
+    a.session_name = $("s3SessionName").value.trim();
+  }else if(mode === "profile" || mode === "sso"){
+    a.profile = $("s3Profile").value.trim();
+  }else if(mode === "process"){
+    a.credential_process = $("s3Process").value.trim();
+  }
+  return a;
+}
+
+$("mountBackend").onchange = applyBackendVisibility;
+$("mountAuthSource").onchange = applyAuthSourceVisibility;
+$("s3AuthMode").onchange = applyS3AuthModeVisibility;
 
 $("btnAddMount").onclick = () => {
   $("mountBucket").value = ""; $("mountRoot").value = ""; $("mountPrefix").value = "";
-  $("mountBackend").value = "local"; $("mountEditTitle").textContent = "Add mount";
+  $("mountBackend").value = mountState.supported[0] || "local";
+  $("mountEndpoint").value = ""; $("mountRegion").value = ""; $("mountAddressing").value = "";
+  $("mountSigVer").value = ""; $("mountVerify").value = ""; $("mountFips").checked = false;
+  $("mountDualstack").checked = false; $("mountAuthSource").value = "credential";
+  $("mountCredential").value = "";
+  applyBackendVisibility();
+  $("mountEditTitle").textContent = "Add mount";
   $("mountEditStatus").textContent = ""; $("mountBucket").focus();
 };
 
@@ -1315,20 +1479,39 @@ $("btnApplyMount").onclick = () => {
     s.className = "status err"; s.textContent = `'${m.bucket}' is reserved for the database warehouse bucket.`; return; }
   if(m.backend === "local" && !m.root){
     s.className = "status err"; s.textContent = "Root path is required for the local backend."; return; }
+  if(m.backend === "s3"){
+    if(!m.root){ s.className = "status err"; s.textContent = "Upstream bucket is required for the s3 backend."; return; }
+    if(!m.credential && !m.auth){
+      s.className = "status err"; s.textContent = "Choose an authentication source (stored credential, anonymous, or instance)."; return; }
+    if(m.credential === "" && $("mountAuthSource").value === "credential"){
+      s.className = "status err"; s.textContent = "Enter a credential id (and Save S3 credential) or pick anonymous/instance."; return; }
+  }
   const idx = mountState.mounts.findIndex(x => x.bucket === m.bucket);
   if(idx >= 0) mountState.mounts[idx] = m; else mountState.mounts.push(m);
   renderMounts();
   s.className = "status ok"; s.textContent = `Mount '${m.bucket}' ${idx >= 0 ? "updated" : "added"}. Remember to Save mounts to config.`;
 };
 
+$("btnSaveS3Cred").onclick = async () => {
+  const s = $("s3CredStatus"); s.className = "status";
+  const cid = $("mountCredential").value.trim();
+  if(!cid){ s.className = "status err"; s.textContent = "Enter a credential id first."; return; }
+  const auth = readS3AuthForm();
+  s.textContent = "Saving credential…";
+  const r = await api("/_config/api/s3-credentials", { credential_id: cid, auth });
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + ((r.errors && r.errors.join("; ")) || r.error || "could not save"); return; }
+  s.className = "status ok"; s.textContent = `🔒 Saved '${cid}' (${r.mode}, ${r.backend}). ${r.note || ""}`;
+};
+
 $("btnTestMount").onclick = async () => {
   const m = readMountForm();
-  const s = $("mountEditStatus"); s.className = "status"; s.textContent = "Testing path…";
-  const r = await api("/_config/api/mounts/test", { backend: m.backend, root: m.root, prefix: m.prefix });
-  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + (r.error || "path not reachable"); return; }
+  const s = $("mountEditStatus"); s.className = "status"; s.textContent = "Testing…";
+  const r = await api("/_config/api/mounts/test", m);
+  if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + (r.error || "backend not reachable"); return; }
   const sample = (r.sample && r.sample.length) ? " (" + r.sample.slice(0, 6).join(", ") + (r.sample.length > 6 ? "…" : "") + ")" : "";
+  const where = r.path || (r.bucket ? ("s3://" + r.bucket) : "backend");
   s.className = "status ok";
-  s.textContent = `✓ Reachable: ${r.path} — ${r.sample_count} entr${r.sample_count === 1 ? "y" : "ies"}${sample}`;
+  s.textContent = `✓ Reachable: ${where} — ${r.sample_count} entr${r.sample_count === 1 ? "y" : "ies"}${sample}`;
 };
 
 $("storageEnabled").onchange = () => { mountState.enabled = $("storageEnabled").checked; };

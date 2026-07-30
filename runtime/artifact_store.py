@@ -126,6 +126,29 @@ class ArtifactStore(abc.ABC):
         """
         yield self.get(key, offset=offset, length=length)
 
+    def list_dir(self, prefix: str = "") -> list[tuple]:
+        """One directory level under ``prefix`` (which must be empty or end in ``/``).
+
+        Returns ``(name, is_dir, size, mtime_ms)`` for the immediate children only —
+        the cheap, S3-``delimiter=/`` folder-browse path. Default derives it from the
+        recursive ``list()``; filesystem backends override with an O(one-level) scan.
+        """
+        pfx = prefix.replace("\\", "/").lstrip("/")
+        if pfx and not pfx.endswith("/"):
+            pfx += "/"
+        dirs: set[str] = set()
+        files: list[tuple] = []
+        for st in self.list(pfx):
+            rest = st.key[len(pfx):]
+            slash = rest.find("/")
+            if slash == -1:
+                files.append((rest, False, st.size, st.mtime_ms))
+            else:
+                dirs.add(rest[:slash])
+        out = [(d, True, 0, None) for d in sorted(dirs)]
+        out.extend(sorted(files))
+        return out
+
 
 class MemoryStore(ArtifactStore):
     """In‑process, dict‑backed store. Ephemeral — for tests and single‑box dev."""
@@ -249,6 +272,33 @@ class LocalDirStore(ArtifactStore):
                     out.append(ObjectStat(rel, st.st_size, int(st.st_mtime * 1000)))
         out.sort(key=lambda s: s.key)
         return out
+
+    def list_dir(self, prefix: str = "") -> list[tuple]:
+        """One directory level via ``os.scandir`` — no recursive walk (fast browse)."""
+        pfx = prefix.replace("\\", "/").strip("/")
+        base = os.path.join(self.root, *pfx.split("/")) if pfx else self.root
+        rp = os.path.abspath(base)
+        if rp != self.root and not rp.startswith(self.root + os.sep):
+            raise ValueError(f"list prefix escapes store root: {prefix!r}")
+        dirs: list[tuple] = []
+        files: list[tuple] = []
+        try:
+            with os.scandir(base) as it:
+                for e in it:
+                    try:
+                        if e.is_dir():
+                            dirs.append((e.name, True, 0, None))
+                        elif e.is_file():
+                            if e.name.endswith(".tmp"):
+                                continue
+                            st = e.stat()
+                            files.append((e.name, False, st.st_size, int(st.st_mtime * 1000)))
+                    except OSError:
+                        continue
+        except (FileNotFoundError, NotADirectoryError):
+            return []
+        dirs.sort(); files.sort()
+        return dirs + files
 
     def delete(self, key: str) -> bool:
         path = self._path(key)

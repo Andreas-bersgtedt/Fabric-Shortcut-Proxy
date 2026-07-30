@@ -56,20 +56,40 @@ def list_objects(mount: Mount, request: Request) -> Response:
     store = backend_for(mount)
     s3_prefix = request.query_params.get("prefix", "")
     delimiter = request.query_params.get("delimiter", "")
-    backend_prefix = mount.prefix + s3_prefix.replace("\\", "/").lstrip("/")
     plen = len(mount.prefix)
 
     flat: list[dict] = []
     common: set[str] = set()
-    for st in store.list(backend_prefix):
-        bkey = st.key[plen:] if st.key.startswith(mount.prefix) else st.key
-        if delimiter:
-            remainder = bkey[len(s3_prefix):]
-            pos = remainder.find(delimiter)
-            if pos != -1:
-                common.add(s3_prefix + remainder[: pos + len(delimiter)])
+
+    if delimiter == "/":
+        # Folder browse: enumerate ONE directory level (os.scandir), never a
+        # recursive walk of the whole share — that would hang on a large mount.
+        full = mount.prefix + s3_prefix.replace("\\", "/").lstrip("/")
+        if full == "" or full.endswith("/"):
+            dirpath, leaf = full, ""
+        else:
+            cut = full.rfind("/")
+            dirpath = full[:cut + 1] if cut >= 0 else ""
+            leaf = full[cut + 1:] if cut >= 0 else full
+        try:
+            entries = store.list_dir(dirpath)
+        except ValueError:
+            entries = []
+        for name, is_dir, size, mtime in entries:
+            if leaf and not name.startswith(leaf):
                 continue
-        flat.append({"key": bkey, "size": st.size, "last_modified_ms": st.mtime_ms or 0})
+            full_key = dirpath + name
+            bkey = full_key[plen:] if full_key.startswith(mount.prefix) else full_key
+            if is_dir:
+                common.add(bkey + "/")
+            else:
+                flat.append({"key": bkey, "size": size, "last_modified_ms": mtime or 0})
+    else:
+        # Flat listing (no delimiter): recursive — rare for Fabric's browser.
+        backend_prefix = mount.prefix + s3_prefix.replace("\\", "/").lstrip("/")
+        for st in store.list(backend_prefix):
+            bkey = st.key[plen:] if st.key.startswith(mount.prefix) else st.key
+            flat.append({"key": bkey, "size": st.size, "last_modified_ms": st.mtime_ms or 0})
 
     log.info("passthrough_list", bucket=mount.bucket, prefix=s3_prefix,
              delimiter=delimiter, matched=len(flat), common_prefixes=len(common))

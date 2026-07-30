@@ -50,6 +50,21 @@ def test_head_reports_size_and_mtime(tmp_path):
     assert st is not None and st.size == 5 and st.mtime_ms and st.mtime_ms > 0
 
 
+def test_local_list_dir_is_one_level(tmp_path):
+    store = LocalDirStore(str(tmp_path))
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "deep").mkdir()
+    (tmp_path / "a" / "deep" / "x.txt").write_bytes(b"x")
+    (tmp_path / "top.txt").write_bytes(b"t")
+
+    top = store.list_dir("")
+    kinds = {name: is_dir for name, is_dir, _sz, _mt in top}
+    assert kinds == {"a": True, "top.txt": False}   # immediate children only
+
+    lvl = store.list_dir("a/")
+    assert {name for name, *_ in lvl} == {"deep"}    # descend one level
+
+
 # ---------------------------------------------------------------------------
 # mount registry
 # ---------------------------------------------------------------------------
@@ -117,6 +132,14 @@ async def test_passthrough_list_flat_and_delimited(proxy_app):
         assert "readme.txt" in r.text
         assert "<CommonPrefixes>" in r.text and "sub/" in r.text
         assert "sub/data.bin" not in r.text          # rolled up under the prefix
+
+
+async def test_passthrough_browse_into_subfolder(proxy_app):
+    async with _client(proxy_app) as c:
+        r = await c.get("/secure-nfs?list-type=2&delimiter=/&prefix=sub/")
+        assert r.status_code == 200
+        assert "sub/data.bin" in r.text              # one level down shows the file
+        assert "<CommonPrefixes>" not in r.text       # no further subfolders
 
 
 async def test_passthrough_head_and_get_full(proxy_app):

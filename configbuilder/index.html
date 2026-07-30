@@ -991,41 +991,70 @@ async function saveSettings(){
 }
 
 async function applyTables(){
-  const items = [...state.selected.values()];
-  const tables = items.filter(s=>!s.invalid && s.key_column).map(s=>{
+  const status = $("tableStatus");
+  const valid = [...state.selected.values()].filter(s=>!s.invalid && s.key_column);
+  const tables = valid.map(s=>{
     const e = { name:s.name, source_table:s.source_table, key_column:s.key_column };
     if(s.num_splits) e.num_splits = parseInt(s.num_splits);
     if(s.connection && s.connection!=="default") e.connection = s.connection;
     return e;
   });
-  if(!tables.length){ 
-    const status = $("tableStatus");
-    status.className="status err"; 
-    status.textContent="Select at least one table with a valid key column to apply."; 
-    return; 
+  if(!tables.length){
+    status.className="status err";
+    status.textContent="Select at least one table with a valid key column to apply.";
+    return;
   }
-  const status = $("tableStatus");
-  status.className="status"; 
+  // Table names are the virtual Iceberg table id and must be unique across ALL
+  // sources — the same table selected under two connections would collide.
+  const names = tables.map(t=>t.name);
+  const dups = [...new Set(names.filter((n,i)=>names.indexOf(n)!==i))];
+  if(dups.length){
+    status.className="status err";
+    status.textContent="Duplicate table name(s): "+dups.join(", ")
+      +". Names must be unique across every source — remove the copies (e.g. the same table added under two connections).";
+    return;
+  }
+  // Every referenced named source must be tested so it can be written with a real URL.
+  const refIds = [...new Set(valid.map(s=>s.connection||"default"))].filter(c=>c!=="default");
+  const notReady = refIds.filter(cid=>{ const c=state.connections.get(cid); return !c || !c.tested || !c.db_url; });
+  if(notReady.length){
+    status.className="status err";
+    status.textContent="These sources aren't tested yet: "+notReady.join(", ")
+      +". Open the Connection tab, Test each one, then apply again.";
+    return;
+  }
+  // Persist the referenced named sources alongside the tables (passwords stripped)
+  // so config.tables.json never references an undefined connection.
+  const connections = [...state.connections.values()]
+    .filter(c=>c.id!=="default" && c.tested && c.db_url)
+    .map(c=>({id:c.id, db_url: stripPw(c.db_url)}));
+  const settings = {tables};
+  if(connections.length) settings.connections = connections;
+
+  status.className="status";
   status.textContent="Applying "+tables.length+" table(s)…";
-  const usesNamed = tables.some(t=>t.connection);
   try{
     const r = await fetch("/_config/api/apply", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({settings:{tables}})
+      body: JSON.stringify({settings})
     });
     const d = await r.json();
-    if(!r.ok){ 
-      status.className="status err"; 
-      status.textContent="Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status); 
-      return; 
+    if(!r.ok){
+      status.className="status err";
+      status.textContent="Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status);
+      return;
     }
-    status.className="status ok"; 
-    status.textContent="✓ Applied "+tables.length+" table(s) to config.tables.json"
-      + (usesNamed ? " — named sources take effect after restart (Save connection(s) to config first)." : "");
-    setTimeout(()=>{ status.textContent=""; status.className="status"; }, 5000);
-  }catch(e){ 
-    status.className="status err"; 
-    status.textContent="Apply error: "+e; 
+    status.className="status ok";
+    let msg = "✓ Applied "+tables.length+" table(s)";
+    if(connections.length) msg += " + "+connections.length+" named source"+(connections.length>1?"s":"");
+    msg += " to config (restart to apply).";
+    const envHints = refIds.map(cid=>{ const c=state.connections.get(cid); return hasPw(c.db_url)?envVarFor(cid):null; }).filter(Boolean);
+    if(envHints.length) msg += " Set "+[...new Set(envHints)].join(", ")+" for the password(s).";
+    status.textContent = msg;
+    setTimeout(()=>{ status.textContent=""; status.className="status"; }, 6000);
+  }catch(e){
+    status.className="status err";
+    status.textContent="Apply error: "+e;
   }
 }
 

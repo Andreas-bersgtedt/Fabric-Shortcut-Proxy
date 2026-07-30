@@ -827,7 +827,12 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
             if not isinstance(v, list):
                 errors.append(f"{k}: must be a list")
             else:
-                clean[k] = v  # Pass through as-is
+                names = [str((t or {}).get("name") or "") for t in v if isinstance(t, dict)]
+                dups = sorted({n for n in names if n and names.count(n) > 1})
+                if dups:
+                    errors.append(f"tables: duplicate table name(s) {dups} — names must be unique across all sources")
+                else:
+                    clean[k] = v  # Pass through as-is
             continue
 
         # Special case: "connections" is an array of named source definitions.

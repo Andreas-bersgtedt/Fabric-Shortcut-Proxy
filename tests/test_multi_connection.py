@@ -186,6 +186,25 @@ def test_write_tables_with_connection(tmp_path, monkeypatch):
     assert "connection" not in tbls[0]
 
 
+def test_validate_rejects_duplicate_table_names():
+    # The same table name under two sources would collide (Iceberg table id).
+    _, errors = config.validate_setting_updates({
+        "tables": [
+            {"name": "orders", "source_table": "dbo.orders", "key_column": "id"},
+            {"name": "orders", "source_table": "public.orders", "key_column": "id", "connection": "pg"},
+        ]
+    })
+    assert errors and any("duplicate table name" in e.lower() for e in errors)
+
+    clean, errs = config.validate_setting_updates({
+        "tables": [
+            {"name": "orders", "source_table": "dbo.orders", "key_column": "id"},
+            {"name": "shipments", "source_table": "public.ship", "key_column": "id", "connection": "pg"},
+        ]
+    })
+    assert not errs and "tables" in clean
+
+
 def test_named_connection_env_override(monkeypatch):
     # DB_URL_<ID> overrides the file's db_url so secrets can stay out of config.
     monkeypatch.setenv("DB_URL_WAREHOUSE_PG", "postgresql+asyncpg://envhost/db")
@@ -202,9 +221,7 @@ def test_named_connection_env_override(monkeypatch):
 
 
 def test_inline_db_creds_gate_optin(monkeypatch):
-    cred = {"db_url": "mssql+aioodbc://u:p@host/db"}
-
-    # Secure by default: an inline credential in db_url is rejected.
+    cred = {"db_url": "mssql+aioodbc://u:p@host/db"}    # Secure by default: an inline credential in db_url is rejected.
     monkeypatch.delenv("ALLOW_CONFIG_DB_CREDENTIALS", raising=False)
     with pytest.raises(ValueError):
         connection_config._gate_connection_dict(cred)

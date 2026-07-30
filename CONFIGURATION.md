@@ -455,7 +455,12 @@ Create one Fabric shortcut per table.
 | `S3_BUCKET` | `fabric-iceberg-poc` | Bucket Fabric connects to |
 | `PORT` | `9000` | HTTP listen port |
 | `VALIDATE_SOURCE_SCHEMA` | `1` | Validate declared columns exist (no‑op for reflected schemas) |
-| `REQUIRE_SIGV4` | `0` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`) |
+| `REQUIRE_SIGV4` | `0` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
+| `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough — see §14 |
+| `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
+| `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |
+| `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy when both are set |
 
 > The single‑table shortcut above is env‑only. **Multiple** tables use the
 > `tables` array in `config.json` (§1.1) or the `TABLES` list in `config.py`
@@ -610,4 +615,81 @@ does not exist" errors mid-refresh. Point your Fabric S3 shortcut at
 `db/<server>/<database>/<schema>/<object>` — Fabric auto-detects the `_delta_log/`.
 
 > Design notes and the full action layout: [DELTA_FORMAT.md](DELTA_FORMAT.md).
+
+## 14. Storage proxy — mounted buckets (files & object stores)
+
+Independently of the DB→table virtualization, the same S3 endpoint can serve
+**existing files** from a storage backend as **read-only byte passthrough**. This
+is **additive**: a bucket with a **mount** streams bytes from its backend; every
+other bucket (including the DB warehouse) resolves exactly as before. Grounded in
+[storage/mounts.py](storage/mounts.py), [storage/passthrough.py](storage/passthrough.py),
+and [config.mounts.example.json](config.mounts.example.json).
+
+Turn it on with `ENABLE_STORAGE_PROXY=1` and a `config.mounts.json` (gitignored),
+or use the config-builder **Storage** tab.
+
+### 14.1 Mount table (`config.mounts.json`)
+
+```jsonc
+{
+  "mounts": [
+    // NFS/SMB share mounted by the OS — zero extra deps.
+    { "bucket": "secure-nfs", "backend": "local", "root": "/mnt/finance", "read_only": true },
+
+    // Native S3 / MinIO / S3-compatible bucket ('root' = upstream bucket).
+    { "bucket": "s3vault", "backend": "s3", "root": "reports-bucket", "prefix": "2026/",
+      "endpoint": "https://minio.local:9000", "region": "us-east-1",
+      "addressing_style": "path", "credential": "s3vault", "read_only": true },
+
+    // Native Azure Blob / ADLS Gen2 container ('root' = container).
+    { "bucket": "blobvault", "backend": "azure", "root": "reports",
+      "account": "mystorageacct", "credential": "blobvault", "read_only": true },
+
+    // Public bucket needs an explicit credential-less auth mode.
+    { "bucket": "adls-open", "backend": "azure", "root": "public",
+      "account": "opendatalake", "auth": "default", "read_only": true }
+  ]
+}
+```
+
+- `bucket` — the S3 bucket Fabric/clients use; must differ from `S3_BUCKET` and be
+  a valid S3 name.
+- `root` — filesystem path (`local`) / upstream bucket (`s3`) / container (`azure`).
+- `prefix` — optional; confine serving to a subtree (also `..`-hardened).
+- `credential` — id of an encrypted upstream credential in the store (never inline).
+- `auth` — for a credential-less mount, an explicit mode (S3: `anonymous`/`instance`;
+  Azure: `default`/`managed_identity`/`anonymous`).
+- Mounts are **read-only** in v1.
+
+Install the SDK for native backends: `pip install '.[s3proxy]'` (S3),
+`pip install '.[azureblob]'` (Azure). `local` needs nothing.
+
+### 14.2 Backends & install extras
+
+| Backend | `root` is | Extra | Auth modes (via `credential` blob or `auth`) |
+|---|---|---|---|
+| `local` | a filesystem path (NFS/SMB mount) | — | n/a |
+| `s3` | the upstream S3 bucket | `.[s3proxy]` | static, session, assume_role, web_identity, profile, sso, instance, process, anonymous |
+| `azure` | the container | `.[azureblob]` | connection_string, account_key, sas, aad_client_secret, managed_identity, default, anonymous |
+
+Upstream secrets live encrypted in the credential store and are set in the config
+builder (**Storage → mount editor**) or via `/_config/api/{s3,azure}-credentials`.
+
+### 14.3 Access keys & authorization
+
+When a mount exists, issue scoped **access keys** so each client reaches only its
+allowed buckets/prefixes:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets |
+| `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounts even when `REQUIRE_SIGV4=0` |
+| `REQUIRE_SIGV4` | `0` | Enforce SigV4 on **all** buckets |
+| `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access |
+| `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |
+
+Manage keys in the config-builder **Storage → Access keys** panel (create returns
+the secret once; rotate/delete supported). The legacy single key stays a wildcard
+until the first access key is created. Full security model: [SECURITY.md](SECURITY.md).
 

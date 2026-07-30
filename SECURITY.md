@@ -12,6 +12,8 @@ The following files may contain credentials and are **never** committed to versi
 config.connection.json       # Database connection URL with credentials
 config.system.json          # AWS keys for S3 access
 config.performance.json     # Optional: reserved for future sensitive settings
+config.mounts.json          # Storage-proxy mount table (references credential ids, not secrets)
+secrets/credentials.json    # Encrypted store: DB URLs, upstream S3/Azure creds, access keys
 .env                        # Local development environment variables
 .env.local                  # Local overrides (not committed)
 secrets.json               # Any secret material (never commit)
@@ -142,6 +144,98 @@ After cleaning history, force-push (carefully, on a feature branch only):
 ```bash
 git push origin --force-with-lease
 ```
+
+## Storage Proxy Security (Phase 4)
+
+When the storage proxy serves **mounted buckets** (existing files from `local` /
+`s3` / `azure` backends), the S3 front door is hardened beyond the single-key
+POC path. Grounded in [security/access_keys.py](security/access_keys.py),
+[s3/auth.py](s3/auth.py), [main.py](main.py) (auth middleware), and
+[observability/audit.py](observability/audit.py).
+
+### Front-door authentication (inbound)
+
+- **AWS SigV4**, verified against **many scoped access keys** (not just one static
+  pair). Each key is resolved by the access-key id presented in the request's
+  `Credential=` scope. The legacy single `S3_ACCESS_KEY_ID` keeps working as an
+  implicit wildcard **until the first access key is created**, then coexists as a
+  wildcard key you can remove/rotate.
+- **Forced auth on mounts** — `ENFORCE_MOUNT_AUTH` (default `1`) requires a valid
+  signature on any mounted bucket **even when `REQUIRE_SIGV4=0`**. A secured mount
+  is never served anonymously.
+- Not supported inbound: presigned-URL/query-string auth, STS session tokens, SigV2.
+
+### Per-key authorization (ACL)
+
+Each access key carries an authorization scope, stored **encrypted**:
+
+```jsonc
+{ "access_key_id": "FSP…", "secret_key": "…", "label": "finance-reader",
+  "allowed_buckets": ["secure-nfs", "s3vault"],
+  "allowed_prefixes": { "s3vault": ["2026/"] },   // optional finer scope
+  "permissions": "read", "enabled": true }
+```
+
+- `allowed_buckets` may be `["*"]` (all) or a fixed list; `allowed_prefixes`
+  confines a key to sub-paths. Out-of-scope requests are rejected with
+  `AccessDenied` (403).
+- **Read-only** in v1: write methods (PUT/DELETE/POST) are always denied.
+- Manage keys in the config-builder **Storage → Access keys** panel, or via
+  `/_config/api/access-keys` (create returns the secret **once**; rotate/delete
+  supported).
+
+### Upstream credential mediation (outbound)
+
+Clients **never** see the credentials the proxy uses to reach the upstream S3 or
+Azure backend. Those secrets are held in the encrypted credential store
+([security/credential_store.py](security/credential_store.py); DPAPI on Windows,
+Fernet elsewhere) and resolved by the mount's `credential` id — never written to
+`config.mounts.json`.
+
+- **Outbound S3** modes: `static`, `session` (STS temp), `assume_role`
+  (auto-refresh), `web_identity` (OIDC/IRSA), `profile`, `sso`, `instance`
+  (default chain), `process`, `anonymous`.
+- **Outbound Azure** modes: `connection_string`, `account_key`, `sas`,
+  `aad_client_secret` (service principal), `managed_identity`, `default`
+  (DefaultAzureCredential), `anonymous`.
+- A credential-less mount must declare an explicit `auth` mode (S3:
+  `anonymous`/`instance`; Azure: `default`/`managed_identity`/`anonymous`) so
+  ambient host credentials are never picked up by surprise.
+
+### Path confinement
+
+Every mounted key is normalized and rejects `..` traversal, and is confined to the
+mount's `prefix` subtree, so a request can never escape its backend root (OWASP
+A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
+
+### TLS
+
+- Terminate HTTPS **at the proxy** by setting **both** `TLS_CERT_FILE` and
+  `TLS_KEY_FILE` (wired into uvicorn for [main.py](main.py) and
+  [manager.py](manager.py)), or terminate at a fronting load balancer.
+- SigV4 read requests use `UNSIGNED-PAYLOAD`, so signatures give **no
+  confidentiality** over plain HTTP — enable TLS before turning on auth. The proxy
+  logs a startup warning when auth/mounts are on but TLS is not configured.
+
+### Audit logging
+
+- With `ENABLE_AUDIT_LOG=1` (default), every mounted-object access emits a
+  structured `audit` event — `identity`, `client`, `bucket`, `key`, `backend`,
+  `method`, `status`, `bytes` — with secrets scrubbed. Auth and authorization
+  **denials are audited too**.
+- Events go to the structured logger, an optional append-only file
+  (`AUDIT_LOG_FILE`), and an in-memory ring surfaced at `GET /_config/api/audit`.
+
+### Settings summary
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets as passthrough |
+| `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounts even if `REQUIRE_SIGV4=0` |
+| `REQUIRE_SIGV4` | `0` | Enforce SigV4 on **all** buckets |
+| `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access |
+| `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |
 
 ## Deployment Checklist
 

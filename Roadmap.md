@@ -27,9 +27,30 @@ The plan is phased to minimize regression risk and preserve current known-good b
 - Views are discoverable in config builder, but split-key strategy for views needs stronger guidance/fallbacks.
 - Virtual object keys are table-name centric and do not include server/database/schema hierarchy.
 - Range splitting exists but is key-span based, not row-target based.
-- Runtime is HTTP-only today.
+- Runtime is HTTP by default; **TLS termination at the proxy is available** (`TLS_CERT_FILE`/`TLS_KEY_FILE`) or via a fronting LB.
+- **Storage proxy** (secured file/object passthrough) is delivered — see the section below.
 
 ## Roadmap Overview
+
+## Storage Proxy (Secured Passthrough) — Delivered
+Goal: front *existing* files/objects through the same S3 endpoint, alongside the DB→table path.
+
+Status: Completed (Phases 1–4).
+
+### Scope (delivered)
+- **Additive mount table** (`config.mounts.json`): a bucket with a mount streams bytes
+  from its backend; every other bucket resolves through Iceberg/Delta unchanged.
+- **Backends:** `local` (NFS/SMB via OS mount), `s3` (native S3/MinIO, ranged +
+  paginated), `azure` (Blob / ADLS Gen2). Read-only, `..`-confined, streamed.
+- **Outbound credential mediation** — upstream S3/Azure secrets held encrypted
+  (DPAPI/Fernet), resolved by id; broad auth-mode coverage for both clouds.
+- **Inbound security (Phase 4):** SigV4 verified against **scoped access keys**
+  (per-bucket/prefix ACLs, read-only), forced auth on mounts (`ENFORCE_MOUNT_AUTH`),
+  TLS termination, and per-access **audit logging** (`ENABLE_AUDIT_LOG`).
+- **Config-builder UI:** Storage tab (mount editor per backend + Access-keys manager).
+
+Reference: [devplan/StorageProxy.md](devplan/StorageProxy.md), [SECURITY.md](SECURITY.md),
+[CONFIGURATION.md](CONFIGURATION.md) §14. Optional next step: read-write (PUT/DELETE/multipart).
 
 ## Phase 1: Canonical Source Path Model
 Goal: represent source identity clearly and map virtual folders to source lineage.

@@ -42,6 +42,28 @@ def _request_shutdown() -> None:
         log.info("graceful_shutdown_requested")
 
 
+def _source_connect_hint(exc: Exception) -> str:
+    """A concise, credential-redacted message when a source DB can't be reached at startup."""
+    conns: dict[str, str] = {}
+    for t in config.TABLES:
+        cid = getattr(t, "connection_id", "default")
+        if cid not in conns:
+            conns[cid] = config.redact_db_url(config.effective_db_url(cid))
+    lines = "\n".join(f"    - {cid}: {url}" for cid, url in conns.items())
+    err = config.redact_db_url(str(exc))[:300]
+    return (
+        "Cannot reach the source database at startup (schema reflection failed).\n"
+        "  Connection(s) used by your tables:\n" + lines + "\n"
+        f"  Underlying error: {err}\n"
+        "  Likely causes:\n"
+        "    - Wrong username/password (SQL Server error 18456 = the server rejected the login).\n"
+        "    - A named source is missing its DB_URL_<ID> environment variable (password stripped).\n"
+        "    - The database host/port is unreachable or blocked by a firewall.\n"
+        "  Fix the credentials via the config builder, the DB_URL env var (Manager.ps1 -DbUrl),\n"
+        "  or config.connection.json, then restart."
+    )
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -62,13 +84,17 @@ async def lifespan(app: FastAPI):
     # Resolve each table's schema (reflected from source metadata unless declared
     # explicitly) and split key column, in place, before snapshots are built.
     from db.executor import resolve_tables
-    await resolve_tables(config.TABLES)
-
-    # Fail fast (H6) if any source table doesn't expose every declared column.
-    if config.VALIDATE_SOURCE_SCHEMA:
-        from db.executor import validate_source_schema
-        for table in config.TABLES:
-            await validate_source_schema(table)
+    try:
+        await resolve_tables(config.TABLES)
+        # Fail fast (H6) if any source table doesn't expose every declared column.
+        if config.VALIDATE_SOURCE_SCHEMA:
+            from db.executor import validate_source_schema
+            for table in config.TABLES:
+                await validate_source_schema(table)
+    except Exception as exc:  # noqa: BLE001 - turn a raw driver stack trace into a clear message
+        hint = _source_connect_hint(exc)
+        log.error("source_connect_failed", detail=hint)
+        raise RuntimeError(hint) from exc
 
     if config.AUTO_REFRESH:
         # Data-freshness path (content-addressed snapshots + background poller).

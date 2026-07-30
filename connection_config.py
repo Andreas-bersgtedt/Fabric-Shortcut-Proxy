@@ -142,7 +142,7 @@ else:
 # ---------------------------------------------------------------------------
 
 import re as _re
-from security.credentials import scrub_database_url, validate_no_hardcoded_credentials
+from security.credentials import scrub_database_url, scrub_secrets, validate_no_hardcoded_credentials
 
 
 def redact_db_url(url: str) -> str:
@@ -176,6 +176,36 @@ def _env_url_for(connection_id: str) -> str | None:
         return None
     name = "DB_URL_" + _re.sub(r"[^A-Za-z0-9]+", "_", connection_id).upper()
     return os.environ.get(name) or None
+
+
+def _allow_inline_db_creds() -> bool:
+    """Whether the operator has explicitly allowed inline DB credentials in the
+    local (gitignored) config.connection.json via ``ALLOW_CONFIG_DB_CREDENTIALS``."""
+    return os.environ.get("ALLOW_CONFIG_DB_CREDENTIALS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _gate_connection_dict(d: dict) -> None:
+    """Credential-gate a connection section/entry.
+
+    Secure by default: raises if any value carries an inline credential pattern.
+    When ``ALLOW_CONFIG_DB_CREDENTIALS`` is set, the ``db_url`` VALUE is exempt
+    (it's the designated connection-string field and the file is local/gitignored)
+    but is warned about, while key-name checks (password/token/... keys) still apply.
+    """
+    if not isinstance(d, dict):
+        return
+    if _allow_inline_db_creds():
+        validate_no_hardcoded_credentials({k: v for k, v in d.items() if k != "db_url"})
+        u = d.get("db_url")
+        if isinstance(u, str) and u and scrub_secrets(u) != u:
+            print(
+                "[connection_config] WARNING: inline DB credentials in db_url are allowed via "
+                "ALLOW_CONFIG_DB_CREDENTIALS. Prefer the DB_URL env var and keep "
+                "config.connection.json gitignored (never commit it).",
+                file=sys.stderr,
+            )
+        return
+    validate_no_hardcoded_credentials(d)
 
 
 @dataclass(frozen=True)
@@ -232,7 +262,7 @@ def _build_connections() -> dict[str, "Connection"]:
         for entry in raw_list:
             if not isinstance(entry, dict):
                 continue
-            validate_no_hardcoded_credentials(entry)
+            _gate_connection_dict(entry)
             c = _connection_from_json(entry)
             if not c.id:
                 print("[connection_config] connections[] entry missing 'id'; skipped.", file=sys.stderr)
@@ -253,10 +283,17 @@ def _build_connections() -> dict[str, "Connection"]:
 # Validate on import: ensure no hardcoded credentials in config, then build the
 # connection registry (each named entry is credential-gated in _build_connections).
 try:
-    validate_no_hardcoded_credentials(_FILE_CFG)
+    _gate_connection_dict(_FILE_CFG)
     CONNECTIONS: dict[str, Connection] = _build_connections()
 except ValueError as e:
     print(f"[connection_config] SECURITY ERROR: {e}", file=sys.stderr)
+    print(
+        "[connection_config] Options: (1) put the full URL in the DB_URL env var "
+        "(e.g. .\\Manager.ps1 -DbUrl \"...\"); (2) if this config.connection.json is local "
+        "and gitignored, set ALLOW_CONFIG_DB_CREDENTIALS=1 to permit an inline db_url; "
+        "(3) use passwordless auth (e.g. SQL Server trusted_connection=yes).",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 

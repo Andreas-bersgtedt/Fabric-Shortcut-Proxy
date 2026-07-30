@@ -200,3 +200,20 @@ def test_named_connection_env_override(monkeypatch):
     )
     assert c2.db_url == "postgresql+asyncpg://filehost/db"
 
+
+def test_inline_db_creds_gate_optin(monkeypatch):
+    cred = {"db_url": "mssql+aioodbc://u:p@host/db"}
+
+    # Secure by default: an inline credential in db_url is rejected.
+    monkeypatch.delenv("ALLOW_CONFIG_DB_CREDENTIALS", raising=False)
+    with pytest.raises(ValueError):
+        connection_config._gate_connection_dict(cred)
+
+    # Explicit opt-in permits an inline db_url (local, gitignored config).
+    monkeypatch.setenv("ALLOW_CONFIG_DB_CREDENTIALS", "1")
+    connection_config._gate_connection_dict(cred)  # must not raise
+
+    # ...but a secret under a sensitive KEY name is still rejected even opted-in.
+    with pytest.raises(ValueError):
+        connection_config._gate_connection_dict({"password": "hunter2"})
+

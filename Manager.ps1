@@ -56,6 +56,12 @@
     Serve the config builder UI/API at /_config on the control port.
     Sets ENABLE_CONFIG_BUILDER=1.
 
+.PARAMETER AllowConfigDbCreds
+    Permit an inline DB credential in the local (gitignored) config.connection.json
+    db_url instead of hard-failing at startup. Sets ALLOW_CONFIG_DB_CREDENTIALS=1.
+    Prefer -DbUrl (DB_URL env var) or passwordless auth; only use this for a
+    local file you never commit.
+
 .PARAMETER AdminToken
     Token required for mutating /_manager actions (X-Admin-Token header or ?token=).
     Sets ADMIN_TOKEN. Reads stay open; blank = no auth.
@@ -137,6 +143,7 @@ param(
     [switch]$Gateway,
     [switch]$AdminUi,
     [switch]$ConfigUi,
+    [switch]$AllowConfigDbCreds,
     [string]$AdminToken,
     [switch]$Ha,
     [switch]$RetentionGc,
@@ -396,6 +403,7 @@ if ($PSBoundParameters.ContainsKey("AgentCount"))    { $env:AGENT_COUNT  = "$Age
 if ($Gateway)                                        { $env:ENABLE_GATEWAY = "1" }
 if ($AdminUi)                                        { $env:ENABLE_ADMIN_UI = "1" }
 if ($ConfigUi)                                       { $env:ENABLE_CONFIG_BUILDER = "1" }
+if ($AllowConfigDbCreds)                             { $env:ALLOW_CONFIG_DB_CREDENTIALS = "1" }
 if ($PSBoundParameters.ContainsKey("AdminToken"))    { $env:ADMIN_TOKEN  = $AdminToken }
 if ($Ha)                                             { $env:MANAGER_HA = "1" }
 if ($RetentionGc)                                    { $env:RETENTION_GC = "1" }

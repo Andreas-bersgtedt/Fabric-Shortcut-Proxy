@@ -148,7 +148,7 @@ sequenceDiagram
   alt method OPTIONS or exempt prefix (/healthz, /_config, ...)
     MW->>RT: pass through (no auth)
   else data path
-    MW->>MW: parse (bucket, key); mounted = get_mount(bucket) is not None
+    MW->>MW: parse bucket/key, mounted = get_mount(bucket) is not None
     MW->>MW: require = REQUIRE_SIGV4 or (mounted and ENFORCE_MOUNT_AUTH)
     alt require auth
       MW->>V: verify_signature(secret_resolver=AK.resolve_secret)
@@ -158,7 +158,7 @@ sequenceDiagram
         V-->>MW: SigV4Error
         MW->>AU: record(denial) if mounted
         MW-->>C: 403 AccessDenied (S3 XML)
-      else verified -> identity
+      else verified, sets identity
         MW->>AK: authorize(identity, bucket, key, method)
         alt out of scope / write / disabled
           MW->>AU: record(denial) if mounted
@@ -503,11 +503,11 @@ sequenceDiagram
   MG-->>AG: assignment + snapshot
   loop every HEARTBEAT_MS
     AG->>MG: HeartbeatRequest(agent_id, lease, serving stats)
-    MG->>RG: heartbeat() -> pending ControlCommands
-    RG-->>MG: [Assignment | Drain | ReloadConfig | PublishSnapshot]
+    MG->>RG: heartbeat() returns pending ControlCommands
+    RG-->>MG: Assignment / Drain / ReloadConfig / PublishSnapshot
     MG-->>AG: commands (Ack)
   end
-  Note over RG: miss_limit exceeded -> agent marked dead,<br/>gateway.pick() excludes it
+  Note over RG: after miss_limit the agent is dead and excluded by gateway.pick()
 ```
 
 Message shapes are transport-neutral dataclasses in

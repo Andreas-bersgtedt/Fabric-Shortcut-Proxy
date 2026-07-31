@@ -175,6 +175,11 @@
     PostgreSQL connection string (libpq conninfo or URL) for -PublishCppImage. When
     set, the publisher reads rows from Postgres; takes precedence over -CppSourceDb.
 
+.PARAMETER CppVersions
+    Number of successive snapshot versions to publish for -PublishCppImage (default
+    1). Each version re-materializes a growing prefix: Iceberg writes vN.metadata
+    files, Delta appends commits.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -239,7 +244,8 @@ param(
     [int]$CppSplits,
     [ValidateSet("iceberg", "delta")]
     [string]$CppFormat,
-    [string]$CppPostgres
+    [string]$CppPostgres,
+    [int]$CppVersions
 )
 
 $ErrorActionPreference = "Stop"
@@ -441,22 +447,23 @@ if ($PublishCppImage) {
     $pubStore  = if ($PSBoundParameters.ContainsKey("CppStoreDir")) { $CppStoreDir } else { Join-Path $ProjectRoot ".artifacts" }
     $pubSplits = if ($PSBoundParameters.ContainsKey("CppSplits"))   { $CppSplits }   else { 8 }
     $pubFormat = if ($PSBoundParameters.ContainsKey("CppFormat"))   { $CppFormat }   else { "iceberg" }
+    $pubVersions = if ($PSBoundParameters.ContainsKey("CppVersions")) { $CppVersions } else { 1 }
 
     Write-Step "Publishing native $pubFormat serving image"
     if ($PSBoundParameters.ContainsKey("CppPostgres") -and $CppPostgres) {
-        $pubArgs = @("--postgres", $CppPostgres, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat)
+        $pubArgs = @("--postgres", $CppPostgres, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat, "--versions", "$pubVersions")
         if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
         Write-Host "    Source   : PostgreSQL" -ForegroundColor DarkGray
         & $pubExe @pubArgs
     } elseif ($PSBoundParameters.ContainsKey("CppSourceDb") -and $CppSourceDb) {
-        $pubArgs = @("--sqlite", $CppSourceDb, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat)
+        $pubArgs = @("--sqlite", $CppSourceDb, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat, "--versions", "$pubVersions")
         if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
         Write-Host "    Source   : SQLite $CppSourceDb" -ForegroundColor DarkGray
         & $pubExe @pubArgs
     } else {
         $pubRows = if ($PSBoundParameters.ContainsKey("CppRows")) { $CppRows } else { 50000 }
         Write-Host "    Source   : demo data ($pubRows rows)" -ForegroundColor DarkGray
-        & $pubExe $pubStore "$pubRows" "$pubSplits" "--format" $pubFormat
+        & $pubExe $pubStore "$pubRows" "$pubSplits" "--format" $pubFormat "--versions" "$pubVersions"
     }
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host "    Store dir: $pubStore" -ForegroundColor DarkGray

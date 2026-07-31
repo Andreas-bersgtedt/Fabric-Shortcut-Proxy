@@ -48,6 +48,7 @@ ARG_CPP_STORE_DIR=""
 ARG_CPP_PORT=""
 ARG_CPP_FORMAT=""
 ARG_CPP_POSTGRES=""
+ARG_CPP_VERSIONS=""
 
 AUTO_STASH_CREATED=0
 AUTO_STASH_REF=""
@@ -127,6 +128,7 @@ C++ agent / native publisher (build/run C++ tools, then exit):
   --cpp-port N           Port for the C++ Agent (default 9400)
   --cpp-format FMT       Output for --publish-cpp-image: iceberg (default) | delta
   --cpp-postgres CONNINFO  Postgres source for --publish-cpp-image (else --cpp-source-db / demo)
+  --cpp-versions N       Successive snapshot versions to publish (default 1; F2)
 
 Misc:
   -h, --help             Show this help
@@ -184,6 +186,7 @@ while [[ $# -gt 0 ]]; do
     --cpp-port) require_value "$1" "${2:-}"; ARG_CPP_PORT="$2"; shift 2 ;;
     --cpp-format) require_value "$1" "${2:-}"; ARG_CPP_FORMAT="$2"; shift 2 ;;
     --cpp-postgres) require_value "$1" "${2:-}"; ARG_CPP_POSTGRES="$2"; shift 2 ;;
+    --cpp-versions) require_value "$1" "${2:-}"; ARG_CPP_VERSIONS="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1 (run with --help)" ;;
   esac
@@ -287,23 +290,24 @@ if [[ $ARG_PUBLISH_CPP_IMAGE -eq 1 ]]; then
   pub_store="${ARG_CPP_STORE_DIR:-$SCRIPT_DIR/.artifacts}"
   pub_splits="${ARG_CPP_SPLITS:-8}"
   pub_format="${ARG_CPP_FORMAT:-iceberg}"
+  pub_versions="${ARG_CPP_VERSIONS:-1}"
   # native_publish links the shared Arrow/Avro/sqlite libs from vcpkg_installed.
   export LD_LIBRARY_PATH="$(echo "$SCRIPT_DIR"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   step "Publishing native $pub_format serving image"
   if [[ -n "$ARG_CPP_POSTGRES" ]]; then
-    pub_args=(--postgres "$ARG_CPP_POSTGRES" --store "$pub_store" --splits "$pub_splits" --format "$pub_format")
+    pub_args=(--postgres "$ARG_CPP_POSTGRES" --store "$pub_store" --splits "$pub_splits" --format "$pub_format" --versions "$pub_versions")
     [[ -z "$ARG_CPP_SEED_ROWS" ]] || pub_args+=(--seed "$ARG_CPP_SEED_ROWS")
     printf '    Source   : PostgreSQL\n'
     "$pub_exe" "${pub_args[@]}"
   elif [[ -n "$ARG_CPP_SOURCE_DB" ]]; then
-    pub_args=(--sqlite "$ARG_CPP_SOURCE_DB" --store "$pub_store" --splits "$pub_splits" --format "$pub_format")
+    pub_args=(--sqlite "$ARG_CPP_SOURCE_DB" --store "$pub_store" --splits "$pub_splits" --format "$pub_format" --versions "$pub_versions")
     [[ -z "$ARG_CPP_SEED_ROWS" ]] || pub_args+=(--seed "$ARG_CPP_SEED_ROWS")
     printf '    Source   : SQLite %s\n' "$ARG_CPP_SOURCE_DB"
     "$pub_exe" "${pub_args[@]}"
   else
     pub_rows="${ARG_CPP_ROWS:-50000}"
     printf '    Source   : demo data (%s rows)\n' "$pub_rows"
-    "$pub_exe" "$pub_store" "$pub_rows" "$pub_splits" --format "$pub_format"
+    "$pub_exe" "$pub_store" "$pub_rows" "$pub_splits" --format "$pub_format" --versions "$pub_versions"
   fi
   printf '    Store dir: %s\n' "$pub_store"
   export STORE_DIR="$pub_store"

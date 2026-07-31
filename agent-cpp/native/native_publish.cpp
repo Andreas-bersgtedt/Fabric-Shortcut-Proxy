@@ -113,90 +113,101 @@ std::string table_basename(const std::string& table_path) {
     return (p == std::string::npos) ? table_path : table_path.substr(p + 1);
 }
 
-// Write the Parquet splits (shared), then the format-specific metadata: Iceberg
-// (manifests + metadata.json) or Delta (_delta_log commit 0). Both formats serve
-// the same content-addressed Parquet split files.
-void publish_image(const std::string& store_dir, const std::string& bucket,
-                   const std::string& table_path, const std::vector<fsp::IcebergColumn>& cols,
-                   const std::vector<std::shared_ptr<arrow::Table>>& split_tables,
-                   const std::string& format) {
+std::string delta_commit_key(const std::string& table_path, int commit_index) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%020d", commit_index);
+    return table_path + "/_delta_log/" + buf + ".json";
+}
+
+// Publish one or more successive snapshot versions (F2). Each version fully
+// re-materializes the table under a new snapshot identity: Iceberg writes a new
+// vN.metadata.json + manifests; Delta appends a commit (add new splits, remove
+// the prior version's). Both formats serve the same content-addressed splits.
+// `versions[k]` holds the per-split Arrow tables for version k+1.
+void publish_versions(const std::string& store_dir, const std::string& bucket,
+                      const std::string& table_path, const std::vector<fsp::IcebergColumn>& cols,
+                      const std::string& format,
+                      const std::vector<std::vector<std::shared_ptr<arrow::Table>>>& versions) {
     using namespace fsp;
     using namespace fsp::native;
 
-    SnapshotIdentity id = build_snapshot_identity(bucket, table_path);
     const bool is_delta = (format == "delta");
+    std::vector<DeltaColumn> dcols;
+    for (const auto& c : cols) dcols.push_back({c.name, c.iceberg_type, c.nullable});
+    DeltaLog dlog(table_basename(table_path), table_path, dcols);
+    int commits_written = 0;
+    SnapshotIdentity prev;
 
-    struct SplitInfo {
-        std::string object_key;
-        int64_t records = 0;
-        int64_t size = 0;
-        std::map<int, ColumnStats> stats;
-    };
-    std::vector<SplitInfo> infos;
-    int64_t total_rows = 0;
-    for (int s = 0; s < static_cast<int>(split_tables.size()); ++s) {
-        const std::shared_ptr<arrow::Table>& table = split_tables[s];
-        std::string pq = write_table_to_parquet(table);
-        const std::string object_key = split_object_key(table_path, s, id.snapshot_id);
-        write_object(store_dir, object_key, pq);
+    for (int vi = 0; vi < static_cast<int>(versions.size()); ++vi) {
+        const int version = vi + 1;
+        SnapshotIdentity id =
+            (version == 1)
+                ? build_snapshot_identity(bucket, table_path)
+                : advance_snapshot_identity(bucket, table_path, version, prev.watermark_ms, prev.sequence_number);
+        prev = id;
 
-        SplitInfo info;
-        info.object_key = object_key;
-        info.records = table->num_rows();
-        info.size = static_cast<int64_t>(pq.size());
-        if (!is_delta) info.stats = collect_split_stats(pq, cols);  // Iceberg manifest bounds
-        infos.push_back(std::move(info));
-        total_rows += table->num_rows();
+        struct SplitInfo {
+            std::string object_key;
+            int64_t records = 0;
+            int64_t size = 0;
+            std::map<int, ColumnStats> stats;
+        };
+        std::vector<SplitInfo> infos;
+        int64_t total_rows = 0;
+        const std::vector<std::shared_ptr<arrow::Table>>& tables = versions[vi];
+        for (int s = 0; s < static_cast<int>(tables.size()); ++s) {
+            std::string pq = write_table_to_parquet(tables[s]);
+            const std::string object_key = split_object_key(table_path, s, id.snapshot_id);
+            write_object(store_dir, object_key, pq);
+            SplitInfo info;
+            info.object_key = object_key;
+            info.records = tables[s]->num_rows();
+            info.size = static_cast<int64_t>(pq.size());
+            if (!is_delta) info.stats = collect_split_stats(pq, cols);
+            infos.push_back(std::move(info));
+            total_rows += tables[s]->num_rows();
+        }
+
+        if (is_delta) {
+            DeltaVersion dv;
+            dv.version = version;
+            dv.watermark_ms = id.watermark_ms;
+            for (const auto& info : infos) dv.splits.push_back({info.object_key, info.size, info.records});
+            dlog.register_version(dv);
+            while (commits_written < static_cast<int>(dlog.commits().size())) {
+                write_object(store_dir, delta_commit_key(table_path, commits_written),
+                             dlog.commits()[commits_written]);
+                ++commits_written;
+            }
+        } else {
+            ManifestSnapshot snap;
+            snap.snapshot_id = static_cast<int64_t>(id.snapshot_id);
+            snap.sequence_number = id.sequence_number;
+            snap.bucket_name = bucket;
+            snap.manifest_file_key = id.manifest_file_key;
+            for (const auto& info : infos) {
+                ManifestSplit split;
+                split.object_key = info.object_key;
+                split.record_count = info.records;
+                split.file_size_in_bytes = info.size;
+                split.stats = info.stats;
+                snap.splits.push_back(split);
+            }
+            const std::string mf = build_manifest_file(snap);
+            write_object(store_dir, id.manifest_file_key, mf);
+            const std::string ml = build_manifest_list(snap, static_cast<int64_t>(mf.size()));
+            write_object(store_dir, id.manifest_list_key, ml);
+            const std::string metadata = build_metadata_json(bucket, table_path, cols, id, total_rows,
+                                                             static_cast<int>(tables.size()));
+            write_object(store_dir, id.metadata_key, metadata);
+            write_object(store_dir, id.version_hint_key, std::to_string(version));
+        }
+        std::printf("  v%d: snapshot_id=%llu rows=%lld splits=%zu\n", version,
+                    static_cast<unsigned long long>(id.snapshot_id), static_cast<long long>(total_rows),
+                    tables.size());
     }
-
-    if (is_delta) {
-        std::vector<DeltaColumn> dcols;
-        for (const auto& c : cols) dcols.push_back({c.name, c.iceberg_type, c.nullable});
-        DeltaLog dlog(table_basename(table_path), table_path, dcols);
-        DeltaVersion v;
-        v.version = 1;
-        v.watermark_ms = id.watermark_ms;
-        for (const auto& info : infos) v.splits.push_back({info.object_key, info.size, info.records});
-        dlog.register_version(v);
-
-        const std::string log_key = table_path + "/_delta_log/00000000000000000000.json";
-        write_object(store_dir, log_key, dlog.commits().at(0));
-        std::printf("published (delta): rows=%lld splits=%zu table_path=%s\n",
-                    static_cast<long long>(total_rows), split_tables.size(), table_path.c_str());
-        std::printf("  delta_log: %s\n", log_key.c_str());
-        std::printf("  store_dir: %s\n", store_dir.c_str());
-        return;
-    }
-
-    ManifestSnapshot snap;
-    snap.snapshot_id = static_cast<int64_t>(id.snapshot_id);
-    snap.sequence_number = id.sequence_number;
-    snap.bucket_name = bucket;
-    snap.manifest_file_key = id.manifest_file_key;
-    for (const auto& info : infos) {
-        ManifestSplit split;
-        split.object_key = info.object_key;
-        split.record_count = info.records;
-        split.file_size_in_bytes = info.size;
-        split.stats = info.stats;
-        snap.splits.push_back(split);
-    }
-
-    const std::string mf = build_manifest_file(snap);
-    write_object(store_dir, id.manifest_file_key, mf);
-    const std::string ml = build_manifest_list(snap, static_cast<int64_t>(mf.size()));
-    write_object(store_dir, id.manifest_list_key, ml);
-    const std::string metadata =
-        build_metadata_json(bucket, table_path, cols, id, total_rows, static_cast<int>(split_tables.size()));
-    write_object(store_dir, id.metadata_key, metadata);
-    write_object(store_dir, id.version_hint_key, "1");
-
-    std::printf("published (iceberg): rows=%lld splits=%zu bucket=%s table_path=%s\n",
-                static_cast<long long>(total_rows), split_tables.size(), bucket.c_str(),
-                table_path.c_str());
-    std::printf("  metadata: %s\n", id.metadata_key.c_str());
-    std::printf("  manifest_list: %s\n", id.manifest_list_key.c_str());
-    std::printf("  store_dir: %s\n", store_dir.c_str());
+    std::printf("published (%s): %zu version(s) table_path=%s store_dir=%s\n", format.c_str(),
+                versions.size(), table_path.c_str(), store_dir.c_str());
 }
 
 std::vector<fsp::Column> as_planner_columns(const std::vector<fsp::IcebergColumn>& cols) {
@@ -219,7 +230,7 @@ bool has_flag(int argc, char** argv, const std::string& name) {
 }
 
 // Demo mode: synthesize rows entirely in C++ (no database).
-int run_demo(int argc, char** argv, const std::string& format) {
+int run_demo(int argc, char** argv, const std::string& format, int versions) {
     using namespace fsp;
     using namespace fsp::native;
 
@@ -228,29 +239,35 @@ int run_demo(int argc, char** argv, const std::string& format) {
     const int num_splits = static_cast<int>(arg_i64(argc, argv, 3, 5));
     const std::string bucket = argc > 4 ? argv[4] : "fabric-iceberg-poc";
     const std::string table_path = argc > 5 ? argv[5] : "warehouse/demo/orders";
-    if (total_rows <= 0 || num_splits <= 0) {
-        std::printf("rows and splits must be positive\n");
+    if (total_rows <= 0 || num_splits <= 0 || versions < 1) {
+        std::printf("rows, splits, versions must be positive\n");
         return 2;
     }
 
     const std::vector<IcebergColumn> cols = default_schema();
     std::shared_ptr<arrow::Schema> schema = build_arrow_schema(cols);
-    const int64_t base = total_rows / num_splits;
-    const int64_t rem = total_rows % num_splits;
 
-    std::vector<std::shared_ptr<arrow::Table>> tables;
-    int64_t start = 0;
-    for (int s = 0; s < num_splits; ++s) {
-        const int64_t count = base + (s == num_splits - 1 ? rem : 0);
-        tables.push_back(build_split_table(schema, start, count));
-        start += count;
+    // Version k reveals a growing prefix (k/versions of the rows) to exercise F2.
+    std::vector<std::vector<std::shared_ptr<arrow::Table>>> vers;
+    for (int k = 1; k <= versions; ++k) {
+        const int64_t rows_k = total_rows * k / versions;
+        const int64_t base = rows_k / num_splits;
+        const int64_t rem = rows_k % num_splits;
+        std::vector<std::shared_ptr<arrow::Table>> tables;
+        int64_t start = 0;
+        for (int s = 0; s < num_splits; ++s) {
+            const int64_t count = base + (s == num_splits - 1 ? rem : 0);
+            tables.push_back(build_split_table(schema, start, count));
+            start += count;
+        }
+        vers.push_back(std::move(tables));
     }
-    publish_image(store_dir, bucket, table_path, cols, tables, format);
+    publish_versions(store_dir, bucket, table_path, cols, format, vers);
     return 0;
 }
 
 // SQL mode: materialize from a SQLite table using range-based split queries.
-int run_sql(int argc, char** argv, const std::string& format) {
+int run_sql(int argc, char** argv, const std::string& format, int versions) {
     using namespace fsp;
     using namespace fsp::native;
 
@@ -283,19 +300,25 @@ int run_sql(int argc, char** argv, const std::string& format) {
         }
 
         std::pair<int64_t, int64_t> bounds = sql_key_bounds(db, dialect, table, pk);
-        std::vector<std::pair<int64_t, int64_t>> ranges =
-            compute_key_ranges(bounds.first, bounds.second, num_splits);
+        const int64_t lo = bounds.first, hi = bounds.second;
+        const int64_t span = (hi >= lo) ? (hi - lo + 1) : 0;
 
-        std::vector<std::shared_ptr<arrow::Table>> tables;
-        for (const auto& r : ranges) {
-            const int64_t max_rows = r.second > r.first ? (r.second - r.first) : 1;
-            tables.push_back(
-                sql_read_range(db, dialect, cols, schema, table, pk, r.first, r.second, max_rows));
+        std::vector<std::vector<std::shared_ptr<arrow::Table>>> vers;
+        for (int k = 1; k <= versions; ++k) {
+            const int64_t upper = lo + span * k / versions;  // exclusive upper id (growing prefix)
+            std::vector<std::pair<int64_t, int64_t>> ranges = compute_key_ranges(lo, upper - 1, num_splits);
+            std::vector<std::shared_ptr<arrow::Table>> tables;
+            for (const auto& r : ranges) {
+                const int64_t max_rows = r.second > r.first ? (r.second - r.first) : 1;
+                tables.push_back(
+                    sql_read_range(db, dialect, cols, schema, table, pk, r.first, r.second, max_rows));
+            }
+            vers.push_back(std::move(tables));
         }
-        std::printf("sql: db=%s table=%s key=%s splits=%d key_range=[%lld,%lld]\n", db_path.c_str(),
-                    table.c_str(), pk.c_str(), num_splits, static_cast<long long>(bounds.first),
-                    static_cast<long long>(bounds.second));
-        publish_image(store_dir, bucket, table_path, cols, tables, format);
+        std::printf("sql: db=%s table=%s key=%s splits=%d versions=%d key_range=[%lld,%lld]\n",
+                    db_path.c_str(), table.c_str(), pk.c_str(), num_splits, versions,
+                    static_cast<long long>(lo), static_cast<long long>(hi));
+        publish_versions(store_dir, bucket, table_path, cols, format, vers);
     } catch (...) {
         sqlite3_close(db);
         throw;
@@ -305,7 +328,7 @@ int run_sql(int argc, char** argv, const std::string& format) {
 }
 
 // Postgres mode: materialize from a PostgreSQL table using range-based split queries.
-int run_pg(int argc, char** argv, const std::string& format) {
+int run_pg(int argc, char** argv, const std::string& format, int versions) {
     using namespace fsp;
     using namespace fsp::native;
 
@@ -338,19 +361,25 @@ int run_pg(int argc, char** argv, const std::string& format) {
         }
 
         std::pair<int64_t, int64_t> bounds = pg_key_bounds(conn, dialect, table, pk);
-        std::vector<std::pair<int64_t, int64_t>> ranges =
-            compute_key_ranges(bounds.first, bounds.second, num_splits);
+        const int64_t lo = bounds.first, hi = bounds.second;
+        const int64_t span = (hi >= lo) ? (hi - lo + 1) : 0;
 
-        std::vector<std::shared_ptr<arrow::Table>> tables;
-        for (const auto& rg : ranges) {
-            const int64_t max_rows = rg.second > rg.first ? (rg.second - rg.first) : 1;
-            tables.push_back(
-                pg_read_range(conn, dialect, cols, schema, table, pk, rg.first, rg.second, max_rows));
+        std::vector<std::vector<std::shared_ptr<arrow::Table>>> vers;
+        for (int k = 1; k <= versions; ++k) {
+            const int64_t upper = lo + span * k / versions;  // exclusive upper id (growing prefix)
+            std::vector<std::pair<int64_t, int64_t>> ranges = compute_key_ranges(lo, upper - 1, num_splits);
+            std::vector<std::shared_ptr<arrow::Table>> tables;
+            for (const auto& rg : ranges) {
+                const int64_t max_rows = rg.second > rg.first ? (rg.second - rg.first) : 1;
+                tables.push_back(
+                    pg_read_range(conn, dialect, cols, schema, table, pk, rg.first, rg.second, max_rows));
+            }
+            vers.push_back(std::move(tables));
         }
-        std::printf("postgres: table=%s key=%s splits=%d key_range=[%lld,%lld]\n", table.c_str(),
-                    pk.c_str(), num_splits, static_cast<long long>(bounds.first),
-                    static_cast<long long>(bounds.second));
-        publish_image(store_dir, bucket, table_path, cols, tables, format);
+        std::printf("postgres: table=%s key=%s splits=%d versions=%d key_range=[%lld,%lld]\n",
+                    table.c_str(), pk.c_str(), num_splits, versions,
+                    static_cast<long long>(lo), static_cast<long long>(hi));
+        publish_versions(store_dir, bucket, table_path, cols, format, vers);
     } catch (...) {
         PQfinish(conn);
         throw;
@@ -369,16 +398,21 @@ int main(int argc, char** argv) {
                     "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]      (SQLite source)\n"
                     "  native_publish --postgres <conninfo> --store <dir> [--seed <rows>] [--splits <n>] "
                     "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]  (PostgreSQL source)\n"
-                    "  add --format iceberg|delta (default iceberg) to any form.\n");
+                    "  add --format iceberg|delta (default iceberg) and --versions N (default 1) to any form.\n");
         return 2;
     }
-    // Pull --format out of argv so it composes with the positional demo form.
+    // Pull --format and --versions out of argv so they compose with the positional demo form.
     std::string format = "iceberg";
+    int versions = 1;
     std::vector<char*> filtered;
     filtered.push_back(argv[0]);
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--format" && i + 1 < argc) {
             format = argv[++i];
+            continue;
+        }
+        if (std::string(argv[i]) == "--versions" && i + 1 < argc) {
+            versions = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
             continue;
         }
         filtered.push_back(argv[i]);
@@ -387,13 +421,17 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "native_publish: --format must be 'iceberg' or 'delta'\n");
         return 2;
     }
+    if (versions < 1) {
+        std::fprintf(stderr, "native_publish: --versions must be >= 1\n");
+        return 2;
+    }
     int fargc = static_cast<int>(filtered.size());
     char** fargv = filtered.data();
 
     try {
-        if (has_flag(fargc, fargv, "--postgres")) return run_pg(fargc, fargv, format);
-        if (has_flag(fargc, fargv, "--sqlite")) return run_sql(fargc, fargv, format);
-        return run_demo(fargc, fargv, format);
+        if (has_flag(fargc, fargv, "--postgres")) return run_pg(fargc, fargv, format, versions);
+        if (has_flag(fargc, fargv, "--sqlite")) return run_sql(fargc, fargv, format, versions);
+        return run_demo(fargc, fargv, format, versions);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "native_publish error: %s\n", e.what());
         return 1;

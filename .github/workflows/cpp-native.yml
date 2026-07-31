@@ -140,3 +140,14 @@ jobs:
         run: |
           agent-cpp/native/build/native_publish --postgres "host=localhost port=5432 user=postgres password=postgres dbname=postgres" --store "$GITHUB_WORKSPACE/.store_pg" --seed 50000 --splits 8 --format delta
           python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_pg/warehouse/demo/orders" 50000
+
+      - name: Validate multi-snapshot (F2, 3 Delta versions)
+        run: |
+          agent-cpp/native/build/native_publish "$GITHUB_WORKSPACE/.store_mv" 30000 4 --versions 3 --format delta
+          python - <<'PY'
+          from deltalake import DeltaTable
+          dt = DeltaTable("${{ github.workspace }}/.store_mv/warehouse/demo/orders")
+          assert dt.version() == 2, f"expected version 2, got {dt.version()}"
+          assert dt.to_pyarrow_table().num_rows == 30000, dt.to_pyarrow_table().num_rows
+          print("multi-snapshot OK: version", dt.version())
+          PY

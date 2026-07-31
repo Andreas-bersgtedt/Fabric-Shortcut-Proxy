@@ -80,12 +80,16 @@ jobs:
       - name: Build native modules (vcpkg Arrow/Avro)
         run: bash agent-cpp/native/build_native.sh
 
+      # Scope the vcpkg Arrow libs to native binaries only. Exporting them into
+      # LD_LIBRARY_PATH globally makes the loader prefer the vcpkg libarrow over
+      # the pyarrow wheel's bundled build, which breaks every Python reader step
+      # with an undefined-symbol ImportError.
       - name: Export runtime library path
-        run: echo "LD_LIBRARY_PATH=$(echo "$GITHUB_WORKSPACE"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')" >> "$GITHUB_ENV"
+        run: echo "NATIVE_LD=$(echo "$GITHUB_WORKSPACE"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')" >> "$GITHUB_ENV"
 
       - name: Run native unit tests
         run: |
-          agent-cpp/native/build/native_tests \
+          LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_tests \
             agent-cpp/native/build/split0.parquet \
             agent-cpp/native/build/manifest.avro \
             agent-cpp/native/build/manifest_list.avro \
@@ -95,7 +99,7 @@ jobs:
         run: python agent-cpp/native/roundtrip_check.py agent-cpp/native/build
 
       - name: Publish native Iceberg image
-        run: agent-cpp/native/build/native_publish --sqlite "$GITHUB_WORKSPACE/.native.db" --store "$GITHUB_WORKSPACE/.store_native" --seed 50000 --splits 8
+        run: LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish --sqlite "$GITHUB_WORKSPACE/.native.db" --store "$GITHUB_WORKSPACE/.store_native" --seed 50000 --splits 8
 
       - name: Build C++ serving agent
         run: bash agent-cpp/build.sh
@@ -133,17 +137,17 @@ jobs:
 
       - name: Publish + validate native Delta image (expect 50000 rows)
         run: |
-          agent-cpp/native/build/native_publish --sqlite "$GITHUB_WORKSPACE/.native.db" --store "$GITHUB_WORKSPACE/.store_delta" --splits 8 --format delta
+          LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish --sqlite "$GITHUB_WORKSPACE/.native.db" --store "$GITHUB_WORKSPACE/.store_delta" --splits 8 --format delta
           python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_delta/warehouse/demo/orders" 50000
 
       - name: Publish + validate from PostgreSQL (expect 50000 rows)
         run: |
-          agent-cpp/native/build/native_publish --postgres "host=localhost port=5432 user=postgres password=postgres dbname=postgres" --store "$GITHUB_WORKSPACE/.store_pg" --seed 50000 --splits 8 --format delta
+          LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish --postgres "host=localhost port=5432 user=postgres password=postgres dbname=postgres" --store "$GITHUB_WORKSPACE/.store_pg" --seed 50000 --splits 8 --format delta
           python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_pg/warehouse/demo/orders" 50000
 
       - name: Validate multi-snapshot (F2, 3 Delta versions)
         run: |
-          agent-cpp/native/build/native_publish "$GITHUB_WORKSPACE/.store_mv" 30000 4 --versions 3 --format delta
+          LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish "$GITHUB_WORKSPACE/.store_mv" 30000 4 --versions 3 --format delta
           python - <<'PY'
           from deltalake import DeltaTable
           dt = DeltaTable("${{ github.workspace }}/.store_mv/warehouse/demo/orders")
@@ -233,8 +237,7 @@ jobs:
 
       - name: Publish from MSSQL via ODBC + validate (expect 50000 rows)
         run: |
-          export LD_LIBRARY_PATH="$(echo "$GITHUB_WORKSPACE"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')"
-          agent-cpp/native/build/native_publish \
+          LD_LIBRARY_PATH="$(echo "$GITHUB_WORKSPACE"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')" agent-cpp/native/build/native_publish \
             --odbc "Driver={ODBC Driver 18 for SQL Server};Server=localhost,1433;UID=sa;PWD=Str0ng!Passw0rd;Database=master;TrustServerCertificate=yes" \
             --store "$GITHUB_WORKSPACE/.store_mssql" --db-kind mssql --splits 8 --format delta
           python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_mssql/warehouse/demo/orders" 50000

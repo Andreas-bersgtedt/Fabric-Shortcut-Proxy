@@ -122,6 +122,11 @@
     Disable serving legacy object aliases when canonical layout is enabled.
     Sets ENABLE_LEGACY_PATH_ALIASES=0.
 
+.PARAMETER Tier1Tests
+    Build and run the C++ Tier 1 conformance tests (agent-cpp/build_tier1.ps1),
+    then exit with the test result. Requires Visual Studio 2022 with the C++
+    workload. Does not create the venv or launch the Manager.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -133,6 +138,9 @@
 
 .EXAMPLE
     .\Manager.ps1 -DbUrl "mssql+aioodbc://@host/db?driver=ODBC+Driver+18+for+SQL+Server&trusted_connection=yes"
+
+.EXAMPLE
+    .\Manager.ps1 -Tier1Tests
 #>
 [CmdletBinding()]
 param(
@@ -163,7 +171,8 @@ param(
     [switch]$AutoStash,
     [ValidateSet("legacy", "canonical")]
     [string]$ObjectPathLayout,
-    [switch]$DisableLegacyAliases
+    [switch]$DisableLegacyAliases,
+    [switch]$Tier1Tests
 )
 
 $ErrorActionPreference = "Stop"
@@ -331,6 +340,19 @@ if ($NoPull) {
         Write-Step "Codebase bootstrapped in place (branch '$targetBranch'). Re-run if this script was updated."
         if (-not $SkipInstall -and (Test-Path $StampFile)) { Remove-Item -Force $StampFile }
     }
+}
+
+# ---------------------------------------------------------------------------
+# Optional: build + run the C++ Tier 1 conformance tests, then exit (verify mode).
+#   .\Manager.ps1 -Tier1Tests   -> planner / delta / cache C++ vs Python golden vectors.
+# Needs Visual Studio 2022 with the C++ workload; does not touch the venv.
+# ---------------------------------------------------------------------------
+if ($Tier1Tests) {
+    $tier1Build = Join-Path $ProjectRoot "agent-cpp\build_tier1.ps1"
+    if (-not (Test-Path $tier1Build)) { throw "Tier 1 build script not found: $tier1Build" }
+    Write-Step "Building + running C++ Tier 1 conformance tests"
+    & $tier1Build
+    exit $LASTEXITCODE
 }
 
 # ---------------------------------------------------------------------------

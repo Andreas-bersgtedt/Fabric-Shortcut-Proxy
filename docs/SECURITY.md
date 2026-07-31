@@ -149,9 +149,9 @@ git push origin --force-with-lease
 
 When the storage proxy serves **mounted buckets** (existing files from `local` /
 `s3` / `azure` backends), the S3 front door is hardened beyond the single-key
-POC path. Grounded in [security/access_keys.py](security/access_keys.py),
-[s3/auth.py](s3/auth.py), [main.py](main.py) (auth middleware), and
-[observability/audit.py](observability/audit.py).
+POC path. Grounded in [security/access_keys.py](../security/access_keys.py),
+[s3/auth.py](../s3/auth.py), [main.py](../main.py) (auth middleware), and
+[observability/audit.py](../observability/audit.py).
 
 ### Front-door authentication (inbound)
 
@@ -188,7 +188,7 @@ Each access key carries an authorization scope, stored **encrypted**:
 
 Clients **never** see the credentials the proxy uses to reach the upstream S3 or
 Azure backend. Those secrets are held in the encrypted credential store
-([security/credential_store.py](security/credential_store.py); DPAPI on Windows,
+([security/credential_store.py](../security/credential_store.py); DPAPI on Windows,
 Fernet elsewhere) and resolved by the mount's `credential` id — never written to
 `config.mounts.json`.
 
@@ -211,8 +211,8 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
 ### TLS
 
 - Terminate HTTPS **at the proxy** by setting **both** `TLS_CERT_FILE` and
-  `TLS_KEY_FILE` (wired into uvicorn for [main.py](main.py) and
-  [manager.py](manager.py)), or terminate at a fronting load balancer.
+  `TLS_KEY_FILE` (wired into uvicorn for [main.py](../main.py) and
+  [manager.py](../manager.py)), or terminate at a fronting load balancer.
 - SigV4 read requests use `UNSIGNED-PAYLOAD`, so signatures give **no
   confidentiality** over plain HTTP — enable TLS before turning on auth. The proxy
   logs a startup warning when auth/mounts are on but TLS is not configured.

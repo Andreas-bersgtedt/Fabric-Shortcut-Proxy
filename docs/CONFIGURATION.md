@@ -7,8 +7,8 @@ You do **not** hand‑write a column schema. Point the proxy at a **table/view
 name** and a **key column**; the Iceberg schema is **reflected from the source
 database automatically** at startup.
 
-Grounded in [config.py](config.py), [db/executor.py](db/executor.py) (reflection),
-and [planner/dialects.py](planner/dialects.py).
+Grounded in [config.py](../config.py), [db/executor.py](../db/executor.py) (reflection),
+and [planner/dialects.py](../planner/dialects.py).
 
 ---
 
@@ -23,8 +23,8 @@ Settings resolve with this precedence (highest wins):
 | Surface | What it controls | How to set it |
 |---|---|---|
 | **Environment variables** | Connection string, source table, **key column**, bucket, port, splits, flags | `DB_URL`, `DB_SOURCE_TABLE`, `KEY_COLUMN`, … |
-| **`config.json`** | Everything above **plus the full `tables` registry** — no Python | Copy [config.example.json](config.example.json) → `config.json` |
-| **`config.py` → `TABLES`** | The table registry (alternative to `config.json`) | Edit [config.py](config.py) |
+| **`config.json`** | Everything above **plus the full `tables` registry** — no Python | Copy [config.example.json](../config.example.json) → `config.json` |
+| **`config.py` → `TABLES`** | The table registry (alternative to `config.json`) | Edit [config.py](../config.py) |
 
 At startup the proxy:
 1. Reads `DB_URL` and auto‑selects the SQL **dialect** from its scheme.
@@ -304,7 +304,7 @@ table has a primary key (auto‑detected); pass it for views or composite keys.
 
 Tables can be served from **different source databases of different dialects** at
 once. Declare each extra source in a `connections` array in
-[config.connection.json](config.connection.example.json), then bind a table to
+[config.connection.json](../config.connection.example.json), then bind a table to
 one with its `connection` field.
 
 ```jsonc
@@ -540,7 +540,7 @@ clears the buffers before a fresh Fabric run. Run it locally — don't expose pu
 | `ICEBERG_MANIFEST_STATS=1` | Emit column bounds/counts for reader pruning (F3; validate against Fabric first) |
 | `ICEBERG_SNAPSHOT_HISTORY=1` | Retain snapshot versions; `POST /_admin/refresh` advances the version (F2) |
 
-See [README.md](README.md) and [PLANNING.md](PLANNING.md) for the full flag list.
+See [README.md](../README.md) and [PLANNING.md](PLANNING.md) for the full flag list.
 
 ## 12. Data freshness (auto-refresh)
 
@@ -622,8 +622,8 @@ Independently of the DB→table virtualization, the same S3 endpoint can serve
 **existing files** from a storage backend as **read-only byte passthrough**. This
 is **additive**: a bucket with a **mount** streams bytes from its backend; every
 other bucket (including the DB warehouse) resolves exactly as before. Grounded in
-[storage/mounts.py](storage/mounts.py), [storage/passthrough.py](storage/passthrough.py),
-and [config.mounts.example.json](config.mounts.example.json).
+[storage/mounts.py](../storage/mounts.py), [storage/passthrough.py](../storage/passthrough.py),
+and [config.mounts.example.json](../config.mounts.example.json).
 
 Turn it on with `ENABLE_STORAGE_PROXY=1` and a `config.mounts.json` (gitignored),
 or use the config-builder **Storage** tab.

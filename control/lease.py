@@ -1,6 +1,6 @@
 """
 Leader lease over the shared artifact store — Phase 5 Manager failover
-(SCALE_ARCHITECTURE_PLAN.md §14 Phase 5, Risk "Manager is a SPOF").
+(docs/SCALE_ARCHITECTURE_PLAN.md §14 Phase 5, Risk "Manager is a SPOF").
 
 A best-effort TTL leader election so exactly one Manager is **primary** (supervises
 Agents + serves the gateway) while others run as warm **standbys**. The primary

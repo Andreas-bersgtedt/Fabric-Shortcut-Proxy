@@ -1,5 +1,5 @@
 """
-Manager / Controller role package (SCALE_ARCHITECTURE_PLAN.md §4.1).
+Manager / Controller role package (docs/SCALE_ARCHITECTURE_PLAN.md §4.1).
 
 The **control plane** (the "Primary") owns configuration + secrets, the
 authoritative per‑table **published epoch** (Iceberg metadata / Delta

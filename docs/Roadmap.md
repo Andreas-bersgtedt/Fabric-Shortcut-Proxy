@@ -49,7 +49,7 @@ Status: Completed (Phases 1–4).
   TLS termination, and per-access **audit logging** (`ENABLE_AUDIT_LOG`).
 - **Config-builder UI:** Storage tab (mount editor per backend + Access-keys manager).
 
-Reference: [devplan/StorageProxy.md](devplan/StorageProxy.md), [SECURITY.md](SECURITY.md),
+Reference: [devplan/StorageProxy.md](../devplan/StorageProxy.md), [SECURITY.md](SECURITY.md),
 [CONFIGURATION.md](CONFIGURATION.md) §14. Optional next step: read-write (PUT/DELETE/multipart).
 
 ## Phase 1: Canonical Source Path Model

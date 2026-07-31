@@ -1,6 +1,6 @@
 """
 Retention GC — prune orphaned Parquet splits from the shared artifact store
-(SCALE_ARCHITECTURE_PLAN.md §14 Phase 5).
+(docs/SCALE_ARCHITECTURE_PLAN.md §14 Phase 5).
 
 When AUTO_REFRESH publishes a new snapshot version, older versions eventually age
 out of the in-memory history (``SNAPSHOT_HISTORY_LIMIT``). Their data-split objects

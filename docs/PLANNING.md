@@ -69,28 +69,28 @@ regressing the working Fabric path.
 ### H1 — Metrics & diagnostics  ·  effort M · risk low  ·  (§4.8)  ·  ✅ DONE
 - **Goal:** expose metadata‑request count, data‑file‑request count, SQL latency,
   bytes served, and cache hit ratio.
-- **Delivered:** [observability/metrics.py](observability/metrics.py) registry;
+- **Delivered:** [observability/metrics.py](../observability/metrics.py) registry;
   `GET /metrics` (Prometheus) + `GET /_admin/stats` (JSON) in
-  [observability/endpoints.py](observability/endpoints.py); instrumented
-  [s3/router.py](s3/router.py) (request counts + bytes served),
-  [db/executor.py](db/executor.py) (SQL latency histogram), and
-  [cache/lru_cache.py](cache/lru_cache.py) (hit/miss + occupancy).
+  [observability/endpoints.py](../observability/endpoints.py); instrumented
+  [s3/router.py](../s3/router.py) (request counts + bytes served),
+  [db/executor.py](../db/executor.py) (SQL latency histogram), and
+  [cache/lru_cache.py](../cache/lru_cache.py) (hit/miss + occupancy).
 - **Acceptance:** ✅ `/metrics` returns non‑zero counters after traffic; cache hit
   ratio rises on repeated reads. Covered by `tests/test_metrics_health.py`.
 
 ### H2 — Health & readiness endpoints  ·  effort S · risk low  ·  ✅ DONE
 - **Goal:** `/healthz` (liveness) and `/readyz` (readiness = snapshot built **and**
   source DB reachable).
-- **Delivered:** routes in [observability/endpoints.py](observability/endpoints.py)
+- **Delivered:** routes in [observability/endpoints.py](../observability/endpoints.py)
   mounted before the S3 catch‑all; readiness runs `SELECT 1` via
-  [db/executor.py](db/executor.py) `ping()`.
+  [db/executor.py](../db/executor.py) `ping()`.
 - **Acceptance:** ✅ `/healthz` → 200 while up; `/readyz` → 200 once ready, 503
   otherwise. Covered by `tests/test_metrics_health.py`.
 
 ### H3 — SigV4 authentication verification  ·  effort L · risk med  ·  ✅ DONE
-- **Delivered:** [s3/auth.py](s3/auth.py) verifies `AWS4-HMAC-SHA256` header auth
+- **Delivered:** [s3/auth.py](../s3/auth.py) verifies `AWS4-HMAC-SHA256` header auth
   (canonical request → string-to-sign → HMAC signing-key chain), and a middleware
-  in [main.py](main.py) enforces it when `REQUIRE_SIGV4=1` (default off); health/
+  in [main.py](../main.py) enforces it when `REQUIRE_SIGV4=1` (default off); health/
   metrics/admin endpoints and CORS preflight are exempt. Failures return
   `403` with `AccessDenied` / `InvalidAccessKeyId` / `SignatureDoesNotMatch`.
 - **Acceptance:** ✅ tests sign with **botocore** (the real S3 signer) and assert
@@ -99,32 +99,32 @@ regressing the working Fabric path.
 
 ### H4 — Resource guards for on‑demand scans  ·  effort M · risk med  ·  ✅ DONE
 - **Delivered:** an `asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)` in
-  [s3/router.py](s3/router.py) bounds simultaneous SQL+Parquet builds;
+  [s3/router.py](../s3/router.py) bounds simultaneous SQL+Parquet builds;
   `QUERY_MAX_ROWS` caps rows per split; `parquet_generations_total` metric added.
 
 ### H5 — Retry / resilience policy  ·  effort S–M · risk low  ·  ✅ DONE
-- **Delivered:** [db/executor.py](db/executor.py) retries with linear backoff
+- **Delivered:** [db/executor.py](../db/executor.py) retries with linear backoff
   (`DB_MAX_RETRIES` / `DB_RETRY_BACKOFF`) and raises `SourceUnavailable` on
-  exhaustion; [s3/router.py](s3/router.py) maps it to `503 ServiceUnavailable`
+  exhaustion; [s3/router.py](../s3/router.py) maps it to `503 ServiceUnavailable`
   with `Retry-After`.
 
 ### H6 — Schema‑drift detection  ·  effort M · risk low  ·  ✅ DONE
-- **Delivered:** [db/executor.py](db/executor.py) `validate_source_schema()`
+- **Delivered:** [db/executor.py](../db/executor.py) `validate_source_schema()`
   introspects the source table at startup and fails fast if any declared
   `TABLE_SCHEMA` column is missing (extra columns are logged, not fatal). Gated
   by `VALIDATE_SOURCE_SCHEMA` (default on).
 
 ### H7 — Config & secrets hygiene  ·  effort S · risk low  ·  ✅ DONE
 - **Goal:** all secrets from env/secret store; validate required config at startup.
-- **Delivered:** [config.py](config.py) `validate_config()` (fails fast with an
-  aggregated message) called from the [main.py](main.py) lifespan; `redact_db_url()`
+- **Delivered:** [config.py](../config.py) `validate_config()` (fails fast with an
+  aggregated message) called from the [main.py](../main.py) lifespan; `redact_db_url()`
   masks credentials in the startup log. Required env documented in the README.
 - **Acceptance:** ✅ missing/invalid config fails fast; DB URL passwords never logged.
   Covered by `tests/test_hardening.py`.
 
 ### H8 — S3 error‑response fidelity  ·  effort S · risk low  ·  ✅ DONE
-- **Delivered:** [s3/xml_responses.py](s3/xml_responses.py) error bodies now carry
-  a unique `RequestId` + `HostId`; [s3/router.py](s3/router.py) returns
+- **Delivered:** [s3/xml_responses.py](../s3/xml_responses.py) error bodies now carry
+  a unique `RequestId` + `HostId`; [s3/router.py](../s3/router.py) returns
   `416 Range Not Satisfiable` (with `Content-Range: bytes */<size>`) for ranges
   that start beyond the object, matching AWS. Suffix/footer ranges unaffected.
 
@@ -144,16 +144,16 @@ regressing the working Fabric path.
 
 ### F1 — Multi‑table support  ·  effort L · risk med  ·  (§10.1)  ·  ✅ DONE
 - **Goal:** serve N tables under `warehouse/db/<table>` from one proxy.
-- **Delivered:** [config.py](config.py) now exposes a `TableDef` dataclass and a
+- **Delivered:** [config.py](../config.py) now exposes a `TableDef` dataclass and a
   `TABLES` registry (default = the single demo `sales` table, preserving
-  behavior). [iceberg/state_store.py](iceberg/state_store.py) holds a
+  behavior). [iceberg/state_store.py](../iceberg/state_store.py) holds a
   `dict[str, SnapshotState]` registry with `build_table_snapshot` /
   `build_all_snapshots` / `get_all_snapshots`; `SnapshotState` and
   `SplitDescriptor` carry a back‑reference to their `TableDef`.
-  [iceberg/metadata.py](iceberg/metadata.py) and
-  [parquet/generator.py](parquet/generator.py) read `snap.table.schema` instead of
-  the global; [s3/router.py](s3/router.py) aggregates objects across all snapshots
-  and resolves the owning snapshot per key; [main.py](main.py) builds and
+  [iceberg/metadata.py](../iceberg/metadata.py) and
+  [parquet/generator.py](../parquet/generator.py) read `snap.table.schema` instead of
+  the global; [s3/router.py](../s3/router.py) aggregates objects across all snapshots
+  and resolves the owning snapshot per key; [main.py](../main.py) builds and
   materializes every table (and validates each source schema). `build_snapshot()`
   is kept as a backward‑compatible single‑table wrapper.
 - **Acceptance:** ✅ `tests/test_multitable.py` registers `sales` + `products`
@@ -163,13 +163,13 @@ regressing the working Fabric path.
 ### F2 — Snapshot history & time‑travel  ·  effort L · risk med  ·  (§10.2)  ·  ✅ DONE
 - **Goal:** multiple snapshots with populated `snapshot-log` / `metadata-log`;
   serve `vN.metadata.json` history; `version-hint.text` > 1.
-- **Delivered:** [iceberg/state_store.py](iceberg/state_store.py) keeps a per-table
+- **Delivered:** [iceberg/state_store.py](../iceberg/state_store.py) keeps a per-table
   history (`_history`) plus `advance_table_snapshot()`; each version gets its own
   snapshot id / sequence / watermark / versioned manifests / `vN.metadata.json`
-  while sharing the deterministic data files. [iceberg/metadata.py](iceberg/metadata.py)
+  while sharing the deterministic data files. [iceberg/metadata.py](../iceberg/metadata.py)
   renders each version **point-in-time** (snapshots up to that version, a
   `snapshot-log`, and a `metadata-log` of earlier metadata files);
-  [s3/router.py](s3/router.py) serves all historical metadata/manifests and
+  [s3/router.py](../s3/router.py) serves all historical metadata/manifests and
   reports `version-hint.text` = the current version; `/_admin/refresh` advances
   the version when history is on. Gated by `ICEBERG_SNAPSHOT_HISTORY` (default off).
 - **Acceptance:** ✅ `tests/test_phase5.py::test_snapshot_history_and_time_travel`;
@@ -181,9 +181,9 @@ regressing the working Fabric path.
 ### F3 — Manifest statistics & predicate pushdown  ·  effort L · risk med  ·  (§10.3)  ·  ✅ DONE
 - **Goal:** populate column stats (sizes, value/null counts, lower/upper bounds)
   to enable split pruning.
-- **Delivered:** [iceberg/stats.py](iceberg/stats.py) computes per-column stats
+- **Delivered:** [iceberg/stats.py](../iceberg/stats.py) computes per-column stats
   from each generated Parquet file's row-group metadata and encodes bounds with
-  Iceberg single-value binary serialization; [iceberg/manifest.py](iceberg/manifest.py)
+  Iceberg single-value binary serialization; [iceberg/manifest.py](../iceberg/manifest.py)
   emits the six stat maps as Iceberg array-of-key/value maps **with a `field-id`
   on every key and value** (the missing field-ids were exactly what strict
   readers rejected before). Gated by `ICEBERG_MANIFEST_STATS` (default off).
@@ -194,7 +194,7 @@ regressing the working Fabric path.
 
 ### F4 — Async pre‑generation of hot Parquet  ·  effort M · risk low  ·  (§10.4)  ·  ✅ DONE
 - **Goal:** pre‑warm popular splits to cut first‑read latency.
-- **Delivered:** startup materialization in [main.py](main.py) now runs
+- **Delivered:** startup materialization in [main.py](../main.py) now runs
   concurrently (bounded by `MAX_CONCURRENT_GENERATIONS` via an asyncio
   semaphore + `asyncio.gather`), gated by `CONCURRENT_STARTUP_MATERIALIZATION`
   (default on). Note: splits are still materialized eagerly (not lazily) because
@@ -205,9 +205,9 @@ regressing the working Fabric path.
 
 ### F5 — Materialized object‑store cache  ·  effort M–L · risk low  ·  (§10.5)  ·  ✅ DONE
 - **Goal:** persist generated Parquet (disk) to survive restarts.
-- **Delivered:** [cache/lru_cache.py](cache/lru_cache.py) write-through to a disk
+- **Delivered:** [cache/lru_cache.py](../cache/lru_cache.py) write-through to a disk
   directory keyed by a hash of the (deterministic) object key, with read-through
-  + `warm_parquet()` used by the [main.py](main.py) lifespan to skip SQL +
+  + `warm_parquet()` used by the [main.py](../main.py) lifespan to skip SQL +
   Parquet regeneration on a warm restart. Gated by `PARQUET_DISK_CACHE`
   (default off); atomic writes via a temp file + `os.replace`.
 - **Acceptance:** ✅ `tests/test_phase5.py` write → clear memory → read-from-disk
@@ -216,11 +216,11 @@ regressing the working Fabric path.
 ### F6 — Pluggable SQL dialect adapters  ·  effort M · risk med  ·  (§10.6)  ·  ✅ DONE
 - **Goal:** first‑class SQLite / PostgreSQL / SQL Server support (`aioodbc` is
   already a dependency).
-- **Delivered:** [planner/dialects.py](planner/dialects.py) provides `Dialect`
+- **Delivered:** [planner/dialects.py](../planner/dialects.py) provides `Dialect`
   adapters (SQLite, PostgreSQL, SQL Server) that encapsulate identifier quoting
   (double‑quote vs. brackets), the integer CAST type (`INTEGER` vs. `BIGINT`), and
   the row‑limit clause (`LIMIT` suffix vs. T‑SQL `TOP` prefix). `get_dialect()`
-  selects from the `config.DB_URL` scheme; [planner/split_planner.py](planner/split_planner.py)
+  selects from the `config.DB_URL` scheme; [planner/split_planner.py](../planner/split_planner.py)
   is now fully dialect‑driven and uses the split's own `TableDef`.
 - **Acceptance:** ✅ `tests/test_dialects.py` asserts the emitted SQL per dialect
   (TOP vs LIMIT, BIGINT vs INTEGER, bracket vs double‑quote, dotted‑name quoting).

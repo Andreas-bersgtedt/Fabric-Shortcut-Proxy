@@ -1,5 +1,5 @@
 """
-Agent / Runtime role package (SCALE_ARCHITECTURE_PLAN.md §4.2).
+Agent / Runtime role package (docs/SCALE_ARCHITECTURE_PLAN.md §4.2).
 
 The **runtime** is the stateless worker: it speaks the S3 data plane
 (GET/HEAD/List, ranged reads, SigV4), generates Parquet from SQL pushdown, and

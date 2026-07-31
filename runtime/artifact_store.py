@@ -1,5 +1,5 @@
 """
-Artifact store — the durable object layer for the cluster (SCALE_ARCHITECTURE_PLAN.md §4.3).
+Artifact store — the durable object layer for the cluster (docs/SCALE_ARCHITECTURE_PLAN.md §4.3).
 
 A single, small interface behind which materialized **Parquet splits** and table
 **metadata** (Iceberg ``metadata.json``/manifests or the Delta ``_delta_log``) are

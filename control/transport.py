@@ -1,5 +1,5 @@
 """
-Control‑plane transport seam (SCALE_ARCHITECTURE_PLAN.md §14 Phase 1, decision #1).
+Control‑plane transport seam (docs/SCALE_ARCHITECTURE_PLAN.md §14 Phase 1, decision #1).
 
 Open decision #1 is resolved **REST‑first, gRPC‑ready**. Callers depend only on the
 :class:`ControlServer` (Manager side) and :class:`ControlClient` (Agent side)

@@ -1,5 +1,5 @@
 """
-Serving image publisher — Phase 6 (SCALE_ARCHITECTURE_PLAN.md §14, C++ Agent).
+Serving image publisher — Phase 6 (docs/SCALE_ARCHITECTURE_PLAN.md §14, C++ Agent).
 
 Writes a **complete, self-contained table image** to the artifact store: every S3
 object the Agent would serve — the data splits AND the Iceberg

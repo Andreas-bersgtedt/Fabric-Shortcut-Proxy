@@ -24,7 +24,7 @@ deterministic and content-independent.**
 
 ## 2. Root cause (grounded in code)
 
-In [iceberg/state_store.py](iceberg/state_store.py) `build_table_snapshot`:
+In [iceberg/state_store.py](../iceberg/state_store.py) `build_table_snapshot`:
 
 ```python
 seed = f"{bucket}/{table_path}"          # no data component
@@ -172,7 +172,7 @@ Content-addressing fixes exactly that, uniformly, with no source signal.
 
 ### 7.3 Cache invalidation
 - New chunk paths are cold; superseded parquet is evicted from
-  [cache/lru_cache.py](cache/lru_cache.py) (memory) and its F5 disk file deleted.
+  [cache/lru_cache.py](../cache/lru_cache.py) (memory) and its F5 disk file deleted.
 
 ### 7.4 Config (env / config.json)
 | Key | Default | Meaning |

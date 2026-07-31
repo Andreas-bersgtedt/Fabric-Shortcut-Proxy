@@ -4,8 +4,8 @@ Design notes for the **native Delta** emitter — an alternative to the default
 Iceberg output that lets Microsoft Fabric read the virtual tables **without the
 Iceberg → Delta conversion layer**.
 
-Grounded in [delta/log.py](delta/log.py), [s3/router.py](s3/router.py),
-[main.py](main.py), and [config.py](config.py).
+Grounded in [delta/log.py](../delta/log.py), [s3/router.py](../s3/router.py),
+[main.py](../main.py), and [config.py](../config.py).
 
 ---
 
@@ -95,7 +95,7 @@ Key invariants:
 ## 4. How it's derived (decoupled from freshness)
 
 The emitter does **not** touch the freshness/publish path. Instead
-[delta/log.py](delta/log.py) reads the existing snapshot **history** from
+[delta/log.py](../delta/log.py) reads the existing snapshot **history** from
 `iceberg.state_store` and memoizes commits:
 
 - `_commits: dict[table -> list[str]]` — append-only commit texts, one per
@@ -106,7 +106,7 @@ The emitter does **not** touch the freshness/publish path. Instead
 `sync_all()` walks `get_snapshot_history(table)` (oldest → newest) and appends a
 commit for every version not yet committed. It is called:
 
-1. **once at startup** ([main.py](main.py) lifespan, after materialization) so
+1. **once at startup** ([main.py](../main.py) lifespan, after materialization) so
    commit 0 is captured before any history pruning could drop version 1, and
 2. **lazily on every object listing** (`delta_log_objects()`), so commits created
    by the background refresh poller show up without any poller changes.
@@ -164,7 +164,7 @@ advertises the data files of every retained version.
 
 ## 6. Request routing
 
-[s3/router.py](s3/router.py) branches on `config.TABLE_FORMAT`:
+[s3/router.py](../s3/router.py) branches on `config.TABLE_FORMAT`:
 
 - **ListObjectsV2 / HEAD** — `_snapshot_objects()` returns
   `delta.log.delta_log_objects()` in delta mode (the `_delta_log/*.json` commits
@@ -189,7 +189,7 @@ advertises the data files of every retained version.
 
 ## 8. Tests
 
-[tests/test_delta.py](tests/test_delta.py) covers the type mapping + schema
+[tests/test_delta.py](../tests/test_delta.py) covers the type mapping + schema
 string (unit) and the router in delta mode (integration): listing serves
 `_delta_log/…json` + `.parquet` and **not** Iceberg artifacts; commit 0 parses to
 `protocol` + `metaData` (valid struct schema) + one `add` per split; Parquet data

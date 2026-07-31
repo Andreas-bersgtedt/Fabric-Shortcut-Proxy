@@ -3,7 +3,7 @@
     Bootstrap and launch the Fabric Shortcut Proxy **Manager** (control plane).
 
 .DESCRIPTION
-    One-shot bootstrap for the Manager/Agent cluster (SCALE_ARCHITECTURE_PLAN.md):
+    One-shot bootstrap for the Manager/Agent cluster (docs/SCALE_ARCHITECTURE_PLAN.md):
       1. Verifies a suitable Python interpreter is available.
       2. Creates a local virtual environment (.venv) if it does not exist.
       3. Installs / updates project dependencies from pyproject.toml.

@@ -1,7 +1,7 @@
 """
 Manager ↔ Agent contract — transport‑neutral message shapes.
 
-This is the **frozen logical contract** (SCALE_ARCHITECTURE_PLAN.md §5) expressed
+This is the **frozen logical contract** (docs/SCALE_ARCHITECTURE_PLAN.md §5) expressed
 as Python dataclasses with a dict/JSON codec. It mirrors ``control/proto/control.proto``
 1:1 so the same messages can travel over gRPC/protobuf **or** REST/JSON — deferring
 open decision #1 (transport) without blocking Phase 1.

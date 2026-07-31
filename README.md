@@ -6,7 +6,7 @@ table objects and generates Parquet files on demand from SQL pushdown queries.
 > The proxy supports two output modes from the same backend data path:
 > `TABLE_FORMAT=iceberg` and `TABLE_FORMAT=delta`.
 > In Fabric environments, Delta mode is often preferred because Fabric reads `_delta_log`
-> directly with no conversion layer. See [DELTA_FORMAT.md](DELTA_FORMAT.md).
+> directly with no conversion layer. See [DELTA_FORMAT.md](docs/DELTA_FORMAT.md).
 
 ## Architecture recap
 
@@ -46,7 +46,7 @@ SigV4 front door. See [Storage Proxy](#storage-proxy--secured-file--object-passt
 
 > For component-level detail — per-process flow diagrams for auth, the warehouse read
 > path, the storage proxy, credential mediation, config, and the Manager/Agent control
-> plane — see [TechnicalArchitecture.md](TechnicalArchitecture.md).
+> plane — see [TechnicalArchitecture.md](docs/TechnicalArchitecture.md).
 
 ## Storage Proxy — secured file / object passthrough
 
@@ -85,11 +85,12 @@ s3emulator/
 ├── Manager.ps1              Bootstrap: venv + deps + launch Manager/Agent cluster
 ├── Manager.sh               Linux/macOS bootstrap for Manager/Agent cluster
 ├── validate_pyiceberg.py    Reference-reader validation (pyiceberg)
-├── PLANNING.md              Hardening & enhancement roadmap
-├── SCALE_ARCHITECTURE_PLAN.md  Manager/Agent cluster rewrite for scale (10⁸+ rows)
-├── CONFIGURATION.md         Full configuration manual (PostgreSQL / SQL Server)
-├── DELTA_FORMAT.md          Native Delta output design (TABLE_FORMAT=delta)
-├── ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md  Real Oracle/Databricks operations + smoke tests
+├── docs/                    Documentation (design, configuration, runbooks)
+│   ├── PLANNING.md              Hardening & enhancement roadmap
+│   ├── SCALE_ARCHITECTURE_PLAN.md  Manager/Agent cluster rewrite for scale (10⁸+ rows)
+│   ├── CONFIGURATION.md         Full configuration manual (PostgreSQL / SQL Server)
+│   ├── DELTA_FORMAT.md          Native Delta output design (TABLE_FORMAT=delta)
+│   └── ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md  Real Oracle/Databricks operations + smoke tests
 ├── s3/
 │   ├── router.py            GET / HEAD / ListObjectsV2 endpoints (warehouse + mount routing)
 │   ├── auth.py              AWS SigV4 verification (multi-key resolver; H3)
@@ -180,7 +181,7 @@ s3emulator/
   ```
 
   For setup, day-2 operations, troubleshooting, and rollback, use
-  [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
+  [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](docs/ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
 ## Quick start
 
@@ -402,7 +403,7 @@ accepts DB credentials, so run it locally only. PostgreSQL needs `asyncpg`
 
 > For in-depth, working PostgreSQL and SQL Server examples — single-table **and**
 > multi-table, with source DDL and troubleshooting — see the
-> [Configuration Manual](CONFIGURATION.md).
+> [Configuration Manual](docs/CONFIGURATION.md).
 
 The split-query SQL is generated per **dialect** (F6). `planner/dialects.py`
 selects an adapter from the `DB_URL` scheme and handles the differences
@@ -445,7 +446,7 @@ canonical table prefix.
 | `DB_SOURCE_TABLE`     | `sales`                                  | Table/view to query (schema-qualified ok) |
 | `KEY_COLUMN`          | *(unset)*                                | Integer split key; set it to reflect the schema from source |
 | `NUM_SPLITS`          | `8`                                      | Number of virtual Parquet files     |
-| `TABLE_FORMAT`        | `iceberg`                                | Output format: `iceberg` or `delta` (native `_delta_log` in Fabric). See [DELTA_FORMAT.md](DELTA_FORMAT.md) |
+| `TABLE_FORMAT`        | `iceberg`                                | Output format: `iceberg` or `delta` (native `_delta_log` in Fabric). See [DELTA_FORMAT.md](docs/DELTA_FORMAT.md) |
 | `QUERY_TIMEOUT`       | `30`                                     | SQL query timeout (seconds)         |
 | `PORT`                | `9000`                                   | HTTP listen port                    |
 | `QUIET_404_LOGS`      | `1`                                      | Suppress expected-probe 404 access logs |
@@ -467,12 +468,12 @@ canonical table prefix.
 | `SNAPSHOT_HISTORY_LIMIT` | `10`                                  | Max historical snapshots to retain |
 | `PIN_MATERIALIZED_SPLITS` | `1`                                  | Serve snapshot data files byte-identical (prevents size-drift 404s). Keep on |
 | `TIMESTAMP_ASSUME_UTC` | `1`                                     | Map naive datetimes to `timestamptz` (Fabric SQL endpoint rejects `TIMESTAMP_NTZ`) |
-| `AUTO_REFRESH`        | `0`                                      | Re-read the source and publish a new snapshot when data changes (see [CONFIGURATION.md](CONFIGURATION.md) §12) |
+| `AUTO_REFRESH`        | `0`                                      | Re-read the source and publish a new snapshot when data changes (see [CONFIGURATION.md](docs/CONFIGURATION.md) §12) |
 | `ENABLE_MONITOR`      | `0`                                      | Serve the read-only monitoring dashboard at `/_monitor/` (local admin only) |
 | `REQUEST_TRACE`       | `1`                                      | Record the Fabric request timeline (powers `/_admin/timeline` + the monitor) |
 
 > This is a curated subset. **Every** setting — with defaults, categories, and help
-> text — is documented in [CONFIGURATION.md](CONFIGURATION.md) and browsable in the
+> text — is documented in [CONFIGURATION.md](docs/CONFIGURATION.md) and browsable in the
 > config-builder UI's "All settings" panel.
 
 ## Documentation freshness
@@ -482,12 +483,12 @@ Use this order when docs appear to conflict:
 1. **Runtime source of truth**: [config.py](config.py) (defaults, validation, effective-setting sources) and API/router modules.
 2. **Operator docs (kept current)**:
   - [README.md](README.md) for setup and quick operations.
-  - [CONFIGURATION.md](CONFIGURATION.md) for complete settings and behavior.
-  - [DELTA_FORMAT.md](DELTA_FORMAT.md) for `TABLE_FORMAT=delta` semantics.
+  - [CONFIGURATION.md](docs/CONFIGURATION.md) for complete settings and behavior.
+  - [DELTA_FORMAT.md](docs/DELTA_FORMAT.md) for `TABLE_FORMAT=delta` semantics.
 3. **Design/history docs (may describe prior states)**:
-  - [PLANNING.md](PLANNING.md)
-  - [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md)
-  - [CONFIG_BUILDER_PLAN.md](CONFIG_BUILDER_PLAN.md)
+  - [PLANNING.md](docs/PLANNING.md)
+  - [SCALE_ARCHITECTURE_PLAN.md](docs/SCALE_ARCHITECTURE_PLAN.md)
+  - [CONFIG_BUILDER_PLAN.md](docs/CONFIG_BUILDER_PLAN.md)
 
 Current defaults and behavior to assume unless overridden:
 
@@ -559,6 +560,6 @@ logs.
 | Parameterized SQL only (no injection risk) | ✅ |
 
 For the full hardening/feature roadmap and per-item status (H1–H9, F1–F6), see
-[PLANNING.md](PLANNING.md). All planned items are complete; the format-risky
+[PLANNING.md](docs/PLANNING.md). All planned items are complete; the format-risky
 features (F3 manifest stats, F2 time-travel) ship behind default-off flags and
 are validated with the `pyiceberg` reference reader.

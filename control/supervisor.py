@@ -1,5 +1,5 @@
 """
-Agent supervisor — the Manager's process babysitter (SCALE_ARCHITECTURE_PLAN.md §9).
+Agent supervisor — the Manager's process babysitter (docs/SCALE_ARCHITECTURE_PLAN.md §9).
 
 Direct‑spawn backend (the Phase 1 default, cross‑platform): the Manager launches
 the Agent as a child process, watches it for **both** process exit and heartbeat

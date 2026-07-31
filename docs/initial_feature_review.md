@@ -6,7 +6,7 @@ Primary reference: [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md)
 
 ## 1) Scope
 
-This review evaluates [agent-cpp/agent.cpp](agent-cpp/agent.cpp) against the Phase 6 commitments in [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md#L642), with emphasis on:
+This review evaluates [agent-cpp/agent.cpp](../agent-cpp/agent.cpp) against the Phase 6 commitments in [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md#L642), with emphasis on:
 
 - Contract and architecture alignment
 - Deviations and operational risk
@@ -28,52 +28,52 @@ Status: Mostly aligned for current Windows serving scope, with portability and h
 
 Aligned:
 
-- Win32 + winsock implementation and no external OSS libs in [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L23)
-- S3 serving primitives implemented (GET/HEAD, Range, ListObjectsV2) in [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L263)
-- Health endpoints implemented in [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L346)
-- Control register/heartbeat path implemented in [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L446)
+- Win32 + winsock implementation and no external OSS libs in [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L23)
+- S3 serving primitives implemented (GET/HEAD, Range, ListObjectsV2) in [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L263)
+- Health endpoints implemented in [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L346)
+- Control register/heartbeat path implemented in [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L446)
 
 Needs hardening / partial deviation:
 
-- Path safety checks are not root-canonicalized before open in [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L130)
-- Unhandled numeric parse exceptions can terminate the process in [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L117)
-- Thread-per-connection model is unbounded in [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L515)
+- Path safety checks are not root-canonicalized before open in [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L130)
+- Unhandled numeric parse exceptions can terminate the process in [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L117)
+- Thread-per-connection model is unbounded in [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L515)
 
 ## 4) Findings (Ordered by Severity)
 
 ### High
 
 1. Path root escape risk
-- Location: [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L130), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L137)
+- Location: [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L130), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L137)
 - Issue: Key validation only blocks empty and ".."; absolute/drive-qualified key forms can still bypass intended store-root guarantees.
 - Risk: Read outside configured artifact store root.
 
 2. Crash-on-parse risk
-- Location: [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L117), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L122), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L287), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L292), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L388), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L424)
+- Location: [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L117), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L122), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L287), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L292), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L388), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L424)
 - Issue: stoi/stoll use on untrusted values without guard paths.
 - Risk: malformed input can terminate process.
 
 ### Medium
 
 3. Unbounded detached thread model
-- Location: [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L513), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L515)
+- Location: [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L513), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L515)
 - Issue: each accepted socket creates a detached thread.
 - Risk: memory and scheduler pressure under load spikes.
 
 4. Memory-heavy object handling
-- Location: [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L140), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L183)
+- Location: [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L140), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L183)
 - Issue: full object read into memory + extra substring allocation for partial responses.
 - Risk: elevated peak RSS and allocation churn for large splits.
 
 5. List path cost scales with store size
-- Location: [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L226), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L242)
+- Location: [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L226), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L242)
 - Issue: full recursive walk + sort per request.
 - Risk: O(n log n) CPU/alloc overhead at larger object counts.
 
 ### Low
 
 6. Bucket segment ignored
-- Location: [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L364), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L366)
+- Location: [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L364), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L366)
 - Issue: request bucket parsed but not enforced.
 - Risk: semantic drift if strict bucket isolation is required later.
 
@@ -106,8 +106,8 @@ Short answer: partially aligned in direction, not yet aligned in deliverable.
 Evidence and interpretation:
 
 - Plan intent: Linux is explicitly listed in backlog for Phase 6 in [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md#L662).
-- Current code: hard-coupled to Windows networking and headers in [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L23), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L24), [agent-cpp/agent.cpp](agent-cpp/agent.cpp#L25).
-- Build path: Windows-first via [agent-cpp/build.ps1](agent-cpp/build.ps1).
+- Current code: hard-coupled to Windows networking and headers in [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L23), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L24), [agent-cpp/agent.cpp](../agent-cpp/agent.cpp#L25).
+- Build path: Windows-first via [agent-cpp/build.ps1](../agent-cpp/build.ps1).
 
 Conclusion:
 
@@ -126,6 +126,6 @@ Conclusion:
 
 ## 8) Dependency and Licensing Note
 
-For [agent-cpp/agent.cpp](agent-cpp/agent.cpp), no third-party open-source dependency is present; it uses standard C++ and Windows SDK/Winsock only.
+For [agent-cpp/agent.cpp](../agent-cpp/agent.cpp), no third-party open-source dependency is present; it uses standard C++ and Windows SDK/Winsock only.
 
 Operational note: runtime redistribution still needs normal Microsoft runtime compliance when distributing Windows binaries.

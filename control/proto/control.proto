@@ -1,6 +1,6 @@
 // =============================================================================
 // FROZEN CONTRACT — Manager <-> Agent control plane.
-// SCALE_ARCHITECTURE_PLAN.md §5. Mirrors control/contract.py 1:1 (snake_case
+// docs/SCALE_ARCHITECTURE_PLAN.md §5. Mirrors control/contract.py 1:1 (snake_case
 // field names) so JSON<->protobuf is mechanical. This is the language-agnostic
 // interface the future C++ Agent implements. Change ONLY additively (new fields
 // with new tags / new optional messages); never renumber or repurpose a tag.

@@ -1,5 +1,5 @@
 """
-S3 gateway — the Manager's built-in load balancer (SCALE_ARCHITECTURE_PLAN.md §4.4, Phase 3).
+S3 gateway — the Manager's built-in load balancer (docs/SCALE_ARCHITECTURE_PLAN.md §4.4, Phase 3).
 
 Fronts the Agent fleet with a single Fabric-facing S3 endpoint. It round-robins
 GET/HEAD/List requests across the **ready** (heartbeating) Agents from the

@@ -20,21 +20,47 @@ ARG_HEARTBEAT_MS=""
 ARG_AGENT_COUNT=""
 ARG_GATEWAY=0
 ARG_ADMIN_UI=0
+ARG_CONFIG_UI=0
 ARG_ADMIN_TOKEN_SET=0
 ARG_ADMIN_TOKEN=""
 ARG_HA=0
 ARG_RETENTION_GC=0
+ARG_STRICT_DB_CREDS=0
+ARG_OBJECT_PATH_LAYOUT=""
+ARG_DISABLE_LEGACY_ALIASES=0
 ARG_BRANCH=""
 ARG_REMOTE="origin"
 ARG_REPO_URL="https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy.git"
 ARG_NO_PULL=0
+ARG_AUTO_STASH=0
 ARG_REINSTALL=0
 ARG_RECREATE=0
 ARG_SKIP_INSTALL=0
 
+AUTO_STASH_CREATED=0
+AUTO_STASH_REF=""
+
 step() { printf '==> %s\n' "$1"; }
 warn() { printf 'WARN: %s\n' "$1" >&2; }
 die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
+
+# Refuse to run destructive git sync over local edits unless --auto-stash is set,
+# mirroring Ensure-CleanOrAutoStash in Manager.ps1.
+ensure_clean_or_autostash() {
+  local dirty
+  dirty="$(git status --porcelain 2>/dev/null || true)"
+  [[ -n "$dirty" ]] || return 0
+  if [[ $ARG_AUTO_STASH -eq 0 ]]; then
+    die "Local changes are present. Commit, stash, or rerun with --auto-stash."$'\n'"Local changes:"$'\n'"$dirty"
+  fi
+  local stamp stash_msg
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  stash_msg="manager-autostash-$stamp"
+  step "Local changes detected - auto-stashing"
+  git stash push -u -m "$stash_msg" || die "git stash push failed"
+  AUTO_STASH_CREATED=1
+  AUTO_STASH_REF="stash^{/$stash_msg}"
+}
 
 usage() {
   cat <<'EOF'
@@ -53,15 +79,23 @@ Core options:
 Feature flags:
   --gateway              Set ENABLE_GATEWAY=1
   --admin-ui             Set ENABLE_ADMIN_UI=1
+  --config-ui            Set ENABLE_CONFIG_BUILDER=1 (live config UI/API)
   --admin-token TOKEN    Set ADMIN_TOKEN=TOKEN
   --ha                   Set MANAGER_HA=1
   --retention-gc         Set RETENTION_GC=1
+
+DB credential / path options:
+  --allow-config-db-creds   Allow inline db_url from config (default; no-op)
+  --strict-db-credentials   Re-enable the secure startup gate (ALLOW_CONFIG_DB_CREDENTIALS=0)
+  --object-path-layout FMT  OBJECT_PATH_LAYOUT override: canonical|legacy
+  --disable-legacy-aliases  Set ENABLE_LEGACY_PATH_ALIASES=0
 
 Git sync options:
   --branch NAME          Checkout branch before launch
   --remote NAME          Git remote for fetch/pull (default origin)
   --repo-url URL         Repo URL for bootstrap in non-git folder
   --no-pull              Skip git sync step entirely
+  --auto-stash           Auto-stash local changes before sync (kept for safety)
 
 Bootstrap options:
   --reinstall            Force dependency reinstall
@@ -96,13 +130,19 @@ while [[ $# -gt 0 ]]; do
     --agent-count) require_value "$1" "${2:-}"; ARG_AGENT_COUNT="$2"; shift 2 ;;
     --gateway) ARG_GATEWAY=1; shift ;;
     --admin-ui) ARG_ADMIN_UI=1; shift ;;
+    --config-ui) ARG_CONFIG_UI=1; shift ;;
     --admin-token) require_value "$1" "${2:-}"; ARG_ADMIN_TOKEN_SET=1; ARG_ADMIN_TOKEN="$2"; shift 2 ;;
     --ha) ARG_HA=1; shift ;;
     --retention-gc) ARG_RETENTION_GC=1; shift ;;
+    --allow-config-db-creds) shift ;;    # default behavior; accepted for parity
+    --strict-db-credentials) ARG_STRICT_DB_CREDS=1; shift ;;
+    --object-path-layout) require_value "$1" "${2:-}"; ARG_OBJECT_PATH_LAYOUT="$2"; shift 2 ;;
+    --disable-legacy-aliases) ARG_DISABLE_LEGACY_ALIASES=1; shift ;;
     --branch) require_value "$1" "${2:-}"; ARG_BRANCH="$2"; shift 2 ;;
     --remote) require_value "$1" "${2:-}"; ARG_REMOTE="$2"; shift 2 ;;
     --repo-url) require_value "$1" "${2:-}"; ARG_REPO_URL="$2"; shift 2 ;;
     --no-pull) ARG_NO_PULL=1; shift ;;
+    --auto-stash) ARG_AUTO_STASH=1; shift ;;
     --reinstall) ARG_REINSTALL=1; shift ;;
     --recreate) ARG_RECREATE=1; shift ;;
     --skip-install) ARG_SKIP_INSTALL=1; shift ;;
@@ -113,6 +153,10 @@ done
 
 if [[ -n "$ARG_TABLE_FORMAT" && "$ARG_TABLE_FORMAT" != "iceberg" && "$ARG_TABLE_FORMAT" != "delta" ]]; then
   die "--table-format must be 'iceberg' or 'delta'"
+fi
+
+if [[ -n "$ARG_OBJECT_PATH_LAYOUT" && "$ARG_OBJECT_PATH_LAYOUT" != "canonical" && "$ARG_OBJECT_PATH_LAYOUT" != "legacy" ]]; then
+  die "--object-path-layout must be 'canonical' or 'legacy'"
 fi
 
 if [[ $ARG_NO_PULL -eq 1 ]]; then
@@ -133,6 +177,7 @@ else
       if [[ -n "$ARG_BRANCH" ]]; then
         current="$(git rev-parse --abbrev-ref HEAD)"
         if [[ "$current" != "$ARG_BRANCH" ]]; then
+          ensure_clean_or_autostash
           step "Checking out branch '$ARG_BRANCH'"
           git checkout "$ARG_BRANCH"
         fi
@@ -142,6 +187,7 @@ else
       if [[ "$cur_branch" == "HEAD" ]]; then
         warn "Detached HEAD - skipping pull. Pass --branch to check out a branch."
       else
+        ensure_clean_or_autostash
         step "Pulling '$cur_branch' (fast-forward only)"
         git pull --ff-only "$ARG_REMOTE" "$cur_branch"
       fi
@@ -154,6 +200,10 @@ else
         fi
       else
         step "Repo already up to date"
+      fi
+
+      if [[ $AUTO_STASH_CREATED -eq 1 ]]; then
+        warn "AutoStash created and kept for safety. Restore later with: git stash pop $AUTO_STASH_REF"
       fi
     fi
   else
@@ -233,9 +283,16 @@ fi
 [[ -z "$ARG_AGENT_COUNT" ]] || export AGENT_COUNT="$ARG_AGENT_COUNT"
 [[ $ARG_GATEWAY -eq 0 ]] || export ENABLE_GATEWAY="1"
 [[ $ARG_ADMIN_UI -eq 0 ]] || export ENABLE_ADMIN_UI="1"
+[[ $ARG_CONFIG_UI -eq 0 ]] || export ENABLE_CONFIG_BUILDER="1"
 [[ $ARG_ADMIN_TOKEN_SET -eq 0 ]] || export ADMIN_TOKEN="$ARG_ADMIN_TOKEN"
 [[ $ARG_HA -eq 0 ]] || export MANAGER_HA="1"
 [[ $ARG_RETENTION_GC -eq 0 ]] || export RETENTION_GC="1"
+# Local launcher: config.connection.json is a local, gitignored per-deployment file, so allow
+# an inline db_url by default. --strict-db-credentials re-enables the secure startup gate.
+export ALLOW_CONFIG_DB_CREDENTIALS="1"
+[[ $ARG_STRICT_DB_CREDS -eq 0 ]] || export ALLOW_CONFIG_DB_CREDENTIALS="0"
+[[ -z "$ARG_OBJECT_PATH_LAYOUT" ]] || export OBJECT_PATH_LAYOUT="$ARG_OBJECT_PATH_LAYOUT"
+[[ $ARG_DISABLE_LEGACY_ALIASES -eq 0 ]] || export ENABLE_LEGACY_PATH_ALIASES="0"
 
 eff_ctl_host="${CONTROL_HOST:-127.0.0.1}"
 eff_ctl_port="${CONTROL_PORT:-9200}"
@@ -245,7 +302,10 @@ eff_format="${TABLE_FORMAT:-iceberg}"
 eff_count="${AGENT_COUNT:-1}"
 eff_gateway="${ENABLE_GATEWAY:-0}"
 eff_admin_ui="${ENABLE_ADMIN_UI:-0}"
+eff_config_ui="${ENABLE_CONFIG_BUILDER:-0}"
 eff_ha="${MANAGER_HA:-0}"
+eff_layout="${OBJECT_PATH_LAYOUT:-canonical}"
+eff_aliases="${ENABLE_LEGACY_PATH_ALIASES:-0}"
 
 agent_dial_host="$eff_agent_host"
 if [[ "$eff_agent_host" == "0.0.0.0" || "$eff_agent_host" == "::" ]]; then
@@ -267,6 +327,9 @@ printf '    Manager control : http://%s:%s   (/healthz  /readyz  /agents)\n' "$c
 if [[ "$eff_admin_ui" == "1" ]]; then
   printf '    Operator console: http://%s:%s/_manager   <- start/stop/restart/drain + monitor\n' "$ctl_dial_host" "$eff_ctl_port"
 fi
+if [[ "$eff_config_ui" == "1" ]]; then
+  printf '    Config builder  : http://%s:%s/_config    <- live config UI/API\n' "$ctl_dial_host" "$eff_ctl_port"
+fi
 if [[ "$eff_ha" == "1" ]]; then
   printf '    Manager HA      : leader lease (primary supervises; run a 2nd --ha Manager as standby)\n'
 fi
@@ -280,6 +343,7 @@ else
   fi
 fi
 printf '    Table format    : %s\n' "$eff_format"
+printf '    Object paths    : layout=%s legacy_aliases=%s\n' "$eff_layout" "$eff_aliases"
 printf '    Source DB       : %s\n' "$db_url_masked"
 printf '    The Manager restarts any Agent automatically if it crashes.\n'
 printf '    Press Ctrl+C to stop (also stops the supervised Agents).\n\n'

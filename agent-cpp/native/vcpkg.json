@@ -3,7 +3,13 @@
   "version-string": "0.1.0",
   "description": "Native (Arrow/Avro) C++ modules for the Tier 1 materialization port.",
   "dependencies": [
-    { "name": "arrow", "features": ["parquet"] },
+    {
+      "name": "arrow",
+      "features": [
+        "parquet"
+      ]
+    },
     "avro-cpp"
-  ]
+  ],
+  "builtin-baseline": "3c5d90a305ff00ca841f085a74a7ce74ee777dee"
 }

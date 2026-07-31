@@ -171,6 +171,10 @@
     Output format for -PublishCppImage: iceberg (default) or delta. delta writes a
     native _delta_log serving image instead of Iceberg metadata + manifests.
 
+.PARAMETER CppPostgres
+    PostgreSQL connection string (libpq conninfo or URL) for -PublishCppImage. When
+    set, the publisher reads rows from Postgres; takes precedence over -CppSourceDb.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -234,7 +238,8 @@ param(
     [int]$CppRows,
     [int]$CppSplits,
     [ValidateSet("iceberg", "delta")]
-    [string]$CppFormat
+    [string]$CppFormat,
+    [string]$CppPostgres
 )
 
 $ErrorActionPreference = "Stop"
@@ -438,7 +443,12 @@ if ($PublishCppImage) {
     $pubFormat = if ($PSBoundParameters.ContainsKey("CppFormat"))   { $CppFormat }   else { "iceberg" }
 
     Write-Step "Publishing native $pubFormat serving image"
-    if ($PSBoundParameters.ContainsKey("CppSourceDb") -and $CppSourceDb) {
+    if ($PSBoundParameters.ContainsKey("CppPostgres") -and $CppPostgres) {
+        $pubArgs = @("--postgres", $CppPostgres, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat)
+        if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
+        Write-Host "    Source   : PostgreSQL" -ForegroundColor DarkGray
+        & $pubExe @pubArgs
+    } elseif ($PSBoundParameters.ContainsKey("CppSourceDb") -and $CppSourceDb) {
         $pubArgs = @("--sqlite", $CppSourceDb, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat)
         if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
         Write-Host "    Source   : SQLite $CppSourceDb" -ForegroundColor DarkGray

@@ -26,6 +26,7 @@
 #include "iceberg_schema.hpp"    // fsp::IcebergColumn (tier1)
 #include "iceberg_state.hpp"     // fsp::build_snapshot_identity, split_object_key (tier1)
 #include "parquet_writer.hpp"
+#include "pg_source.hpp"
 #include "split_planner.hpp"     // fsp::Column, pk_column, compute_key_ranges (tier1)
 #include "split_stats.hpp"
 #include "sql_source.hpp"
@@ -303,6 +304,61 @@ int run_sql(int argc, char** argv, const std::string& format) {
     return 0;
 }
 
+// Postgres mode: materialize from a PostgreSQL table using range-based split queries.
+int run_pg(int argc, char** argv, const std::string& format) {
+    using namespace fsp;
+    using namespace fsp::native;
+
+    const std::string conninfo = flag(argc, argv, "--postgres", "");
+    const std::string store_dir = flag(argc, argv, "--store", "");
+    const std::string table = flag(argc, argv, "--table", "sales");
+    const std::string key = flag(argc, argv, "--key", "");  // "" => planner default (id)
+    const int num_splits = static_cast<int>(std::strtoll(flag(argc, argv, "--splits", "8").c_str(), nullptr, 10));
+    const std::string bucket = flag(argc, argv, "--bucket", "fabric-iceberg-poc");
+    const std::string table_path = flag(argc, argv, "--table-path", "warehouse/demo/orders");
+    const int64_t seed_rows = std::strtoll(flag(argc, argv, "--seed", "0").c_str(), nullptr, 10);
+
+    if (conninfo.empty() || store_dir.empty()) {
+        std::printf("usage: native_publish --postgres <conninfo> --store <dir> [--seed <rows>] "
+                    "[--splits <n>] [--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]\n");
+        return 2;
+    }
+
+    const std::vector<IcebergColumn> cols = default_schema();
+    std::shared_ptr<arrow::Schema> schema = build_arrow_schema(cols);
+    const PostgresDialect dialect;
+    const std::string pk = pk_column(key, as_planner_columns(cols));
+
+    PGconn* conn = pg_open(conninfo);
+    try {
+        if (seed_rows > 0) {
+            int64_t seeded = seed_demo_table_pg(conn, table, seed_rows);
+            std::printf("seeded: table=%s rows=%lld (postgres)\n", table.c_str(),
+                        static_cast<long long>(seeded));
+        }
+
+        std::pair<int64_t, int64_t> bounds = pg_key_bounds(conn, dialect, table, pk);
+        std::vector<std::pair<int64_t, int64_t>> ranges =
+            compute_key_ranges(bounds.first, bounds.second, num_splits);
+
+        std::vector<std::shared_ptr<arrow::Table>> tables;
+        for (const auto& rg : ranges) {
+            const int64_t max_rows = rg.second > rg.first ? (rg.second - rg.first) : 1;
+            tables.push_back(
+                pg_read_range(conn, dialect, cols, schema, table, pk, rg.first, rg.second, max_rows));
+        }
+        std::printf("postgres: table=%s key=%s splits=%d key_range=[%lld,%lld]\n", table.c_str(),
+                    pk.c_str(), num_splits, static_cast<long long>(bounds.first),
+                    static_cast<long long>(bounds.second));
+        publish_image(store_dir, bucket, table_path, cols, tables, format);
+    } catch (...) {
+        PQfinish(conn);
+        throw;
+    }
+    PQfinish(conn);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -310,8 +366,10 @@ int main(int argc, char** argv) {
         std::printf("usage:\n"
                     "  native_publish <store_dir> [rows] [splits] [bucket] [table_path]   (demo data)\n"
                     "  native_publish --sqlite <db> --store <dir> [--seed <rows>] [--splits <n>] "
-                    "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]      (SQL source)\n"
-                    "  add --format iceberg|delta (default iceberg) to either form.\n");
+                    "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]      (SQLite source)\n"
+                    "  native_publish --postgres <conninfo> --store <dir> [--seed <rows>] [--splits <n>] "
+                    "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]  (PostgreSQL source)\n"
+                    "  add --format iceberg|delta (default iceberg) to any form.\n");
         return 2;
     }
     // Pull --format out of argv so it composes with the positional demo form.
@@ -333,6 +391,7 @@ int main(int argc, char** argv) {
     char** fargv = filtered.data();
 
     try {
+        if (has_flag(fargc, fargv, "--postgres")) return run_pg(fargc, fargv, format);
         if (has_flag(fargc, fargv, "--sqlite")) return run_sql(fargc, fargv, format);
         return run_demo(fargc, fargv, format);
     } catch (const std::exception& e) {

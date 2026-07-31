@@ -10,7 +10,8 @@
       ]
     },
     "avro-cpp",
-    "sqlite3"
+    "sqlite3",
+    "libpq"
   ],
   "builtin-baseline": "3c5d90a305ff00ca841f085a74a7ce74ee777dee"
 }

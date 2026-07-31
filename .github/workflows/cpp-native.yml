@@ -38,6 +38,18 @@ jobs:
       # Reuse prebuilt vcpkg packages across runs so Arrow/Avro are not rebuilt
       # from source every time (first run is still a heavy from-source build).
       VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -123,3 +135,8 @@ jobs:
         run: |
           agent-cpp/native/build/native_publish --sqlite "$GITHUB_WORKSPACE/.native.db" --store "$GITHUB_WORKSPACE/.store_delta" --splits 8 --format delta
           python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_delta/warehouse/demo/orders" 50000
+
+      - name: Publish + validate from PostgreSQL (expect 50000 rows)
+        run: |
+          agent-cpp/native/build/native_publish --postgres "host=localhost port=5432 user=postgres password=postgres dbname=postgres" --store "$GITHUB_WORKSPACE/.store_pg" --seed 50000 --splits 8 --format delta
+          python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_pg/warehouse/demo/orders" 50000

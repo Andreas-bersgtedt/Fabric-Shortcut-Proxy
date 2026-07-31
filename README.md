@@ -44,6 +44,10 @@ A bucket with **no mount** resolves through the Iceberg/Delta path exactly as be
 a bucket **with a mount** streams bytes straight from its backend. Both share the same
 SigV4 front door. See [Storage Proxy](#storage-proxy--secured-file--object-passthrough).
 
+> For component-level detail — per-process flow diagrams for auth, the warehouse read
+> path, the storage proxy, credential mediation, config, and the Manager/Agent control
+> plane — see [TechnicalArchitecture.md](TechnicalArchitecture.md).
+
 ## Storage Proxy — secured file / object passthrough
 
 Alongside the DB→table virtualization, the same S3 endpoint can serve **existing files**

@@ -127,6 +127,26 @@
     then exit with the test result. Requires Visual Studio 2022 with the C++
     workload. Does not create the venv or launch the Manager.
 
+.PARAMETER BuildCppAgent
+    Build the C++ serving Agent (agent-cpp/build.ps1 -> agent.exe), then exit.
+    Requires Visual Studio 2022 with the C++ workload.
+
+.PARAMETER RunCppAgent
+    Build, then run the C++ serving Agent, and exit when it stops. Sets the
+    agent's environment for you; override with -CppAgentPort, -CppStoreDir, or
+    -CppManagerUrl. Does not create the venv or launch the Python Manager.
+
+.PARAMETER CppAgentPort
+    Port for the C++ serving Agent (agent default 9400). Used with -RunCppAgent.
+
+.PARAMETER CppStoreDir
+    Artifact store directory the C++ Agent serves from (agent default ./.artifacts).
+    Used with -RunCppAgent.
+
+.PARAMETER CppManagerUrl
+    Manager control URL for the C++ Agent to register/heartbeat into the fleet
+    (default empty = standalone). Used with -RunCppAgent.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -141,6 +161,9 @@
 
 .EXAMPLE
     .\Manager.ps1 -Tier1Tests
+
+.EXAMPLE
+    .\Manager.ps1 -RunCppAgent
 #>
 [CmdletBinding()]
 param(
@@ -172,7 +195,12 @@ param(
     [ValidateSet("legacy", "canonical")]
     [string]$ObjectPathLayout,
     [switch]$DisableLegacyAliases,
-    [switch]$Tier1Tests
+    [switch]$Tier1Tests,
+    [switch]$BuildCppAgent,
+    [switch]$RunCppAgent,
+    [int]$CppAgentPort,
+    [string]$CppStoreDir,
+    [string]$CppManagerUrl
 )
 
 $ErrorActionPreference = "Stop"
@@ -352,6 +380,40 @@ if ($Tier1Tests) {
     if (-not (Test-Path $tier1Build)) { throw "Tier 1 build script not found: $tier1Build" }
     Write-Step "Building + running C++ Tier 1 conformance tests"
     & $tier1Build
+    exit $LASTEXITCODE
+}
+
+# ---------------------------------------------------------------------------
+# Optional: build (and optionally run) the C++ serving Agent, then exit.
+#   .\Manager.ps1 -BuildCppAgent   -> compile agent-cpp\agent.exe
+#   .\Manager.ps1 -RunCppAgent     -> compile + run it (Ctrl+C to stop)
+# Needs Visual Studio 2022 with the C++ workload; does not touch the venv.
+# ---------------------------------------------------------------------------
+if ($BuildCppAgent -or $RunCppAgent) {
+    $cppBuild = Join-Path $ProjectRoot "agent-cpp\build.ps1"
+    $cppExe = Join-Path $ProjectRoot "agent-cpp\agent.exe"
+    if (-not (Test-Path $cppBuild)) { throw "C++ agent build script not found: $cppBuild" }
+    Write-Step "Building C++ serving Agent (agent.exe)"
+    & $cppBuild
+
+    if (-not $RunCppAgent) { exit $LASTEXITCODE }
+
+    # Only override the agent's built-in defaults when a value was supplied.
+    if ($PSBoundParameters.ContainsKey("CppAgentPort"))  { $env:PORT = "$CppAgentPort" }
+    if ($PSBoundParameters.ContainsKey("CppStoreDir"))   { $env:STORE_DIR = $CppStoreDir }
+    if ($PSBoundParameters.ContainsKey("CppManagerUrl")) { $env:MANAGER_URL = $CppManagerUrl }
+    if ($PSBoundParameters.ContainsKey("HeartbeatMs"))   { $env:HEARTBEAT_MS = "$HeartbeatMs" }
+
+    $effCppPort  = if ($env:PORT) { $env:PORT } else { "9400" }
+    $effCppStore = if ($env:STORE_DIR) { $env:STORE_DIR } else { "./.artifacts" }
+    $effCppMgr   = if ($env:MANAGER_URL) { $env:MANAGER_URL } else { "(standalone)" }
+    Write-Host ""
+    Write-Step "Running C++ serving Agent"
+    Write-Host "    Endpoint : http://localhost:${effCppPort}   (/healthz  /<bucket>/<key>)" -ForegroundColor Green
+    Write-Host "    Store dir: $effCppStore" -ForegroundColor DarkGray
+    Write-Host "    Manager  : $effCppMgr" -ForegroundColor DarkGray
+    Write-Host "    Press Ctrl+C to stop." -ForegroundColor DarkGray
+    & $cppExe
     exit $LASTEXITCODE
 }
 

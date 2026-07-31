@@ -9,6 +9,7 @@
 #include <tuple>
 #include <vector>
 
+#include "json.hpp"
 #include "md5.hpp"
 
 namespace fsp {
@@ -30,38 +31,6 @@ struct DeltaVersion {
     int64_t watermark_ms = 0;
     std::vector<DeltaSplit> splits;
 };
-
-// Append the JSON-escaped form of s (no surrounding quotes), matching Python json (ensure_ascii).
-inline void json_escape_into(std::string& out, const std::string& s) {
-    for (char ch : s) {
-        unsigned char c = static_cast<unsigned char>(ch);
-        switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            case '\b': out += "\\b"; break;
-            case '\f': out += "\\f"; break;
-            default:
-                if (c < 0x20) {
-                    static const char* h = "0123456789abcdef";
-                    out += "\\u00";
-                    out += h[(c >> 4) & 0xf];
-                    out += h[c & 0xf];
-                } else {
-                    out += ch;  // identifiers assumed ASCII (SQL names)
-                }
-        }
-    }
-}
-
-inline std::string json_quote(const std::string& s) {
-    std::string out = "\"";
-    json_escape_into(out, s);
-    out += "\"";
-    return out;
-}
 
 // Iceberg type string -> Delta type string.
 inline std::string delta_type(const std::string& iceberg_type) {

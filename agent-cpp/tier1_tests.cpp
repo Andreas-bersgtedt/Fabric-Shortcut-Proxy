@@ -16,6 +16,7 @@
 #include "tier1/iceberg_schema.hpp"
 #include "tier1/iceberg_state.hpp"
 #include "tier1/iceberg_metadata.hpp"
+#include "tier1/iceberg_stats.hpp"
 
 static int g_pass = 0, g_fail = 0;
 
@@ -397,6 +398,35 @@ R"j({
           fsp::build_metadata_json("fabric-iceberg-poc", "warehouse/sales", cols, id, 0, 3), wantMeta);
 }
 
+static void test_stats() {
+    check("enc.bool.t", fsp::to_hex(fsp::encode_bool(true)), "01");
+    check("enc.bool.f", fsp::to_hex(fsp::encode_bool(false)), "00");
+    check("enc.int", fsp::to_hex(fsp::encode_int32(305419896)), "78563412");
+    check("enc.int.neg", fsp::to_hex(fsp::encode_int32(-1)), "ffffffff");
+    check("enc.long", fsp::to_hex(fsp::encode_long(1234567890123LL)), "cb04fb711f010000");
+    check("enc.float", fsp::to_hex(fsp::encode_float(1.5f)), "0000c03f");
+    check("enc.double", fsp::to_hex(fsp::encode_double(1.5)), "000000000000f83f");
+    check("enc.date", fsp::to_hex(fsp::encode_date_days(18262)), "56470000");
+    check("enc.ts", fsp::to_hex(fsp::encode_micros(1577836800000000LL)), "0040fac1089b0500");
+    check("enc.string", fsp::to_hex(fsp::encode_string("\x63\x61\x66\xc3\xa9")), "636166c3a9");
+    check("enc.binary", fsp::to_hex(fsp::encode_binary(std::string("\x01\x02\x03", 3))), "010203");
+    check("enc.uuid", fsp::to_hex(fsp::encode_uuid16(
+              std::string("\x12\x34\x56\x78\x12\x34\x56\x78\x12\x34\x56\x78\x12\x34\x56\x78", 16))),
+          "12345678123456781234567812345678");
+
+    check("dec.12.34", fsp::to_hex(fsp::encode_decimal("12.34")), "04d2");
+    check("dec.100", fsp::to_hex(fsp::encode_decimal("100")), "64");
+    check("dec.128", fsp::to_hex(fsp::encode_decimal("128")), "0080");
+    check("dec.neg1", fsp::to_hex(fsp::encode_decimal("-1")), "ff");
+    check("dec.neg12.34", fsp::to_hex(fsp::encode_decimal("-12.34")), "fb2e");
+    check("dec.0", fsp::to_hex(fsp::encode_decimal("0")), "00");
+    check("dec.255.0", fsp::to_hex(fsp::encode_decimal("255.0")), "09f6");
+    check("dec.0.5", fsp::to_hex(fsp::encode_decimal("0.5")), "05");
+    check("dec.0.00", fsp::to_hex(fsp::encode_decimal("0.00")), "00");
+    check("dec.12.340", fsp::to_hex(fsp::encode_decimal("12.340")), "3034");
+    check("dec.i64max", fsp::to_hex(fsp::encode_decimal("9223372036854775807")), "7fffffffffffffff");
+}
+
 int main() {
     test_dialects();
     test_split_math();
@@ -404,6 +434,7 @@ int main() {
     test_delta();
     test_cache();
     test_iceberg();
+    test_stats();
     std::printf("\ntier1: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

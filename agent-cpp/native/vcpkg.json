@@ -1,0 +1,9 @@
+{
+  "name": "fabric-shortcut-proxy-native",
+  "version-string": "0.1.0",
+  "description": "Native (Arrow/Avro) C++ modules for the Tier 1 materialization port.",
+  "dependencies": [
+    { "name": "arrow", "features": ["parquet"] },
+    "avro-cpp"
+  ]
+}

@@ -46,6 +46,7 @@ ARG_CPP_ROWS=""
 ARG_CPP_SPLITS=""
 ARG_CPP_STORE_DIR=""
 ARG_CPP_PORT=""
+ARG_CPP_FORMAT=""
 
 AUTO_STASH_CREATED=0
 AUTO_STASH_REF=""
@@ -123,6 +124,7 @@ C++ agent / native publisher (build/run C++ tools, then exit):
   --cpp-splits N         Split count for --publish-cpp-image (default 8)
   --cpp-store-dir DIR    Store dir to publish into / serve from (default ./.artifacts)
   --cpp-port N           Port for the C++ Agent (default 9400)
+  --cpp-format FMT       Output for --publish-cpp-image: iceberg (default) | delta
 
 Misc:
   -h, --help             Show this help
@@ -178,6 +180,7 @@ while [[ $# -gt 0 ]]; do
     --cpp-splits) require_value "$1" "${2:-}"; ARG_CPP_SPLITS="$2"; shift 2 ;;
     --cpp-store-dir) require_value "$1" "${2:-}"; ARG_CPP_STORE_DIR="$2"; shift 2 ;;
     --cpp-port) require_value "$1" "${2:-}"; ARG_CPP_PORT="$2"; shift 2 ;;
+    --cpp-format) require_value "$1" "${2:-}"; ARG_CPP_FORMAT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1 (run with --help)" ;;
   esac
@@ -280,18 +283,19 @@ if [[ $ARG_PUBLISH_CPP_IMAGE -eq 1 ]]; then
   [[ -x "$pub_exe" ]] || die "native_publish not found after build: $pub_exe"
   pub_store="${ARG_CPP_STORE_DIR:-$SCRIPT_DIR/.artifacts}"
   pub_splits="${ARG_CPP_SPLITS:-8}"
+  pub_format="${ARG_CPP_FORMAT:-iceberg}"
   # native_publish links the shared Arrow/Avro/sqlite libs from vcpkg_installed.
   export LD_LIBRARY_PATH="$(echo "$SCRIPT_DIR"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  step "Publishing native Iceberg serving image"
+  step "Publishing native $pub_format serving image"
   if [[ -n "$ARG_CPP_SOURCE_DB" ]]; then
-    pub_args=(--sqlite "$ARG_CPP_SOURCE_DB" --store "$pub_store" --splits "$pub_splits")
+    pub_args=(--sqlite "$ARG_CPP_SOURCE_DB" --store "$pub_store" --splits "$pub_splits" --format "$pub_format")
     [[ -z "$ARG_CPP_SEED_ROWS" ]] || pub_args+=(--seed "$ARG_CPP_SEED_ROWS")
     printf '    Source   : SQLite %s\n' "$ARG_CPP_SOURCE_DB"
     "$pub_exe" "${pub_args[@]}"
   else
     pub_rows="${ARG_CPP_ROWS:-50000}"
     printf '    Source   : demo data (%s rows)\n' "$pub_rows"
-    "$pub_exe" "$pub_store" "$pub_rows" "$pub_splits"
+    "$pub_exe" "$pub_store" "$pub_rows" "$pub_splits" --format "$pub_format"
   fi
   printf '    Store dir: %s\n' "$pub_store"
   export STORE_DIR="$pub_store"

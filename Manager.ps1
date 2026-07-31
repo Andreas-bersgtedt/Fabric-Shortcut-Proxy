@@ -167,6 +167,10 @@
 .PARAMETER CppSplits
     Number of splits for -PublishCppImage. Default 8.
 
+.PARAMETER CppFormat
+    Output format for -PublishCppImage: iceberg (default) or delta. delta writes a
+    native _delta_log serving image instead of Iceberg metadata + manifests.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -228,7 +232,9 @@ param(
     [string]$CppSourceDb,
     [int]$CppSeedRows,
     [int]$CppRows,
-    [int]$CppSplits
+    [int]$CppSplits,
+    [ValidateSet("iceberg", "delta")]
+    [string]$CppFormat
 )
 
 $ErrorActionPreference = "Stop"
@@ -429,17 +435,18 @@ if ($PublishCppImage) {
 
     $pubStore  = if ($PSBoundParameters.ContainsKey("CppStoreDir")) { $CppStoreDir } else { Join-Path $ProjectRoot ".artifacts" }
     $pubSplits = if ($PSBoundParameters.ContainsKey("CppSplits"))   { $CppSplits }   else { 8 }
+    $pubFormat = if ($PSBoundParameters.ContainsKey("CppFormat"))   { $CppFormat }   else { "iceberg" }
 
-    Write-Step "Publishing native Iceberg serving image"
+    Write-Step "Publishing native $pubFormat serving image"
     if ($PSBoundParameters.ContainsKey("CppSourceDb") -and $CppSourceDb) {
-        $pubArgs = @("--sqlite", $CppSourceDb, "--store", $pubStore, "--splits", "$pubSplits")
+        $pubArgs = @("--sqlite", $CppSourceDb, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat)
         if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
         Write-Host "    Source   : SQLite $CppSourceDb" -ForegroundColor DarkGray
         & $pubExe @pubArgs
     } else {
         $pubRows = if ($PSBoundParameters.ContainsKey("CppRows")) { $CppRows } else { 50000 }
         Write-Host "    Source   : demo data ($pubRows rows)" -ForegroundColor DarkGray
-        & $pubExe $pubStore "$pubRows" "$pubSplits"
+        & $pubExe $pubStore "$pubRows" "$pubSplits" "--format" $pubFormat
     }
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host "    Store dir: $pubStore" -ForegroundColor DarkGray

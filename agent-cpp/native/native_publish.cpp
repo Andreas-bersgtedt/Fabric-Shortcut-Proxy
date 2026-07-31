@@ -20,6 +20,7 @@
 #include <arrow/api.h>
 
 #include "avro_manifest.hpp"
+#include "delta_log.hpp"        // fsp::DeltaLog (tier1)
 #include "iceberg_arrow.hpp"
 #include "iceberg_metadata.hpp"  // fsp::build_metadata_json (tier1)
 #include "iceberg_schema.hpp"    // fsp::IcebergColumn (tier1)
@@ -105,37 +106,79 @@ int64_t arg_i64(int argc, char** argv, int idx, int64_t def) {
     return def;
 }
 
-// Assemble + write a full Iceberg serving image (splits + manifests + metadata)
-// from a set of per-split Arrow tables. Shared by the demo and SQL row sources.
+// Last path segment, used as the Delta table name.
+std::string table_basename(const std::string& table_path) {
+    size_t p = table_path.find_last_of('/');
+    return (p == std::string::npos) ? table_path : table_path.substr(p + 1);
+}
+
+// Write the Parquet splits (shared), then the format-specific metadata: Iceberg
+// (manifests + metadata.json) or Delta (_delta_log commit 0). Both formats serve
+// the same content-addressed Parquet split files.
 void publish_image(const std::string& store_dir, const std::string& bucket,
                    const std::string& table_path, const std::vector<fsp::IcebergColumn>& cols,
-                   const std::vector<std::shared_ptr<arrow::Table>>& split_tables) {
+                   const std::vector<std::shared_ptr<arrow::Table>>& split_tables,
+                   const std::string& format) {
     using namespace fsp;
     using namespace fsp::native;
 
     SnapshotIdentity id = build_snapshot_identity(bucket, table_path);
+    const bool is_delta = (format == "delta");
+
+    struct SplitInfo {
+        std::string object_key;
+        int64_t records = 0;
+        int64_t size = 0;
+        std::map<int, ColumnStats> stats;
+    };
+    std::vector<SplitInfo> infos;
+    int64_t total_rows = 0;
+    for (int s = 0; s < static_cast<int>(split_tables.size()); ++s) {
+        const std::shared_ptr<arrow::Table>& table = split_tables[s];
+        std::string pq = write_table_to_parquet(table);
+        const std::string object_key = split_object_key(table_path, s, id.snapshot_id);
+        write_object(store_dir, object_key, pq);
+
+        SplitInfo info;
+        info.object_key = object_key;
+        info.records = table->num_rows();
+        info.size = static_cast<int64_t>(pq.size());
+        if (!is_delta) info.stats = collect_split_stats(pq, cols);  // Iceberg manifest bounds
+        infos.push_back(std::move(info));
+        total_rows += table->num_rows();
+    }
+
+    if (is_delta) {
+        std::vector<DeltaColumn> dcols;
+        for (const auto& c : cols) dcols.push_back({c.name, c.iceberg_type, c.nullable});
+        DeltaLog dlog(table_basename(table_path), table_path, dcols);
+        DeltaVersion v;
+        v.version = 1;
+        v.watermark_ms = id.watermark_ms;
+        for (const auto& info : infos) v.splits.push_back({info.object_key, info.size, info.records});
+        dlog.register_version(v);
+
+        const std::string log_key = table_path + "/_delta_log/00000000000000000000.json";
+        write_object(store_dir, log_key, dlog.commits().at(0));
+        std::printf("published (delta): rows=%lld splits=%zu table_path=%s\n",
+                    static_cast<long long>(total_rows), split_tables.size(), table_path.c_str());
+        std::printf("  delta_log: %s\n", log_key.c_str());
+        std::printf("  store_dir: %s\n", store_dir.c_str());
+        return;
+    }
+
     ManifestSnapshot snap;
     snap.snapshot_id = static_cast<int64_t>(id.snapshot_id);
     snap.sequence_number = id.sequence_number;
     snap.bucket_name = bucket;
     snap.manifest_file_key = id.manifest_file_key;
-
-    int64_t total_rows = 0;
-    for (int s = 0; s < static_cast<int>(split_tables.size()); ++s) {
-        const std::shared_ptr<arrow::Table>& table = split_tables[s];
-        std::string pq = write_table_to_parquet(table);
-        std::map<int, ColumnStats> stats = collect_split_stats(pq, cols);
-
-        const std::string object_key = split_object_key(table_path, s, id.snapshot_id);
-        write_object(store_dir, object_key, pq);
-
+    for (const auto& info : infos) {
         ManifestSplit split;
-        split.object_key = object_key;
-        split.record_count = table->num_rows();
-        split.file_size_in_bytes = static_cast<int64_t>(pq.size());
-        split.stats = stats;
+        split.object_key = info.object_key;
+        split.record_count = info.records;
+        split.file_size_in_bytes = info.size;
+        split.stats = info.stats;
         snap.splits.push_back(split);
-        total_rows += table->num_rows();
     }
 
     const std::string mf = build_manifest_file(snap);
@@ -147,7 +190,7 @@ void publish_image(const std::string& store_dir, const std::string& bucket,
     write_object(store_dir, id.metadata_key, metadata);
     write_object(store_dir, id.version_hint_key, "1");
 
-    std::printf("published: rows=%lld splits=%zu bucket=%s table_path=%s\n",
+    std::printf("published (iceberg): rows=%lld splits=%zu bucket=%s table_path=%s\n",
                 static_cast<long long>(total_rows), split_tables.size(), bucket.c_str(),
                 table_path.c_str());
     std::printf("  metadata: %s\n", id.metadata_key.c_str());
@@ -175,7 +218,7 @@ bool has_flag(int argc, char** argv, const std::string& name) {
 }
 
 // Demo mode: synthesize rows entirely in C++ (no database).
-int run_demo(int argc, char** argv) {
+int run_demo(int argc, char** argv, const std::string& format) {
     using namespace fsp;
     using namespace fsp::native;
 
@@ -201,12 +244,12 @@ int run_demo(int argc, char** argv) {
         tables.push_back(build_split_table(schema, start, count));
         start += count;
     }
-    publish_image(store_dir, bucket, table_path, cols, tables);
+    publish_image(store_dir, bucket, table_path, cols, tables, format);
     return 0;
 }
 
 // SQL mode: materialize from a SQLite table using range-based split queries.
-int run_sql(int argc, char** argv) {
+int run_sql(int argc, char** argv, const std::string& format) {
     using namespace fsp;
     using namespace fsp::native;
 
@@ -251,7 +294,7 @@ int run_sql(int argc, char** argv) {
         std::printf("sql: db=%s table=%s key=%s splits=%d key_range=[%lld,%lld]\n", db_path.c_str(),
                     table.c_str(), pk.c_str(), num_splits, static_cast<long long>(bounds.first),
                     static_cast<long long>(bounds.second));
-        publish_image(store_dir, bucket, table_path, cols, tables);
+        publish_image(store_dir, bucket, table_path, cols, tables, format);
     } catch (...) {
         sqlite3_close(db);
         throw;
@@ -267,12 +310,31 @@ int main(int argc, char** argv) {
         std::printf("usage:\n"
                     "  native_publish <store_dir> [rows] [splits] [bucket] [table_path]   (demo data)\n"
                     "  native_publish --sqlite <db> --store <dir> [--seed <rows>] [--splits <n>] "
-                    "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]      (SQL source)\n");
+                    "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]      (SQL source)\n"
+                    "  add --format iceberg|delta (default iceberg) to either form.\n");
         return 2;
     }
+    // Pull --format out of argv so it composes with the positional demo form.
+    std::string format = "iceberg";
+    std::vector<char*> filtered;
+    filtered.push_back(argv[0]);
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--format" && i + 1 < argc) {
+            format = argv[++i];
+            continue;
+        }
+        filtered.push_back(argv[i]);
+    }
+    if (format != "iceberg" && format != "delta") {
+        std::fprintf(stderr, "native_publish: --format must be 'iceberg' or 'delta'\n");
+        return 2;
+    }
+    int fargc = static_cast<int>(filtered.size());
+    char** fargv = filtered.data();
+
     try {
-        if (has_flag(argc, argv, "--sqlite")) return run_sql(argc, argv);
-        return run_demo(argc, argv);
+        if (has_flag(fargc, fargv, "--sqlite")) return run_sql(fargc, fargv, format);
+        return run_demo(fargc, fargv, format);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "native_publish error: %s\n", e.what());
         return 1;

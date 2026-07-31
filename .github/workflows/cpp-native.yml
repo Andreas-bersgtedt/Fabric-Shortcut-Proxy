@@ -2,7 +2,8 @@ name: C++ native
 
 # Builds and validates the C++ Tier 1 port: the pure-logic conformance tests and
 # the Arrow/Avro native modules (Parquet writer, split stats, Iceberg manifests),
-# ending in a full pyiceberg read of a natively published serving image.
+# ending in a full pyiceberg read of a serving image materialized from a SQLite
+# source via range-split queries.
 on:
   push:
     branches: [ main, cpprefactor ]
@@ -82,7 +83,7 @@ jobs:
         run: python agent-cpp/native/roundtrip_check.py agent-cpp/native/build
 
       - name: Publish native Iceberg image
-        run: agent-cpp/native/build/native_publish "$GITHUB_WORKSPACE/.store_native" 50000 5
+        run: agent-cpp/native/build/native_publish --sqlite "$GITHUB_WORKSPACE/.native.db" --store "$GITHUB_WORKSPACE/.store_native" --seed 50000 --splits 8
 
       - name: Build C++ serving agent
         run: bash agent-cpp/build.sh

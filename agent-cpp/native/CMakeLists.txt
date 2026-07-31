@@ -49,7 +49,9 @@ target_compile_options(native_tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 # Native serving-image publisher: assembles a full Iceberg table image (Parquet
 # splits + Avro manifests + metadata.json) into a store dir for the C++ agent.
+# Reads rows from a SQLite source (or synthesizes demo data).
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
 add_executable(native_publish native_publish.cpp)
 target_include_directories(native_publish PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../tier1)
-target_link_libraries(native_publish PRIVATE Arrow::arrow_shared Parquet::parquet_shared avrocpp_local)
+target_link_libraries(native_publish PRIVATE Arrow::arrow_shared Parquet::parquet_shared avrocpp_local unofficial::sqlite3::sqlite3)
 target_compile_options(native_publish PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)

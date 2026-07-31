@@ -25,7 +25,9 @@
 #include "iceberg_schema.hpp"    // fsp::IcebergColumn (tier1)
 #include "iceberg_state.hpp"     // fsp::build_snapshot_identity, split_object_key (tier1)
 #include "parquet_writer.hpp"
+#include "split_planner.hpp"     // fsp::Column, pk_column, compute_key_ranges (tier1)
 #include "split_stats.hpp"
+#include "sql_source.hpp"
 
 namespace fs = std::filesystem;
 
@@ -103,45 +105,24 @@ int64_t arg_i64(int argc, char** argv, int idx, int64_t def) {
     return def;
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
+// Assemble + write a full Iceberg serving image (splits + manifests + metadata)
+// from a set of per-split Arrow tables. Shared by the demo and SQL row sources.
+void publish_image(const std::string& store_dir, const std::string& bucket,
+                   const std::string& table_path, const std::vector<fsp::IcebergColumn>& cols,
+                   const std::vector<std::shared_ptr<arrow::Table>>& split_tables) {
     using namespace fsp;
     using namespace fsp::native;
 
-    if (argc < 2) {
-        std::printf("usage: native_publish <store_dir> [rows] [splits] [bucket] [table_path]\n");
-        return 2;
-    }
-    const std::string store_dir = argv[1];
-    const int64_t total_rows = arg_i64(argc, argv, 2, 50000);
-    const int num_splits = static_cast<int>(arg_i64(argc, argv, 3, 5));
-    const std::string bucket = argc > 4 ? argv[4] : "fabric-iceberg-poc";
-    const std::string table_path = argc > 5 ? argv[5] : "warehouse/demo/orders";
-
-    if (total_rows <= 0 || num_splits <= 0) {
-        std::printf("rows and splits must be positive\n");
-        return 2;
-    }
-
-    const std::vector<IcebergColumn> cols = default_schema();
-    std::shared_ptr<arrow::Schema> schema = build_arrow_schema(cols);
     SnapshotIdentity id = build_snapshot_identity(bucket, table_path);
-
-    // One split per (roughly) equal row range; last split absorbs the remainder.
-    const int64_t base = total_rows / num_splits;
-    const int64_t rem = total_rows % num_splits;
-
     ManifestSnapshot snap;
     snap.snapshot_id = static_cast<int64_t>(id.snapshot_id);
     snap.sequence_number = id.sequence_number;
     snap.bucket_name = bucket;
     snap.manifest_file_key = id.manifest_file_key;
 
-    int64_t start = 0;
-    for (int s = 0; s < num_splits; ++s) {
-        const int64_t count = base + (s == num_splits - 1 ? rem : 0);
-        std::shared_ptr<arrow::Table> table = build_split_table(schema, start, count);
+    int64_t total_rows = 0;
+    for (int s = 0; s < static_cast<int>(split_tables.size()); ++s) {
+        const std::shared_ptr<arrow::Table>& table = split_tables[s];
         std::string pq = write_table_to_parquet(table);
         std::map<int, ColumnStats> stats = collect_split_stats(pq, cols);
 
@@ -150,30 +131,150 @@ int main(int argc, char** argv) {
 
         ManifestSplit split;
         split.object_key = object_key;
-        split.record_count = count;
+        split.record_count = table->num_rows();
         split.file_size_in_bytes = static_cast<int64_t>(pq.size());
         split.stats = stats;
         snap.splits.push_back(split);
-        start += count;
+        total_rows += table->num_rows();
     }
 
     const std::string mf = build_manifest_file(snap);
     write_object(store_dir, id.manifest_file_key, mf);
-
     const std::string ml = build_manifest_list(snap, static_cast<int64_t>(mf.size()));
     write_object(store_dir, id.manifest_list_key, ml);
-
     const std::string metadata =
-        build_metadata_json(bucket, table_path, cols, id, total_rows, num_splits);
+        build_metadata_json(bucket, table_path, cols, id, total_rows, static_cast<int>(split_tables.size()));
     write_object(store_dir, id.metadata_key, metadata);
-
     write_object(store_dir, id.version_hint_key, "1");
 
-    std::printf("published: rows=%lld splits=%d bucket=%s table_path=%s\n",
-                static_cast<long long>(total_rows), num_splits, bucket.c_str(), table_path.c_str());
+    std::printf("published: rows=%lld splits=%zu bucket=%s table_path=%s\n",
+                static_cast<long long>(total_rows), split_tables.size(), bucket.c_str(),
+                table_path.c_str());
     std::printf("  metadata: %s\n", id.metadata_key.c_str());
     std::printf("  manifest_list: %s\n", id.manifest_list_key.c_str());
-    std::printf("  manifest_file: %s\n", id.manifest_file_key.c_str());
     std::printf("  store_dir: %s\n", store_dir.c_str());
+}
+
+std::vector<fsp::Column> as_planner_columns(const std::vector<fsp::IcebergColumn>& cols) {
+    std::vector<fsp::Column> out;
+    out.reserve(cols.size());
+    for (const auto& c : cols) out.push_back({c.name, c.iceberg_type, c.nullable});
+    return out;
+}
+
+std::string flag(int argc, char** argv, const std::string& name, const std::string& def) {
+    for (int i = 1; i + 1 < argc; ++i)
+        if (name == argv[i]) return argv[i + 1];
+    return def;
+}
+
+bool has_flag(int argc, char** argv, const std::string& name) {
+    for (int i = 1; i < argc; ++i)
+        if (name == argv[i]) return true;
+    return false;
+}
+
+// Demo mode: synthesize rows entirely in C++ (no database).
+int run_demo(int argc, char** argv) {
+    using namespace fsp;
+    using namespace fsp::native;
+
+    const std::string store_dir = argv[1];
+    const int64_t total_rows = arg_i64(argc, argv, 2, 50000);
+    const int num_splits = static_cast<int>(arg_i64(argc, argv, 3, 5));
+    const std::string bucket = argc > 4 ? argv[4] : "fabric-iceberg-poc";
+    const std::string table_path = argc > 5 ? argv[5] : "warehouse/demo/orders";
+    if (total_rows <= 0 || num_splits <= 0) {
+        std::printf("rows and splits must be positive\n");
+        return 2;
+    }
+
+    const std::vector<IcebergColumn> cols = default_schema();
+    std::shared_ptr<arrow::Schema> schema = build_arrow_schema(cols);
+    const int64_t base = total_rows / num_splits;
+    const int64_t rem = total_rows % num_splits;
+
+    std::vector<std::shared_ptr<arrow::Table>> tables;
+    int64_t start = 0;
+    for (int s = 0; s < num_splits; ++s) {
+        const int64_t count = base + (s == num_splits - 1 ? rem : 0);
+        tables.push_back(build_split_table(schema, start, count));
+        start += count;
+    }
+    publish_image(store_dir, bucket, table_path, cols, tables);
     return 0;
+}
+
+// SQL mode: materialize from a SQLite table using range-based split queries.
+int run_sql(int argc, char** argv) {
+    using namespace fsp;
+    using namespace fsp::native;
+
+    const std::string db_path = flag(argc, argv, "--sqlite", "");
+    const std::string store_dir = flag(argc, argv, "--store", "");
+    const std::string table = flag(argc, argv, "--table", "sales");
+    const std::string key = flag(argc, argv, "--key", "");  // "" => planner default (id)
+    const int num_splits = static_cast<int>(std::strtoll(flag(argc, argv, "--splits", "8").c_str(), nullptr, 10));
+    const std::string bucket = flag(argc, argv, "--bucket", "fabric-iceberg-poc");
+    const std::string table_path = flag(argc, argv, "--table-path", "warehouse/demo/orders");
+    const int64_t seed_rows = std::strtoll(flag(argc, argv, "--seed", "0").c_str(), nullptr, 10);
+
+    if (db_path.empty() || store_dir.empty()) {
+        std::printf("usage: native_publish --sqlite <db> --store <dir> [--seed <rows>] "
+                    "[--splits <n>] [--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]\n");
+        return 2;
+    }
+
+    const std::vector<IcebergColumn> cols = default_schema();
+    std::shared_ptr<arrow::Schema> schema = build_arrow_schema(cols);
+    const SQLiteDialect dialect;
+    const std::string pk = pk_column(key, as_planner_columns(cols));
+
+    sqlite3* db = sql_open(db_path);
+    try {
+        if (seed_rows > 0) {
+            int64_t seeded = seed_demo_table(db, table, seed_rows);
+            std::printf("seeded: table=%s rows=%lld (db=%s)\n", table.c_str(),
+                        static_cast<long long>(seeded), db_path.c_str());
+        }
+
+        std::pair<int64_t, int64_t> bounds = sql_key_bounds(db, dialect, table, pk);
+        std::vector<std::pair<int64_t, int64_t>> ranges =
+            compute_key_ranges(bounds.first, bounds.second, num_splits);
+
+        std::vector<std::shared_ptr<arrow::Table>> tables;
+        for (const auto& r : ranges) {
+            const int64_t max_rows = r.second > r.first ? (r.second - r.first) : 1;
+            tables.push_back(
+                sql_read_range(db, dialect, cols, schema, table, pk, r.first, r.second, max_rows));
+        }
+        std::printf("sql: db=%s table=%s key=%s splits=%d key_range=[%lld,%lld]\n", db_path.c_str(),
+                    table.c_str(), pk.c_str(), num_splits, static_cast<long long>(bounds.first),
+                    static_cast<long long>(bounds.second));
+        publish_image(store_dir, bucket, table_path, cols, tables);
+    } catch (...) {
+        sqlite3_close(db);
+        throw;
+    }
+    sqlite3_close(db);
+    return 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::printf("usage:\n"
+                    "  native_publish <store_dir> [rows] [splits] [bucket] [table_path]   (demo data)\n"
+                    "  native_publish --sqlite <db> --store <dir> [--seed <rows>] [--splits <n>] "
+                    "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]      (SQL source)\n");
+        return 2;
+    }
+    try {
+        if (has_flag(argc, argv, "--sqlite")) return run_sql(argc, argv);
+        return run_demo(argc, argv);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "native_publish error: %s\n", e.what());
+        return 1;
+    }
 }

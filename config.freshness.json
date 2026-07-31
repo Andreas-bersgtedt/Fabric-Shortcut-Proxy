@@ -1,9 +1,0 @@
-{
-  "freshness": {
-    "auto_refresh": true,
-    "refresh_allow_full_pull": false,
-    "refresh_poll_seconds": 600,
-    "refresh_strategy": "auto",
-    "refresh_ttl_seconds": 1200
-  }
-}

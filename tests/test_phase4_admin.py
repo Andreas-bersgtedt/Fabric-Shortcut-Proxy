@@ -30,6 +30,12 @@ class FakeSupervisor:
         self.restart_count = restart_count
         self.pid = 1000 if alive else None
         self.calls: list[str] = []
+        # Memory monitoring fields the admin fleet snapshot reads.
+        self.rss_mb = 0.0
+        self.avg_rss_mb = 0.0
+        self.peak_rss_mb = 0.0
+        self.memory_alert_threshold_mb = 0
+        self.memory_restart_threshold_mb = 0
 
     @property
     def is_alive(self):

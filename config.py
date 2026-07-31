@@ -158,6 +158,7 @@ _register("AUDIT_LOG_FILE", "audit_log_file", "str", AUDIT_LOG_FILE)
 _register("TLS_CERT_FILE", "tls_cert_file", "str", TLS_CERT_FILE)
 _register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
+_register("ENABLE_GATEWAY", "enable_gateway", "bool", ENABLE_GATEWAY)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 
 # Register memory monitoring settings

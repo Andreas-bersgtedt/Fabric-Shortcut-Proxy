@@ -52,19 +52,20 @@ def test_validate_updates_coerces_and_rejects():
 
 
 def test_write_config_updates_merges_and_preserves(tmp_path, monkeypatch):
-    cfgfile = tmp_path / "config.json"
-    cfgfile.write_text(json.dumps({"tables": [{"source_table": "t"}], "num_splits": 8}))
-    monkeypatch.setenv("CONFIG_FILE", str(cfgfile))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.system.json").write_text(json.dumps({"system": {"host": "1.2.3.4"}}))
 
     result = config.write_config_updates({"agent_count": 4, "num_splits": 16})
     assert result["changed"] == ["agent_count", "num_splits"]
-    written = json.loads(cfgfile.read_text())
-    assert written["agent_count"] == 4 and written["num_splits"] == 16
-    assert written["tables"] == [{"source_table": "t"}]     # untouched
+    # Settings route to their section files (nested under the section name); existing keys preserved.
+    system = json.loads((tmp_path / "config.system.json").read_text())["system"]
+    perf = json.loads((tmp_path / "config.performance.json").read_text())["performance"]
+    assert system["agent_count"] == 4 and system["host"] == "1.2.3.4"
+    assert perf["num_splits"] == 16
 
 
 def test_write_config_updates_rejects_bad(monkeypatch, tmp_path):
-    monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "c.json"))
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError):
         config.write_config_updates({"num_splits": "not-an-int"})
 
@@ -93,7 +94,7 @@ async def test_current_endpoint_lists_effective_config():
 
 
 async def test_save_endpoint_persists_and_validates(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.chdir(tmp_path)
     async with _client(_cb_app()) as c:
         r = await c.post("/_config/api/save", json={"settings": {"agent_count": 5}})
         assert r.status_code == 200
@@ -107,18 +108,17 @@ async def test_save_endpoint_persists_and_validates(tmp_path, monkeypatch):
 
 
 async def test_save_endpoint_allows_secret_replace_and_clear(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
-    monkeypatch.setenv("CONFIG_FILE", str(cfg))
+    monkeypatch.chdir(tmp_path)
 
     async with _client(_cb_app()) as c:
         rep = await c.post("/_config/api/save", json={"settings": {"secret_access_key": "new-secret"}})
         assert rep.status_code == 200 and rep.json()["ok"]
-        after_replace = json.loads(cfg.read_text())
+        after_replace = json.loads((tmp_path / "config.system.json").read_text())["system"]
         assert after_replace["secret_access_key"] == "new-secret"
 
         clr = await c.post("/_config/api/save", json={"settings": {"secret_access_key": ""}})
         assert clr.status_code == 200 and clr.json()["ok"]
-        after_clear = json.loads(cfg.read_text())
+        after_clear = json.loads((tmp_path / "config.system.json").read_text())["system"]
         assert after_clear["secret_access_key"] == ""
 
 

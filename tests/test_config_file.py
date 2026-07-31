@@ -67,19 +67,17 @@ def test_tabledef_from_json_with_schema():
 # ---------------------------------------------------------------------------
 
 def test_load_config_file(tmp_path, monkeypatch):
-    p = tmp_path / "cfg.json"
-    p.write_text(json.dumps({"num_splits": 4, "tables": []}), encoding="utf-8")
-    monkeypatch.setenv("CONFIG_FILE", str(p))
-    assert config._load_config_file()["num_splits"] == 4
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.performance.json").write_text(json.dumps({"num_splits": 4}), encoding="utf-8")
+    assert config._load_config_file()["performance"]["num_splits"] == 4
 
 
 def test_load_config_file_tolerates_bom(tmp_path, monkeypatch):
-    p = tmp_path / "cfg.json"
-    p.write_text(json.dumps({"bucket": "b"}), encoding="utf-8-sig")  # UTF-8 BOM
-    monkeypatch.setenv("CONFIG_FILE", str(p))
-    assert config._load_config_file()["bucket"] == "b"
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.freshness.json").write_text(json.dumps({"refresh_strategy": "ttl"}), encoding="utf-8-sig")  # UTF-8 BOM
+    assert config._load_config_file()["freshness"]["refresh_strategy"] == "ttl"
 
 
-def test_load_config_file_missing_is_empty(monkeypatch):
-    monkeypatch.setenv("CONFIG_FILE", "definitely_not_here_98765.json")
+def test_load_config_file_missing_is_empty(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     assert config._load_config_file() == {}

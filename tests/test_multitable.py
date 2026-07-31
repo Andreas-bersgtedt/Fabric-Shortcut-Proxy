@@ -66,6 +66,8 @@ async def client():
     # so set them here (and restore on teardown) to keep this module isolated.
     mp = pytest.MonkeyPatch()
     mp.setattr(config, "BUCKET_NAME", "mt-bucket")
+    mp.setattr(config, "OBJECT_PATH_LAYOUT", "legacy")   # tests assert legacy warehouse/db/<table> paths
+    mp.setattr(config, "ENABLE_LEGACY_PATH_ALIASES", True)   # accept the 'warehouse/' request prefix
 
     _executor._engine = None  # pick up DB_URL set above
 

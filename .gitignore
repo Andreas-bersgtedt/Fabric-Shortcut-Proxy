@@ -66,6 +66,7 @@ devplan/
 config.connection.json
 config.system.json
 config.performance.json
+config.freshness.json
 config.tables.json
 config.mounts.json
 *.env

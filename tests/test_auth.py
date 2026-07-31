@@ -154,6 +154,8 @@ async def auth_client(monkeypatch):
     # module's requests so the router resolves the bucket/snapshot correctly.
     monkeypatch.setattr(config, "BUCKET_NAME", "auth-bucket")
     monkeypatch.setattr(config, "NUM_SPLITS", 4)
+    monkeypatch.setattr(config, "OBJECT_PATH_LAYOUT", "legacy")          # signed paths use warehouse/db/<table>
+    monkeypatch.setattr(config, "ENABLE_LEGACY_PATH_ALIASES", True)      # accept the 'warehouse/' request prefix
 
     _executor._engine = None
     await seed_demo_database()

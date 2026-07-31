@@ -38,6 +38,10 @@ async def client():
     from iceberg.state_store import build_snapshot
 
     _executor._engine = None
+    _saved_layout = config.OBJECT_PATH_LAYOUT
+    _saved_aliases = config.ENABLE_LEGACY_PATH_ALIASES
+    config.OBJECT_PATH_LAYOUT = "legacy"   # this module asserts legacy warehouse/db/<table> paths
+    config.ENABLE_LEGACY_PATH_ALIASES = True   # accept the 'warehouse/' request prefix
     build_snapshot(
         table_name=config.TABLE_NAME,
         num_splits=config.NUM_SPLITS,
@@ -56,6 +60,8 @@ async def client():
     ) as c:
         yield c
 
+    config.OBJECT_PATH_LAYOUT = _saved_layout
+    config.ENABLE_LEGACY_PATH_ALIASES = _saved_aliases
     if _executor._engine is not None:
         await _executor._engine.dispose()
         _executor._engine = None

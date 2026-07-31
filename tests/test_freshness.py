@@ -103,7 +103,8 @@ def _cleanup_db():
 # materialize_table — content addressing + determinism
 # ---------------------------------------------------------------------------
 
-async def test_materialize_is_content_deterministic():
+async def test_materialize_is_content_deterministic(monkeypatch):
+    monkeypatch.setattr(config, "OBJECT_PATH_LAYOUT", "legacy", raising=False)  # assert a fixed warehouse/db/<table> prefix
     await _write_rows([(1, "a", 1.0), (2, "b", 2.0), (3, "c", 3.0)])
     t = _table()
     snap1 = await freshness.materialize_table(t, _BUCKET, _PREFIX)

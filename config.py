@@ -53,7 +53,7 @@ from connection_config import (
     QUERY_TIMEOUT_SECONDS, QUERY_MAX_ROWS,
     DB_MAX_RETRIES, DB_RETRY_BACKOFF_SECONDS, VALIDATE_SOURCE_SCHEMA,
     redact_db_url,
-    Connection, CONNECTIONS, get_connection, connection_ids,
+    Connection, CONNECTIONS, get_connection,
 )
 
 

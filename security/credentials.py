@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Any
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from urllib.parse import urlparse, urlunparse
 
 
 # Patterns for detecting sensitive data in text

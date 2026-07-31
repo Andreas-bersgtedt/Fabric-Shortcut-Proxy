@@ -149,11 +149,15 @@ jobs:
         run: |
           LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish "$GITHUB_WORKSPACE/.store_mv" 30000 4 --versions 3 --format delta
           python - <<'PY'
+          import os, sys
           from deltalake import DeltaTable
           dt = DeltaTable("${{ github.workspace }}/.store_mv/warehouse/demo/orders")
           assert dt.version() == 2, f"expected version 2, got {dt.version()}"
           assert dt.to_pyarrow_table().num_rows == 30000, dt.to_pyarrow_table().num_rows
           print("multi-snapshot OK: version", dt.version())
+          # delta-rs can SIGABRT during interpreter teardown; hard-exit past it.
+          sys.stdout.flush()
+          os._exit(0)
           PY
 
   # MSSQL ODBC round-trip. Non-blocking: the msodbcsql driver + service plumbing

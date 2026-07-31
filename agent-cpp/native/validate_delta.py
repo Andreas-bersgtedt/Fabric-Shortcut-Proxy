@@ -7,6 +7,7 @@ Reads the _delta_log + Parquet splits produced by native_publish --format delta
 """
 from __future__ import annotations
 
+import os
 import sys
 
 from deltalake import DeltaTable
@@ -43,4 +44,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _rc = main()
+    # delta-rs' tokio runtime can abort (SIGABRT) during normal interpreter
+    # teardown; the check is already done, so hard-exit past that teardown.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_rc)

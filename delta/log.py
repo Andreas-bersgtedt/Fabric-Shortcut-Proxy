@@ -30,7 +30,6 @@ import hashlib
 import json
 import threading
 
-import config
 import cache.lru_cache as cache
 from iceberg.state_store import get_all_snapshots, get_snapshot_history
 from observability.logging import get_logger

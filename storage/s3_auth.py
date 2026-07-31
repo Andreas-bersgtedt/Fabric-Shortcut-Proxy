@@ -30,7 +30,7 @@ no cloud SDK; ``build_s3_client`` raises a clear install hint when they're absen
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 

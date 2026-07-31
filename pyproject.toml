@@ -64,3 +64,8 @@ packages = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.ruff.lint.per-file-ignores]
+# config.py deliberately re-exports settings from system_config / connection_config
+# so callers can read them as config.X; ruff sees those imports as unused (F401).
+"config.py" = ["F401"]

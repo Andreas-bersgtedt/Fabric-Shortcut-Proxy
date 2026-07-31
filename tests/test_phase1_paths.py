@@ -38,7 +38,7 @@ def test_alias_to_active_key_when_canonical(monkeypatch):
     t = TableDef(name="orders", source_table="sales.orders", num_splits=1, schema=_SCHEMA)
     snap = ss.build_table_snapshot(t, "bucket", "warehouse/db")
 
-    old = f"warehouse/db/orders/metadata/v1.metadata.json"
+    old = "warehouse/db/orders/metadata/v1.metadata.json"
     new = f"{snap.table_path}/metadata/v1.metadata.json"
     assert ss.alias_to_active_key(old) == new
 

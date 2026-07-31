@@ -21,13 +21,13 @@ flowchart LR
   subgraph Proxy["Fabric Shortcut Proxy (FastAPI)"]
     AUTH["Auth middleware<br/>SigV4 (multi-key) + per-key ACL<br/>+ forced mount auth"]
     RT["s3/router.py<br/>GET / HEAD / ListObjectsV2 (+ range)"]
-    subgraph WH["Warehouse bucket — DB to table"]
+    subgraph WH["Warehouse bucket: DB to table"]
       RES["Iceberg / Delta resolver"]
       GEN["SQL pushdown to Parquet<br/>planner + db + parquet"]
     end
-    subgraph MNT["Mounted buckets — storage proxy"]
+    subgraph MNT["Mounted buckets: storage proxy"]
       PT["passthrough<br/>byte streaming + range"]
-      LOC["local — NFS / SMB"]
+      LOC["local: NFS / SMB"]
       S3B["s3 / MinIO"]
       AZ["azure Blob / ADLS"]
     end
@@ -59,26 +59,26 @@ flowchart TB
     MGR["manager.py<br/>Manager control-plane app"]
   end
 
-  subgraph Front["S3 front door — s3/"]
+  subgraph Front["S3 front door: s3/"]
     ROUTER["router.py"]
-    AUTHV["auth.py — SigV4 verify"]
+    AUTHV["auth.py: SigV4 verify"]
     XML["xml_responses.py"]
   end
 
   subgraph Sec["security/"]
-    AK["access_keys.py — keys + ACL"]
-    CS["credential_store.py — DPAPI/Fernet"]
-    SCRUB["credentials.py — scrubbing"]
+    AK["access_keys.py: keys + ACL"]
+    CS["credential_store.py: DPAPI/Fernet"]
+    SCRUB["credentials.py: scrubbing"]
   end
 
   subgraph Meta["Table metadata"]
-    ICE["iceberg/ — schema, metadata,<br/>manifest, stats, state_store, freshness"]
+    ICE["iceberg/: schema, metadata,<br/>manifest, stats, state_store, freshness"]
     DELTA["delta/log.py"]
   end
 
   subgraph Gen["Generation"]
-    PLAN["planner/ — split_planner,<br/>dialects, shard_weight"]
-    DB["db/ — executor, reflect, capabilities"]
+    PLAN["planner/: split_planner,<br/>dialects, shard_weight"]
+    DB["db/: executor, reflect, capabilities"]
     PARQ["parquet/generator.py"]
   end
 
@@ -91,7 +91,7 @@ flowchart TB
     LRU["cache/lru_cache.py"]
   end
 
-  subgraph Ctl["control/ — Manager/Agent plane"]
+  subgraph Ctl["control/: Manager/Agent plane"]
     REG["registry.py"]
     SUP["supervisor.py"]
     GW["gateway.py"]
@@ -129,7 +129,7 @@ Referenced: [s3/router.py](../s3/router.py), [security/access_keys.py](../securi
 
 ---
 
-## 3. Request lifecycle — auth middleware
+## 3. Request lifecycle: auth middleware
 
 The outermost hop for every S3 request. Grounded in
 [main.py](../main.py) (`sigv4_auth_middleware`) and [s3/auth.py](../s3/auth.py).
@@ -217,7 +217,7 @@ allowed_buckets, allowed_prefixes, permissions, enabled}`.
 
 ---
 
-## 5. Warehouse read path — metadata & data
+## 5. Warehouse read path: metadata & data
 
 The DB→table serving path in [s3/router.py](../s3/router.py) `get_object`.
 
@@ -292,7 +292,7 @@ restart-stable and any change yields a new path + `current-snapshot-id`.
 
 ---
 
-## 7. Storage proxy — passthrough serving
+## 7. Storage proxy: passthrough serving
 
 Read-only byte passthrough for mounted buckets. Grounded in
 [storage/passthrough.py](../storage/passthrough.py) and [storage/mounts.py](../storage/mounts.py).
@@ -446,14 +446,13 @@ flowchart TB
 ```
 
 Secret material (DB URLs, upstream creds, access keys) is **not** stored in these
-JSON files — it lives in the encrypted credential store.
+JSON files, it lives in the encrypted credential store.
 
 ---
 
 ## 11. Manager / Agent control plane (fleet)
 
-Stateless Agents behind a Manager. Grounded in [control/](../control) —
-`registry.py`, `supervisor.py`, `gateway.py`, `lease.py`, `admin.py`,
+Stateless Agents behind a Manager. Grounded in [control/](../control), `registry.py`, `supervisor.py`, `gateway.py`, `lease.py`, `admin.py`,
 `contract.py`, and [runtime/agent_link.py](../runtime/agent_link.py).
 
 ```mermaid
@@ -466,7 +465,7 @@ flowchart TB
     SUP["supervisor.AgentSupervisor<br/>spawn / restart / crash-loop guard + RSS"]
     LEASE["lease.LeaderLease (HA primary)"]
     JOBS["materialization jobs<br/>split plan + publish snapshot"]
-    ADMIN["admin.py — /_manager fleet console"]
+    ADMIN["admin.py: /_manager fleet console"]
   end
 
   subgraph FLEET["Agent fleet (stateless)"]
@@ -518,7 +517,7 @@ Message shapes are transport-neutral dataclasses in
 
 ## 12. Observability & audit
 
-Grounded in [observability/](../observability) — `logging.py`, `metrics.py`,
+Grounded in [observability/](../observability), `logging.py`, `metrics.py`,
 `trace.py`, `querystats.py`, `audit.py`, `endpoints.py`.
 
 ```mermaid

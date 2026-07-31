@@ -17,13 +17,13 @@ flowchart LR
   subgraph Proxy["Fabric Shortcut Proxy (FastAPI)"]
     AUTH["Auth middleware<br/>SigV4 (multi-key) + per-key ACL<br/>+ forced mount auth"]
     RT["s3/router.py<br/>GET / HEAD / ListObjectsV2 (+ range)"]
-    subgraph WH["Warehouse bucket — DB to table"]
+    subgraph WH["Warehouse bucket: DB to table"]
       RES["Iceberg / Delta resolver"]
       GEN["SQL pushdown to Parquet<br/>planner + db + parquet"]
     end
-    subgraph MNT["Mounted buckets — storage proxy"]
+    subgraph MNT["Mounted buckets: storage proxy"]
       PT["passthrough<br/>byte streaming + range"]
-      LOC["local — NFS / SMB"]
+      LOC["local: NFS / SMB"]
       S3B["s3 / MinIO"]
       AZ["azure Blob / ADLS"]
     end
@@ -44,11 +44,11 @@ A bucket with **no mount** resolves through the Iceberg/Delta path exactly as be
 a bucket **with a mount** streams bytes straight from its backend. Both share the same
 SigV4 front door. See [Storage Proxy](#storage-proxy--secured-file--object-passthrough).
 
-> For component-level detail — per-process flow diagrams for auth, the warehouse read
+> For component-level detail, per-process flow diagrams for auth, the warehouse read
 > path, the storage proxy, credential mediation, config, and the Manager/Agent control
-> plane — see [TechnicalArchitecture.md](docs/TechnicalArchitecture.md).
+> plane, see [TechnicalArchitecture.md](docs/TechnicalArchitecture.md).
 
-## Storage Proxy — secured file / object passthrough
+## Storage Proxy: secured file / object passthrough
 
 Alongside the DB→table virtualization, the same S3 endpoint can serve **existing files**
 from a storage backend as **read-only byte passthrough**. It is **additive**: a bucket with
@@ -56,7 +56,7 @@ a **mount** streams bytes from its backend; every other bucket resolves through 
 Iceberg/Delta path unchanged, so a single deployment exposes the DB warehouse *and* file
 shares/object stores at once.
 
-**Backends** (`config.mounts.json`, gitignored — see [config.mounts.example.json](config.mounts.example.json)):
+**Backends** (`config.mounts.json`, gitignored, see [config.mounts.example.json](config.mounts.example.json)):
 
 | Backend | Serves | Notes |
 |---|---|---|
@@ -65,11 +65,11 @@ shares/object stores at once.
 | `azure` | a native **Azure Blob / ADLS Gen2** container | flat blob + hierarchical namespace (`pip install '.[azureblob]'`) |
 
 **Security (Phase 4):**
-- **Per-key authorization** — issue scoped S3 **access keys** (allowed buckets/prefixes, read-only), stored encrypted; SigV4 is verified against them. The legacy single key stays a wildcard until you add a key.
-- **Forced auth on mounts** — `ENFORCE_MOUNT_AUTH` (default on) requires SigV4 on mounted buckets even when `REQUIRE_SIGV4` is off.
-- **Upstream credential mediation** — clients never see upstream S3/Azure secrets; they're held encrypted (DPAPI/Fernet) and resolved by id. Outbound S3 covers static/session/assume-role/web-identity/profile/SSO/instance/process/anonymous; Azure covers connection-string/account-key/SAS/AAD/managed-identity/default/anonymous.
-- **TLS** — terminate HTTPS at the proxy (`TLS_CERT_FILE` + `TLS_KEY_FILE`) or a fronting LB.
-- **Audit** — every mounted-object access (identity, bucket, key, bytes) is logged when `ENABLE_AUDIT_LOG` is on; recent events at `GET /_config/api/audit`.
+- **Per-key authorization**: issue scoped S3 **access keys** (allowed buckets/prefixes, read-only), stored encrypted; SigV4 is verified against them. The legacy single key stays a wildcard until you add a key.
+- **Forced auth on mounts**: `ENFORCE_MOUNT_AUTH` (default on) requires SigV4 on mounted buckets even when `REQUIRE_SIGV4` is off.
+- **Upstream credential mediation**: clients never see upstream S3/Azure secrets; they're held encrypted (DPAPI/Fernet) and resolved by id. Outbound S3 covers static/session/assume-role/web-identity/profile/SSO/instance/process/anonymous; Azure covers connection-string/account-key/SAS/AAD/managed-identity/default/anonymous.
+- **TLS**: terminate HTTPS at the proxy (`TLS_CERT_FILE` + `TLS_KEY_FILE`) or a fronting LB.
+- **Audit**: every mounted-object access (identity, bucket, key, bytes) is logged when `ENABLE_AUDIT_LOG` is on; recent events at `GET /_config/api/audit`.
 
 Enable it in the config-builder **Storage** tab, or set `ENABLE_STORAGE_PROXY=1` and drop a
 `config.mounts.json`. Design, phasing, and diagrams: [devplan/StorageProxy.md](devplan/StorageProxy.md).
@@ -339,7 +339,7 @@ For strict canonical-only behavior (no legacy aliases), start Manager with:
 
 ## Connecting a real SQL database
 
-Point the proxy at a table/view and a **key column** — the table schema is
+Point the proxy at a table/view and a **key column**: the table schema is
 **reflected from the source database automatically**, no manual column list:
 
 ```powershell
@@ -384,7 +384,7 @@ connection string).
 
 ### Config Builder UI
 
-Prefer clicking to typing JSON? Enable the built-in **config builder** — a small
+Prefer clicking to typing JSON? Enable the built-in **config builder**: a small
 web page that connects to your database, lists tables, and downloads a
 `config.json`:
 
@@ -401,8 +401,8 @@ overridable), and click **Download config.json**. It's **off by default** and
 accepts DB credentials, so run it locally only. PostgreSQL needs `asyncpg`
 (`pip install asyncpg`); SQL Server needs the ODBC driver.
 
-> For in-depth, working PostgreSQL and SQL Server examples — single-table **and**
-> multi-table, with source DDL and troubleshooting — see the
+> For in-depth, working PostgreSQL and SQL Server examples, single-table **and**
+> multi-table, with source DDL and troubleshooting, see the
 > [Configuration Manual](docs/CONFIGURATION.md).
 
 The split-query SQL is generated per **dialect** (F6). `planner/dialects.py`
@@ -419,7 +419,7 @@ automatically:
 
 The proxy can expose several virtual tables from one instance (F1).
 Each is described by a `TableDef` in `config.py`'s `TABLES` list and served under
-`db/<server>/<database>/<schema>/<object>`. Schemas are reflected from the source — just name the
+`db/<server>/<database>/<schema>/<object>`. Schemas are reflected from the source, just name the
 table and its key column:
 
 ```python
@@ -472,8 +472,8 @@ canonical table prefix.
 | `ENABLE_MONITOR`      | `0`                                      | Serve the read-only monitoring dashboard at `/_monitor/` (local admin only) |
 | `REQUEST_TRACE`       | `1`                                      | Record the Fabric request timeline (powers `/_admin/timeline` + the monitor) |
 
-> This is a curated subset. **Every** setting — with defaults, categories, and help
-> text — is documented in [CONFIGURATION.md](docs/CONFIGURATION.md) and browsable in the
+> This is a curated subset. **Every** setting, with defaults, categories, and help
+> text, is documented in [CONFIGURATION.md](docs/CONFIGURATION.md) and browsable in the
 > config-builder UI's "All settings" panel.
 
 ## Documentation freshness
@@ -501,8 +501,8 @@ Current defaults and behavior to assume unless overridden:
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /healthz`      | Liveness — 200 while the process is up |
-| `GET /readyz`       | Readiness — 200 when the snapshot is built **and** the source DB is reachable, else 503 |
+| `GET /healthz`      | Liveness, 200 while the process is up |
+| `GET /readyz`       | Readiness, 200 when the snapshot is built **and** the source DB is reachable, else 503 |
 | `GET /metrics`      | Prometheus text exposition (request counts, bytes served, cache hit/miss, SQL latency histogram) |
 | `GET /_admin/stats` | JSON snapshot of the same metrics plus cache occupancy |
 | `GET /_admin/timeline?table=` | Per-table Fabric read timeline: proxy time vs Fabric-side gaps, per-kind counts, errors |
@@ -510,7 +510,7 @@ Current defaults and behavior to assume unless overridden:
 | `POST /_admin/trace/reset` | Clear the trace buffer before a fresh Fabric run |
 | `GET /_admin/objects?table=` | Declared vs cached size per served object (pinpoints size-drift 404s) |
 | `GET /_admin/schemas?table=` | Resolved logical types per column + risky-type flags |
-| `GET /_monitor/`    | Monitoring dashboard SPA (when `ENABLE_MONITOR=1`) — per-table read/query stats, output format, query lag |
+| `GET /_monitor/`    | Monitoring dashboard SPA (when `ENABLE_MONITOR=1`), per-table read/query stats, output format, query lag |
 
 ```powershell
 curl http://localhost:9000/healthz          # {"status":"ok"}

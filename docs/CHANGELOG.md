@@ -5,22 +5,22 @@ All notable changes to the Fabric Shortcut Proxy are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] — 2026-07-30
+## [2.0.0]: 2026-07-30
 
-Major release. Headlined by the **secured storage proxy** — the same S3 front door
+Major release. Headlined by the **secured storage proxy**: the same S3 front door
 can now serve *existing* files/objects as read-only byte passthrough, **alongside**
-the database→Iceberg/Delta path — plus multi-connection sources, an encrypted
+the database→Iceberg/Delta path, plus multi-connection sources, an encrypted
 credential store, and per-key authorization / TLS / audit.
 
 ### Added
-- **Storage proxy — secured file/object passthrough (Phases 1–4).** An additive
+- **Storage proxy, secured file/object passthrough (Phases 1–4).** An additive
   mount table (`config.mounts.json`): a bucket with a mount streams bytes straight
   from its backend; every other bucket resolves through Iceberg/Delta unchanged.
-  - `local` backend — a filesystem path (an OS-mounted **NFS/SMB** share); streamed
+  - `local` backend, a filesystem path (an OS-mounted **NFS/SMB** share); streamed
     ranged reads and a one-level (non-recursive) folder browse.
-  - `s3` backend — native **S3 / MinIO / S3-compatible** buckets with ranged
+  - `s3` backend, native **S3 / MinIO / S3-compatible** buckets with ranged
     streaming and internal list pagination (`pip install '.[s3proxy]'`).
-  - `azure` backend — native **Azure Blob / ADLS Gen2** containers, flat blob and
+  - `azure` backend, native **Azure Blob / ADLS Gen2** containers, flat blob and
     hierarchical namespace (`pip install '.[azureblob]'`).
   - Config-builder **Storage** tab: per-backend mount editor with a live *Test*
     probe; mounted buckets are advertised in `ListBuckets`.
@@ -29,8 +29,8 @@ credential store, and per-key authorization / TLS / audit.
   keys* panel and `/_config/api/access-keys` (create returns the secret once;
   rotate/delete supported).
 - **Outbound credential mediation.** Upstream S3/Azure secrets are held encrypted
-  and resolved by id — never exposed to clients or written to `config.mounts.json`.
-  Broad auth-mode coverage — S3: static, session, assume_role, web_identity,
+  and resolved by id, never exposed to clients or written to `config.mounts.json`.
+  Broad auth-mode coverage, S3: static, session, assume_role, web_identity,
   profile, sso, instance, process, anonymous; Azure: connection_string,
   account_key, sas, aad_client_secret, managed_identity, default, anonymous.
 - **Encrypted Manager credential store** (DPAPI on Windows, Fernet elsewhere) that
@@ -50,7 +50,7 @@ credential store, and per-key authorization / TLS / audit.
   (multi-key) and returns the authenticated identity; the legacy single key remains
   an implicit wildcard until the first scoped key is created.
 - Mounted buckets require authentication even when `REQUIRE_SIGV4=0`
-  (`ENFORCE_MOUNT_AUTH`, default on) — a secured mount is never served anonymously.
+  (`ENFORCE_MOUNT_AUTH`, default on), a secured mount is never served anonymously.
 - `ListObjectsV2` XML now carries pagination fields (`MaxKeys`, `IsTruncated`,
   `NextContinuationToken`).
 - Documentation: README architecture diagram + Storage Proxy section; `SECURITY.md`
@@ -76,9 +76,9 @@ credential store, and per-key authorization / TLS / audit.
 - Every mount key is normalized and rejects `..` traversal, confined to the mount
   `prefix` subtree, across all backends (OWASP A01/A03).
 
-## [1.0.0] — 2026-07-25
+## [1.0.0]: 2026-07-25
 
-Initial release — the proof-of-concept virtualization gateway that makes relational
+Initial release, the proof-of-concept virtualization gateway that makes relational
 data appear as shortcut-readable table objects in Microsoft Fabric.
 
 ### Added

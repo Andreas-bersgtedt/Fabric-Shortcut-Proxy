@@ -28,11 +28,11 @@ The plan is phased to minimize regression risk and preserve current known-good b
 - Virtual object keys are table-name centric and do not include server/database/schema hierarchy.
 - Range splitting exists but is key-span based, not row-target based.
 - Runtime is HTTP by default; **TLS termination at the proxy is available** (`TLS_CERT_FILE`/`TLS_KEY_FILE`) or via a fronting LB.
-- **Storage proxy** (secured file/object passthrough) is delivered — see the section below.
+- **Storage proxy** (secured file/object passthrough) is delivered, see the section below.
 
 ## Roadmap Overview
 
-## Storage Proxy (Secured Passthrough) — Delivered
+## Storage Proxy (Secured Passthrough): Delivered
 Goal: front *existing* files/objects through the same S3 endpoint, alongside the DB→table path.
 
 Status: Completed (Phases 1–4).
@@ -42,7 +42,7 @@ Status: Completed (Phases 1–4).
   from its backend; every other bucket resolves through Iceberg/Delta unchanged.
 - **Backends:** `local` (NFS/SMB via OS mount), `s3` (native S3/MinIO, ranged +
   paginated), `azure` (Blob / ADLS Gen2). Read-only, `..`-confined, streamed.
-- **Outbound credential mediation** — upstream S3/Azure secrets held encrypted
+- **Outbound credential mediation**: upstream S3/Azure secrets held encrypted
   (DPAPI/Fernet), resolved by id; broad auth-mode coverage for both clouds.
 - **Inbound security (Phase 4):** SigV4 verified against **scoped access keys**
   (per-bucket/prefix ACLs, read-only), forced auth on mounts (`ENFORCE_MOUNT_AUTH`),

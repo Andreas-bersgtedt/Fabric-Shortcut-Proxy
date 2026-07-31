@@ -1,6 +1,6 @@
 # Delta Lake output mode (`TABLE_FORMAT=delta`)
 
-Design notes for the **native Delta** emitter — an alternative to the default
+Design notes for the **native Delta** emitter, an alternative to the default
 Iceberg output that lets Microsoft Fabric read the virtual tables **without the
 Iceberg → Delta conversion layer**.
 
@@ -21,7 +21,7 @@ Fabric's side. That pass:
 - is where most of the format-level bugs we hit lived (field-ids, decimal type
   form, `last-sequence-number`, size-drift `BlobNotFound`, `READ_EXCEPTION`).
 
-**Delta**, by contrast, is a *native* shortcut format — Fabric reads the
+**Delta**, by contrast, is a *native* shortcut format, Fabric reads the
 `_delta_log/` directly, no conversion. Serving Delta ourselves removes the whole
 conversion surface (and its lag) while **reusing every other part of the proxy**:
 the same content-addressed Parquet splits, split pinning, and auto-refresh.
@@ -47,7 +47,7 @@ No `metadata.json`, no `*.avro` manifests, no `version-hint.text`. The Parquet
 files are byte-for-byte the same ones the Iceberg path serves (same generator,
 same content-addressed names, same pinning).
 
-Point the Fabric shortcut at `db/<server>/<database>/<schema>/<object>` — Fabric
+Point the Fabric shortcut at `db/<server>/<database>/<schema>/<object>`, Fabric
 auto-detects `_delta_log/` and reads it as a Delta table.
 
 ---
@@ -57,7 +57,7 @@ auto-detects `_delta_log/` and reads it as a Delta table.
 Each **published snapshot version** (the proxy's unit of freshness) maps to one
 Delta commit. Delta commit files are JSON-lines (one action per line):
 
-**commit 0** — `00000000000000000000.json`
+**commit 0**: `00000000000000000000.json`
 
 ```json
 {"protocol":{"minReaderVersion":1,"minWriterVersion":2}}
@@ -66,7 +66,7 @@ Delta commit. Delta commit files are JSON-lines (one action per line):
 … one add per split …
 ```
 
-**commit N** (N ≥ 1) — after a refresh publishes a new version
+**commit N** (N ≥ 1), after a refresh publishes a new version
 
 ```json
 {"add":{"path":"data/split-0-<newhash>.parquet", …}}      ← only the CHANGED splits
@@ -76,7 +76,7 @@ Delta commit. Delta commit files are JSON-lines (one action per line):
 Commit N is a **diff** (see §4.1): only splits whose content changed are `add`ed,
 and only the files they replaced are `remove`d. Because splits are
 content-addressed, unchanged splits keep the same path and carry forward with no
-action — a full add-all/remove-all replace would net an unchanged file out of the
+action, a full add-all/remove-all replace would net an unchanged file out of the
 table for a replaying reader.
 
 Key invariants:
@@ -87,7 +87,7 @@ Key invariants:
   no-op diff is skipped, so a Delta commit number need not equal the internal
   snapshot version).
 - `stats` carries `numRecords` only (enough for Delta; no min/max needed).
-- `protocol` is reader 1 / writer 2 — plain add/remove, no deletion vectors or
+- `protocol` is reader 1 / writer 2, plain add/remove, no deletion vectors or
   column mapping.
 
 ---
@@ -98,9 +98,9 @@ The emitter does **not** touch the freshness/publish path. Instead
 [delta/log.py](../delta/log.py) reads the existing snapshot **history** from
 `iceberg.state_store` and memoizes commits:
 
-- `_commits: dict[table -> list[str]]` — append-only commit texts, one per
+- `_commits: dict[table -> list[str]]`: append-only commit texts, one per
   content-changing version (indexed 0..N; a no-op version is skipped).
-- `_prev_files` / `_committed_version` — per-table bookkeeping to build the `add`/
+- `_prev_files` / `_committed_version`: per-table bookkeeping to build the `add`/
   `remove` diff and to skip already-committed versions.
 
 `sync_all()` walks `get_snapshot_history(table)` (oldest → newest) and appends a
@@ -166,14 +166,14 @@ advertises the data files of every retained version.
 
 [s3/router.py](../s3/router.py) branches on `config.TABLE_FORMAT`:
 
-- **ListObjectsV2 / HEAD** — `_snapshot_objects()` returns
+- **ListObjectsV2 / HEAD**: `_snapshot_objects()` returns
   `delta.log.delta_log_objects()` in delta mode (the `_delta_log/*.json` commits
   + current data files) instead of the Iceberg metadata/manifest/version-hint
   objects.
-- **GET** — a `…/_delta_log/*.json` key is served from `delta.log.get_commit_bytes`
+- **GET**: a `…/_delta_log/*.json` key is served from `delta.log.get_commit_bytes`
   (range-aware, `application/json`); unknown log files such as `_last_checkpoint`
-  return `404` (expected — Delta readers probe for it). The Iceberg metadata
-  branch is gated off in delta mode. **Data-file GETs are unchanged** — the same
+  return `404` (expected, Delta readers probe for it). The Iceberg metadata
+  branch is gated off in delta mode. **Data-file GETs are unchanged**: the same
   `get_split_by_key` → pinned/generated Parquet path serves both formats.
 
 ---
@@ -181,7 +181,7 @@ advertises the data files of every retained version.
 ## 7. What is *unchanged*
 
 - Parquet generation, content-addressed split names, `PIN_MATERIALIZED_SPLITS`.
-- Auto-refresh (`AUTO_REFRESH`) and the freshness poller — no edits; delta commits
+- Auto-refresh (`AUTO_REFRESH`) and the freshness poller, no edits; delta commits
   are derived from the snapshots it already publishes.
 - The config-builder UI, `/readyz`, tracing, and the monitor dashboard.
 

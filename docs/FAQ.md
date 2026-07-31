@@ -16,7 +16,7 @@ The source database remains the system of record. The proxy is a read-path virtu
 
 Yes. Alongside the database-to-table virtualization, the same S3 endpoint can act as a **secured storage proxy**: a **mounted** bucket streams existing files straight from a storage backend as **read-only byte passthrough**, while every other bucket (including the database warehouse) resolves through the Iceberg/Delta path unchanged.
 
-This is **additive** — a single deployment can expose the relational warehouse *and* file shares/object stores at once, behind one authenticated front door. It is enabled per bucket through a mount table (`config.mounts.json`) or the config-builder **Storage** tab, and is off by default (`ENABLE_STORAGE_PROXY`).
+This is **additive**: a single deployment can expose the relational warehouse *and* file shares/object stores at once, behind one authenticated front door. It is enabled per bucket through a mount table (`config.mounts.json`) or the config-builder **Storage** tab, and is off by default (`ENABLE_STORAGE_PROXY`).
 
 ## Which storage backends can the proxy front?
 

@@ -1,7 +1,7 @@
-# Plan — Data Freshness & Chunk Identity
+# Plan: Data Freshness & Chunk Identity
 
 How to make source-data changes visible in Microsoft Fabric through the proxy,
-and why the current fixed modulo chunking can never signal a change — **without
+and why the current fixed modulo chunking can never signal a change, **without
 modifying the source databases and uniformly across every SQL variant**.
 
 Status: **planning only.** Companion to [PLANNING.md](PLANNING.md).
@@ -15,7 +15,7 @@ Status: **planning only.** Companion to [PLANNING.md](PLANNING.md).
    re-reads.
 2. **Fixed chunk identity.** Chunks are `key % N` and their file paths are
    derived from a fixed seed, so a data change alters a chunk's *contents* but
-   not its *path* — there is no metadata change to signal freshness.
+   not its *path*, there is no metadata change to signal freshness.
 
 Both stem from one design property: **snapshot ids and every object key are
 deterministic and content-independent.**
@@ -42,7 +42,7 @@ To Fabric, the Iceberg table version is unchanged → no re-read.
 
 `advance_table_snapshot` (F2 time-travel) already mints a new snapshot-id /
 version / manifest keys, **but shares the data files** (`new.splits =
-cur.splits`) — so it still doesn't change data-file paths, which is what the
+cur.splits`), so it still doesn't change data-file paths, which is what the
 cache layers key on.
 
 ---
@@ -65,8 +65,8 @@ means freshness is *bounded*, never instant.
 
 ## 4. Hard constraint & the key insight
 
-> **Constraint (new):** we may **not** change the source servers — no Change
-> Tracking, CDC, triggers, or added `rowversion`/`ModifiedDate` — and the
+> **Constraint (new):** we may **not** change the source servers, no Change
+> Tracking, CDC, triggers, or added `rowversion`/`ModifiedDate`, and the
 > solution must be **uniform across every SQL variant**. This removes every
 > *source-provided* change signal as a baseline. The only thing guaranteed on
 > every server is **the data we can already read**.
@@ -89,24 +89,23 @@ constraint, the only content-independent-yet-data-derived token available is a
 
 **No free lunch.** With zero source cooperation, catching an in-place UPDATE
 *requires reading the affected data* (or a fingerprint of it). There is no
-standard, uniform, cheap SQL signal that reports "a row changed" — those all come
+standard, uniform, cheap SQL signal that reports "a row changed", those all come
 from source-side features we're not allowed to enable.
 
 So the uniform detector is **materialize-and-hash**: on a timer, re-run the same
-SELECTs we already use, hash the produced bytes **in the proxy** (portable — done
+SELECTs we already use, hash the produced bytes **in the proxy** (portable, done
 in Python, not the DB), and compare to the last published hash. It catches
 inserts, deletes **and** updates, on any engine, read-only.
 
 | Strategy (`REFRESH_STRATEGY`) | Catches update? | Uniform? | Cost per poll |
 |---|---|---|---|
 | **content_hash** (default) | ✅ | ✅ | one read of the data (per chunk) |
-| **ttl** (blind) | n/a — refreshes regardless | ✅ | re-materialize each tick even when idle |
+| **ttl** (blind) | n/a, refreshes regardless | ✅ | re-materialize each tick even when idle |
 | **manual** | only on `POST /_admin/refresh` | ✅ | none until called |
-| **rowcount** (accelerator) | insert/delete only | ✅ | cheap `COUNT(*)` — a fast "definitely changed", **not** a safe skip for updates |
-| **dialect_probe** (optional) | ✅ | ❌ per-dialect / perms | cheap — **safe skip** when no DML, else falls back to content_hash |
+| **rowcount** (accelerator) | insert/delete only | ✅ | cheap `COUNT(*)`, a fast "definitely changed", **not** a safe skip for updates |
+| **dialect_probe** (optional) | ✅ | ❌ per-dialect / perms | cheap, **safe skip** when no DML, else falls back to content_hash |
 
-The optional `dialect_probe` reads existing **system views** — no source change —
-but isn't universally available/permitted, so it's an *accelerator*, never the
+The optional `dialect_probe` reads existing **system views**: no source change, but isn't universally available/permitted, so it's an *accelerator*, never the
 baseline:
 - **SQL Server:** `sys.dm_db_index_usage_stats.last_user_update` (needs `VIEW SERVER STATE`).
 - **PostgreSQL:** `pg_stat_user_tables` (`n_tup_ins + n_tup_upd + n_tup_del`).
@@ -122,7 +121,7 @@ step is wrapped so a probe failure can never crash the server.
 
 ---
 
-## 6. Chunking — content-addressed identity
+## 6. Chunking: content-addressed identity
 
 The chunk **is** its content: `split-{i}-{sha(bytes)[:12]}.parquet`.
 
@@ -133,13 +132,13 @@ The chunk **is** its content: `split-{i}-{sha(bytes)[:12]}.parquet`.
 | Snapshot id | root hash over the ordered chunk hashes → changes **iff** some chunk changed |
 
 Modulo vs. range partitioning both work with content-addressing:
-- **Modulo `key % N`** (today): keep it — minimal change. An update rewrites one
+- **Modulo `key % N`** (today): keep it, minimal change. An update rewrites one
   chunk's bytes → only that chunk's hash/path changes → Fabric re-reads one chunk.
 - **Range/bucket by key** (enhancement): contiguous ranges give better update
   locality and unlock F3 **min/max pruning** (Fabric skips chunks whose bounds
   exclude the predicate). Recommended once content-addressing lands.
 
-So modulo was never the problem — **fixed, content-independent identity** was.
+So modulo was never the problem, **fixed, content-independent identity** was.
 Content-addressing fixes exactly that, uniformly, with no source signal.
 
 ---
@@ -154,20 +153,20 @@ Content-addressing fixes exactly that, uniformly, with no source signal.
   serialization: `chunk_hash = sha256(b"\x1e".join(canonical(row)))[:12]`.
 - `object_key = f"{table_path}/data/split-{i}-{chunk_hash}.parquet"`.
 - `snapshot_id = int(sha256("|".join(f"{i}:{h}" for i,h in enumerate(chunk_hashes)))[:15], 16)`
-  — stable per content, new when any chunk changes. `version-hint` /
+, stable per content, new when any chunk changes. `version-hint` /
   `v{N}.metadata.json` advance each time the snapshot id changes.
 - Restart-stable: same content ⇒ same hashes ⇒ same ids ⇒ no 404s.
 
 ### 7.2 Background poller (the `auto` cascade)
 - Lifespan task every `REFRESH_POLL_SECONDS` (default **600 s / 10 min**, matching
   Fabric's sync cadence), per table:
-  1. **`dialect_probe`** — token unchanged → **skip** (cheapest path).
+  1. **`dialect_probe`**: token unchanged → **skip** (cheapest path).
   2. Token changed → `materialize_table` + `publish`.
   3. Probe unavailable / errored (`None`) → **do not** auto full-pull; log
-     `probe_unavailable` and wait for a **manual** refresh — *unless*
+     `probe_unavailable` and wait for a **manual** refresh, *unless*
      `REFRESH_ALLOW_FULL_PULL=1` (last resort) → then materialize + publish.
 - **Crash-proof:** every step is wrapped in try/except; a failing poll logs and
-  reschedules — it can never crash startup or the server.
+  reschedules, it can never crash startup or the server.
 - Gate with `AUTO_REFRESH` (default off ⇒ today's behavior preserved).
 
 ### 7.3 Cache invalidation
@@ -178,7 +177,7 @@ Content-addressing fixes exactly that, uniformly, with no source signal.
 | Key | Default | Meaning |
 |---|---|---|
 | `AUTO_REFRESH` | `0` | Enable the freshness poller |
-| `REFRESH_POLL_SECONDS` | `600` | Poll interval (10 min — matches Fabric sync cadence) |
+| `REFRESH_POLL_SECONDS` | `600` | Poll interval (10 min, matches Fabric sync cadence) |
 | `REFRESH_STRATEGY` | `auto` | `auto` (probe→manual→[full]) \| `dialect_probe` \| `content_hash` \| `ttl` \| `manual` |
 | `REFRESH_ALLOW_FULL_PULL` | `0` | Allow the last-resort full content read when the probe is unavailable |
 | `REFRESH_TTL_SECONDS` | `1200` | Window for the `ttl` strategy |
@@ -194,7 +193,7 @@ Content-addressing fixes exactly that, uniformly, with no source signal.
 
 Uniform **+** no source changes ⇒ the proxy must **read the source to detect
 updates**. That read cost scales with `table_size × poll_frequency` and is a hard
-floor — there is no way to detect an in-place update cheaply without a source
+floor, there is no way to detect an in-place update cheaply without a source
 signal we're forbidden to add.
 
 Content-addressing minimizes **Fabric-side** churn (only changed chunks re-read;
@@ -207,7 +206,7 @@ Mitigations, in order:
 - For very large, hot tables use `manual` refresh (webhook after a known batch).
 
 **Latency to freshness** = `poll interval` + Fabric-side lag (shortcut cache +
-SQL-endpoint sync) — never instant. Other properties preserved: no-404 (ids are
+SQL-endpoint sync), never instant. Other properties preserved: no-404 (ids are
 stable per content), and F2 time-travel (each distinct content is a retained
 snapshot version).
 
@@ -222,7 +221,7 @@ snapshot version).
 | **P3** | Optional `dialect_probe` fast-skip (MSSQL / PG) + tests | Lower read cost where the catalog is readable | ✅ done (SQLite/PG/MSSQL probe shipped with P2 `auto`) |
 | **P4** | Range/bucket chunking + F3 min/max pruning | Better update locality + Fabric-side pruning for large tables | deferred |
 
-**Effort:** P1–P2 ≈ M, P3 ≈ S, P4 ≈ L. **Risk:** med — touches snapshot identity;
+**Effort:** P1–P2 ≈ M, P3 ≈ S, P4 ≈ L. **Risk:** med, touches snapshot identity;
 validate each step with `validate_pyiceberg.py` **and** a real Fabric round-trip
 (update a row → confirm the new value appears within the poll interval).
 
@@ -252,19 +251,19 @@ validate each step with `validate_pyiceberg.py` **and** a real Fabric round-trip
 > and exposes a manual `POST /_admin/refresh` override. 10 dedicated tests in
 > `tests/test_freshness.py`; full suite 107 passing. P4 remains deferred.
 
-Everything is **gated by `AUTO_REFRESH` (default off)** — with it off the proxy
+Everything is **gated by `AUTO_REFRESH` (default off)**: with it off the proxy
 behaves exactly as today (deterministic ids; 97 tests unchanged; known-good
 Fabric path untouched). Content-addressing + polling activate only when freshness
 is enabled.
 
-### P1 — Content-addressed materialize + publish
+### P1: Content-addressed materialize + publish
 - New `iceberg/freshness.py`:
-  - `async def materialize_table(table, bucket, prefix) -> SnapshotState` — run
+  - `async def materialize_table(table, bucket, prefix) -> SnapshotState`: run
     every split query, build parquet, compute the **content-deterministic**
     `chunk_hash` (§7.1), set `object_key = split-{i}-{chunk_hash}.parquet`, cache
     the bytes, fill record_count/size/stats, and derive `snapshot_id`,
     manifest/uuid/`v{version}` keys.
-  - `async def publish(table_name, new_snap) -> bool` — if `new_snap.snapshot_id`
+  - `async def publish(table_name, new_snap) -> bool`: if `new_snap.snapshot_id`
     == current → no-op (`False`); else register as a new version (version++,
     history + metadata-log), **evict superseded chunk caches** (mem + F5 disk),
     drop the table's metadata cache. Returns `True` on change.
@@ -276,9 +275,9 @@ is enabled.
   changed row → new `snapshot_id` + exactly one changed chunk path; `publish`
   dedupes when unchanged.
 
-### P2 — Poller (cascade) + config + manual refresh
+### P2: Poller (cascade) + config + manual refresh
 - `iceberg/freshness.py`: `start_poller(app)` schedules an asyncio task running
-  `poll_once` per table on the cascade in §7.2 — **crash-proof** (try/except per
+  `poll_once` per table on the cascade in §7.2, **crash-proof** (try/except per
   step; log + reschedule).
 - `POST /_admin/refresh` → force `materialize_table` + `publish` (manual override,
   bypasses the probe).
@@ -287,7 +286,7 @@ is enabled.
 - Tests: publishes on change, skips on unchanged, survives a probe exception (no
   crash), manual refresh forces a rebuild.
 
-### P3 — Dialect probes (best-effort, always validated)
+### P3: Dialect probes (best-effort, always validated)
 - `async def probe_change_token(table) -> str | None`, dialect-selected:
   - **SQL Server:** `MAX(last_user_update)` from `sys.dm_db_index_usage_stats`
     for the object (needs `VIEW SERVER STATE`). Caveat: the DMV is empty until
@@ -299,15 +298,15 @@ is enabled.
 - Tests: sqlite `data_version` flips after a write; a raised probe → `None`
   (no crash, cascade falls through).
 
-### P4 — Range chunking + F3 pruning (deferred enhancement)
+### P4: Range chunking + F3 pruning (deferred enhancement)
 - Range predicates + per-chunk min/max in the manifest for Fabric-side pruning
   and better update locality. Independent of P1–P3.
 
 ### Cross-cutting validation
 - After P1 and P2: `pytest`, `validate_pyiceberg.py`, and a **real Fabric
-  round-trip** — update a row, confirm the new value appears within
+  round-trip**: update a row, confirm the new value appears within
   `REFRESH_POLL_SECONDS` + the (unavoidable) Fabric-side lag.
 
-**Effort:** P1–P2 ≈ M, P3 ≈ S, P4 ≈ L. **Risk:** med — P1 reorders snapshot-id
+**Effort:** P1–P2 ≈ M, P3 ≈ S, P4 ≈ L. **Risk:** med, P1 reorders snapshot-id
 derivation to *after* materialization, so validate restart-stability (same data →
 same ids) carefully before enabling in Fabric.

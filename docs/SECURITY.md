@@ -160,7 +160,7 @@ POC path. Grounded in [security/access_keys.py](../security/access_keys.py),
   `Credential=` scope. The legacy single `S3_ACCESS_KEY_ID` keeps working as an
   implicit wildcard **until the first access key is created**, then coexists as a
   wildcard key you can remove/rotate.
-- **Forced auth on mounts** — `ENFORCE_MOUNT_AUTH` (default `1`) requires a valid
+- **Forced auth on mounts**: `ENFORCE_MOUNT_AUTH` (default `1`) requires a valid
   signature on any mounted bucket **even when `REQUIRE_SIGV4=0`**. A secured mount
   is never served anonymously.
 - Not supported inbound: presigned-URL/query-string auth, STS session tokens, SigV2.
@@ -189,7 +189,7 @@ Each access key carries an authorization scope, stored **encrypted**:
 Clients **never** see the credentials the proxy uses to reach the upstream S3 or
 Azure backend. Those secrets are held in the encrypted credential store
 ([security/credential_store.py](../security/credential_store.py); DPAPI on Windows,
-Fernet elsewhere) and resolved by the mount's `credential` id — never written to
+Fernet elsewhere) and resolved by the mount's `credential` id, never written to
 `config.mounts.json`.
 
 - **Outbound S3** modes: `static`, `session` (STS temp), `assume_role`
@@ -214,14 +214,14 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
   `TLS_KEY_FILE` (wired into uvicorn for [main.py](../main.py) and
   [manager.py](../manager.py)), or terminate at a fronting load balancer.
 - SigV4 read requests use `UNSIGNED-PAYLOAD`, so signatures give **no
-  confidentiality** over plain HTTP — enable TLS before turning on auth. The proxy
+  confidentiality** over plain HTTP, enable TLS before turning on auth. The proxy
   logs a startup warning when auth/mounts are on but TLS is not configured.
 
 ### Audit logging
 
 - With `ENABLE_AUDIT_LOG=1` (default), every mounted-object access emits a
-  structured `audit` event — `identity`, `client`, `bucket`, `key`, `backend`,
-  `method`, `status`, `bytes` — with secrets scrubbed. Auth and authorization
+  structured `audit` event, `identity`, `client`, `bucket`, `key`, `backend`,
+  `method`, `status`, `bytes`, with secrets scrubbed. Auth and authorization
   **denials are audited too**.
 - Events go to the structured logger, an optional append-only file
   (`AUDIT_LOG_FILE`), and an in-memory ring surfaced at `GET /_config/api/audit`.

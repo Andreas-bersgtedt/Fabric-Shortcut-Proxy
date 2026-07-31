@@ -1,9 +1,9 @@
-# Configuration Manual — PostgreSQL & SQL Server
+# Configuration Manual: PostgreSQL & SQL Server
 
-Working, end‑to‑end configuration for pointing the Fabric Shortcut Proxy at a real
-**PostgreSQL** or **Microsoft SQL Server** source — single‑table and multi‑table.
+Working, end-to-end configuration for pointing the Fabric Shortcut Proxy at a real
+**PostgreSQL** or **Microsoft SQL Server** source, single-table and multi-table.
 
-You do **not** hand‑write a column schema. Point the proxy at a **table/view
+You do **not** hand-write a column schema. Point the proxy at a **table/view
 name** and a **key column**; the Iceberg schema is **reflected from the source
 database automatically** at startup.
 
@@ -23,11 +23,11 @@ Settings resolve with this precedence (highest wins):
 | Surface | What it controls | How to set it |
 |---|---|---|
 | **Environment variables** | Connection string, source table, **key column**, bucket, port, splits, flags | `DB_URL`, `DB_SOURCE_TABLE`, `KEY_COLUMN`, … |
-| **`config.json`** | Everything above **plus the full `tables` registry** — no Python | Copy [config.example.json](../config.example.json) → `config.json` |
+| **`config.json`** | Everything above **plus the full `tables` registry**: no Python | Copy [config.example.json](../config.example.json) → `config.json` |
 | **`config.py` → `TABLES`** | The table registry (alternative to `config.json`) | Edit [config.py](../config.py) |
 
 At startup the proxy:
-1. Reads `DB_URL` and auto‑selects the SQL **dialect** from its scheme.
+1. Reads `DB_URL` and auto-selects the SQL **dialect** from its scheme.
 2. For every table, **reflects the source columns** and maps them to Iceberg
    types (or uses your explicit schema, if you provided one).
 3. Resolves the **split key column** (explicit `KEY_COLUMN`, else the primary key).
@@ -37,10 +37,10 @@ At startup the proxy:
 > A **single table** needs only environment variables. **Multiple tables** are
 > cleanest via `config.json` (no Python editing at all).
 
-### 1.1 Using `config.json` (recommended for multi‑table)
+### 1.1 Using `config.json` (recommended for multi-table)
 
-Copy the template and edit it — everything, including multiple tables, is
-JSON‑driven and schema‑free:
+Copy the template and edit it, everything, including multiple tables, is
+JSON-driven and schema-free:
 
 ```jsonc
 // config.json  (place next to main.py, or point CONFIG_FILE at it)
@@ -67,7 +67,7 @@ CONFIG_FILE=/deploy/prod.config.json bash ./Manager.sh --skip-install
 
 `config.json` is gitignored (it holds your connection string). Environment
 variables still override individual keys, e.g. `$env:DB_URL=…` wins over the
-file's `db_url`. Full key list is in §8; per‑table fields in §5.2.
+file's `db_url`. Full key list is in §8; per-table fields in §5.2.
 
 ### 1.2 Or build it in the browser (`ENABLE_CONFIG_BUILDER`)
 
@@ -82,7 +82,7 @@ $env:ENABLE_CONFIG_BUILDER = "1"
 
 If you run standalone `python main.py` (no Manager), use `http://localhost:9000/_config/`.
 
-Enter host / user / password → pick tables (key column auto‑detected, overridable)
+Enter host / user / password → pick tables (key column auto-detected, overridable)
 → **Download config.json**. It's **off by default** and accepts DB credentials, so
 run it locally only. `asyncpg` is required for PostgreSQL (`pip install asyncpg`).
 
@@ -110,14 +110,14 @@ run it locally only. `asyncpg` is required for PostgreSQL (`pip install asyncpg`
 
 ### 3.1 Connection string (`DB_URL`)
 
-The scheme prefix auto‑selects the dialect:
+The scheme prefix auto-selects the dialect:
 
 ```
 postgresql+asyncpg://user:pass@host:5432/dbname
 mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
 ```
 
-### 3.2 The key column (`KEY_COLUMN`) — the only thing you must choose
+### 3.2 The key column (`KEY_COLUMN`): the only thing you must choose
 
 By default, split count is dynamic (`split_target_rows=100000`) and planning uses
 contiguous key ranges for index-pruned reads when possible. The legacy modulo
@@ -139,11 +139,11 @@ ORDER BY <key>
 
 - If `KEY_COLUMN` is set, that column is the split key **and** its presence turns
   on automatic schema reflection.
-- If it is not set, the proxy uses the table's **primary key** (auto‑detected).
+- If it is not set, the proxy uses the table's **primary key** (auto-detected).
 - Integer keys are preferred for range planning. For non-integer keys, the planner
   falls back to deterministic row-number sharding.
 
-> **Views** usually have no primary key — always pass `KEY_COLUMN` for a view.
+> **Views** usually have no primary key, always pass `KEY_COLUMN` for a view.
 
 ### 3.3 Automatic type mapping
 
@@ -168,9 +168,9 @@ Reflected source types are mapped to Iceberg types automatically:
 Column **order** and **names** come straight from the source; `field_id`s are
 assigned `1..N` in column order.
 
-### 3.4 Schema‑qualified source tables
+### 3.4 Schema-qualified source tables
 
-`DB_SOURCE_TABLE` / `source_table` may be schema‑qualified. Reflection and the
+`DB_SOURCE_TABLE` / `source_table` may be schema-qualified. Reflection and the
 generated SQL both handle it:
 
 | Value | PostgreSQL SQL | SQL Server SQL |
@@ -187,7 +187,7 @@ table's `num_splits`) or `QUERY_MAX_ROWS`.
 
 ---
 
-## 4. PostgreSQL — single table (env only, no Python)
+## 4. PostgreSQL: single table (env only, no Python)
 
 ### 4.1 Source
 
@@ -201,7 +201,7 @@ CREATE TABLE public.orders (
 );
 ```
 
-### 4.2 Configure & launch — that's it
+### 4.2 Configure & launch: that's it
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install asyncpg   # once
@@ -246,9 +246,9 @@ $env:S3EMU_SERVER = "http://127.0.0.1:9000"
 
 ---
 
-## 5. PostgreSQL — multi table
+## 5. PostgreSQL: multi table
 
-Multiple tables is the one case that needs `config.py` — but still **no column
+Multiple tables is the one case that needs `config.py`, but still **no column
 schemas**, just a short list.
 
 ### 5.1 Source
@@ -264,7 +264,7 @@ CREATE TABLE public.customers (
 );
 ```
 
-### 5.2 Register both tables — `config.json` (no Python)
+### 5.2 Register both tables: `config.json` (no Python)
 
 ```json
 {
@@ -276,18 +276,18 @@ CREATE TABLE public.customers (
 }
 ```
 
-Per‑table JSON fields:
+Per-table JSON fields:
 
 | Field | Required | Notes |
 |---|---|---|
-| `source_table` | yes | Table/view; schema‑qualified allowed |
+| `source_table` | yes | Table/view; schema-qualified allowed |
 | `name` | no | Defaults to the source table's last segment; canonical path is derived from source identity |
 | `key_column` | no | Integer split key; defaults to the primary key |
-| `num_splits` | no | Defaults to the top‑level `num_splits` / `NUM_SPLITS` |
+| `num_splits` | no | Defaults to the top-level `num_splits` / `NUM_SPLITS` |
 | `schema` | no | Explicit override: `[{ "field_id", "name", "type", "nullable" }]` |
 | `connection` | no | Source connection id (see §5.4). Defaults to `default` |
 
-**Or** the equivalent `config.py` (`TABLES` list) — one line per table:
+**Or** the equivalent `config.py` (`TABLES` list), one line per table:
 
 ```python
 # config.py
@@ -298,7 +298,7 @@ TABLES: list[TableDef] = [
 ```
 
 `schema` is omitted → reflected from each source. `key_column` is optional if the
-table has a primary key (auto‑detected); pass it for views or composite keys.
+table has a primary key (auto-detected); pass it for views or composite keys.
 
 ### 5.4 Multiple sources / dialects (one proxy, many databases)
 
@@ -335,7 +335,7 @@ Notes:
 - The id `default` is **reserved** and always derived from `db_url` / `DB_URL`;
   `connections[]` entries must use other ids.
 - Each connection gets its **own** engine pool, dialect, capability profile, and
-  `SOURCE_MAX_CONCURRENCY` backpressure gate — one busy source can't starve
+  `SOURCE_MAX_CONCURRENCY` backpressure gate, one busy source can't starve
   another.
 - Per-connection `query_timeout_seconds`, `query_max_rows`, `db_max_retries`, and
   `db_retry_backoff_seconds` are optional overrides; unset values fall back to the
@@ -343,7 +343,7 @@ Notes:
 - Canonical object paths are namespaced by each source's server/database, so
   tables from different connections never collide.
 - Credentials in `connections[]` are credential-gated exactly like the default
-  section — prefer environment variables / secret stores for passwords.
+  section, prefer environment variables / secret stores for passwords.
 
 ### 5.5 Launch & verify
 
@@ -360,7 +360,7 @@ Create one Fabric shortcut per table (`…/orders/…`, `…/customers/…`).
 
 ---
 
-## 6. SQL Server — single table (env only)
+## 6. SQL Server: single table (env only)
 
 ### 6.1 Source
 
@@ -389,7 +389,7 @@ $env:NUM_SPLITS      = "8"
 # $env:DB_URL = "mssql+aioodbc://@mssql-host/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&trusted_connection=yes&TrustServerCertificate=yes"
 ```
 
-Generated split SQL (SQL Server dialect — brackets, `BIGINT`, `TOP`):
+Generated split SQL (SQL Server dialect, brackets, `BIGINT`, `TOP`):
 
 ```sql
 SELECT TOP (:max_rows) [order_id], [customer], [amount], [created], [is_paid]
@@ -402,7 +402,7 @@ Verify / Fabric shortcut: identical to §4.3 / §4.4.
 
 ---
 
-## 7. SQL Server — multi table
+## 7. SQL Server: multi table
 
 ### 7.1 Source
 
@@ -426,7 +426,7 @@ TABLES: list[TableDef] = [
 ]
 ```
 
-Or the equivalent `config.json` `tables` array (see §5.2) — the JSON keys are the
+Or the equivalent `config.json` `tables` array (see §5.2), the JSON keys are the
 same for any dialect.
 
 ### 7.3 Launch
@@ -445,36 +445,36 @@ Create one Fabric shortcut per table.
 | Variable | Default | Notes |
 |---|---|---|
 | `DB_URL` | `sqlite+aiosqlite:///./poc_source.db` | Scheme selects the dialect |
-| `DB_SOURCE_TABLE` | `sales` | Source table/view; schema‑qualified allowed |
-| `KEY_COLUMN` | *(unset)* | Integer split key; **set it to enable auto‑schema** for your table |
+| `DB_SOURCE_TABLE` | `sales` | Source table/view; schema-qualified allowed |
+| `KEY_COLUMN` | *(unset)* | Integer split key; **set it to enable auto-schema** for your table |
 | `TABLE_NAME` | `sales` | Iceberg name; canonical path defaults to `db/<server>/<database>/<schema>/<object>` |
 | `NUM_SPLITS` | `8` | Split count |
-| `TABLE_FORMAT` | `iceberg` | Output format served to Fabric: `iceberg` (Fabric virtualizes to Delta) or `delta` (native `_delta_log`, no conversion — lower lag). See §13 |
+| `TABLE_FORMAT` | `iceberg` | Output format served to Fabric: `iceberg` (Fabric virtualizes to Delta) or `delta` (native `_delta_log`, no conversion, lower lag). See §13 |
 | `QUERY_MAX_ROWS` | `500000` | Max rows per split |
 | `QUERY_TIMEOUT` | `30` | SQL timeout (seconds) |
 | `S3_BUCKET` | `fabric-iceberg-poc` | Bucket Fabric connects to |
 | `PORT` | `9000` | HTTP listen port |
-| `VALIDATE_SOURCE_SCHEMA` | `1` | Validate declared columns exist (no‑op for reflected schemas) |
+| `VALIDATE_SOURCE_SCHEMA` | `1` | Validate declared columns exist (no-op for reflected schemas) |
 | `REQUIRE_SIGV4` | `0` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
-| `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough — see §14 |
+| `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |
 | `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy when both are set |
 
-> The single‑table shortcut above is env‑only. **Multiple** tables use the
+> The single-table shortcut above is env-only. **Multiple** tables use the
 > `tables` array in `config.json` (§1.1) or the `TABLES` list in `config.py`
-> (both schema‑free). Every environment variable also has a `config.json` key
-> (lower‑case, without the `S3_`/`DB_` prefix — e.g. `DB_URL`→`db_url`,
+> (both schema-free). Every environment variable also has a `config.json` key
+> (lower-case, without the `S3_`/`DB_` prefix, e.g. `DB_URL`→`db_url`,
 > `S3_BUCKET`→`bucket`, `KEY_COLUMN`→`key_column`, `NUM_SPLITS`→`num_splits`).
 
 ---
 
-## 9. Advanced — overriding the reflected schema
+## 9. Advanced: overriding the reflected schema
 
 Reflection covers the common cases. Provide an explicit `schema` on a `TableDef`
 only when you need to override a mapped type (e.g. store a text column as a
-`date`, as the built‑in SQLite demo does):
+`date`, as the built-in SQLite demo does):
 
 ```python
 TABLES = [
@@ -507,7 +507,7 @@ TABLES = [
 | A column has the wrong Iceberg type | Reflected type differs from intent | Override with an explicit `schema` (§9) |
 | SQL endpoint warns *"Columns of the specified data types are not supported … TIMESTAMP_NTZ"* | Naive `datetime`/`datetime2` mapped to Iceberg `timestamp` (NTZ), which the Fabric SQL endpoint rejects | Fixed by default (`TIMESTAMP_ASSUME_UTC=1` maps naive datetimes to `timestamptz`); set `TIMESTAMP_ASSUME_UTC=0` to opt out |
 | SQL endpoint sync fails `404 BlobNotFound` on a table, or Table view spins >5 min / never loads (esp. multi-table) | Fabric's conversion outlives the in-memory Parquet cache (LRU eviction or `PARQUET_CACHE_TTL`), so a split is regenerated on demand with a *different* byte size than the manifest declared → ranged reads miss | Startup now **pins** materialized splits (`PIN_MATERIALIZED_SPLITS=1`, default) so each data file is served byte-identical for the snapshot's life. If you disable pinning, enable `PARQUET_DISK_CACHE=1` and/or raise `PARQUET_CACHE_MAX_BYTES` / `PARQUET_CACHE_TTL`. |
-| XTable conversion log: `Error Code: READ_EXCEPTION` (conversion `Failed`) | XTable fetched a Parquet whose bytes didn't match the manifest-declared size (split regenerated after cache eviction/expiry) — same size-drift root cause | Keep `PIN_MATERIALIZED_SPLITS=1` (default). Then **delete + recreate** the shortcut (Fabric caches the failed conversion) and re-check `_delta_log/latest_conversion_log.txt`. |
+| XTable conversion log: `Error Code: READ_EXCEPTION` (conversion `Failed`) | XTable fetched a Parquet whose bytes didn't match the manifest-declared size (split regenerated after cache eviction/expiry), same size-drift root cause | Keep `PIN_MATERIALIZED_SPLITS=1` (default). Then **delete + recreate** the shortcut (Fabric caches the failed conversion) and re-check `_delta_log/latest_conversion_log.txt`. |
 
 Diagnostics: `GET /readyz`, `GET /_admin/stats`, and `validate_pyiceberg.py`
 (reads the actual served bytes).
@@ -519,7 +519,7 @@ Diagnostics: `GET /readyz`, `GET /_admin/stats`, and `validate_pyiceberg.py`
 | `GET /_admin/timeline?table=<name>` | Per-table request count, wall-clock span, time spent **in the proxy** vs. **Fabric-side gaps**, per-kind breakdown, slowest requests, biggest gaps, and 4xx/5xx (missing-blob) samples |
 | `GET /_admin/trace?table=&kind=&status=&limit=` | Raw request log, newest first; e.g. `?status=404` lists every blob Fabric asked for that we didn't have |
 | `POST /_admin/trace/reset` | Clear the buffer right before starting a fresh Fabric run |
-| `GET /_admin/objects?table=<name>` | Every served object with **declared** vs **cached** size — non-zero `size_drift_files` / `uncached_data_files` pinpoints the `BlobNotFound` cause |
+| `GET /_admin/objects?table=<name>` | Every served object with **declared** vs **cached** size, non-zero `size_drift_files` / `uncached_data_files` pinpoints the `BlobNotFound` cause |
 
 Toggle with `REQUEST_TRACE=0`; buffer size via `TRACE_BUFFER_SIZE` (default 5000).
 
@@ -528,7 +528,7 @@ Toggle with `REQUEST_TRACE=0`; buffer size via `TRACE_BUFFER_SIZE` (default 5000
 snapshot version, cache/pinned occupancy, and the **query lag** breakdown
 (Fabric request → SQL execution → Parquet generation → bytes returned) per data
 request. Data comes from `GET /_monitor/api/summary`; `POST /_monitor/api/reset`
-clears the buffers before a fresh Fabric run. Run it locally — don't expose publicly.
+clears the buffers before a fresh Fabric run. Run it locally, don't expose publicly.
 
 ---
 
@@ -547,7 +547,7 @@ See [README.md](../README.md) and [PLANNING.md](PLANNING.md) for the full flag l
 By default the proxy serves a fixed point-in-time snapshot (built once at
 startup). Enable **auto-refresh** to have it re-read the source, publish a new
 Iceberg snapshot whenever content actually changes, and let Fabric pick up the
-new data. Nothing is required on the source SQL server — detection is uniform
+new data. Nothing is required on the source SQL server, detection is uniform
 across SQLite / PostgreSQL / SQL Server.
 
 | Setting | Default | Effect |
@@ -563,7 +563,7 @@ non-deterministic parquet bytes), so identical data is restart-stable (no churn)
 and any change yields a new data-file path + a new `current-snapshot-id`. A new
 snapshot version is published **only** when content differs. `POST /_admin/refresh`
 forces an immediate materialize + publish (bypassing the probe) and reports which
-tables changed. Probes and polls are best-effort and fully wrapped — a failing
+tables changed. Probes and polls are best-effort and fully wrapped, a failing
 probe or query degrades gracefully and never crashes startup or the server.
 
 ```powershell
@@ -577,7 +577,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:9000/_admin/refresh
 
 ---
 
-## 13. Table format — Iceberg vs Delta (`TABLE_FORMAT`)
+## 13. Table format: Iceberg vs Delta (`TABLE_FORMAT`)
 
 The proxy can serve each virtual table in **two on-the-wire formats**. The data
 Parquet files are identical; only the *table metadata* differs.
@@ -585,7 +585,7 @@ Parquet files are identical; only the *table metadata* differs.
 | `TABLE_FORMAT` | What Fabric sees | Trade-off |
 |---|---|---|
 | `iceberg` *(default)* | Iceberg v2 metadata (`metadata.json` + Avro manifests + `version-hint.text`) | Fabric **virtualizes** Iceberg → Delta on its side. That conversion adds 5 s–2 min of lag, refreshes *at most* once per ~2 min, and is where most conversion-time bugs live. |
-| `delta` | A native Delta log (`_delta_log/NNNNNNNNNNNNNNNNNNNN.json`) + the same `data/*.parquet` | Fabric reads the Delta table **directly — no Iceberg→Delta conversion layer**, so lower lag and fewer conversion failure modes. |
+| `delta` | A native Delta log (`_delta_log/NNNNNNNNNNNNNNNNNNNN.json`) + the same `data/*.parquet` | Fabric reads the Delta table **directly, no Iceberg→Delta conversion layer**, so lower lag and fewer conversion failure modes. |
 
 Set it once (env or `config.json`):
 
@@ -601,9 +601,9 @@ Everything else is unchanged: the same content-addressed splits, split **pinning
 (`PIN_MATERIALIZED_SPLITS`), and **auto-refresh** (§12) all work in both modes.
 In Delta mode each published snapshot version becomes one Delta commit:
 
-- **commit 0** (`00000000000000000000.json`) — `protocol` + `metaData` (the schema)
+- **commit 0** (`00000000000000000000.json`), `protocol` + `metaData` (the schema)
   + one `add` per split.
-- **commit N** (N ≥ 1) — a **diff**: `add` only the splits that changed and
+- **commit N** (N ≥ 1), a **diff**: `add` only the splits that changed and
   `remove` only the splits they replaced. Because splits are content-addressed,
   unchanged splits keep the same path and carry forward untouched.
 
@@ -612,11 +612,11 @@ after old snapshot data is pruned. A stale Fabric reader may still ask for a
 prior version's data file until it re-syncs the log; those files stay pinned and
 served (within `SNAPSHOT_HISTORY_LIMIT`), so you don't get "underlying location
 does not exist" errors mid-refresh. Point your Fabric S3 shortcut at
-`db/<server>/<database>/<schema>/<object>` — Fabric auto-detects the `_delta_log/`.
+`db/<server>/<database>/<schema>/<object>`, Fabric auto-detects the `_delta_log/`.
 
 > Design notes and the full action layout: [DELTA_FORMAT.md](DELTA_FORMAT.md).
 
-## 14. Storage proxy — mounted buckets (files & object stores)
+## 14. Storage proxy: mounted buckets (files & object stores)
 
 Independently of the DB→table virtualization, the same S3 endpoint can serve
 **existing files** from a storage backend as **read-only byte passthrough**. This
@@ -652,12 +652,12 @@ or use the config-builder **Storage** tab.
 }
 ```
 
-- `bucket` — the S3 bucket Fabric/clients use; must differ from `S3_BUCKET` and be
+- `bucket`: the S3 bucket Fabric/clients use; must differ from `S3_BUCKET` and be
   a valid S3 name.
-- `root` — filesystem path (`local`) / upstream bucket (`s3`) / container (`azure`).
-- `prefix` — optional; confine serving to a subtree (also `..`-hardened).
-- `credential` — id of an encrypted upstream credential in the store (never inline).
-- `auth` — for a credential-less mount, an explicit mode (S3: `anonymous`/`instance`;
+- `root`: filesystem path (`local`) / upstream bucket (`s3`) / container (`azure`).
+- `prefix`: optional; confine serving to a subtree (also `..`-hardened).
+- `credential`: id of an encrypted upstream credential in the store (never inline).
+- `auth`: for a credential-less mount, an explicit mode (S3: `anonymous`/`instance`;
   Azure: `default`/`managed_identity`/`anonymous`).
 - Mounts are **read-only** in v1.
 

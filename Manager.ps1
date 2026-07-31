@@ -147,6 +147,26 @@
     Manager control URL for the C++ Agent to register/heartbeat into the fleet
     (default empty = standalone). Used with -RunCppAgent.
 
+.PARAMETER PublishCppImage
+    Build the native publisher (agent-cpp/native/build_native.ps1) and run it to
+    materialize a full Iceberg serving image into the store, then exit (or serve
+    it when combined with -RunCppAgent). This is the native replacement for the
+    Python publish step. Requires Visual Studio 2022 and a bootstrapped vcpkg.
+
+.PARAMETER CppSourceDb
+    SQLite database path for -PublishCppImage. When set, the publisher reads rows
+    from this DB via range-split queries; otherwise it synthesizes demo data.
+
+.PARAMETER CppSeedRows
+    With -PublishCppImage and -CppSourceDb, seed the source table with this many
+    demo rows first (skipped if the table already has rows).
+
+.PARAMETER CppRows
+    Row count for -PublishCppImage in demo mode (no -CppSourceDb). Default 50000.
+
+.PARAMETER CppSplits
+    Number of splits for -PublishCppImage. Default 8.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -164,6 +184,9 @@
 
 .EXAMPLE
     .\Manager.ps1 -RunCppAgent
+
+.EXAMPLE
+    .\Manager.ps1 -PublishCppImage -CppSourceDb .\poc_source.db -CppSeedRows 50000 -RunCppAgent
 #>
 [CmdletBinding()]
 param(
@@ -200,7 +223,12 @@ param(
     [switch]$RunCppAgent,
     [int]$CppAgentPort,
     [string]$CppStoreDir,
-    [string]$CppManagerUrl
+    [string]$CppManagerUrl,
+    [switch]$PublishCppImage,
+    [string]$CppSourceDb,
+    [int]$CppSeedRows,
+    [int]$CppRows,
+    [int]$CppSplits
 )
 
 $ErrorActionPreference = "Stop"
@@ -381,6 +409,44 @@ if ($Tier1Tests) {
     Write-Step "Building + running C++ Tier 1 conformance tests"
     & $tier1Build
     exit $LASTEXITCODE
+}
+
+# ---------------------------------------------------------------------------
+# Optional: build the native publisher and materialize a serving image (the
+# native replacement for the Python publish step). Serve it when combined with
+# -RunCppAgent; otherwise publish and exit.
+#   .\Manager.ps1 -PublishCppImage -CppSourceDb .\poc_source.db -CppSeedRows 50000 -RunCppAgent
+# ---------------------------------------------------------------------------
+if ($PublishCppImage) {
+    $buildNative = Join-Path $ProjectRoot "agent-cpp\native\build_native.ps1"
+    if (-not (Test-Path $buildNative)) { throw "Native build script not found: $buildNative" }
+    Write-Step "Building native publisher (Arrow/Avro via vcpkg)"
+    & $buildNative
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    $pubExe = Join-Path $ProjectRoot "agent-cpp\native\build\native_publish.exe"
+    if (-not (Test-Path $pubExe)) { throw "native_publish.exe not found after build: $pubExe" }
+
+    $pubStore  = if ($PSBoundParameters.ContainsKey("CppStoreDir")) { $CppStoreDir } else { Join-Path $ProjectRoot ".artifacts" }
+    $pubSplits = if ($PSBoundParameters.ContainsKey("CppSplits"))   { $CppSplits }   else { 8 }
+
+    Write-Step "Publishing native Iceberg serving image"
+    if ($PSBoundParameters.ContainsKey("CppSourceDb") -and $CppSourceDb) {
+        $pubArgs = @("--sqlite", $CppSourceDb, "--store", $pubStore, "--splits", "$pubSplits")
+        if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
+        Write-Host "    Source   : SQLite $CppSourceDb" -ForegroundColor DarkGray
+        & $pubExe @pubArgs
+    } else {
+        $pubRows = if ($PSBoundParameters.ContainsKey("CppRows")) { $CppRows } else { 50000 }
+        Write-Host "    Source   : demo data ($pubRows rows)" -ForegroundColor DarkGray
+        & $pubExe $pubStore "$pubRows" "$pubSplits"
+    }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host "    Store dir: $pubStore" -ForegroundColor DarkGray
+
+    # Serve the freshly published store when asked; otherwise stop here.
+    $env:STORE_DIR = $pubStore
+    if (-not $RunCppAgent) { exit 0 }
 }
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,16 @@ ARG_AUTO_STASH=0
 ARG_REINSTALL=0
 ARG_RECREATE=0
 ARG_SKIP_INSTALL=0
+ARG_TIER1_TESTS=0
+ARG_BUILD_CPP_AGENT=0
+ARG_RUN_CPP_AGENT=0
+ARG_PUBLISH_CPP_IMAGE=0
+ARG_CPP_SOURCE_DB=""
+ARG_CPP_SEED_ROWS=""
+ARG_CPP_ROWS=""
+ARG_CPP_SPLITS=""
+ARG_CPP_STORE_DIR=""
+ARG_CPP_PORT=""
 
 AUTO_STASH_CREATED=0
 AUTO_STASH_REF=""
@@ -102,6 +112,18 @@ Bootstrap options:
   --recreate             Recreate .venv from scratch
   --skip-install         Skip dependency install
 
+C++ agent / native publisher (build/run C++ tools, then exit):
+  --tier1-tests          Build + run the C++ Tier 1 conformance tests
+  --build-cpp-agent      Build the C++ serving Agent (agent-cpp/build.sh)
+  --run-cpp-agent        Build + run the C++ serving Agent
+  --publish-cpp-image    Build the native publisher + materialize a serving image
+  --cpp-source-db PATH   SQLite source for --publish-cpp-image (else demo data)
+  --cpp-seed-rows N      Seed the SQLite source with N demo rows first
+  --cpp-rows N           Demo row count for --publish-cpp-image (default 50000)
+  --cpp-splits N         Split count for --publish-cpp-image (default 8)
+  --cpp-store-dir DIR    Store dir to publish into / serve from (default ./.artifacts)
+  --cpp-port N           Port for the C++ Agent (default 9400)
+
 Misc:
   -h, --help             Show this help
 
@@ -146,6 +168,16 @@ while [[ $# -gt 0 ]]; do
     --reinstall) ARG_REINSTALL=1; shift ;;
     --recreate) ARG_RECREATE=1; shift ;;
     --skip-install) ARG_SKIP_INSTALL=1; shift ;;
+    --tier1-tests) ARG_TIER1_TESTS=1; shift ;;
+    --build-cpp-agent) ARG_BUILD_CPP_AGENT=1; shift ;;
+    --run-cpp-agent) ARG_RUN_CPP_AGENT=1; shift ;;
+    --publish-cpp-image) ARG_PUBLISH_CPP_IMAGE=1; shift ;;
+    --cpp-source-db) require_value "$1" "${2:-}"; ARG_CPP_SOURCE_DB="$2"; shift 2 ;;
+    --cpp-seed-rows) require_value "$1" "${2:-}"; ARG_CPP_SEED_ROWS="$2"; shift 2 ;;
+    --cpp-rows) require_value "$1" "${2:-}"; ARG_CPP_ROWS="$2"; shift 2 ;;
+    --cpp-splits) require_value "$1" "${2:-}"; ARG_CPP_SPLITS="$2"; shift 2 ;;
+    --cpp-store-dir) require_value "$1" "${2:-}"; ARG_CPP_STORE_DIR="$2"; shift 2 ;;
+    --cpp-port) require_value "$1" "${2:-}"; ARG_CPP_PORT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1 (run with --help)" ;;
   esac
@@ -229,6 +261,55 @@ else
       rm -f "$STAMP_FILE"
     fi
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Optional C++ lifecycle (mirrors Manager.ps1). These build/run the C++ tools
+# and exit; they never create the venv or launch the Python Manager.
+# ---------------------------------------------------------------------------
+if [[ $ARG_TIER1_TESTS -eq 1 ]]; then
+  step "Building + running C++ Tier 1 conformance tests"
+  bash "$SCRIPT_DIR/agent-cpp/build_tier1.sh"
+  exit $?
+fi
+
+if [[ $ARG_PUBLISH_CPP_IMAGE -eq 1 ]]; then
+  step "Building native publisher (Arrow/Avro via vcpkg)"
+  bash "$SCRIPT_DIR/agent-cpp/native/build_native.sh"
+  pub_exe="$SCRIPT_DIR/agent-cpp/native/build/native_publish"
+  [[ -x "$pub_exe" ]] || die "native_publish not found after build: $pub_exe"
+  pub_store="${ARG_CPP_STORE_DIR:-$SCRIPT_DIR/.artifacts}"
+  pub_splits="${ARG_CPP_SPLITS:-8}"
+  # native_publish links the shared Arrow/Avro/sqlite libs from vcpkg_installed.
+  export LD_LIBRARY_PATH="$(echo "$SCRIPT_DIR"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  step "Publishing native Iceberg serving image"
+  if [[ -n "$ARG_CPP_SOURCE_DB" ]]; then
+    pub_args=(--sqlite "$ARG_CPP_SOURCE_DB" --store "$pub_store" --splits "$pub_splits")
+    [[ -z "$ARG_CPP_SEED_ROWS" ]] || pub_args+=(--seed "$ARG_CPP_SEED_ROWS")
+    printf '    Source   : SQLite %s\n' "$ARG_CPP_SOURCE_DB"
+    "$pub_exe" "${pub_args[@]}"
+  else
+    pub_rows="${ARG_CPP_ROWS:-50000}"
+    printf '    Source   : demo data (%s rows)\n' "$pub_rows"
+    "$pub_exe" "$pub_store" "$pub_rows" "$pub_splits"
+  fi
+  printf '    Store dir: %s\n' "$pub_store"
+  export STORE_DIR="$pub_store"
+  [[ $ARG_RUN_CPP_AGENT -eq 1 ]] || exit 0
+fi
+
+if [[ $ARG_BUILD_CPP_AGENT -eq 1 || $ARG_RUN_CPP_AGENT -eq 1 ]]; then
+  step "Building C++ serving Agent (agent)"
+  bash "$SCRIPT_DIR/agent-cpp/build.sh"
+  [[ $ARG_RUN_CPP_AGENT -eq 1 ]] || exit $?
+  [[ -z "$ARG_CPP_PORT" ]] || export PORT="$ARG_CPP_PORT"
+  [[ -z "$ARG_CPP_STORE_DIR" ]] || export STORE_DIR="$ARG_CPP_STORE_DIR"
+  eff_cpp_port="${PORT:-9400}"
+  eff_cpp_store="${STORE_DIR:-./.artifacts}"
+  step "Running C++ serving Agent"
+  printf '    Endpoint : http://localhost:%s   (/healthz  /<bucket>/<key>)\n' "$eff_cpp_port"
+  printf '    Store dir: %s\n' "$eff_cpp_store"
+  exec "$SCRIPT_DIR/agent-cpp/agent"
 fi
 
 resolve_base_python() {

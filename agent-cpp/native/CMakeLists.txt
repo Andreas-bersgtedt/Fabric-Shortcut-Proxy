@@ -46,3 +46,10 @@ add_executable(native_tests native_tests.cpp)
 target_include_directories(native_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../tier1)
 target_link_libraries(native_tests PRIVATE Arrow::arrow_shared Parquet::parquet_shared avrocpp_local)
 target_compile_options(native_tests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
+# Native serving-image publisher: assembles a full Iceberg table image (Parquet
+# splits + Avro manifests + metadata.json) into a store dir for the C++ agent.
+add_executable(native_publish native_publish.cpp)
+target_include_directories(native_publish PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../tier1)
+target_link_libraries(native_publish PRIVATE Arrow::arrow_shared Parquet::parquet_shared avrocpp_local)
+target_compile_options(native_publish PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)

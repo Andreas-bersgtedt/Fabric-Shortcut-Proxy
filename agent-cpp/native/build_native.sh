@@ -49,9 +49,13 @@ echo "Free disk near source: ${avail_gb} GB"
 [ "${avail_gb:-0}" -ge 30 ] || echo "WARNING: <30 GB free; the Arrow/Avro source build may exhaust the disk."
 
 build_dir="$here/build"
-echo "==> Configuring (vcpkg manifest install runs here)"
+# The default x64-linux triplet is static, but the CMake targets link the shared
+# Arrow/Parquet/avro libraries; use the dynamic triplet so those targets exist.
+triplet="${VCPKG_DEFAULT_TRIPLET:-x64-linux-dynamic}"
+echo "==> Configuring (vcpkg manifest install runs here, triplet=$triplet)"
 cmake -S "$here" -B "$build_dir" -G Ninja \
     "-DCMAKE_TOOLCHAIN_FILE=$toolchain" \
+    "-DVCPKG_TARGET_TRIPLET=$triplet" \
     "-DCMAKE_BUILD_TYPE=$build_type"
 
 if [ "$configure_only" -eq 1 ]; then

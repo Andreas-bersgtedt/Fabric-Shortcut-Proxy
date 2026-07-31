@@ -1,0 +1,119 @@
+name: C++ native
+
+# Builds and validates the C++ Tier 1 port: the pure-logic conformance tests and
+# the Arrow/Avro native modules (Parquet writer, split stats, Iceberg manifests),
+# ending in a full pyiceberg read of a natively published serving image.
+on:
+  push:
+    branches: [ main, cpprefactor ]
+    paths:
+      - 'agent-cpp/**'
+      - 'validate_pyiceberg.py'
+      - '.github/workflows/cpp-native.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'agent-cpp/**'
+      - 'validate_pyiceberg.py'
+      - '.github/workflows/cpp-native.yml'
+
+concurrency:
+  group: cpp-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tier1:
+    name: tier1 pure-logic conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + run tier1 tests
+        run: bash agent-cpp/build_tier1.sh
+
+  native:
+    name: native Arrow/Avro build + pyiceberg conformance
+    runs-on: ubuntu-latest
+    env:
+      # Reuse prebuilt vcpkg packages across runs so Arrow/Avro are not rebuilt
+      # from source every time (first run is still a heavy from-source build).
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config \
+            curl zip unzip tar autoconf automake autoconf-archive libtool bison flex
+
+      - name: Export GitHub Actions cache env for vcpkg
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python readers
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyarrow fastavro pyiceberg
+
+      - name: Build native modules (vcpkg Arrow/Avro)
+        run: bash agent-cpp/native/build_native.sh
+
+      - name: Export runtime library path
+        run: echo "LD_LIBRARY_PATH=$(echo "$GITHUB_WORKSPACE"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')" >> "$GITHUB_ENV"
+
+      - name: Run native unit tests
+        run: |
+          agent-cpp/native/build/native_tests \
+            agent-cpp/native/build/split0.parquet \
+            agent-cpp/native/build/manifest.avro \
+            agent-cpp/native/build/manifest_list.avro \
+            agent-cpp/native/build/manifest_stats.avro
+
+      - name: Run Python round-trip check
+        run: python agent-cpp/native/roundtrip_check.py agent-cpp/native/build
+
+      - name: Publish native Iceberg image
+        run: agent-cpp/native/build/native_publish "$GITHUB_WORKSPACE/.store_native" 50000 5
+
+      - name: Build C++ serving agent
+        run: bash agent-cpp/build.sh
+
+      - name: Start C++ agent
+        env:
+          PORT: "9401"
+          STORE_DIR: ".store_native"
+          S3_BUCKET: "fabric-iceberg-poc"
+        run: |
+          ./agent-cpp/agent > cpp-agent.log 2>&1 &
+          echo $! > cpp-agent.pid
+
+      - name: Wait for agent readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9401/readyz > /dev/null; then echo "agent ready"; exit 0; fi
+            sleep 1
+          done
+          echo "agent did not become ready" >&2
+          cat cpp-agent.log >&2
+          exit 1
+
+      - name: Validate native image with pyiceberg (expect 50000 rows)
+        env:
+          S3EMU_SERVER: http://127.0.0.1:9401
+          S3EMU_BUCKET: fabric-iceberg-poc
+        run: |
+          python validate_pyiceberg.py | tee validate.out
+          grep -q "ROWS SCANNED = 50000" validate.out
+
+      - name: Stop C++ agent
+        if: always()
+        run: kill "$(cat cpp-agent.pid)" || true

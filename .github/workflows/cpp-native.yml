@@ -57,7 +57,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build build-essential pkg-config \
-            curl zip unzip tar autoconf automake autoconf-archive libtool bison flex
+            curl zip unzip tar autoconf automake autoconf-archive libtool bison flex unixodbc-dev
 
       - name: Export GitHub Actions cache env for vcpkg
         uses: actions/github-script@v7
@@ -151,3 +151,90 @@ jobs:
           assert dt.to_pyarrow_table().num_rows == 30000, dt.to_pyarrow_table().num_rows
           print("multi-snapshot OK: version", dt.version())
           PY
+
+  # MSSQL ODBC round-trip. Non-blocking: the msodbcsql driver + service plumbing
+  # is validated here rather than locally. needs: native so the vcpkg binary cache
+  # is warm before this job rebuilds native_publish.
+  mssql:
+    name: MSSQL ODBC round-trip (non-blocking)
+    runs-on: ubuntu-latest
+    needs: native
+    continue-on-error: true
+    env:
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      MSSQL_PWD: "Str0ng!Passw0rd"
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Str0ng!Passw0rd' -C -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools + ODBC driver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config \
+            curl zip unzip tar autoconf automake autoconf-archive libtool bison flex unixodbc-dev gnupg
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null
+          curl -sSL "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list" | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+
+      - name: Export GitHub Actions cache env for vcpkg
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pymssql deltalake
+
+      - name: Build native modules (vcpkg, cache-warm)
+        run: bash agent-cpp/native/build_native.sh
+
+      - name: Seed MSSQL demo table (50000 rows)
+        run: |
+          python - <<'PY'
+          import datetime, pymssql
+          conn = pymssql.connect(server="localhost", user="sa", password="Str0ng!Passw0rd", database="master")
+          cur = conn.cursor()
+          cur.execute("IF OBJECT_ID('sales','U') IS NULL CREATE TABLE sales (id BIGINT PRIMARY KEY, order_date DATE, customer_id BIGINT, product NVARCHAR(200), quantity INT, unit_price FLOAT, total FLOAT, region NVARCHAR(50))")
+          conn.commit()
+          products = ["Widget A","Widget B","Gadget X","Gadget Y","Service Pack","Support Plan"]
+          regions = ["North","South","East","West","Central"]
+          base = datetime.date(2023, 1, 1)
+          rows = []
+          for i in range(1, 50001):
+              d = base + datetime.timedelta(days=i % 365)
+              q = 1 + (i % 100); up = ((i * 97) % 99000 + 999) / 100.0
+              rows.append((i, d.isoformat(), 1 + (i % 5000), products[i % 6], q, up, q * up, regions[i % 5]))
+          cur.executemany("INSERT INTO sales (id,order_date,customer_id,product,quantity,unit_price,total,region) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", rows)
+          conn.commit(); conn.close()
+          print("seeded 50000")
+          PY
+
+      - name: Publish from MSSQL via ODBC + validate (expect 50000 rows)
+        run: |
+          export LD_LIBRARY_PATH="$(echo "$GITHUB_WORKSPACE"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')"
+          agent-cpp/native/build/native_publish \
+            --odbc "Driver={ODBC Driver 18 for SQL Server};Server=localhost,1433;UID=sa;PWD=Str0ng!Passw0rd;Database=master;TrustServerCertificate=yes" \
+            --store "$GITHUB_WORKSPACE/.store_mssql" --db-kind mssql --splits 8 --format delta
+          python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_mssql/warehouse/demo/orders" 50000

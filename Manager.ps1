@@ -180,6 +180,13 @@
     1). Each version re-materializes a growing prefix: Iceberg writes vN.metadata
     files, Delta appends commits.
 
+.PARAMETER CppOdbc
+    ODBC connection string for -PublishCppImage (MSSQL / Oracle). Takes precedence
+    over -CppPostgres / -CppSourceDb. Pair with -CppDbKind.
+
+.PARAMETER CppDbKind
+    ODBC dialect for -CppOdbc: mssql (default) or oracle.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -245,7 +252,10 @@ param(
     [ValidateSet("iceberg", "delta")]
     [string]$CppFormat,
     [string]$CppPostgres,
-    [int]$CppVersions
+    [int]$CppVersions,
+    [string]$CppOdbc,
+    [ValidateSet("mssql", "oracle")]
+    [string]$CppDbKind
 )
 
 $ErrorActionPreference = "Stop"
@@ -450,7 +460,12 @@ if ($PublishCppImage) {
     $pubVersions = if ($PSBoundParameters.ContainsKey("CppVersions")) { $CppVersions } else { 1 }
 
     Write-Step "Publishing native $pubFormat serving image"
-    if ($PSBoundParameters.ContainsKey("CppPostgres") -and $CppPostgres) {
+    if ($PSBoundParameters.ContainsKey("CppOdbc") -and $CppOdbc) {
+        $dbKind = if ($PSBoundParameters.ContainsKey("CppDbKind")) { $CppDbKind } else { "mssql" }
+        $pubArgs = @("--odbc", $CppOdbc, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat, "--versions", "$pubVersions", "--db-kind", $dbKind)
+        Write-Host "    Source   : ODBC ($dbKind)" -ForegroundColor DarkGray
+        & $pubExe @pubArgs
+    } elseif ($PSBoundParameters.ContainsKey("CppPostgres") -and $CppPostgres) {
         $pubArgs = @("--postgres", $CppPostgres, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat, "--versions", "$pubVersions")
         if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
         Write-Host "    Source   : PostgreSQL" -ForegroundColor DarkGray

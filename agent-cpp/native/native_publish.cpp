@@ -30,6 +30,7 @@
 #include "split_planner.hpp"     // fsp::Column, pk_column, compute_key_ranges (tier1)
 #include "split_stats.hpp"
 #include "sql_source.hpp"
+#include "odbc_source.hpp"  // includes windows.h on Win32; keep last to limit macro leakage
 
 namespace fs = std::filesystem;
 
@@ -388,6 +389,56 @@ int run_pg(int argc, char** argv, const std::string& format, int versions) {
     return 0;
 }
 
+// ODBC mode: materialize from MSSQL / Oracle (or any ANSI ODBC driver).
+int run_odbc(int argc, char** argv, const std::string& format, int versions) {
+    using namespace fsp;
+    using namespace fsp::native;
+
+    const std::string conn_str = flag(argc, argv, "--odbc", "");
+    const std::string store_dir = flag(argc, argv, "--store", "");
+    const std::string kind_s = flag(argc, argv, "--db-kind", "mssql");
+    const std::string table = flag(argc, argv, "--table", "sales");
+    const std::string key = flag(argc, argv, "--key", "");
+    const int num_splits = static_cast<int>(std::strtoll(flag(argc, argv, "--splits", "8").c_str(), nullptr, 10));
+    const std::string bucket = flag(argc, argv, "--bucket", "fabric-iceberg-poc");
+    const std::string table_path = flag(argc, argv, "--table-path", "warehouse/demo/orders");
+
+    if (conn_str.empty() || store_dir.empty()) {
+        std::printf("usage: native_publish --odbc <connection-string> --store <dir> [--db-kind mssql|oracle] "
+                    "[--splits <n>] [--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]\n");
+        return 2;
+    }
+
+    const std::vector<IcebergColumn> cols = default_schema();
+    std::shared_ptr<arrow::Schema> schema = build_arrow_schema(cols);
+    const OdbcKind kind = odbc_kind_from(kind_s);
+    const std::string pk = pk_column(key, as_planner_columns(cols));
+
+    OdbcConn c;
+    odbc_connect(c, conn_str);
+    std::pair<int64_t, int64_t> bounds = odbc_key_bounds(c, kind, table, pk);
+    const int64_t lo = bounds.first, hi = bounds.second;
+    const int64_t span = (hi >= lo) ? (hi - lo + 1) : 0;
+
+    std::vector<std::vector<std::shared_ptr<arrow::Table>>> vers;
+    for (int k = 1; k <= versions; ++k) {
+        const int64_t upper = lo + span * k / versions;  // exclusive upper id (growing prefix)
+        std::vector<std::pair<int64_t, int64_t>> ranges = compute_key_ranges(lo, upper - 1, num_splits);
+        std::vector<std::shared_ptr<arrow::Table>> tables;
+        for (const auto& r : ranges) {
+            const int64_t max_rows = r.second > r.first ? (r.second - r.first) : 1;
+            tables.push_back(
+                odbc_read_range(c, kind, cols, schema, table, pk, r.first, r.second, max_rows));
+        }
+        vers.push_back(std::move(tables));
+    }
+    std::printf("odbc: kind=%s table=%s key=%s splits=%d versions=%d key_range=[%lld,%lld]\n",
+                kind_s.c_str(), table.c_str(), pk.c_str(), num_splits, versions,
+                static_cast<long long>(lo), static_cast<long long>(hi));
+    publish_versions(store_dir, bucket, table_path, cols, format, vers);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -398,6 +449,8 @@ int main(int argc, char** argv) {
                     "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]      (SQLite source)\n"
                     "  native_publish --postgres <conninfo> --store <dir> [--seed <rows>] [--splits <n>] "
                     "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]  (PostgreSQL source)\n"
+                    "  native_publish --odbc <connstr> --store <dir> [--db-kind mssql|oracle] [--splits <n>] "
+                    "[--table <name>] [--key <col>] [--bucket <b>] [--table-path <p>]      (ODBC source)\n"
                     "  add --format iceberg|delta (default iceberg) and --versions N (default 1) to any form.\n");
         return 2;
     }
@@ -429,6 +482,7 @@ int main(int argc, char** argv) {
     char** fargv = filtered.data();
 
     try {
+        if (has_flag(fargc, fargv, "--odbc")) return run_odbc(fargc, fargv, format, versions);
         if (has_flag(fargc, fargv, "--postgres")) return run_pg(fargc, fargv, format, versions);
         if (has_flag(fargc, fargv, "--sqlite")) return run_sql(fargc, fargv, format, versions);
         return run_demo(fargc, fargv, format, versions);

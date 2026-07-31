@@ -49,6 +49,8 @@ ARG_CPP_PORT=""
 ARG_CPP_FORMAT=""
 ARG_CPP_POSTGRES=""
 ARG_CPP_VERSIONS=""
+ARG_CPP_ODBC=""
+ARG_CPP_DB_KIND=""
 
 AUTO_STASH_CREATED=0
 AUTO_STASH_REF=""
@@ -129,6 +131,8 @@ C++ agent / native publisher (build/run C++ tools, then exit):
   --cpp-format FMT       Output for --publish-cpp-image: iceberg (default) | delta
   --cpp-postgres CONNINFO  Postgres source for --publish-cpp-image (else --cpp-source-db / demo)
   --cpp-versions N       Successive snapshot versions to publish (default 1; F2)
+  --cpp-odbc CONNSTR     ODBC source (MSSQL/Oracle) for --publish-cpp-image
+  --cpp-db-kind KIND     ODBC dialect for --cpp-odbc: mssql (default) | oracle
 
 Misc:
   -h, --help             Show this help
@@ -187,6 +191,8 @@ while [[ $# -gt 0 ]]; do
     --cpp-format) require_value "$1" "${2:-}"; ARG_CPP_FORMAT="$2"; shift 2 ;;
     --cpp-postgres) require_value "$1" "${2:-}"; ARG_CPP_POSTGRES="$2"; shift 2 ;;
     --cpp-versions) require_value "$1" "${2:-}"; ARG_CPP_VERSIONS="$2"; shift 2 ;;
+    --cpp-odbc) require_value "$1" "${2:-}"; ARG_CPP_ODBC="$2"; shift 2 ;;
+    --cpp-db-kind) require_value "$1" "${2:-}"; ARG_CPP_DB_KIND="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1 (run with --help)" ;;
   esac
@@ -294,7 +300,11 @@ if [[ $ARG_PUBLISH_CPP_IMAGE -eq 1 ]]; then
   # native_publish links the shared Arrow/Avro/sqlite libs from vcpkg_installed.
   export LD_LIBRARY_PATH="$(echo "$SCRIPT_DIR"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   step "Publishing native $pub_format serving image"
-  if [[ -n "$ARG_CPP_POSTGRES" ]]; then
+  if [[ -n "$ARG_CPP_ODBC" ]]; then
+    pub_args=(--odbc "$ARG_CPP_ODBC" --store "$pub_store" --splits "$pub_splits" --format "$pub_format" --versions "$pub_versions" --db-kind "${ARG_CPP_DB_KIND:-mssql}")
+    printf '    Source   : ODBC (%s)\n' "${ARG_CPP_DB_KIND:-mssql}"
+    "$pub_exe" "${pub_args[@]}"
+  elif [[ -n "$ARG_CPP_POSTGRES" ]]; then
     pub_args=(--postgres "$ARG_CPP_POSTGRES" --store "$pub_store" --splits "$pub_splits" --format "$pub_format" --versions "$pub_versions")
     [[ -z "$ARG_CPP_SEED_ROWS" ]] || pub_args+=(--seed "$ARG_CPP_SEED_ROWS")
     printf '    Source   : PostgreSQL\n'

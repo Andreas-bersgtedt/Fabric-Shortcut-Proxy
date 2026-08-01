@@ -36,7 +36,9 @@ elif vcpkg_git "$HOME/vcpkg"; then
     vcpkg_root="$HOME/vcpkg"
 else
     echo "==> Cloning + bootstrapping vcpkg at $HOME/vcpkg"
-    git clone --depth 1 https://github.com/microsoft/vcpkg "$HOME/vcpkg"
+    # Full commit history (blobs fetched on demand) so the pinned builtin-baseline
+    # in vcpkg.json resolves; a --depth 1 clone omits the baseline commit.
+    git clone --filter=blob:none https://github.com/microsoft/vcpkg "$HOME/vcpkg"
     "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
     vcpkg_root="$HOME/vcpkg"
 fi

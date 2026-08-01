@@ -111,7 +111,7 @@ def check_manifest_stats(path: Path) -> None:
     check(upper.get(1) == struct.pack("<q", 3), "upper_bound(id) == LE int64(3)")
 
 
-def try_pyiceberg(manifest_path: Path) -> None:
+def try_pyiceberg() -> None:
     try:
         from pyiceberg.manifest import _manifests  # noqa: F401
     except Exception:
@@ -131,7 +131,7 @@ def main() -> int:
     check_manifest_file(mf)
     check_manifest_list(ml, mf.stat().st_size)
     check_manifest_stats(mfs)
-    try_pyiceberg(mf)
+    try_pyiceberg()
 
     print(f"roundtrip: {_passed} passed, {_failed} failed")
     return 0 if _failed == 0 else 1

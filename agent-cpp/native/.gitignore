@@ -1,0 +1,3 @@
+build/
+vcpkg_installed/
+build_native.log

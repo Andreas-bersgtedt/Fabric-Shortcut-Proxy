@@ -1,0 +1,247 @@
+name: C++ native
+
+# Builds and validates the C++ Tier 1 port: the pure-logic conformance tests and
+# the Arrow/Avro native modules (Parquet writer, split stats, Iceberg manifests),
+# ending in a full pyiceberg read of a serving image materialized from a SQLite
+# source via range-split queries.
+on:
+  push:
+    branches: [ main, cpprefactor ]
+    paths:
+      - 'agent-cpp/**'
+      - 'validate_pyiceberg.py'
+      - '.github/workflows/cpp-native.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'agent-cpp/**'
+      - 'validate_pyiceberg.py'
+      - '.github/workflows/cpp-native.yml'
+
+concurrency:
+  group: cpp-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tier1:
+    name: tier1 pure-logic conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + run tier1 tests
+        run: bash agent-cpp/build_tier1.sh
+
+  native:
+    name: native Arrow/Avro build + pyiceberg conformance
+    runs-on: ubuntu-latest
+    env:
+      # Reuse prebuilt vcpkg packages across runs so Arrow/Avro are not rebuilt
+      # from source every time (first run is still a heavy from-source build).
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config \
+            curl zip unzip tar autoconf automake autoconf-archive libtool bison flex unixodbc-dev
+
+      - name: Export GitHub Actions cache env for vcpkg
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python readers
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyarrow fastavro pyiceberg deltalake
+
+      - name: Build native modules (vcpkg Arrow/Avro)
+        run: bash agent-cpp/native/build_native.sh
+
+      # Scope the vcpkg Arrow libs to native binaries only. Exporting them into
+      # LD_LIBRARY_PATH globally makes the loader prefer the vcpkg libarrow over
+      # the pyarrow wheel's bundled build, which breaks every Python reader step
+      # with an undefined-symbol ImportError.
+      - name: Export runtime library path
+        run: echo "NATIVE_LD=$(echo "$GITHUB_WORKSPACE"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')" >> "$GITHUB_ENV"
+
+      - name: Run native unit tests
+        run: |
+          LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_tests \
+            agent-cpp/native/build/split0.parquet \
+            agent-cpp/native/build/manifest.avro \
+            agent-cpp/native/build/manifest_list.avro \
+            agent-cpp/native/build/manifest_stats.avro
+
+      - name: Run Python round-trip check
+        run: python agent-cpp/native/roundtrip_check.py agent-cpp/native/build
+
+      - name: Publish native Iceberg image
+        run: LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish --sqlite "$GITHUB_WORKSPACE/.native.db" --store "$GITHUB_WORKSPACE/.store_native" --seed 50000 --splits 8
+
+      - name: Build C++ serving agent
+        run: bash agent-cpp/build.sh
+
+      - name: Start C++ agent
+        env:
+          PORT: "9401"
+          STORE_DIR: ".store_native"
+          S3_BUCKET: "fabric-iceberg-poc"
+        run: |
+          ./agent-cpp/agent > cpp-agent.log 2>&1 &
+          echo $! > cpp-agent.pid
+
+      - name: Wait for agent readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9401/readyz > /dev/null; then echo "agent ready"; exit 0; fi
+            sleep 1
+          done
+          echo "agent did not become ready" >&2
+          cat cpp-agent.log >&2
+          exit 1
+
+      - name: Validate native image with pyiceberg (expect 50000 rows)
+        env:
+          S3EMU_SERVER: http://127.0.0.1:9401
+          S3EMU_BUCKET: fabric-iceberg-poc
+        run: |
+          python validate_pyiceberg.py | tee validate.out
+          grep -q "ROWS SCANNED = 50000" validate.out
+
+      - name: Stop C++ agent
+        if: always()
+        run: kill "$(cat cpp-agent.pid)" || true
+
+      - name: Publish + validate native Delta image (expect 50000 rows)
+        run: |
+          LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish --sqlite "$GITHUB_WORKSPACE/.native.db" --store "$GITHUB_WORKSPACE/.store_delta" --splits 8 --format delta
+          python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_delta/warehouse/demo/orders" 50000
+
+      - name: Publish + validate from PostgreSQL (expect 50000 rows)
+        run: |
+          LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish --postgres "host=localhost port=5432 user=postgres password=postgres dbname=postgres" --store "$GITHUB_WORKSPACE/.store_pg" --seed 50000 --splits 8 --format delta
+          python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_pg/warehouse/demo/orders" 50000
+
+      - name: Validate multi-snapshot (F2, 3 Delta versions)
+        run: |
+          LD_LIBRARY_PATH="$NATIVE_LD" agent-cpp/native/build/native_publish "$GITHUB_WORKSPACE/.store_mv" 30000 4 --versions 3 --format delta
+          python - <<'PY'
+          import os, sys
+          from deltalake import DeltaTable
+          dt = DeltaTable("${{ github.workspace }}/.store_mv/warehouse/demo/orders")
+          assert dt.version() == 2, f"expected version 2, got {dt.version()}"
+          assert dt.to_pyarrow_table().num_rows == 30000, dt.to_pyarrow_table().num_rows
+          print("multi-snapshot OK: version", dt.version())
+          # delta-rs can SIGABRT during interpreter teardown; hard-exit past it.
+          sys.stdout.flush()
+          os._exit(0)
+          PY
+
+  # MSSQL ODBC round-trip. Non-blocking: the msodbcsql driver + service plumbing
+  # is validated here rather than locally. needs: native so the vcpkg binary cache
+  # is warm before this job rebuilds native_publish.
+  mssql:
+    name: MSSQL ODBC round-trip (non-blocking)
+    runs-on: ubuntu-latest
+    needs: native
+    continue-on-error: true
+    env:
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      MSSQL_PWD: "Str0ng!Passw0rd"
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Str0ng!Passw0rd' -C -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools + ODBC driver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config \
+            curl zip unzip tar autoconf automake autoconf-archive libtool bison flex unixodbc-dev gnupg
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null
+          curl -sSL "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list" | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+
+      - name: Export GitHub Actions cache env for vcpkg
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pymssql deltalake pyarrow
+
+      - name: Build native modules (vcpkg, cache-warm)
+        run: bash agent-cpp/native/build_native.sh
+
+      - name: Seed MSSQL demo table (50000 rows)
+        run: |
+          python - <<'PY'
+          import datetime, pymssql
+          conn = pymssql.connect(server="localhost", user="sa", password="Str0ng!Passw0rd", database="master")
+          cur = conn.cursor()
+          cur.execute("IF OBJECT_ID('sales','U') IS NULL CREATE TABLE sales (id BIGINT PRIMARY KEY, order_date DATE, customer_id BIGINT, product NVARCHAR(200), quantity INT, unit_price FLOAT, total FLOAT, region NVARCHAR(50))")
+          conn.commit()
+          products = ["Widget A","Widget B","Gadget X","Gadget Y","Service Pack","Support Plan"]
+          regions = ["North","South","East","West","Central"]
+          base = datetime.date(2023, 1, 1)
+          rows = []
+          for i in range(1, 50001):
+              d = base + datetime.timedelta(days=i % 365)
+              q = 1 + (i % 100); up = ((i * 97) % 99000 + 999) / 100.0
+              rows.append((i, d.isoformat(), 1 + (i % 5000), products[i % 6], q, up, q * up, regions[i % 5]))
+          cur.executemany("INSERT INTO sales (id,order_date,customer_id,product,quantity,unit_price,total,region) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", rows)
+          conn.commit(); conn.close()
+          print("seeded 50000")
+          PY
+
+      - name: Publish from MSSQL via ODBC + validate (expect 50000 rows)
+        run: |
+          LD_LIBRARY_PATH="$(echo "$GITHUB_WORKSPACE"/agent-cpp/native/build/vcpkg_installed/*/lib | tr ' ' ':')" agent-cpp/native/build/native_publish \
+            --odbc "Driver={ODBC Driver 18 for SQL Server};Server=localhost,1433;UID=sa;PWD=Str0ng!Passw0rd;Database=master;TrustServerCertificate=yes" \
+            --store "$GITHUB_WORKSPACE/.store_mssql" --db-kind mssql --splits 8 --format delta
+          python agent-cpp/native/validate_delta.py "$GITHUB_WORKSPACE/.store_mssql/warehouse/demo/orders" 50000

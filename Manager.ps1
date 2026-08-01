@@ -122,6 +122,71 @@
     Disable serving legacy object aliases when canonical layout is enabled.
     Sets ENABLE_LEGACY_PATH_ALIASES=0.
 
+.PARAMETER Tier1Tests
+    Build and run the C++ Tier 1 conformance tests (agent-cpp/build_tier1.ps1),
+    then exit with the test result. Requires Visual Studio 2022 with the C++
+    workload. Does not create the venv or launch the Manager.
+
+.PARAMETER BuildCppAgent
+    Build the C++ serving Agent (agent-cpp/build.ps1 -> agent.exe), then exit.
+    Requires Visual Studio 2022 with the C++ workload.
+
+.PARAMETER RunCppAgent
+    Build, then run the C++ serving Agent, and exit when it stops. Sets the
+    agent's environment for you; override with -CppAgentPort, -CppStoreDir, or
+    -CppManagerUrl. Does not create the venv or launch the Python Manager.
+
+.PARAMETER CppAgentPort
+    Port for the C++ serving Agent (agent default 9400). Used with -RunCppAgent.
+
+.PARAMETER CppStoreDir
+    Artifact store directory the C++ Agent serves from (agent default ./.artifacts).
+    Used with -RunCppAgent.
+
+.PARAMETER CppManagerUrl
+    Manager control URL for the C++ Agent to register/heartbeat into the fleet
+    (default empty = standalone). Used with -RunCppAgent.
+
+.PARAMETER PublishCppImage
+    Build the native publisher (agent-cpp/native/build_native.ps1) and run it to
+    materialize a full Iceberg serving image into the store, then exit (or serve
+    it when combined with -RunCppAgent). This is the native replacement for the
+    Python publish step. Requires Visual Studio 2022 and a bootstrapped vcpkg.
+
+.PARAMETER CppSourceDb
+    SQLite database path for -PublishCppImage. When set, the publisher reads rows
+    from this DB via range-split queries; otherwise it synthesizes demo data.
+
+.PARAMETER CppSeedRows
+    With -PublishCppImage and -CppSourceDb, seed the source table with this many
+    demo rows first (skipped if the table already has rows).
+
+.PARAMETER CppRows
+    Row count for -PublishCppImage in demo mode (no -CppSourceDb). Default 50000.
+
+.PARAMETER CppSplits
+    Number of splits for -PublishCppImage. Default 8.
+
+.PARAMETER CppFormat
+    Output format for -PublishCppImage: iceberg (default) or delta. delta writes a
+    native _delta_log serving image instead of Iceberg metadata + manifests.
+
+.PARAMETER CppPostgres
+    PostgreSQL connection string (libpq conninfo or URL) for -PublishCppImage. When
+    set, the publisher reads rows from Postgres; takes precedence over -CppSourceDb.
+
+.PARAMETER CppVersions
+    Number of successive snapshot versions to publish for -PublishCppImage (default
+    1). Each version re-materializes a growing prefix: Iceberg writes vN.metadata
+    files, Delta appends commits.
+
+.PARAMETER CppOdbc
+    ODBC connection string for -PublishCppImage (MSSQL / Oracle). Takes precedence
+    over -CppPostgres / -CppSourceDb. Pair with -CppDbKind.
+
+.PARAMETER CppDbKind
+    ODBC dialect for -CppOdbc: mssql (default) or oracle.
+
 .EXAMPLE
     .\Manager.ps1
 
@@ -133,6 +198,15 @@
 
 .EXAMPLE
     .\Manager.ps1 -DbUrl "mssql+aioodbc://@host/db?driver=ODBC+Driver+18+for+SQL+Server&trusted_connection=yes"
+
+.EXAMPLE
+    .\Manager.ps1 -Tier1Tests
+
+.EXAMPLE
+    .\Manager.ps1 -RunCppAgent
+
+.EXAMPLE
+    .\Manager.ps1 -PublishCppImage -CppSourceDb .\poc_source.db -CppSeedRows 50000 -RunCppAgent
 #>
 [CmdletBinding()]
 param(
@@ -163,7 +237,25 @@ param(
     [switch]$AutoStash,
     [ValidateSet("legacy", "canonical")]
     [string]$ObjectPathLayout,
-    [switch]$DisableLegacyAliases
+    [switch]$DisableLegacyAliases,
+    [switch]$Tier1Tests,
+    [switch]$BuildCppAgent,
+    [switch]$RunCppAgent,
+    [int]$CppAgentPort,
+    [string]$CppStoreDir,
+    [string]$CppManagerUrl,
+    [switch]$PublishCppImage,
+    [string]$CppSourceDb,
+    [int]$CppSeedRows,
+    [int]$CppRows,
+    [int]$CppSplits,
+    [ValidateSet("iceberg", "delta")]
+    [string]$CppFormat,
+    [string]$CppPostgres,
+    [int]$CppVersions,
+    [string]$CppOdbc,
+    [ValidateSet("mssql", "oracle")]
+    [string]$CppDbKind
 )
 
 $ErrorActionPreference = "Stop"
@@ -331,6 +423,103 @@ if ($NoPull) {
         Write-Step "Codebase bootstrapped in place (branch '$targetBranch'). Re-run if this script was updated."
         if (-not $SkipInstall -and (Test-Path $StampFile)) { Remove-Item -Force $StampFile }
     }
+}
+
+# ---------------------------------------------------------------------------
+# Optional: build + run the C++ Tier 1 conformance tests, then exit (verify mode).
+#   .\Manager.ps1 -Tier1Tests   -> planner / delta / cache C++ vs Python golden vectors.
+# Needs Visual Studio 2022 with the C++ workload; does not touch the venv.
+# ---------------------------------------------------------------------------
+if ($Tier1Tests) {
+    $tier1Build = Join-Path $ProjectRoot "agent-cpp\build_tier1.ps1"
+    if (-not (Test-Path $tier1Build)) { throw "Tier 1 build script not found: $tier1Build" }
+    Write-Step "Building + running C++ Tier 1 conformance tests"
+    & $tier1Build
+    exit $LASTEXITCODE
+}
+
+# ---------------------------------------------------------------------------
+# Optional: build the native publisher and materialize a serving image (the
+# native replacement for the Python publish step). Serve it when combined with
+# -RunCppAgent; otherwise publish and exit.
+#   .\Manager.ps1 -PublishCppImage -CppSourceDb .\poc_source.db -CppSeedRows 50000 -RunCppAgent
+# ---------------------------------------------------------------------------
+if ($PublishCppImage) {
+    $buildNative = Join-Path $ProjectRoot "agent-cpp\native\build_native.ps1"
+    if (-not (Test-Path $buildNative)) { throw "Native build script not found: $buildNative" }
+    Write-Step "Building native publisher (Arrow/Avro via vcpkg)"
+    & $buildNative
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    $pubExe = Join-Path $ProjectRoot "agent-cpp\native\build\native_publish.exe"
+    if (-not (Test-Path $pubExe)) { throw "native_publish.exe not found after build: $pubExe" }
+
+    $pubStore  = if ($PSBoundParameters.ContainsKey("CppStoreDir")) { $CppStoreDir } else { Join-Path $ProjectRoot ".artifacts" }
+    $pubSplits = if ($PSBoundParameters.ContainsKey("CppSplits"))   { $CppSplits }   else { 8 }
+    $pubFormat = if ($PSBoundParameters.ContainsKey("CppFormat"))   { $CppFormat }   else { "iceberg" }
+    $pubVersions = if ($PSBoundParameters.ContainsKey("CppVersions")) { $CppVersions } else { 1 }
+
+    Write-Step "Publishing native $pubFormat serving image"
+    if ($PSBoundParameters.ContainsKey("CppOdbc") -and $CppOdbc) {
+        $dbKind = if ($PSBoundParameters.ContainsKey("CppDbKind")) { $CppDbKind } else { "mssql" }
+        $pubArgs = @("--odbc", $CppOdbc, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat, "--versions", "$pubVersions", "--db-kind", $dbKind)
+        Write-Host "    Source   : ODBC ($dbKind)" -ForegroundColor DarkGray
+        & $pubExe @pubArgs
+    } elseif ($PSBoundParameters.ContainsKey("CppPostgres") -and $CppPostgres) {
+        $pubArgs = @("--postgres", $CppPostgres, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat, "--versions", "$pubVersions")
+        if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
+        Write-Host "    Source   : PostgreSQL" -ForegroundColor DarkGray
+        & $pubExe @pubArgs
+    } elseif ($PSBoundParameters.ContainsKey("CppSourceDb") -and $CppSourceDb) {
+        $pubArgs = @("--sqlite", $CppSourceDb, "--store", $pubStore, "--splits", "$pubSplits", "--format", $pubFormat, "--versions", "$pubVersions")
+        if ($PSBoundParameters.ContainsKey("CppSeedRows") -and $CppSeedRows -gt 0) { $pubArgs += @("--seed", "$CppSeedRows") }
+        Write-Host "    Source   : SQLite $CppSourceDb" -ForegroundColor DarkGray
+        & $pubExe @pubArgs
+    } else {
+        $pubRows = if ($PSBoundParameters.ContainsKey("CppRows")) { $CppRows } else { 50000 }
+        Write-Host "    Source   : demo data ($pubRows rows)" -ForegroundColor DarkGray
+        & $pubExe $pubStore "$pubRows" "$pubSplits" "--format" $pubFormat "--versions" "$pubVersions"
+    }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host "    Store dir: $pubStore" -ForegroundColor DarkGray
+
+    # Serve the freshly published store when asked; otherwise stop here.
+    $env:STORE_DIR = $pubStore
+    if (-not $RunCppAgent) { exit 0 }
+}
+
+# ---------------------------------------------------------------------------
+# Optional: build (and optionally run) the C++ serving Agent, then exit.
+#   .\Manager.ps1 -BuildCppAgent   -> compile agent-cpp\agent.exe
+#   .\Manager.ps1 -RunCppAgent     -> compile + run it (Ctrl+C to stop)
+# Needs Visual Studio 2022 with the C++ workload; does not touch the venv.
+# ---------------------------------------------------------------------------
+if ($BuildCppAgent -or $RunCppAgent) {
+    $cppBuild = Join-Path $ProjectRoot "agent-cpp\build.ps1"
+    $cppExe = Join-Path $ProjectRoot "agent-cpp\agent.exe"
+    if (-not (Test-Path $cppBuild)) { throw "C++ agent build script not found: $cppBuild" }
+    Write-Step "Building C++ serving Agent (agent.exe)"
+    & $cppBuild
+
+    if (-not $RunCppAgent) { exit $LASTEXITCODE }
+
+    # Only override the agent's built-in defaults when a value was supplied.
+    if ($PSBoundParameters.ContainsKey("CppAgentPort"))  { $env:PORT = "$CppAgentPort" }
+    if ($PSBoundParameters.ContainsKey("CppStoreDir"))   { $env:STORE_DIR = $CppStoreDir }
+    if ($PSBoundParameters.ContainsKey("CppManagerUrl")) { $env:MANAGER_URL = $CppManagerUrl }
+    if ($PSBoundParameters.ContainsKey("HeartbeatMs"))   { $env:HEARTBEAT_MS = "$HeartbeatMs" }
+
+    $effCppPort  = if ($env:PORT) { $env:PORT } else { "9400" }
+    $effCppStore = if ($env:STORE_DIR) { $env:STORE_DIR } else { "./.artifacts" }
+    $effCppMgr   = if ($env:MANAGER_URL) { $env:MANAGER_URL } else { "(standalone)" }
+    Write-Host ""
+    Write-Step "Running C++ serving Agent"
+    Write-Host "    Endpoint : http://localhost:${effCppPort}   (/healthz  /<bucket>/<key>)" -ForegroundColor Green
+    Write-Host "    Store dir: $effCppStore" -ForegroundColor DarkGray
+    Write-Host "    Manager  : $effCppMgr" -ForegroundColor DarkGray
+    Write-Host "    Press Ctrl+C to stop." -ForegroundColor DarkGray
+    & $cppExe
+    exit $LASTEXITCODE
 }
 
 # ---------------------------------------------------------------------------

@@ -213,7 +213,7 @@ jobs:
       - name: Install Python tools
         run: |
           python -m pip install --upgrade pip
-          pip install pymssql deltalake
+          pip install pymssql deltalake pyarrow
 
       - name: Build native modules (vcpkg, cache-warm)
         run: bash agent-cpp/native/build_native.sh

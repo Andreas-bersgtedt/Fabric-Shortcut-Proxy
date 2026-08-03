@@ -104,6 +104,11 @@ REQUIRE_SIGV4: bool = _get_bool("REQUIRE_SIGV4", "require_sigv4", False)
 HOST: str = _get_str("HOST", "host", "0.0.0.0")
 PORT: int = _get_int("PORT", "port", 9000)
 
+# Trust X-Forwarded-For/Proto only from these proxy IPs/CIDRs (comma list, or "*")
+# so the agent recovers the real client IP + scheme behind a load balancer (used
+# by audit logging). Default trusts loopback only (uvicorn's default) = no change.
+FORWARDED_ALLOW_IPS: str = _get_str("FORWARDED_ALLOW_IPS", "forwarded_allow_ips", "127.0.0.1").strip()
+
 # TLS termination at the proxy (Phase 4). Provide BOTH a cert and key to serve
 # HTTPS; empty = plain HTTP (terminate TLS at a fronting LB instead).
 TLS_CERT_FILE: str = _get_str("TLS_CERT_FILE", "tls_cert_file", "")

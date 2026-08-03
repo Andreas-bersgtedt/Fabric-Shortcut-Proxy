@@ -28,6 +28,7 @@ from system_config import (
     ACCESS_KEY_ID, SECRET_ACCESS_KEY, REQUIRE_SIGV4,
     # Server
     HOST, PORT, TLS_CERT_FILE, TLS_KEY_FILE,
+    FORWARDED_ALLOW_IPS,
     # Admin UIs
     ENABLE_CONFIG_BUILDER, ENABLE_MONITOR,
     # Storage proxy
@@ -511,6 +512,7 @@ SETTINGS_META: dict[str, dict] = {
     "require_sigv4": {"cat": "S3 endpoint", "help": "Enforce AWS SigV4 request signatures."},
     # Server
     "host": {"cat": "Server", "help": "Bind address."},
+    "forwarded_allow_ips": {"cat": "Server", "help": "Trust X-Forwarded-For/Proto only from these proxy IPs/CIDRs (comma list, or '*') so audit logs the real client IP behind a load balancer. Default: loopback only."},
     "port": {"cat": "Server", "help": "Listen port."},
     "tls_cert_file": {"cat": "Server", "help": "Path to a TLS certificate (PEM). Provide with tls_key_file to serve HTTPS."},
     "tls_key_file": {"cat": "Server", "help": "Path to the TLS private key (PEM). Provide with tls_cert_file to serve HTTPS.", "secret": True},
@@ -723,6 +725,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "secret_access_key": "config.system.json",
     "require_sigv4": "config.system.json",
     "host": "config.system.json",
+    "forwarded_allow_ips": "config.system.json",
     "port": "config.system.json",
     "enable_config_builder": "config.system.json",
     "enable_monitor": "config.system.json",

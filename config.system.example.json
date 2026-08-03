@@ -10,6 +10,7 @@
     "secret_access_key": "",
     "require_sigv4": false,
     "host": "127.0.0.1",
+    "forwarded_allow_ips": "127.0.0.1",
     "port": 9000,
     "enable_config_builder": true,
     "enable_monitor": true,

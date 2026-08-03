@@ -57,6 +57,17 @@ def _begin_drain() -> None:
         _request_shutdown()
 
 
+def _uvicorn_kwargs(tls: dict | None = None) -> dict:
+    """uvicorn.Config kwargs. Trusts proxy headers only from FORWARDED_ALLOW_IPS so
+    audit logging sees the real client IP (not the LB's) behind an external LB."""
+    kw = {
+        "host": config.HOST, "port": config.PORT, "log_level": "info",
+        "proxy_headers": True, "forwarded_allow_ips": config.FORWARDED_ALLOW_IPS,
+    }
+    kw.update(tls or {})
+    return kw
+
+
 def _source_connect_hint(exc: Exception) -> str:
     """A concise, credential-redacted message when a source DB can't be reached at startup."""
     conns: dict[str, str] = {}
@@ -727,7 +738,7 @@ if __name__ == "__main__":
         # SigV4 read signatures give no confidentiality over plain HTTP.
         log.warning("tls_not_configured",
                     hint="set tls_cert_file + tls_key_file, or terminate TLS at a fronting LB")
-    _uv_config = uvicorn.Config(app, host=config.HOST, port=config.PORT, log_level="info", **_tls)
+    _uv_config = uvicorn.Config(app, **_uvicorn_kwargs(_tls))
     _server = uvicorn.Server(_uv_config)
     _set_uvicorn_server(_server)
     _server.run()

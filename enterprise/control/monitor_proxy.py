@@ -27,7 +27,9 @@ from observability.logging import get_logger
 
 log = get_logger(__name__)
 
-_HTML_PATH = pathlib.Path(__file__).resolve().parent.parent / "monitor" / "index.html"
+# monitor/index.html lives in the Lite core (repo root), three levels up from
+# <repo>/enterprise/control/monitor_proxy.py.
+_HTML_PATH = pathlib.Path(__file__).resolve().parent.parent.parent / "monitor" / "index.html"
 
 
 def _dial_host(host: str) -> str:

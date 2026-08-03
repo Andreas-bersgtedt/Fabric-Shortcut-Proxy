@@ -32,7 +32,9 @@ from observability.logging import configure_logging, get_logger
 
 log = get_logger(__name__)
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# This file lives at <repo>/enterprise/control/manager_app.py, so the repo root
+# (where the Agent entrypoint main.py lives) is three levels up.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _agent_host_for_link() -> str:

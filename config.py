@@ -358,6 +358,21 @@ else:
         ),
     ]
 
+# Resilience: drop a table whose connection is not defined instead of hard-failing at
+# startup. A single orphaned reference (e.g. a source removed from connections[]) must
+# not brick the Manager/Agent and lock the operator out of the config builder used to
+# fix it. The table self-heals on the next config-builder Apply, which rewrites tables[].
+_orphaned_tables = [t for t in TABLES if t.connection_id not in CONNECTIONS]
+if _orphaned_tables:
+    for _t in _orphaned_tables:
+        print(
+            f"[config] table {_t.name!r} skipped: connection {_t.connection_id!r} is not "
+            f"defined (known: {sorted(CONNECTIONS)}). Re-add the source in the config "
+            f"builder, then reassign the table.",
+            file=sys.stderr,
+        )
+    TABLES = [t for t in TABLES if t.connection_id in CONNECTIONS]
+
 
 # ---------------------------------------------------------------------------
 # Config validation

@@ -1263,20 +1263,23 @@ async function applyTables(){
       +". Names must be unique across every source — remove the copies (e.g. the same table added under two connections).";
     return;
   }
-  // Every referenced named source must be tested so it can be written with a real URL.
+  // Every referenced named source must be applyable: tested this session, or its
+  // password is already saved in the Manager store (config gets a password-stripped
+  // URL either way; the store hydrates the real password at runtime).
   const refIds = [...new Set(valid.map(s=>s.connection||"default"))].filter(c=>c!=="default");
-  const notReady = refIds.filter(cid=>{ const c=state.connections.get(cid); return !c || !c.tested || !c.db_url; });
+  const isReady = (cid)=>{ const c=state.connections.get(cid); return !!c && ((c.tested && c.db_url) || (state.storedCreds.has(cid) && (c.db_url || c.db_url_masked))); };
+  const notReady = refIds.filter(cid=>!isReady(cid));
   if(notReady.length){
     status.className="status err";
-    status.textContent="These sources aren't tested yet: "+notReady.join(", ")
-      +". Open the Connection tab, Test each one, then apply again.";
+    status.textContent="These sources aren't ready yet: "+notReady.join(", ")
+      +". Open the Connection tab and either Test each one or Save credentials to the Manager, then apply again.";
     return;
   }
   // Persist the referenced named sources alongside the tables (passwords stripped)
   // so config.tables.json never references an undefined connection.
   const connections = [...state.connections.values()]
-    .filter(c=>c.id!=="default" && c.tested && c.db_url)
-    .map(c=>({id:c.id, db_url: stripPw(c.db_url)}));
+    .filter(c=>c.id!=="default" && ((c.tested && c.db_url) || (state.storedCreds.has(c.id) && (c.db_url || c.db_url_masked))))
+    .map(c=>({id:c.id, db_url: stripPw(c.db_url || c.db_url_masked)}));
   const settings = {tables};
   if(connections.length) settings.connections = connections;
 

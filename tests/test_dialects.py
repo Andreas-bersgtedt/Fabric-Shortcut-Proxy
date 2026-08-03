@@ -101,6 +101,22 @@ def test_split_query_mssql(monkeypatch):
     assert sql.rstrip().endswith("ORDER BY [id]")
 
 
+def test_split_query_mssql_range_uses_top_not_limit(monkeypatch):
+    # Range planning (key_lo/key_hi) must emit TOP too; T-SQL has no LIMIT.
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    split = SplitDescriptor(
+        split_index=1, num_splits=4,
+        object_key="warehouse/db/widgets/data/split-1-x.parquet",
+        watermark_ms=0, table=_TABLE, key_lo=25, key_hi=50,
+    )
+    sql, params = build_split_query(split)
+    assert sql.startswith("SELECT TOP (:max_rows) [id], [name]")
+    assert "[id] >= :key_lo AND [id] < :key_hi" in sql
+    assert "LIMIT" not in sql
+    assert sql.rstrip().endswith("ORDER BY [id]")
+    assert params == {"key_lo": 25, "key_hi": 50, "max_rows": config.QUERY_MAX_ROWS}
+
+
 def test_split_query_oracle(monkeypatch):
     monkeypatch.setattr(config, "DB_URL", "oracle+oracledb://h/db")
     sql, _ = build_split_query(_split())

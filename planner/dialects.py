@@ -148,6 +148,25 @@ class MSSQLDialect(Dialect):
             f"ORDER BY {pk}"
         )
 
+    def build_select_range(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        key_lo_param: str,
+        key_hi_param: str,
+        max_rows_param: str,
+    ) -> str:
+        # T-SQL has no LIMIT: the range slice must use the TOP prefix too.
+        predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
+        return (
+            f"SELECT TOP (:{max_rows_param}) {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"ORDER BY {pk}"
+        )
+
     def build_select_row_number(
         self,
         *,

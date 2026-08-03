@@ -44,6 +44,30 @@ def _request_shutdown() -> None:
         log.info("graceful_shutdown_requested")
 
 
+def _begin_drain() -> None:
+    """Drain: flip /readyz to 503 so an external LB deregisters this backend, then
+    exit after AGENT_DRAIN_GRACE_SECONDS so in-flight requests can finish."""
+    from runtime.drain import set_draining
+    set_draining(True)
+    grace = max(0.0, config.AGENT_DRAIN_GRACE_SECONDS)
+    log.info("drain_started", grace_seconds=grace)
+    try:
+        asyncio.get_event_loop().call_later(grace, _request_shutdown)
+    except RuntimeError:
+        _request_shutdown()
+
+
+def _uvicorn_kwargs(tls: dict | None = None) -> dict:
+    """uvicorn.Config kwargs. Trusts proxy headers only from FORWARDED_ALLOW_IPS so
+    audit logging sees the real client IP (not the LB's) behind an external LB."""
+    kw = {
+        "host": config.HOST, "port": config.PORT, "log_level": "info",
+        "proxy_headers": True, "forwarded_allow_ips": config.FORWARDED_ALLOW_IPS,
+    }
+    kw.update(tls or {})
+    return kw
+
+
 def _source_connect_hint(exc: Exception) -> str:
     """A concise, credential-redacted message when a source DB can't be reached at startup."""
     conns: dict[str, str] = {}
@@ -374,7 +398,7 @@ async def lifespan(app: FastAPI):
     app.state.agent_link = None
     if config.MANAGER_URL:
         from runtime.agent_link import AgentLink
-        link = AgentLink(on_drain=_request_shutdown)
+        link = AgentLink(on_drain=_begin_drain)
         await link.start()
         app.state.agent_link = link
 
@@ -714,7 +738,7 @@ if __name__ == "__main__":
         # SigV4 read signatures give no confidentiality over plain HTTP.
         log.warning("tls_not_configured",
                     hint="set tls_cert_file + tls_key_file, or terminate TLS at a fronting LB")
-    _uv_config = uvicorn.Config(app, host=config.HOST, port=config.PORT, log_level="info", **_tls)
+    _uv_config = uvicorn.Config(app, **_uvicorn_kwargs(_tls))
     _server = uvicorn.Server(_uv_config)
     _set_uvicorn_server(_server)
     _server.run()

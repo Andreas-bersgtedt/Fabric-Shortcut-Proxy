@@ -104,6 +104,11 @@ REQUIRE_SIGV4: bool = _get_bool("REQUIRE_SIGV4", "require_sigv4", False)
 HOST: str = _get_str("HOST", "host", "0.0.0.0")
 PORT: int = _get_int("PORT", "port", 9000)
 
+# Trust X-Forwarded-For/Proto only from these proxy IPs/CIDRs (comma list, or "*")
+# so the agent recovers the real client IP + scheme behind a load balancer (used
+# by audit logging). Default trusts loopback only (uvicorn's default) = no change.
+FORWARDED_ALLOW_IPS: str = _get_str("FORWARDED_ALLOW_IPS", "forwarded_allow_ips", "127.0.0.1").strip()
+
 # TLS termination at the proxy (Phase 4). Provide BOTH a cert and key to serve
 # HTTPS; empty = plain HTTP (terminate TLS at a fronting LB instead).
 TLS_CERT_FILE: str = _get_str("TLS_CERT_FILE", "tls_cert_file", "")
@@ -187,6 +192,11 @@ MANAGER_URL: str = _get_str("MANAGER_URL", "manager_url", "").strip()
 # Agent: stable id (blank = auto from host:port)
 AGENT_ID: str = _get_str("AGENT_ID", "agent_id", "").strip()
 
+# Agent: routable host/IP or DNS advertised to the Manager so the LB/gateway can
+# dial this agent. Blank advertises the bind HOST (reachable same-box only when
+# HOST is a wildcard like 0.0.0.0). Set to a real address for a multi-host fleet.
+AGENT_ADVERTISE_HOST: str = _get_str("AGENT_ADVERTISE_HOST", "agent_advertise_host", "").strip()
+
 # Manager: control-plane REST bind address
 CONTROL_HOST: str = _get_str("CONTROL_HOST", "control_host", "127.0.0.1")
 
@@ -204,6 +214,10 @@ AGENT_RESTART_BACKOFF_SECONDS: float = float(_get_int("AGENT_RESTART_BACKOFF", "
 
 # Manager: crash-loop guard — stop respawning after this many restarts
 AGENT_MAX_RAPID_RESTARTS: int = _get_int("AGENT_MAX_RAPID_RESTARTS", "agent_max_rapid_restarts", 5)
+
+# Agent: on drain, flip /readyz to 503 then wait this long before exiting so an
+# external load balancer can deregister the backend and in-flight requests finish.
+AGENT_DRAIN_GRACE_SECONDS: float = float(_get_int("AGENT_DRAIN_GRACE_SECONDS", "agent_drain_grace_seconds", 15))
 
 # ---------------------------------------------------------------------------
 # High Availability (Phase 5)

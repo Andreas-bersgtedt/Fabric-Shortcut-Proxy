@@ -1,0 +1,7 @@
+# Example of what control/lb_renderer.py writes to --out (e.g.
+# /etc/nginx/conf.d/fsp_upstream.conf). Do NOT edit at runtime; the renderer
+# overwrites it from the Manager's GET /agents on every change.
+upstream fsp_agents {
+    server 10.0.0.11:9400 max_fails=2 fail_timeout=5s;
+    server 10.0.0.12:9400 max_fails=2 fail_timeout=5s;
+}

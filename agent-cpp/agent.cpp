@@ -217,13 +217,20 @@ struct Config {
     std::string store_dir = getenv_str("STORE_DIR", getenv_str("ARTIFACT_STORE_DIR", "./.artifacts"));
     std::string bucket = getenv_str("S3_BUCKET", "fabric-iceberg-poc");
     std::string agent_id = getenv_str("AGENT_ID", "cpp-agent-1");
+    std::string advertise_host = getenv_str("AGENT_ADVERTISE_HOST", "");
     std::string manager_url = getenv_str("MANAGER_URL", "");
     int heartbeat_ms = parse_int_or(getenv_str("HEARTBEAT_MS", "2000"), 2000, 200, 600000);
     int socket_timeout_ms = parse_int_or(getenv_str("SOCKET_TIMEOUT_MS", "10000"), 10000, 1000, 60000);
     int max_inflight = parse_int_or(getenv_str("MAX_INFLIGHT", "256"), 256, 1, 100000);
+    // On drain: serve /readyz 503, then exit after this window so the LB can
+    // deregister and in-flight requests finish.
+    int drain_grace_ms = parse_int_or(getenv_str("AGENT_DRAIN_GRACE_SECONDS", "15"), 15, 0, 3600) * 1000;
 };
 
 static Config CFG;
+
+// Set true when the Manager asks us to drain; /readyz then reports 503.
+static std::atomic<bool> g_draining{false};
 
 // ---------------------------------------------------------------------------
 // store/path safety
@@ -588,9 +595,20 @@ static void handle_connection(SocketHandle client) {
 
     bool head_only = (req.method == "HEAD");
 
-    if (req.path == "/healthz" || req.path == "/readyz") {
+    if (req.path == "/healthz") {
         send_fixed_response(client, 200, "OK", "application/json",
                             std::string("{\"status\":\"ok\",\"role\":\"agent\",\"impl\":\"cpp\",\"version\":\"") + APP_VERSION + "\"}",
+                            head_only);
+        close_socket(client);
+        return;
+    }
+
+    if (req.path == "/readyz") {
+        const bool draining = g_draining.load();
+        send_fixed_response(client, draining ? 503 : 200, draining ? "Service Unavailable" : "OK",
+                            "application/json",
+                            std::string("{\"status\":\"") + (draining ? "draining" : "ready") +
+                                "\",\"role\":\"agent\",\"impl\":\"cpp\",\"version\":\"" + APP_VERSION + "\"}",
                             head_only);
         close_socket(client);
         return;
@@ -740,7 +758,8 @@ static void control_loop() {
           << "linux"
 #endif
           << "\",\"version\":\"" << APP_VERSION
-          << "\",\"capacity_hint\":0,\"contract_version\":\"1.0\"}";
+          << "\",\"capacity_hint\":0,\"advertise_host\":\"" << CFG.advertise_host
+          << "\",\"contract_version\":\"1.0\"}";
 
         std::string rb;
         int st = http_post(host, port, "/control/register", j.str(), rb);
@@ -775,9 +794,15 @@ static void control_loop() {
             while (g_running && !do_register()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             }
-        } else if (rb.find("\"drain\"") != std::string::npos) {
-            log_line("drain requested -> shutting down");
-            g_running = false;
+        } else if (rb.find("\"drain\"") != std::string::npos && !g_draining.load()) {
+            // Flip readiness so the LB deregisters us, then exit after the grace
+            // window so in-flight requests finish.
+            g_draining = true;
+            log_line("drain requested -> readyz 503, exiting after grace");
+            std::thread([]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(CFG.drain_grace_ms));
+                g_running = false;
+            }).detach();
         }
     }
 }

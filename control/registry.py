@@ -36,16 +36,22 @@ class AgentRecord:
     capacity_hint: int
     registered_at: float
     last_seen: float
+    advertise_host: str = ""
     health: AgentHealth = field(default_factory=AgentHealth)
     serving_tables: list[str] = field(default_factory=list)
     epochs: dict[str, int] = field(default_factory=dict)
     commands: list[ControlCommand] = field(default_factory=list)
 
     def to_public(self) -> dict:
-        """A JSON‑able view for admin/observability (no internal lease)."""
+        """A JSON‑able view for admin/observability (no internal lease).
+
+        ``host`` is the routable address the LB/gateway should dial: the advertised
+        host when the agent supplied one, else its registered bind host.
+        """
         return {
             "agent_id": self.agent_id,
-            "host": self.host,
+            "host": self.advertise_host or self.host,
+            "bind_host": self.host,
             "port": self.port,
             "os": self.os,
             "version": self.version,
@@ -84,6 +90,7 @@ class Registry:
             self._agents[req.agent_id] = AgentRecord(
                 agent_id=req.agent_id, lease_id=lease, host=req.host, port=req.port,
                 os=req.os, version=req.version, capacity_hint=req.capacity_hint,
+                advertise_host=req.advertise_host,
                 registered_at=now, last_seen=now,
             )
         return RegisterResponse(lease_id=lease, heartbeat_ms=self.heartbeat_ms)

@@ -21,6 +21,7 @@ from iceberg.state_store import get_all_snapshots
 from observability import metrics
 from observability import trace
 from observability.logging import get_logger
+from runtime.drain import is_draining
 
 log = get_logger(__name__)
 
@@ -35,7 +36,16 @@ async def healthz() -> dict:
 
 @router.get("/readyz")
 async def readyz() -> JSONResponse:
-    """Readiness: the Iceberg snapshot is built and the source DB is reachable."""
+    """Readiness: the Iceberg snapshot is built and the source DB is reachable.
+
+    While draining, report 503 up front so an external load balancer deregisters
+    this backend before the process exits (in-flight requests still complete).
+    """
+    if is_draining():
+        return JSONResponse(
+            status_code=503,
+            content={"status": "draining", "checks": {"draining": True}},
+        )
     checks = {"snapshot": False, "database": False}
 
     try:

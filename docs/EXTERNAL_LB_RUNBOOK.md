@@ -151,3 +151,15 @@ Readiness gates re-entry, so no request reaches a not-ready agent during the rol
 - Wrong client IP in audit logs: set `FORWARDED_ALLOW_IPS` to the LB address.
 - nginx not reloading: check the renderer `--reload-cmd` / `--nginx-test-cmd`, and
   the log for `lb_renderer_nginx_test_failed` (a bad include is rolled back).
+- Agents keep exiting with code 78 (`agent_config_error`) and the Manager does not
+  restart them: this is a source-database failure at startup, not a crash. The
+  supervisor holds the Agent on purpose (restarting would just loop). SQL Server
+  `Login failed for user '<user>' (18456)` means the server rejected the
+  credentials. Named sources keep their password in the encrypted credential store
+  and it is hydrated as `DB_URL_<ID>` at Manager startup; if the store has no
+  password (or a stale one) the Agent connects without one and is rejected. Fix:
+  set the password in the config builder (`/_config`), or export the full
+  password-bearing URL as `DB_URL_<ID>` (id uppercased, non-alphanumerics become
+  `_`, e.g. `SalesLT` -> `DB_URL_SALESLT`), then restart the Manager so it
+  re-hydrates and respawns the Agents. Also confirm the account is enabled and the
+  database firewall allows the Agent host.

@@ -1,0 +1,83 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "github-copilot",
+  "elements": [
+    {
+      "type": "text", "id": "title", "x": 40, "y": 20, "width": 900, "height": 40,
+      "text": "Fabric Shortcut Proxy — distributed topology (separate hosts)", "fontSize": 24, "fontFamily": 1,
+      "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"
+    },
+
+    {"type": "rectangle", "id": "leg_green", "x": 40, "y": 70, "width": 20, "height": 20, "strokeColor": "#2f9e44", "backgroundColor": "#b2f2bb", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}},
+    {"type": "text", "id": "leg_green_t", "x": 66, "y": 71, "width": 240, "height": 20, "text": "green = C++ (native)", "fontSize": 14, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "rectangle", "id": "leg_blue", "x": 40, "y": 98, "width": 20, "height": 20, "strokeColor": "#1864ab", "backgroundColor": "#a5d8ff", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}},
+    {"type": "text", "id": "leg_blue_t", "x": 66, "y": 99, "width": 260, "height": 20, "text": "blue = Python / control", "fontSize": 14, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "text", "id": "leg_dash_t", "x": 40, "y": 126, "width": 380, "height": 20, "text": "dashed box = a separate host / node", "fontSize": 14, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+
+    {"type": "rectangle", "id": "fabric", "x": 400, "y": 70, "width": 360, "height": 60, "strokeColor": "#0c8599", "backgroundColor": "#99e9f2", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "fabric_t"}]},
+    {"type": "text", "id": "fabric_t", "containerId": "fabric", "x": 420, "y": 85, "width": 320, "height": 30, "text": "Microsoft Fabric (S3 client)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "rectangle", "id": "gw_node", "x": 230, "y": 175, "width": 360, "height": 150, "strokeColor": "#495057", "backgroundColor": "transparent", "fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "dashed", "roundness": {"type": 3}},
+    {"type": "text", "id": "gw_lbl", "x": 248, "y": 182, "width": 200, "height": 22, "text": "Gateway node", "fontSize": 15, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "rectangle", "id": "lb", "x": 260, "y": 220, "width": 300, "height": 90, "strokeColor": "#1864ab", "backgroundColor": "#a5d8ff", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "lb_t"}]},
+    {"type": "text", "id": "lb_t", "containerId": "lb", "x": 280, "y": 250, "width": 260, "height": 40, "text": "S3 API / Load balancer\n(gateway)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "rectangle", "id": "ctrl_node", "x": 650, "y": 175, "width": 330, "height": 150, "strokeColor": "#495057", "backgroundColor": "transparent", "fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "dashed", "roundness": {"type": 3}},
+    {"type": "text", "id": "ctrl_lbl", "x": 668, "y": 182, "width": 200, "height": 22, "text": "Control node", "fontSize": 15, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "rectangle", "id": "mgr", "x": 680, "y": 220, "width": 270, "height": 90, "strokeColor": "#1864ab", "backgroundColor": "#a5d8ff", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "mgr_t"}]},
+    {"type": "text", "id": "mgr_t", "containerId": "mgr", "x": 700, "y": 250, "width": 230, "height": 40, "text": "Manager\n(registry · lease/HA · rolling)", "fontSize": 14, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "rectangle", "id": "host1", "x": 60, "y": 390, "width": 270, "height": 150, "strokeColor": "#495057", "backgroundColor": "transparent", "fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "dashed", "roundness": {"type": 3}},
+    {"type": "text", "id": "host1_lbl", "x": 78, "y": 397, "width": 200, "height": 22, "text": "Agent host 1", "fontSize": 15, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "rectangle", "id": "agent1", "x": 88, "y": 435, "width": 214, "height": 90, "strokeColor": "#2f9e44", "backgroundColor": "#b2f2bb", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "agent1_t"}]},
+    {"type": "text", "id": "agent1_t", "containerId": "agent1", "x": 103, "y": 460, "width": 184, "height": 40, "text": "C++ agent\n(agent.cpp, zero-dep)", "fontSize": 14, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "rectangle", "id": "host2", "x": 360, "y": 390, "width": 270, "height": 150, "strokeColor": "#495057", "backgroundColor": "transparent", "fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "dashed", "roundness": {"type": 3}},
+    {"type": "text", "id": "host2_lbl", "x": 378, "y": 397, "width": 200, "height": 22, "text": "Agent host 2", "fontSize": 15, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "rectangle", "id": "agent2", "x": 388, "y": 435, "width": 214, "height": 90, "strokeColor": "#2f9e44", "backgroundColor": "#b2f2bb", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "agent2_t"}]},
+    {"type": "text", "id": "agent2_t", "containerId": "agent2", "x": 403, "y": 460, "width": 184, "height": 40, "text": "C++ agent\n(agent.cpp, zero-dep)", "fontSize": 14, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "rectangle", "id": "host3", "x": 660, "y": 390, "width": 270, "height": 150, "strokeColor": "#495057", "backgroundColor": "transparent", "fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "dashed", "roundness": {"type": 3}},
+    {"type": "text", "id": "host3_lbl", "x": 678, "y": 397, "width": 220, "height": 22, "text": "Agent host 3  … N", "fontSize": 15, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "rectangle", "id": "agent3", "x": 688, "y": 435, "width": 214, "height": 90, "strokeColor": "#2f9e44", "backgroundColor": "#b2f2bb", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "agent3_t"}]},
+    {"type": "text", "id": "agent3_t", "containerId": "agent3", "x": 703, "y": 460, "width": 184, "height": 40, "text": "C++ agent\n(agent.cpp, zero-dep)", "fontSize": 14, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "rectangle", "id": "store", "x": 300, "y": 600, "width": 430, "height": 120, "strokeColor": "#e67700", "backgroundColor": "#fff3bf", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "store_t"}]},
+    {"type": "text", "id": "store_t", "containerId": "store", "x": 315, "y": 630, "width": 400, "height": 60, "text": "Shared object store\n(S3 / MinIO / Azure Blob, or NFS/SMB)\nParquet splits + Iceberg/Delta metadata", "fontSize": 14, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "rectangle", "id": "mat_node", "x": 60, "y": 780, "width": 360, "height": 150, "strokeColor": "#495057", "backgroundColor": "transparent", "fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "dashed", "roundness": {"type": 3}},
+    {"type": "text", "id": "mat_lbl", "x": 78, "y": 787, "width": 240, "height": 22, "text": "Materializer worker", "fontSize": 15, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "rectangle", "id": "matpub", "x": 88, "y": 825, "width": 304, "height": 90, "strokeColor": "#2f9e44", "backgroundColor": "#b2f2bb", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "matpub_t"}]},
+    {"type": "text", "id": "matpub_t", "containerId": "matpub", "x": 103, "y": 850, "width": 274, "height": 40, "text": "native_publish (C++)\nArrow/Parquet + Avro · scheduled job", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "rectangle", "id": "src_node", "x": 700, "y": 780, "width": 320, "height": 150, "strokeColor": "#495057", "backgroundColor": "transparent", "fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "dashed", "roundness": {"type": 3}},
+    {"type": "text", "id": "src_lbl", "x": 718, "y": 787, "width": 220, "height": 22, "text": "Source DB host", "fontSize": 15, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+    {"type": "rectangle", "id": "rmdb", "x": 728, "y": 825, "width": 264, "height": 90, "strokeColor": "#e67700", "backgroundColor": "#fff3bf", "fillStyle": "solid", "strokeWidth": 2, "roundness": {"type": 3}, "boundElements": [{"type": "text", "id": "rmdb_t"}]},
+    {"type": "text", "id": "rmdb_t", "containerId": "rmdb", "x": 743, "y": 850, "width": 234, "height": 40, "text": "RMDB\n(SQLite/Postgres/SQL Server/Oracle)", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "textAlign": "center", "verticalAlign": "middle"},
+
+    {"type": "arrow", "id": "a_fabric_lb", "x": 500, "y": 132, "width": 90, "height": 88, "strokeColor": "#0c8599", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [-90, 86]], "startBinding": {"elementId": "fabric", "focus": 0, "gap": 2}, "endBinding": {"elementId": "lb", "focus": 0, "gap": 2}},
+    {"type": "text", "id": "a_fabric_lbl", "x": 430, "y": 150, "width": 200, "height": 20, "text": "S3 GET / LIST / HEAD", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+
+    {"type": "arrow", "id": "a_lb_h1", "x": 330, "y": 312, "width": 135, "height": 76, "strokeColor": "#495057", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [-135, 76]], "startBinding": {"elementId": "lb", "focus": 0, "gap": 2}, "endBinding": {"elementId": "host1", "focus": 0, "gap": 2}},
+    {"type": "arrow", "id": "a_lb_h2", "x": 410, "y": 312, "width": 85, "height": 76, "strokeColor": "#495057", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [85, 76]], "startBinding": {"elementId": "lb", "focus": 0, "gap": 2}, "endBinding": {"elementId": "host2", "focus": 0, "gap": 2}},
+    {"type": "arrow", "id": "a_lb_h3", "x": 490, "y": 312, "width": 305, "height": 76, "strokeColor": "#495057", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [305, 76]], "startBinding": {"elementId": "lb", "focus": 0, "gap": 2}, "endBinding": {"elementId": "host3", "focus": 0, "gap": 2}},
+    {"type": "text", "id": "a_route_lbl", "x": 300, "y": 350, "width": 130, "height": 20, "text": "route / balance", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+
+    {"type": "arrow", "id": "a_store_h1", "x": 380, "y": 598, "width": 185, "height": 58, "strokeColor": "#495057", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [-185, -58]], "startBinding": {"elementId": "store", "focus": 0, "gap": 2}, "endBinding": {"elementId": "host1", "focus": 0, "gap": 2}},
+    {"type": "arrow", "id": "a_store_h2", "x": 510, "y": 598, "width": 15, "height": 58, "strokeColor": "#495057", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [-15, -58]], "startBinding": {"elementId": "store", "focus": 0, "gap": 2}, "endBinding": {"elementId": "host2", "focus": 0, "gap": 2}},
+    {"type": "arrow", "id": "a_store_h3", "x": 620, "y": 598, "width": 175, "height": 58, "strokeColor": "#495057", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [175, -58]], "startBinding": {"elementId": "store", "focus": 0, "gap": 2}, "endBinding": {"elementId": "host3", "focus": 0, "gap": 2}},
+    {"type": "text", "id": "a_serve_lbl", "x": 520, "y": 560, "width": 120, "height": 20, "text": "serve bytes", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+
+    {"type": "arrow", "id": "a_mat_store", "x": 240, "y": 823, "width": 150, "height": 101, "strokeColor": "#495057", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [150, -101]], "startBinding": {"elementId": "matpub", "focus": 0, "gap": 2}, "endBinding": {"elementId": "store", "focus": 0, "gap": 2}},
+    {"type": "text", "id": "a_write_lbl", "x": 250, "y": 745, "width": 170, "height": 20, "text": "write serving image", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+
+    {"type": "arrow", "id": "a_rmdb_mat", "x": 726, "y": 870, "width": 336, "height": 1, "strokeColor": "#495057", "strokeWidth": 2, "roundness": {"type": 2}, "points": [[0, 0], [-336, 0]], "startBinding": {"elementId": "rmdb", "focus": 0, "gap": 2}, "endBinding": {"elementId": "matpub", "focus": 0, "gap": 2}},
+    {"type": "text", "id": "a_read_lbl", "x": 500, "y": 845, "width": 100, "height": 20, "text": "read rows", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"},
+
+    {"type": "arrow", "id": "a_mgr_h3", "x": 815, "y": 312, "width": 20, "height": 76, "strokeColor": "#862e9c", "strokeWidth": 2, "strokeStyle": "dashed", "roundness": {"type": 2}, "points": [[0, 0], [-20, 76]], "startBinding": {"elementId": "mgr", "focus": 0, "gap": 2}, "endBinding": {"elementId": "host3", "focus": 0, "gap": 2}},
+    {"type": "text", "id": "a_ctrl_lbl", "x": 838, "y": 335, "width": 200, "height": 40, "text": "register / heartbeat\ndrain · rolling", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"}
+  ],
+  "appState": {"viewBackgroundColor": "#ffffff", "gridSize": null},
+  "files": {}
+}

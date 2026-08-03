@@ -4,13 +4,13 @@ Manager-side ``/_monitor`` — the operator console's Monitor tab, fleet-aware.
 The Agents own the live serving stats (each sees only the requests the gateway
 routed to it), so the Manager can't compute them locally. This router scrapes
 every live Agent's ``/_monitor/api/summary`` and merges them
-(:func:`control.monitor_agg.merge_summaries`) into one fleet view, and fans a
+(:func:`enterprise.control.monitor_agg.merge_summaries`) into one fleet view, and fans a
 reset out to all Agents. It also serves the standalone monitor SPA so
 ``/_monitor/`` works on the control port too.
 
 Mounted only when the operator console (or monitor) is enabled; requires Agents
 to expose their monitor API (the Manager sets ``ENABLE_MONITOR=1`` on supervised
-Agents — see :mod:`control.manager_app`).
+Agents — see :mod:`enterprise.control.manager_app`).
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
-from control.monitor_agg import merge_summaries
+from enterprise.control.monitor_agg import merge_summaries
 from observability.logging import get_logger
 
 log = get_logger(__name__)

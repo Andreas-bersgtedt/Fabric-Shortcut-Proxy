@@ -3,7 +3,7 @@ S3 gateway — the Manager's built-in load balancer (docs/SCALE_ARCHITECTURE_PLA
 
 Fronts the Agent fleet with a single Fabric-facing S3 endpoint. It round-robins
 GET/HEAD/List requests across the **ready** (heartbeating) Agents from the
-:class:`~control.registry.Registry` and streams the response back (range-aware).
+:class:`~enterprise.control.registry.Registry` and streams the response back (range-aware).
 Agents are interchangeable (they serve from the shared artifact store), so no
 sticky sessions are needed.
 
@@ -19,7 +19,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from control.registry import Registry
+from enterprise.control.registry import Registry
 from observability.logging import get_logger
 
 log = get_logger(__name__)

@@ -2,12 +2,12 @@
 Manager control application.
 
 Builds the control‑plane FastAPI app (REST transport) backed by a
-:class:`~control.registry.Registry` + :class:`~control.server.ControlService`, and
+:class:`~enterprise.control.registry.Registry` + :class:`~enterprise.control.server.ControlService`, and
 supervises **N** local Agent child processes via
-:class:`~control.supervisor.AgentSupervisor` (spawn + heartbeat/exit watch +
+:class:`~enterprise.control.supervisor.AgentSupervisor` (spawn + heartbeat/exit watch +
 restart‑on‑crash). When ``ENABLE_GATEWAY`` is set it also fronts the fleet with a
-built‑in round‑robin S3 gateway (:mod:`control.gateway`). Run it with
-``python manager.py``.
+built‑in round‑robin S3 gateway (:mod:`enterprise.control.gateway`). Run it with
+``python -m enterprise.manager``.
 
 Phase 1 = 1 Agent; Phase 3 = N Agents + gateway + sharded materialization; Manager
 HA is Phase 5. The Fabric‑facing S3 data plane still lives in the Agents — point
@@ -24,10 +24,10 @@ import sys
 from fastapi import FastAPI
 
 import config
-from control.registry import Registry
-from control.server import ControlService
-from control.supervisor import AgentSupervisor
-from control.transport import create_control_router
+from enterprise.control.registry import Registry
+from enterprise.control.server import ControlService
+from enterprise.control.supervisor import AgentSupervisor
+from enterprise.control.transport import create_control_router
 from observability.logging import configure_logging, get_logger
 
 log = get_logger(__name__)
@@ -104,7 +104,7 @@ def create_manager_app() -> FastAPI:
     supervisors = _build_supervisors()
     gateway = None
     if config.ENABLE_GATEWAY:
-        from control.gateway import Gateway
+        from enterprise.control.gateway import Gateway
         gateway = Gateway(registry)
 
     # Phase 5 HA: a leader lease over the shared artifact store. Only the primary
@@ -112,7 +112,7 @@ def create_manager_app() -> FastAPI:
     # because no Agents register to it). Default off => always primary.
     lease = None
     if config.MANAGER_HA:
-        from control.lease import LeaderLease
+        from enterprise.control.lease import LeaderLease
         from runtime.artifact_store import build_store
         store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
         lease = LeaderLease(store, ttl_ms=config.LEADER_LEASE_TTL_MS)
@@ -284,7 +284,7 @@ def create_manager_app() -> FastAPI:
     # Gated behind ENABLE_ADMIN_UI; mounted BEFORE the gateway catch-all so its
     # /_manager routes are not shadowed by the gateway's /{bucket} route.
     if config.ENABLE_ADMIN_UI:
-        from control.admin import create_admin_router
+        from enterprise.control.admin import create_admin_router
         app.include_router(create_admin_router(
             registry, supervisors, gateway=gateway, token=config.ADMIN_TOKEN,
             scale=_scale_fleet, shutdown=_shutdown_manager,
@@ -292,7 +292,7 @@ def create_manager_app() -> FastAPI:
 
     # Phase 5.1: config builder (read current config + push changes) on the Manager,
     # so cluster settings (agent_count etc.) are editable where they apply. Reserved
-    # from the gateway catch-all (see control.gateway._RESERVED_PREFIXES).
+    # from the gateway catch-all (see enterprise.control.gateway._RESERVED_PREFIXES).
     if config.ENABLE_CONFIG_BUILDER:
         from configbuilder.router import router as config_builder_router
         app.include_router(config_builder_router)
@@ -302,13 +302,13 @@ def create_manager_app() -> FastAPI:
     # every Agent's /_monitor/api/summary and merges them. Mounted BEFORE the
     # gateway catch-all (which also reserves /_monitor) so it isn't shadowed.
     if config.ENABLE_ADMIN_UI or config.ENABLE_MONITOR:
-        from control.monitor_proxy import create_monitor_proxy_router
+        from enterprise.control.monitor_proxy import create_monitor_proxy_router
         app.include_router(create_monitor_proxy_router(supervisors))
 
     # Gateway (LB) MUST be included last: its /{bucket} catch-all would otherwise
     # shadow the control/health routes above.
     if gateway is not None:
-        from control.gateway import create_gateway_router
+        from enterprise.control.gateway import create_gateway_router
         app.include_router(create_gateway_router(gateway))
 
     return app

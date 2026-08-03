@@ -8,7 +8,7 @@ supervision (heartbeat + restart).
 
 Phase 0 establishes the seam by freezing the Manager↔Agent **contract** in two
 equivalent forms:
-  - :mod:`control.contract` — transport‑neutral Python dataclasses + a
+  - :mod:`enterprise.control.contract` — transport‑neutral Python dataclasses + a
     dict/JSON codec, usable immediately (Phase 1) regardless of whether the
     transport is gRPC or REST.
   - ``control/proto/control.proto`` — the gRPC/protobuf form of the same
@@ -19,7 +19,7 @@ later phases can build against a stable contract.
 """
 from __future__ import annotations
 
-from control.contract import (
+from enterprise.control.contract import (
     CONTRACT_VERSION,
     KeyRange,
     Column,

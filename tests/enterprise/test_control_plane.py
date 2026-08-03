@@ -7,13 +7,13 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from control.contract import (
+from enterprise.control.contract import (
     RegisterRequest, HeartbeatRequest, AgentHealth, TaskResult,
     ControlCommand, Drain,
 )
-from control.registry import Registry, LeaseError
-from control.server import ControlService
-from control.transport import create_control_router, RestControlClient, StaleLeaseError
+from enterprise.control.registry import Registry, LeaseError
+from enterprise.control.server import ControlService
+from enterprise.control.transport import create_control_router, RestControlClient, StaleLeaseError
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ async def test_rest_assignment_snapshot_taskresult():
 # ---------------------------------------------------------------------------
 
 async def test_agent_link_registers_and_handles_drain():
-    from runtime.agent_link import AgentLink
+    from enterprise.agent_link import AgentLink
     reg = Registry(heartbeat_ms=20)
     client = _make(reg, tables=["sales"])
     drained = asyncio.Event()

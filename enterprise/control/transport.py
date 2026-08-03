@@ -23,11 +23,11 @@ from typing import Protocol, runtime_checkable
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
-from control.contract import (
+from enterprise.control.contract import (
     RegisterRequest, RegisterResponse, HeartbeatRequest, ControlCommand,
     Assignment, SnapshotManifest, TaskResult, Ack,
 )
-from control.registry import LeaseError
+from enterprise.control.registry import LeaseError
 
 # Path prefix for the REST control plane.
 CONTROL_PREFIX = "/control"
@@ -43,7 +43,7 @@ class StaleLeaseError(Exception):
 
 @runtime_checkable
 class ControlServer(Protocol):
-    """The Manager‑side control surface (implemented by ``control.server.ControlService``)."""
+    """The Manager‑side control surface (implemented by ``enterprise.control.server.ControlService``)."""
 
     def register(self, req: RegisterRequest) -> RegisterResponse: ...
     def heartbeat(self, req: HeartbeatRequest) -> list[ControlCommand]: ...  # raises LeaseError

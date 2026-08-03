@@ -7,8 +7,8 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 from config import ColumnDef, TableDef
-from control.lease import LeaderLease
-from control.rolling import rolling_restart
+from enterprise.control.lease import LeaderLease
+from enterprise.control.rolling import rolling_restart
 from runtime.artifact_store import MemoryStore
 
 
@@ -58,7 +58,7 @@ def test_lease_current_owner():
 # ---------------------------------------------------------------------------
 
 def test_gc_deletes_orphans_keeps_live(monkeypatch):
-    from runtime import retention
+    from enterprise import retention
     store = MemoryStore()
     live = "warehouse/db/sales/data/split-0-111.parquet"
     orphan = "warehouse/db/sales/data/split-0-999.parquet"
@@ -74,7 +74,7 @@ def test_gc_deletes_orphans_keeps_live(monkeypatch):
 
 
 def test_gc_dry_run_reports_without_deleting(monkeypatch):
-    from runtime import retention
+    from enterprise import retention
     store = MemoryStore()
     orphan = "warehouse/db/sales/data/split-0-999.parquet"
     store.put(orphan, b"x")
@@ -86,7 +86,7 @@ def test_gc_dry_run_reports_without_deleting(monkeypatch):
 
 
 def test_gc_ignores_non_data_objects(monkeypatch):
-    from runtime import retention
+    from enterprise import retention
     store = MemoryStore()
     meta_orphan = "warehouse/db/sales/metadata/old-m0.avro"
     store.put(meta_orphan, b"x")
@@ -98,7 +98,7 @@ def test_gc_ignores_non_data_objects(monkeypatch):
 
 def test_live_object_keys_from_snapshot(monkeypatch):
     import iceberg.state_store as ss
-    from runtime.retention import live_object_keys
+    from enterprise.retention import live_object_keys
     monkeypatch.setattr(ss, "_snapshots", {}, raising=False)
     monkeypatch.setattr(ss, "_history", {}, raising=False)
     table = TableDef(name="sales", source_table="sales", num_splits=2, key_column="id",

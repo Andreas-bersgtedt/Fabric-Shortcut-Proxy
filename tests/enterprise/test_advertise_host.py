@@ -2,8 +2,8 @@
 routable ``host`` in the public view the LB renderer consumes."""
 from __future__ import annotations
 
-from control.contract import RegisterRequest
-from control.registry import Registry
+from enterprise.control.contract import RegisterRequest
+from enterprise.control.registry import Registry
 
 
 def test_register_request_roundtrip_advertise_host():

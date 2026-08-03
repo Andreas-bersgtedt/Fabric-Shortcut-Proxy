@@ -27,8 +27,8 @@ jobs:
       - name: Run ruff F checks
         run: ruff check . --select F --output-format concise
 
-  test:
-    name: pytest (py${{ matrix.python-version }})
+  test-lite:
+    name: pytest lite (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,13 +43,37 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install package
+      - name: Install Lite package + dev extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e ".[dev]"
 
-      - name: Run tests
-        run: pytest tests/ -v
+      - name: Run Lite tests (core only, enterprise excluded)
+        run: pytest tests/ --ignore=tests/enterprise -v
+
+  test-enterprise:
+    name: pytest enterprise (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Lite + Enterprise packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" -e ./enterprise
+
+      - name: Run Enterprise tests
+        run: pytest tests/enterprise -v
 
   fabric-compat:
     name: pyiceberg reference-reader validation

@@ -7,7 +7,7 @@ receiving any queued Manager→Agent commands (currently just ``drain``). If
 ``MANAGER_URL`` is empty the link is never created and the server behaves exactly
 like the pre‑cluster standalone process.
 
-Transport‑agnostic: it talks through a :class:`~control.transport.ControlClient`
+Transport‑agnostic: it talks through a :class:`~enterprise.control.transport.ControlClient`
 (REST today, gRPC later). Robust by design — a Manager outage never crashes the
 Agent; heartbeats retry and re‑register on a stale lease.
 """
@@ -19,8 +19,8 @@ import socket
 from typing import Callable
 
 import config
-from control.contract import RegisterRequest, HeartbeatRequest, AgentHealth
-from control.transport import ControlClient, RestControlClient, StaleLeaseError
+from enterprise.control.contract import RegisterRequest, HeartbeatRequest, AgentHealth
+from enterprise.control.transport import ControlClient, RestControlClient, StaleLeaseError
 from observability.logging import get_logger
 
 log = get_logger(__name__)

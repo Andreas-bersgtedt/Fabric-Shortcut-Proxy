@@ -1,7 +1,7 @@
 """
 Manager / Controller entry point (Phase 1).
 
-    python manager.py
+    python -m enterprise.manager
 
 Starts the control‑plane REST server on ``CONTROL_HOST:CONTROL_PORT`` and
 supervises a single local Agent (the S3 server, ``main.py``), restarting it on
@@ -21,7 +21,7 @@ from security.credential_store import hydrate_environment
 hydrate_environment()
 
 import config
-from control.manager_app import app
+from enterprise.control.manager_app import app
 
 
 if __name__ == "__main__":

@@ -471,17 +471,17 @@ Each phase is shippable and reversible; the default stays the known-good path.
 
   **Transport seam** (so gRPC can slot in later without touching callers):
   ```text
-  control/transport.py
+  enterprise/control/transport.py
     ControlServer (protocol)   register / heartbeat / get_assignment /
                                get_snapshot / report_task_result
     ControlClient (abstract)   async register / heartbeat / get_assignment / ...
     RestControlClient          httpx impl (Agent side)
     create_control_router()    adapts a ControlServer to FastAPI routes (Manager)
-  control/registry.py     agent leases + heartbeat freshness + dead detection
-  control/server.py       ControlService: ControlServer over the registry
-  control/supervisor.py   spawn / watch (process exit + heartbeat) / restart+backoff
-  control/manager_app.py  control FastAPI app + supervisor lifespan   (manager.py)
-  runtime/agent_link.py   Agent's register+heartbeat loop; handles the drain command
+  enterprise/control/registry.py     agent leases + heartbeat freshness + dead detection
+  enterprise/control/server.py       ControlService: ControlServer over the registry
+  enterprise/control/supervisor.py   spawn / watch (process exit + heartbeat) / restart+backoff
+  enterprise/control/manager_app.py  control FastAPI app + supervisor lifespan   (enterprise/manager.py)
+  enterprise/agent_link.py   Agent's register+heartbeat loop; handles the drain command
   ```
   A future `GrpcControlClient` + gRPC server implement the same two interfaces.
   *Exit:* ✅ kill an Agent → Manager restarts it (`restart_count` bumps, the fresh
@@ -514,7 +514,7 @@ Each phase is shippable and reversible; the default stays the known-good path.
   Multiple Agents behind an LB; Manager fans materialization tasks across them.
   - **Delivered:** the Manager supervises **`AGENT_COUNT`** Agents (each on `PORT+i`,
     its own materialization shard) and, when **`ENABLE_GATEWAY`** is set, fronts them
-    with a built-in round-robin S3 gateway ([control/gateway.py](../control/gateway.py))
+    with a built-in round-robin S3 gateway ([enterprise/control/gateway.py](../enterprise/control/gateway.py))
     that reverse-proxies GET/HEAD/List to the **live** Agents (range-aware, streaming;
     dead Agents excluded). **Distributed cold materialization**: each Agent owns
     `split_index % AGENT_SHARD_COUNT == AGENT_SHARD_INDEX`; a non-owner waits for the
@@ -536,7 +536,7 @@ Each phase is shippable and reversible; the default stays the known-good path.
   Range-based split planning (§7.1), streaming Parquet (§7.2), incremental/CDC
   refresh (§7.6), cluster backpressure.
   - **`/_manager` operator console.**  ✅ **DONE**: a built-in, self-contained
-    admin page ([control/admin.py](../control/admin.py)) served by the Manager at
+    admin page ([enterprise/control/admin.py](../enterprise/control/admin.py)) served by the Manager at
     **`/_manager`** (gated behind `ENABLE_ADMIN_UI`, off by default), plus a small
     JSON admin API that backs it and is scriptable:
     - **Monitor:** `GET /_manager/api/fleet` merges per-Agent **supervisor** state
@@ -579,19 +579,19 @@ Each phase is shippable and reversible; the default stays the known-good path.
 - **Phase 5, Robustness & Manager HA.**  ✅ **DONE**
   Durable registry, rolling upgrades, retention GC, then Raft-replicated Manager.
   - **Leader lease / Manager failover.**  ✅, `MANAGER_HA=1` runs a TTL leader
-    lease over the shared artifact store ([control/lease.py](../control/lease.py)):
+    lease over the shared artifact store ([enterprise/control/lease.py](../enterprise/control/lease.py)):
     only the **primary** supervises Agents + serves the gateway; **standbys** stay
     passive and take over when the primary stops renewing (`/healthz` reports
     `is_leader`, `/readyz` reports `primary`/`standby`). Best-effort read-check-
     write-verify election (a brief dual-holder window at expiry is tolerable,     Agents serve reads regardless; strict single-writer election / Raft is backlog).
   - **Rolling upgrade.**  ✅, `POST /_manager/api/rolling-restart` (console button)
-    recycles Agents **one at a time**, health-gated ([control/rolling.py](../control/rolling.py)):
+    recycles Agents **one at a time**, health-gated ([enterprise/control/rolling.py](../enterprise/control/rolling.py)):
     it deregisters each Agent from the registry *before* stopping it so the gateway
     drops it from rotation instantly, then waits for it to re-register before the
     next, so >= N-1 keep serving with **no read gap**.
   - **Retention GC.**  ✅, an Agent (shard 0) periodically prunes orphaned Parquet
     splits (from snapshot versions aged out of history) from the shared store
-    ([runtime/retention.py](../runtime/retention.py)); `RETENTION_GC` + interval, plus
+    ([enterprise/retention.py](../enterprise/retention.py)); `RETENTION_GC` + interval, plus
     a manual `POST /_admin/gc` (`?dry_run=true`). Conservative: only `.../data/*.parquet`.
   - **Backlog:** strict single-writer election (Raft/etcd) to close the lease race
     window; a shared **floating address / external LB** so failover keeps the same

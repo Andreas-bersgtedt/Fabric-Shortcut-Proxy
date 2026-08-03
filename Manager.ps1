@@ -7,7 +7,7 @@
       1. Verifies a suitable Python interpreter is available.
       2. Creates a local virtual environment (.venv) if it does not exist.
       3. Installs / updates project dependencies from pyproject.toml.
-      4. Launches the Manager (python manager.py), which starts the control-plane
+      4. Launches the Manager (python -m enterprise.manager), which starts the control-plane
          REST server AND spawns + supervises one local Agent (the S3 server).
 
     The Manager restarts the Agent automatically if it crashes. Point your Fabric
@@ -575,7 +575,7 @@ if ($SkipInstall) {
     if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
 
     Write-Step "Installing project dependencies from pyproject.toml"
-    & $VenvPython -m pip install -e . --quiet
+    & $VenvPython -m pip install -e . -e ./enterprise --quiet
     if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
 
     New-Item -ItemType File -Path $StampFile -Force | Out-Null
@@ -660,5 +660,5 @@ Write-Host "    Source DB       : $dbUrlMasked" -ForegroundColor DarkGray
 Write-Host "    The Manager restarts any Agent automatically if it crashes." -ForegroundColor DarkGray
 Write-Host "    Press Ctrl+C to stop (also stops the supervised Agents)." -ForegroundColor DarkGray
 Write-Host ""
-& $VenvPython manager.py
+& $VenvPython -m enterprise.manager
 exit $LASTEXITCODE

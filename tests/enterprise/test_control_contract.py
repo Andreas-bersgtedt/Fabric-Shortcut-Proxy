@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pathlib
 
-from control.contract import (
+from enterprise.control.contract import (
     CONTRACT_VERSION, KeyRange, Column, SplitRef, SnapshotManifest, AgentHealth,
     RegisterRequest, RegisterResponse, HeartbeatRequest, MaterializeTask, TaskResult,
     to_json, from_json,
@@ -80,7 +80,8 @@ def test_materialize_task_and_result_roundtrip():
 
 
 def test_frozen_proto_present_and_mirrors_contract():
-    proto = pathlib.Path(__file__).resolve().parents[1] / "control" / "proto" / "control.proto"
+    proto = (pathlib.Path(__file__).resolve().parents[2]
+             / "enterprise" / "control" / "proto" / "control.proto")
     text = proto.read_text(encoding="utf-8")
     assert "service ControlPlane" in text
     # every contract message name appears in the frozen .proto

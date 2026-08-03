@@ -15,7 +15,7 @@ for the component view.
 ```
 Fabric (S3 client) --> nginx LB (TLS) --> agent fleet (private subnet)
                           ^                    |
-   control/lb_renderer ---+   register/heartbeat/drain, GET /agents
+   enterprise/control/lb_renderer ---+   register/heartbeat/drain, GET /agents
         (polls GET /agents)         |
                                  Manager (control only, ENABLE_GATEWAY=0)
 
@@ -26,7 +26,7 @@ materializer worker --> shared object store --> agents serve from the store
 
 Run the Manager control-only so nothing is served through the built-in gateway:
 
-- `ENABLE_GATEWAY=0` (default). Start with `python manager.py` (or `Manager.ps1` /
+- `ENABLE_GATEWAY=0` (default). Start with `python -m enterprise.manager` (or `Manager.ps1` /
   `Manager.sh`).
 - It exposes `GET /agents` (`{"agents": [...], "dead": [...]}`), which the renderer
   consumes. Keep the control port on a private/control network, not public.
@@ -59,7 +59,7 @@ checklist for the C++ SigV4 caveat.
 
 ## 4. Renderer (co-located with nginx)
 
-Run [control/lb_renderer.py](../control/lb_renderer.py) as a service. It polls
+Run [enterprise/control/lb_renderer.py](../enterprise/control/lb_renderer.py) as a service. It polls
 `GET /agents`, keeps agents that are alive and answer `/readyz` 200, renders the
 `upstream`, and reloads nginx on change (validating with `nginx -t` first).
 
@@ -70,7 +70,7 @@ Description=FSP nginx upstream renderer
 After=network-online.target nginx.service
 
 [Service]
-ExecStart=/usr/bin/python3 -m control.lb_renderer \
+ExecStart=/usr/bin/python3 -m enterprise.control.lb_renderer \
   --manager-url http://manager:9200 \
   --out /etc/nginx/conf.d/fsp_upstream.conf \
   --nginx-test-cmd "nginx -t" --reload-cmd "nginx -s reload" \

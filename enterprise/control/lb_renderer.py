@@ -13,7 +13,7 @@ the authority on which backends are in rotation.
 
 Run it as a small sidecar next to nginx:
 
-    python -m control.lb_renderer --manager-url http://manager:9200 \\
+    python -m enterprise.control.lb_renderer --manager-url http://manager:9200 \\
         --out /etc/nginx/conf.d/fsp_upstream.conf \\
         --nginx-test-cmd "nginx -t" --reload-cmd "nginx -s reload"
 """

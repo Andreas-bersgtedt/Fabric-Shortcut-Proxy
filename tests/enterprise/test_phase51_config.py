@@ -13,8 +13,8 @@ from fastapi import FastAPI
 
 import config
 from configbuilder.router import router as cb_router
-from control.admin import create_admin_router
-from control.registry import Registry
+from enterprise.control.admin import create_admin_router
+from enterprise.control.registry import Registry
 
 
 # ---------------------------------------------------------------------------

@@ -205,6 +205,30 @@ def test_validate_rejects_duplicate_table_names():
     assert not errs and "tables" in clean
 
 
+def test_validate_rejects_table_on_undefined_connection_in_same_apply():
+    # The config-builder "Apply" rewrites tables + connections together. A table
+    # pointing at a source that is NOT in that connections[] would pass here but
+    # fail the stricter startup validator, bricking the Manager — reject it early.
+    _, errors = config.validate_setting_updates({
+        "tables": [
+            {"name": "SO_Header", "source_table": "dbo.SO_Header",
+             "key_column": "id", "connection": "SyntheticData"},
+        ],
+        "connections": [{"id": "SalesLT", "db_url": "mssql+aioodbc://h/db"}],
+    })
+    assert errors and any("SyntheticData" in e and "not defined" in e for e in errors)
+
+    # The same table validates when its source IS in the connections[] payload.
+    clean, errs = config.validate_setting_updates({
+        "tables": [
+            {"name": "SO_Header", "source_table": "dbo.SO_Header",
+             "key_column": "id", "connection": "SyntheticData"},
+        ],
+        "connections": [{"id": "SyntheticData", "db_url": "mssql+aioodbc://h/db"}],
+    })
+    assert not errs and "tables" in clean
+
+
 def test_named_connection_env_override(monkeypatch):
     # DB_URL_<ID> overrides the file's db_url so secrets can stay out of config.
     monkeypatch.setenv("DB_URL_WAREHOUSE_PG", "postgresql+asyncpg://envhost/db")

@@ -935,6 +935,28 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
             errors.append(f"{k}: must be one of {choices} (got {coerced!r})")
             continue
         clean[k] = coerced
+
+    # Cross-check: when a save rewrites BOTH tables and the connections registry
+    # (the config-builder "Apply" path), every table must reference a connection
+    # that write leaves defined. Otherwise the stricter startup validator rejects
+    # the persisted config and the Manager/Agent refuses to boot. A tables-only or
+    # connections-only save is left alone (the missing half is defined elsewhere).
+    if isinstance(clean.get("tables"), list) and isinstance(clean.get("connections"), list):
+        known = {"default"} | {
+            str((e or {}).get("id", "")).strip()
+            for e in clean["connections"] if isinstance(e, dict)
+        }
+        for t in clean["tables"]:
+            if not isinstance(t, dict):
+                continue
+            cid = str(t.get("connection") or t.get("connection_id") or "default").strip() or "default"
+            if cid not in known:
+                label = str(t.get("name") or t.get("source_table") or "?")
+                errors.append(
+                    f"table {label!r}: connection {cid!r} is not defined "
+                    f"(known: {sorted(known)}) — save its source in the same apply, "
+                    f"or remove the table"
+                )
     return clean, errors
 
 

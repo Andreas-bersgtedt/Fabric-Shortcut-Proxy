@@ -5,6 +5,23 @@ All notable changes to the Fabric Shortcut Proxy are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Split into two distributions.** The single-node core continues to ship as
+  `fabric-shortcut-proxy` (Lite); the scale-out cluster code moves into a new
+  `enterprise/` package published as `fabric-shortcut-proxy-enterprise`, pinned to
+  the matching core version. The Manager control plane, agent link, retention GC,
+  and the external-LB renderer now live in the enterprise package. A Lite-only
+  install runs the standalone proxy unchanged; the cluster hooks in `main.py` import
+  the enterprise package lazily and report a clear install hint when it is absent.
+  - Lite: `pip install fabric-shortcut-proxy`, then `python main.py`.
+  - Cluster: install both (`pip install -e . -e ./enterprise` for a dev checkout),
+    then `python -m enterprise.manager`.
+  - CI splits into a Lite suite (core only, enterprise excluded) and an Enterprise
+    suite; a new import-contract test fails if the Lite core imports the enterprise
+    surface.
+
 ## [2.0.0]: 2026-07-30
 
 Major release. Headlined by the **secured storage proxy**: the same S3 front door

@@ -440,20 +440,20 @@ Each phase is shippable and reversible; the default stays the known-good path.
 
 - **Phase 0, Seams (refactor, no behavior change).**  ✅ **DONE**
   Carve the codebase into `runtime/` (S3 router, generator, cache, artifact-store
-  interface) and `control/` (config ownership, registry, snapshot lifecycle) with
+  interface) and `enterprise/control/` (config ownership, registry, snapshot lifecycle) with
   the artifact store behind an interface (local-dir impl first). Freeze the
   Manager↔Agent `.proto`.
   - **Delivered:**
     - `runtime/` package + `runtime/artifact_store.py`: `ArtifactStore` interface
       with `LocalDirStore` (atomic temp-file+rename, path-traversal-safe) and
       `MemoryStore`, a `build_store` factory, and a process-default singleton.
-    - `control/` package + `control/contract.py`: the frozen contract as
+    - `enterprise/control/` package + `enterprise/control/contract.py`: the frozen contract as
       transport-neutral dataclasses + dict/JSON codec (usable now over REST or
-      protobuf later), and **`control/proto/control.proto`**: the frozen gRPC
+      protobuf later), and **`enterprise/control/proto/control.proto`**: the frozen gRPC
       form, mirrored 1:1.
     - `config.py`: `ARTIFACT_STORE_BACKEND` / `ARTIFACT_STORE_DIR` settings
       (+ validation, catalog category "Cluster (scale)").
-    - Tests: `tests/test_artifact_store.py`, `tests/test_control_contract.py`.
+    - Tests: `tests/test_artifact_store.py`, `tests/enterprise/test_control_contract.py`.
   - **Deliberately deferred (risk):** *physically relocating* existing modules
     (`s3`, `parquet`, `cache`) into `runtime/` is NOT done, a big-bang package
     move would churn every import and risk the green suite. The seam is enforced
@@ -598,7 +598,7 @@ Each phase is shippable and reversible; the default stays the known-good path.
     read endpoint (v1 standby serves on its own ports); orphaned-child cleanup on a
     hard primary crash; metadata GC; durable registry snapshot for instant warm view.
   - *Exit:* ✅ **230 tests green** (219 + 11 in
-    [tests/test_phase5_ha.py](../tests/test_phase5_ha.py)). Live-verified: **rolling
+    [tests/enterprise/test_phase5_ha.py](../tests/enterprise/test_phase5_ha.py)). Live-verified: **rolling
     restart** kept the gateway at **30/30** reads while both Agents recycled (new
     pids); **retention GC** pruned an orphan (9→8) and kept the 8 live splits
     (dry-run first); **Manager failover**: a standby stayed passive

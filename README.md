@@ -226,21 +226,23 @@ bash ./Manager.sh --skip-install
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# 2. Install dependencies (editable install uses pyproject.toml)
+# 2a. Lite (single-node proxy): the Fabric-facing S3 endpoint only
 pip install -e .
-# For pyiceberg validation + SigV4 auth tests:
-pip install -e ".[dev]"
+python main.py
+#     Data plane (Fabric endpoint): http://0.0.0.0:9000
 
-# 3. Run Manager + Agent (recommended)
+# 2b. Enterprise (Manager + Agent cluster): adds the control plane.
+#     Install both in one command so the pinned core version resolves locally.
+pip install -e . -e ./enterprise
 python -m enterprise.manager
-# Agent data plane (Fabric endpoint):  http://0.0.0.0:9000
-# Manager control plane:               http://127.0.0.1:9200
+#     Data plane (Fabric endpoint): http://0.0.0.0:9000
+#     Manager control plane:        http://127.0.0.1:9200
 
-# Optional standalone Agent mode:
-# python main.py
-
-# 4. Run tests
-pytest tests/ -v
+# 3. Tests
+pip install -e ".[dev]"                       # Lite test deps (httpx, pyiceberg, botocore)
+pytest tests/ --ignore=tests/enterprise -v    # Lite suite
+pip install -e . -e ./enterprise
+pytest tests/enterprise -v                    # Enterprise suite
 ```
 
 ## C++ serving Agent (Windows + Linux)

@@ -56,7 +56,7 @@ storage backend. Both share the same SigV4 auth + audit seam.
 flowchart TB
   subgraph Entry["Entrypoints"]
     MAIN["main.py<br/>Agent app + auth/trace middleware + TLS"]
-    MGR["manager.py<br/>Manager control-plane app"]
+    MGR["enterprise/manager.py<br/>Manager control-plane app"]
   end
 
   subgraph Front["S3 front door: s3/"]
@@ -91,7 +91,7 @@ flowchart TB
     LRU["cache/lru_cache.py"]
   end
 
-  subgraph Ctl["control/: Manager/Agent plane"]
+  subgraph Ctl["enterprise/control/: Manager/Agent plane"]
     REG["registry.py"]
     SUP["supervisor.py"]
     GW["gateway.py"]
@@ -452,14 +452,14 @@ JSON files, it lives in the encrypted credential store.
 
 ## 11. Manager / Agent control plane (fleet)
 
-Stateless Agents behind a Manager. Grounded in [enterprise/control/](../control), `registry.py`, `supervisor.py`, `gateway.py`, `lease.py`, `admin.py`,
+Stateless Agents behind a Manager. Grounded in [enterprise/control/](../enterprise/control), `registry.py`, `supervisor.py`, `gateway.py`, `lease.py`, `admin.py`,
 `contract.py`, and [enterprise/agent_link.py](../enterprise/agent_link.py).
 
 ```mermaid
 flowchart TB
   Fabric[Fabric / S3 clients] --> GW
 
-  subgraph MGR["Manager (manager.py + enterprise.control.manager_app)"]
+  subgraph MGR["Manager (enterprise/manager.py + enterprise.control.manager_app)"]
     GW["gateway.Gateway<br/>round-robin pick() over ready Agents"]
     REG["registry.Registry<br/>register / heartbeat / dead detection"]
     SUP["supervisor.AgentSupervisor<br/>spawn / restart / crash-loop guard + RSS"]
@@ -492,9 +492,9 @@ flowchart TB
 ```mermaid
 sequenceDiagram
   autonumber
-  participant AG as Agent (runtime.agent_link)
-  participant MG as Manager (control.server / transport)
-  participant RG as control.registry.Registry
+  participant AG as Agent (enterprise.agent_link)
+  participant MG as Manager (enterprise.control.server / transport)
+  participant RG as enterprise.control.registry.Registry
 
   AG->>MG: RegisterRequest(agent_id, host, port, os, version)
   MG->>RG: register()
@@ -511,7 +511,7 @@ sequenceDiagram
 
 Message shapes are transport-neutral dataclasses in
 [enterprise/control/contract.py](../enterprise/control/contract.py) with a dict/JSON codec, mirrored by
-`control/proto/control.proto`.
+`enterprise/control/proto/control.proto`.
 
 ---
 

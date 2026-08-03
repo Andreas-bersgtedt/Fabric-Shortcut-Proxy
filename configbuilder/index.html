@@ -547,7 +547,8 @@ const state = {
   expandedGroups: new Set(), // connection ids whose table group is expanded in the Tables tab
   storedCreds: new Set(),    // connection ids with an encrypted credential in the Manager store
   credBackend: "",           // encryption backend the Manager store is using
-  credAvailable: false       // whether the Manager can encrypt/persist credentials
+  credAvailable: false,      // whether the Manager can encrypt/persist credentials
+  showHiddenPrimary: false   // reveal the empty default card even when auto-hidden
 };
 
 // Composite key so same-named tables from different sources never collide.
@@ -689,8 +690,13 @@ function renameActive(newId){
 }
 function renderConnList(){
   const wrap = $("connList"); wrap.innerHTML = "";
+  const hasNamed = [...state.connections.keys()].some(id => id !== "default");
+  let hiddenPrimary = false;
   for(const c of state.connections.values()){
     const n = [...state.selected.values()].filter(s=>(s.connection||"default")===c.id).length;
+    // Hide the always-present primary (default) when it carries no tables and at
+    // least one named source exists, so it does not clutter multi-source setups.
+    if(c.id === "default" && n === 0 && hasNamed && !state.showHiddenPrimary){ hiddenPrimary = true; continue; }
     const row = document.createElement("div");
     row.className = "connrow" + (c.id === state.activeConnId ? " active" : "");
     const left = document.createElement("div");
@@ -722,6 +728,15 @@ function renderConnList(){
     row.append(left, acts);
     row.onclick = ()=> selectConn(c.id);
     wrap.appendChild(row);
+  }
+  if(hiddenPrimary){
+    const note = document.createElement("div");
+    note.className = "hint";
+    note.style.marginTop = "6px";
+    note.innerHTML = 'Primary (<code>default</code>) connection is empty and hidden. <a href="#" id="showPrimaryLink">Show</a>';
+    wrap.appendChild(note);
+    const link = note.querySelector("#showPrimaryLink");
+    if(link) link.onclick = (e)=>{ e.preventDefault(); state.showHiddenPrimary = true; renderConnList(); };
   }
 }
 

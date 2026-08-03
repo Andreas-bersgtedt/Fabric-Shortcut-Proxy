@@ -44,6 +44,19 @@ def _request_shutdown() -> None:
         log.info("graceful_shutdown_requested")
 
 
+def _begin_drain() -> None:
+    """Drain: flip /readyz to 503 so an external LB deregisters this backend, then
+    exit after AGENT_DRAIN_GRACE_SECONDS so in-flight requests can finish."""
+    from runtime.drain import set_draining
+    set_draining(True)
+    grace = max(0.0, config.AGENT_DRAIN_GRACE_SECONDS)
+    log.info("drain_started", grace_seconds=grace)
+    try:
+        asyncio.get_event_loop().call_later(grace, _request_shutdown)
+    except RuntimeError:
+        _request_shutdown()
+
+
 def _source_connect_hint(exc: Exception) -> str:
     """A concise, credential-redacted message when a source DB can't be reached at startup."""
     conns: dict[str, str] = {}
@@ -374,7 +387,7 @@ async def lifespan(app: FastAPI):
     app.state.agent_link = None
     if config.MANAGER_URL:
         from runtime.agent_link import AgentLink
-        link = AgentLink(on_drain=_request_shutdown)
+        link = AgentLink(on_drain=_begin_drain)
         await link.start()
         app.state.agent_link = link
 

@@ -205,6 +205,10 @@ AGENT_RESTART_BACKOFF_SECONDS: float = float(_get_int("AGENT_RESTART_BACKOFF", "
 # Manager: crash-loop guard — stop respawning after this many restarts
 AGENT_MAX_RAPID_RESTARTS: int = _get_int("AGENT_MAX_RAPID_RESTARTS", "agent_max_rapid_restarts", 5)
 
+# Agent: on drain, flip /readyz to 503 then wait this long before exiting so an
+# external load balancer can deregister the backend and in-flight requests finish.
+AGENT_DRAIN_GRACE_SECONDS: float = float(_get_int("AGENT_DRAIN_GRACE_SECONDS", "agent_drain_grace_seconds", 15))
+
 # ---------------------------------------------------------------------------
 # High Availability (Phase 5)
 # ---------------------------------------------------------------------------

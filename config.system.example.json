@@ -28,6 +28,7 @@
     "control_host": "127.0.0.1",
     "control_port": 9200,
     "heartbeat_ms": 5000,
+    "agent_drain_grace_seconds": 15,
     "heartbeat_miss_limit": 3,
     "agent_restart_backoff_seconds": 5,
     "agent_max_rapid_restarts": 5,

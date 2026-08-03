@@ -41,6 +41,7 @@ from system_config import (
     # Control Plane
     MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT,
     HEARTBEAT_MS, HEARTBEAT_MISS_LIMIT, AGENT_RESTART_BACKOFF_SECONDS, AGENT_MAX_RAPID_RESTARTS,
+    AGENT_DRAIN_GRACE_SECONDS,
     # HA
     MANAGER_HA, LEADER_LEASE_TTL_MS, LEADER_LEASE_RENEW_MS,
     RETENTION_GC, RETENTION_GC_INTERVAL_SECONDS, ROLLING_RESTART_HEALTH_TIMEOUT,
@@ -392,6 +393,8 @@ def validate_config() -> None:
         problems.append(f"CONTROL_PORT must be in 1..65535 (got {CONTROL_PORT}).")
     if HEARTBEAT_MS <= 0:
         problems.append(f"HEARTBEAT_MS must be > 0 (got {HEARTBEAT_MS}).")
+    if AGENT_DRAIN_GRACE_SECONDS < 0:
+        problems.append(f"AGENT_DRAIN_GRACE_SECONDS must be >= 0 (got {AGENT_DRAIN_GRACE_SECONDS}).")
     if HEARTBEAT_MISS_LIMIT < 1:
         problems.append(f"HEARTBEAT_MISS_LIMIT must be >= 1 (got {HEARTBEAT_MISS_LIMIT}).")
     if AGENT_RESTART_BACKOFF_SECONDS < 0:
@@ -563,6 +566,7 @@ SETTINGS_META: dict[str, dict] = {
     "control_host": {"cat": "Cluster (scale)", "help": "Manager: control-plane REST bind address."},
     "control_port": {"cat": "Cluster (scale)", "help": "Manager: control-plane REST port."},
     "heartbeat_ms": {"cat": "Cluster (scale)", "help": "Agent heartbeat interval (ms)."},
+    "agent_drain_grace_seconds": {"cat": "Cluster (scale)", "help": "Agent: on drain, serve /readyz 503 then wait this many seconds before exiting so a load balancer can deregister the backend and in-flight requests finish."},
     "heartbeat_miss_limit": {"cat": "Cluster (scale)", "help": "Manager marks an Agent dead after this many missed heartbeats."},
     "agent_restart_backoff": {"cat": "Cluster (scale)", "help": "Manager: delay before respawning a crashed Agent (seconds)."},
     "agent_max_rapid_restarts": {"cat": "Cluster (scale)", "help": "Manager: crash-loop guard — stop respawning after this many restarts in the window."},
@@ -741,6 +745,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "control_host": "config.system.json",
     "control_port": "config.system.json",
     "heartbeat_ms": "config.system.json",
+    "agent_drain_grace_seconds": "config.system.json",
     "heartbeat_miss_limit": "config.system.json",
     "agent_restart_backoff_seconds": "config.system.json",
     "agent_max_rapid_restarts": "config.system.json",

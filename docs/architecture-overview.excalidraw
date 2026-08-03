@@ -240,5 +240,6 @@
       "text": "manage", "fontSize": 13, "fontFamily": 1, "strokeColor": "#000000", "backgroundColor": "transparent", "textAlign": "left", "verticalAlign": "top"
     }
   ],
-  "appState": {"viewBackgroundColor": "#ffffff", "gridSize": null}
+  "appState": {"viewBackgroundColor": "#ffffff", "gridSize": null},
+  "files": {}
 }

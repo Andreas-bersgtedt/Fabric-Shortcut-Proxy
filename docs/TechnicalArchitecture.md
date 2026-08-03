@@ -125,7 +125,7 @@ flowchart TB
 
 Referenced: [s3/router.py](../s3/router.py), [security/access_keys.py](../security/access_keys.py),
 [iceberg/state_store.py](../iceberg/state_store.py), [storage/mounts.py](../storage/mounts.py),
-[control/registry.py](../control/registry.py), [config.py](../config.py).
+[enterprise/control/registry.py](../enterprise/control/registry.py), [config.py](../config.py).
 
 ---
 
@@ -452,14 +452,14 @@ JSON files, it lives in the encrypted credential store.
 
 ## 11. Manager / Agent control plane (fleet)
 
-Stateless Agents behind a Manager. Grounded in [control/](../control), `registry.py`, `supervisor.py`, `gateway.py`, `lease.py`, `admin.py`,
-`contract.py`, and [runtime/agent_link.py](../runtime/agent_link.py).
+Stateless Agents behind a Manager. Grounded in [enterprise/control/](../control), `registry.py`, `supervisor.py`, `gateway.py`, `lease.py`, `admin.py`,
+`contract.py`, and [enterprise/agent_link.py](../enterprise/agent_link.py).
 
 ```mermaid
 flowchart TB
   Fabric[Fabric / S3 clients] --> GW
 
-  subgraph MGR["Manager (manager.py + control.manager_app)"]
+  subgraph MGR["Manager (manager.py + enterprise.control.manager_app)"]
     GW["gateway.Gateway<br/>round-robin pick() over ready Agents"]
     REG["registry.Registry<br/>register / heartbeat / dead detection"]
     SUP["supervisor.AgentSupervisor<br/>spawn / restart / crash-loop guard + RSS"]
@@ -510,7 +510,7 @@ sequenceDiagram
 ```
 
 Message shapes are transport-neutral dataclasses in
-[control/contract.py](../control/contract.py) with a dict/JSON codec, mirrored by
+[enterprise/control/contract.py](../enterprise/control/contract.py) with a dict/JSON codec, mirrored by
 `control/proto/control.proto`.
 
 ---

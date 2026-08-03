@@ -8,8 +8,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from control.monitor_agg import merge_summaries
-from control.monitor_proxy import create_monitor_proxy_router
+from enterprise.control.monitor_agg import merge_summaries
+from enterprise.control.monitor_proxy import create_monitor_proxy_router
 
 
 def _agent_summary(*, table="sales", requests=0, data_requests=0, cache_hit=None,

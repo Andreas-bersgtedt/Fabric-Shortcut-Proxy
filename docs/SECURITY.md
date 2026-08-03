@@ -68,7 +68,7 @@ $env:AWS_ACCESS_KEY_ID = "your_key"
 $env:AWS_SECRET_ACCESS_KEY = "your_secret"
 
 # Then start the application
-python manager.py
+python -m enterprise.manager
 ```
 
 #### Linux / macOS Bash
@@ -78,7 +78,7 @@ export DB_URL="mssql+aioodbc://user:pass@server:1433/db?TrustServerCertificate=y
 export AWS_ACCESS_KEY_ID="your_key"
 export AWS_SECRET_ACCESS_KEY="your_secret"
 
-python manager.py
+python -m enterprise.manager
 ```
 
 #### Using .env file (development only)
@@ -212,7 +212,7 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
 
 - Terminate HTTPS **at the proxy** by setting **both** `TLS_CERT_FILE` and
   `TLS_KEY_FILE` (wired into uvicorn for [main.py](../main.py) and
-  [manager.py](../manager.py)), or terminate at a fronting load balancer.
+  [enterprise/manager.py](../enterprise/manager.py)), or terminate at a fronting load balancer.
 - SigV4 read requests use `UNSIGNED-PAYLOAD`, so signatures give **no
   confidentiality** over plain HTTP, enable TLS before turning on auth. The proxy
   logs a startup warning when auth/mounts are on but TLS is not configured.

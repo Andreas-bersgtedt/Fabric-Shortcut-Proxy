@@ -1,7 +1,7 @@
 """Tier 2 nginx renderer: upstream rendering, backend selection, write/reload."""
 from __future__ import annotations
 
-from control import lb_renderer as lb
+from enterprise.control import lb_renderer as lb
 
 
 def test_render_upstream_two_backends():

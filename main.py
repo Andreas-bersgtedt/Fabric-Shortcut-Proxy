@@ -14,7 +14,7 @@ import contextlib
 import os
 import sys
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 import config
@@ -397,7 +397,13 @@ async def lifespan(app: FastAPI):
     # Standalone (empty MANAGER_URL) skips this entirely — behavior unchanged.
     app.state.agent_link = None
     if config.MANAGER_URL:
-        from runtime.agent_link import AgentLink
+        try:
+            from enterprise.agent_link import AgentLink
+        except ImportError as exc:
+            raise RuntimeError(
+                "MANAGER_URL is set but the enterprise package is not installed. "
+                "Install it with: pip install fabric-shortcut-proxy-enterprise"
+            ) from exc
         link = AgentLink(on_drain=_begin_drain)
         await link.start()
         app.state.agent_link = link
@@ -408,7 +414,13 @@ async def lifespan(app: FastAPI):
     app.state.gc_task = None
     if config.RETENTION_GC and config.AGENT_SHARD_INDEX == 0:
         from runtime.artifact_store import build_store
-        from runtime.retention import gc_orphaned_data
+        try:
+            from enterprise.retention import gc_orphaned_data
+        except ImportError as exc:
+            raise RuntimeError(
+                "RETENTION_GC is enabled but the enterprise package is not installed. "
+                "Install it with: pip install fabric-shortcut-proxy-enterprise"
+            ) from exc
         _gc_store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
         app.state.gc_store = _gc_store
 
@@ -705,7 +717,14 @@ async def admin_gc(dry_run: bool = False):
     the local-dir/shared store regardless of ARTIFACT_STORE_SERVING.
     """
     from runtime.artifact_store import build_store
-    from runtime.retention import gc_orphaned_data
+    try:
+        from enterprise.retention import gc_orphaned_data
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail="Retention GC requires the enterprise package "
+                   "(pip install fabric-shortcut-proxy-enterprise).",
+        ) from exc
 
     store = getattr(app.state, "gc_store", None) or build_store(
         config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)

@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from control.supervisor import AgentSupervisor
+from enterprise.control.supervisor import AgentSupervisor
 
 
 async def test_supervisor_restarts_crashing_child_then_trips_guard():

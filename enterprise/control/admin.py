@@ -10,8 +10,8 @@ from a browser, plus a small JSON admin API that backs the page (and is scriptab
     GET  /_manager/api/fleet                    -> fleet snapshot (JSON)
     POST /_manager/api/agents/{name}/{action}   -> start|stop|restart|drain
 
-start/stop/restart act through the existing :class:`~control.supervisor.AgentSupervisor`
-(process control); drain queues a :class:`~control.contract.Drain` command that the
+start/stop/restart act through the existing :class:`~enterprise.control.supervisor.AgentSupervisor`
+(process control); drain queues a :class:`~enterprise.control.contract.Drain` command that the
 Agent picks up on its next heartbeat (graceful recycle). Mutating actions are
 guarded by ``ADMIN_TOKEN`` when set (``X-Admin-Token`` header or ``?token=``);
 reads stay open. The whole router is gated behind ``ENABLE_ADMIN_UI`` and mounted
@@ -25,9 +25,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 import config
-from control.contract import ControlCommand, Drain
-from control.registry import Registry
-from control.supervisor import AgentSupervisor
+from enterprise.control.contract import ControlCommand, Drain
+from enterprise.control.registry import Registry
+from enterprise.control.supervisor import AgentSupervisor
 from observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -189,7 +189,7 @@ def create_admin_router(
     @router.post("/_manager/api/rolling-restart")
     async def rolling_restart_action(request: Request) -> dict:
         _check_token(request)
-        from control.rolling import rolling_restart
+        from enterprise.control.rolling import rolling_restart
         # Fire-and-forget: recycle Agents one at a time so >= N-1 keep serving.
         # The console's fleet poll shows them cycling.
         asyncio.create_task(rolling_restart(

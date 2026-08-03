@@ -18,18 +18,19 @@ dependencies = [
     "databricks-sqlalchemy>=2.0",  # Databricks SQLAlchemy dialect/plugin
     "structlog>=24.1",
     "tzdata>=2024.1",          # IANA tz data (Windows) — needed to read tz-aware timestamp values
-    "psutil>=5.9",             # Process memory/CPU monitoring
-    "httpx>=0.27",             # runtime HTTP client: gateway proxy, control plane, monitor scrape, heartbeat
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
 
 [project.optional-dependencies]
 # Reference-reader validation used by the CI "fabric-compat" job, plus botocore
-# for signing requests in the SigV4 auth tests.
+# for signing requests in the SigV4 auth tests, and httpx as the ASGI test client.
+# httpx is not a Lite runtime dependency; only the enterprise cluster code uses it
+# at runtime, so it ships with fabric-shortcut-proxy-enterprise (see enterprise/).
 dev = [
     "pyiceberg[pyarrow]>=0.6",
     "botocore>=1.34",
+    "httpx>=0.27",
 ]
 # Source-DB drivers loaded by SQLAlchemy via the URL scheme. Kept out of core so
 # SQLite/SQL Server installs stay lean; install the extra for the source you use.
@@ -46,21 +47,30 @@ s3proxy = ["boto3>=1.34"]
 azureblob = ["azure-storage-blob>=12.19", "azure-identity>=1.15"]
 
 [tool.setuptools]
-py-modules = ["main", "config", "manager"]
+# Lite (fabric-shortcut-proxy) ships the single-node core only. The scale-out
+# cluster code lives in the enterprise/ package and is published as the separate
+# fabric-shortcut-proxy-enterprise distribution (see enterprise/pyproject.toml).
+py-modules = ["main", "config", "system_config", "connection_config"]
 packages = [
     "cache",
-    "control",
+    "configbuilder",
     "db",
     "delta",
     "demo",
     "iceberg",
+    "monitor",
     "observability",
     "parquet",
     "planner",
     "runtime",
     "s3",
+    "security",
     "storage",
 ]
+
+[tool.setuptools.package-data]
+configbuilder = ["*.html"]
+monitor = ["*.html"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

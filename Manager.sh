@@ -372,7 +372,7 @@ elif [[ $ARG_REINSTALL -eq 1 || ! -f "$STAMP_FILE" ]]; then
   "$VENV_PYTHON" -m pip install --upgrade pip --quiet
 
   step "Installing project dependencies from pyproject.toml"
-  "$VENV_PYTHON" -m pip install -e . --quiet
+  "$VENV_PYTHON" -m pip install -e . -e ./enterprise --quiet
 
   : > "$STAMP_FILE"
   step "Dependencies installed"
@@ -455,4 +455,4 @@ printf '    Source DB       : %s\n' "$db_url_masked"
 printf '    The Manager restarts any Agent automatically if it crashes.\n'
 printf '    Press Ctrl+C to stop (also stops the supervised Agents).\n\n'
 
-exec "$VENV_PYTHON" manager.py
+exec "$VENV_PYTHON" -m enterprise.manager

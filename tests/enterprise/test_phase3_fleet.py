@@ -11,9 +11,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
 import config
-from control.registry import Registry
-from control.contract import RegisterRequest
-from control.gateway import Gateway, create_gateway_router, _dial_host
+from enterprise.control.registry import Registry
+from enterprise.control.contract import RegisterRequest
+from enterprise.control.gateway import Gateway, create_gateway_router, _dial_host
 
 
 def _register(reg: Registry, agent_id: str, port: int, host: str = "0.0.0.0") -> None:
@@ -124,7 +124,7 @@ async def test_gateway_reserves_manager_namespace():
 # ---------------------------------------------------------------------------
 
 def test_build_supervisors_assigns_ports_and_shards(monkeypatch):
-    from control import manager_app
+    from enterprise.control import manager_app
     monkeypatch.setattr(config, "AGENT_COUNT", 3, raising=False)
     monkeypatch.setattr(config, "PORT", 9000, raising=False)
     sups = manager_app._build_supervisors()

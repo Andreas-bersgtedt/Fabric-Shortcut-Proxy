@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fabric-shortcut-proxy-enterprise"
+version = "2.0.0"
+description = "Scale-out (cluster) components for Fabric Shortcut Proxy: Manager control plane, agent link, retention GC, and the external-LB renderer."
+requires-python = ">=3.11"
+# Pinned to the exact Lite core it was built against. The enterprise wheel carries
+# none of the core itself; it imports config, iceberg, runtime.artifact_store,
+# observability, etc. from the installed fabric-shortcut-proxy package.
+dependencies = [
+    "fabric-shortcut-proxy==2.0.0",
+    "httpx>=0.27",             # gateway proxy, control client, monitor scrape, heartbeat
+    "psutil>=5.9",             # AgentSupervisor process memory/CPU monitoring
+]
+
+# Build the enterprise package from this directory: package-dir maps the import
+# package `enterprise` to `.` (this folder), so `control` becomes enterprise.control
+# and manager.py/agent_link.py/retention.py become enterprise.manager/agent_link/retention.
+[tool.setuptools]
+packages = ["enterprise", "enterprise.control"]
+package-dir = { "enterprise" = "." }
+
+[tool.setuptools.package-data]
+"enterprise.control" = ["proto/*.proto"]

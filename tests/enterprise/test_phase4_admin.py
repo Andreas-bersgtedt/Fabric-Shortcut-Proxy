@@ -9,9 +9,9 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 import httpx
 from fastapi import FastAPI
 
-from control.admin import create_admin_router, fleet_snapshot
-from control.contract import RegisterRequest
-from control.registry import Registry
+from enterprise.control.admin import create_admin_router, fleet_snapshot
+from enterprise.control.contract import RegisterRequest
+from enterprise.control.registry import Registry
 
 
 class FakeSupervisor:

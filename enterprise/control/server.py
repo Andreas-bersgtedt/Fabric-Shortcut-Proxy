@@ -1,5 +1,5 @@
 """
-ControlService — the Manager's :class:`~control.transport.ControlServer` impl.
+ControlService — the Manager's :class:`~enterprise.control.transport.ControlServer` impl.
 
 Phase 1 scope: Agent lifecycle only (register / heartbeat / assignment). Snapshot
 distribution and the materialization work‑queue are stubs here — they light up in
@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from typing import Callable
 
-from control.contract import (
+from enterprise.control.contract import (
     RegisterRequest, RegisterResponse, HeartbeatRequest, ControlCommand,
     Assignment, SnapshotManifest, TaskResult, Ack,
 )
-from control.registry import Registry
+from enterprise.control.registry import Registry
 from observability.logging import get_logger
 
 log = get_logger(__name__)

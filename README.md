@@ -79,7 +79,11 @@ Enable it in the config-builder **Storage** tab, or set `ENABLE_STORAGE_PROXY=1`
 ```
 s3emulator/
 ├── main.py                  FastAPI app + lifespan + auth middleware (SigV4 multi-key + mount enforcement) + TLS
-├── manager.py               Manager entrypoint (control plane + local Agent supervision)
+├── enterprise/              Scale-out cluster package (fabric-shortcut-proxy-enterprise wheel)
+│   ├── manager.py               Manager entrypoint (control plane + local Agent supervision)
+│   ├── agent_link.py            Agent register/heartbeat/drain link to the Manager
+│   ├── retention.py             Retention GC (prunes orphaned Parquet splits)
+│   └── control/                 Manager control plane: registry, gateway, LB renderer, HA
 ├── config.py                All tunables (env / config.json / defaults) + validation
 ├── config.example.json      Template for the optional config.json
 ├── Manager.ps1              Bootstrap: venv + deps + launch Manager/Agent cluster
@@ -228,7 +232,7 @@ pip install -e .
 pip install -e ".[dev]"
 
 # 3. Run Manager + Agent (recommended)
-python manager.py
+python -m enterprise.manager
 # Agent data plane (Fabric endpoint):  http://0.0.0.0:9000
 # Manager control plane:               http://127.0.0.1:9200
 

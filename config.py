@@ -40,6 +40,7 @@ from system_config import (
     AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
     # Control Plane
     MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT,
+    AGENT_ADVERTISE_HOST,
     HEARTBEAT_MS, HEARTBEAT_MISS_LIMIT, AGENT_RESTART_BACKOFF_SECONDS, AGENT_MAX_RAPID_RESTARTS,
     AGENT_DRAIN_GRACE_SECONDS,
     # HA
@@ -563,6 +564,7 @@ SETTINGS_META: dict[str, dict] = {
     "publish_serving_image": {"cat": "Cluster (scale)", "help": "Publish a complete servable image (data + metadata) to the store at startup."},
     "manager_url": {"cat": "Cluster (scale)", "help": "Agent: Manager control URL to register/heartbeat (blank = standalone, no cluster)."},
     "agent_id": {"cat": "Cluster (scale)", "help": "Agent: stable id (blank = auto from host:port)."},
+    "agent_advertise_host": {"cat": "Cluster (scale)", "help": "Agent: routable host/IP or DNS advertised to the Manager so an external LB/gateway can dial it (blank = advertise the bind host). Set for a multi-host fleet."},
     "control_host": {"cat": "Cluster (scale)", "help": "Manager: control-plane REST bind address."},
     "control_port": {"cat": "Cluster (scale)", "help": "Manager: control-plane REST port."},
     "heartbeat_ms": {"cat": "Cluster (scale)", "help": "Agent heartbeat interval (ms)."},
@@ -742,6 +744,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "materialize_wait_seconds": "config.system.json",
     "manager_url": "config.system.json",
     "agent_id": "config.system.json",
+    "agent_advertise_host": "config.system.json",
     "control_host": "config.system.json",
     "control_port": "config.system.json",
     "heartbeat_ms": "config.system.json",

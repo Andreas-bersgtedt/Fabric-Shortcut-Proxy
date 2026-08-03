@@ -26,6 +26,7 @@
     "materialize_wait_seconds": 30,
     "manager_url": "",
     "agent_id": "",
+    "agent_advertise_host": "",
     "control_host": "127.0.0.1",
     "control_port": 9000,
     "heartbeat_ms": 5000,

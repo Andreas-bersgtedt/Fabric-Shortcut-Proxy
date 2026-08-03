@@ -140,6 +140,7 @@ class RegisterRequest:
     os: str                      # "windows" | "linux"
     version: str                 # build/git sha
     capacity_hint: int = 0       # cores/mem hint for scheduling
+    advertise_host: str = ""     # routable host the LB/gateway should dial (blank = host)
     contract_version: str = CONTRACT_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +152,7 @@ class RegisterRequest:
             agent_id=str(d["agent_id"]), host=str(d["host"]), port=int(d["port"]),
             os=str(d["os"]), version=str(d["version"]),
             capacity_hint=int(d.get("capacity_hint", 0)),
+            advertise_host=str(d.get("advertise_host", "")),
             contract_version=str(d.get("contract_version", CONTRACT_VERSION)),
         )
 

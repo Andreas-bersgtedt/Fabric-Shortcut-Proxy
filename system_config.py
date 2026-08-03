@@ -187,6 +187,11 @@ MANAGER_URL: str = _get_str("MANAGER_URL", "manager_url", "").strip()
 # Agent: stable id (blank = auto from host:port)
 AGENT_ID: str = _get_str("AGENT_ID", "agent_id", "").strip()
 
+# Agent: routable host/IP or DNS advertised to the Manager so the LB/gateway can
+# dial this agent. Blank advertises the bind HOST (reachable same-box only when
+# HOST is a wildcard like 0.0.0.0). Set to a real address for a multi-host fleet.
+AGENT_ADVERTISE_HOST: str = _get_str("AGENT_ADVERTISE_HOST", "agent_advertise_host", "").strip()
+
 # Manager: control-plane REST bind address
 CONTROL_HOST: str = _get_str("CONTROL_HOST", "control_host", "127.0.0.1")
 

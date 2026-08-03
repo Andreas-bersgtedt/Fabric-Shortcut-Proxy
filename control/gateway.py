@@ -43,7 +43,9 @@ def _is_reserved(path: str) -> bool:
 
 def _dial_host(host: str) -> str:
     """A wildcard bind address isn't dial-able; use loopback on a single box.
-    (Multi-node advertises a real host via AGENT_ADVERTISE_HOST — backlog.)"""
+    Agents on other hosts advertise a routable address (AGENT_ADVERTISE_HOST),
+    which the registry returns as ``host``, so this remap only hits the same-box
+    wildcard case."""
     return "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
 
 

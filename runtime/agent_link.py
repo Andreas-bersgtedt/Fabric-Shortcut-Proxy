@@ -101,6 +101,7 @@ class AgentLink:
             agent_id=self.agent_id, host=config.HOST, port=config.PORT,
             os=_os_name(), version=_APP_VERSION,
             capacity_hint=(0),
+            advertise_host=config.AGENT_ADVERTISE_HOST,
         )
         backoff = 0.5
         for attempt in range(1, retries + 1):

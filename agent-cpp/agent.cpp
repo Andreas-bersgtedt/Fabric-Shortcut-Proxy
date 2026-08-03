@@ -217,6 +217,7 @@ struct Config {
     std::string store_dir = getenv_str("STORE_DIR", getenv_str("ARTIFACT_STORE_DIR", "./.artifacts"));
     std::string bucket = getenv_str("S3_BUCKET", "fabric-iceberg-poc");
     std::string agent_id = getenv_str("AGENT_ID", "cpp-agent-1");
+    std::string advertise_host = getenv_str("AGENT_ADVERTISE_HOST", "");
     std::string manager_url = getenv_str("MANAGER_URL", "");
     int heartbeat_ms = parse_int_or(getenv_str("HEARTBEAT_MS", "2000"), 2000, 200, 600000);
     int socket_timeout_ms = parse_int_or(getenv_str("SOCKET_TIMEOUT_MS", "10000"), 10000, 1000, 60000);
@@ -757,7 +758,8 @@ static void control_loop() {
           << "linux"
 #endif
           << "\",\"version\":\"" << APP_VERSION
-          << "\",\"capacity_hint\":0,\"contract_version\":\"1.0\"}";
+          << "\",\"capacity_hint\":0,\"advertise_host\":\"" << CFG.advertise_host
+          << "\",\"contract_version\":\"1.0\"}";
 
         std::string rb;
         int st = http_post(host, port, "/control/register", j.str(), rb);

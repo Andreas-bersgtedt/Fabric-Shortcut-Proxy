@@ -36,6 +36,7 @@ from system_config import (
     ENABLE_CREDENTIAL_STORE, CREDENTIAL_STORE_PATH,
     # Artifact Store
     ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_SERVING, PUBLISH_SERVING_IMAGE,
+    NATIVE_MATERIALIZER,
     # Fleet
     AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
     # Control Plane
@@ -558,6 +559,7 @@ SETTINGS_META: dict[str, dict] = {
     "artifact_store_dir": {"cat": "Cluster (scale)", "help": "Root directory for the local artifact store."},
     "artifact_store_serving": {"cat": "Cluster (scale)", "help": "Serve materialized Parquet from the artifact store (durable, shareable; zero regeneration on restart)."},
     "publish_serving_image": {"cat": "Cluster (scale)", "help": "Publish a complete servable image (data + metadata) to the store at startup."},
+    "native_materializer": {"cat": "Cluster (scale)", "help": "Build the serving image with the native C++ publisher (agent-cpp/native) for supported tables; falls back to the Python publisher otherwise."},
     "manager_url": {"cat": "Cluster (scale)", "help": "Agent: Manager control URL to register/heartbeat (blank = standalone, no cluster)."},
     "agent_id": {"cat": "Cluster (scale)", "help": "Agent: stable id (blank = auto from host:port)."},
     "control_host": {"cat": "Cluster (scale)", "help": "Manager: control-plane REST bind address."},
@@ -730,6 +732,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "artifact_store_dir": "config.system.json",
     "artifact_store_serving": "config.system.json",
     "publish_serving_image": "config.system.json",
+    "native_materializer": "config.system.json",
     "agent_count": "config.system.json",
     "agent_shard_index": "config.system.json",
     "agent_shard_count": "config.system.json",

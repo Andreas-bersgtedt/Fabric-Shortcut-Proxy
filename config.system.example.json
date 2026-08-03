@@ -17,6 +17,7 @@
     "artifact_store_dir": "./artifacts",
     "artifact_store_serving": false,
     "publish_serving_image": false,
+    "native_materializer": false,
     "agent_count": 1,
     "agent_shard_index": 0,
     "agent_shard_count": 1,

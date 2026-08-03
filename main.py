@@ -367,7 +367,17 @@ async def lifespan(app: FastAPI):
         from runtime.artifact_store import build_store
         from runtime.serving_image import publish_serving_image
         _img_store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
-        await asyncio.get_event_loop().run_in_executor(None, publish_serving_image, _img_store)
+        _loop = asyncio.get_event_loop()
+        # Prefer the native C++ publisher when enabled; fall back to the Python
+        # publisher for any table it does not cover so the image is never partial.
+        _native_complete = False
+        if config.NATIVE_MATERIALIZER:
+            from runtime.native_materializer import materialize_serving_image
+            _nat = await _loop.run_in_executor(None, materialize_serving_image, _img_store)
+            _native_complete = _nat.get("complete", False)
+            log.info("native_materialize", complete=_native_complete, reason=_nat.get("reason"))
+        if not _native_complete:
+            await _loop.run_in_executor(None, publish_serving_image, _img_store)
 
     # Cluster mode (Phase 1): if a Manager is configured, register + heartbeat.
     # Standalone (empty MANAGER_URL) skips this entirely — behavior unchanged.
@@ -698,8 +708,16 @@ async def admin_publish_image():
     from runtime.serving_image import publish_serving_image
 
     store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
-    result = await asyncio.get_event_loop().run_in_executor(None, publish_serving_image, store)
-    return result
+    loop = asyncio.get_event_loop()
+    if config.NATIVE_MATERIALIZER:
+        from runtime.native_materializer import materialize_serving_image
+        native = await loop.run_in_executor(None, materialize_serving_image, store)
+        if native.get("complete"):
+            return {"mode": "native", **native}
+        result = await loop.run_in_executor(None, publish_serving_image, store)
+        return {"mode": "native+python_fallback", "native": native, **result}
+    result = await loop.run_in_executor(None, publish_serving_image, store)
+    return {"mode": "python", **result}
 
 
 if __name__ == "__main__":

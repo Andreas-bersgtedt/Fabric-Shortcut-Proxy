@@ -154,6 +154,10 @@ ARTIFACT_STORE_SERVING: bool = _get_bool("ARTIFACT_STORE_SERVING", "artifact_sto
 # Publish a complete serving image (data + metadata) to the store at startup
 PUBLISH_SERVING_IMAGE: bool = _get_bool("PUBLISH_SERVING_IMAGE", "publish_serving_image", False)
 
+# Produce the serving image with the native C++ publisher (agent-cpp/native)
+# instead of the in-process Python publisher, where the table is supported.
+NATIVE_MATERIALIZER: bool = _get_bool("NATIVE_MATERIALIZER", "native_materializer", False)
+
 # ---------------------------------------------------------------------------
 # Fleet / scale (Phase 3)
 # ---------------------------------------------------------------------------

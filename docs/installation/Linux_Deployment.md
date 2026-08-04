@@ -36,7 +36,7 @@ flowchart LR
   end
   SRC[(Source: SQL Server / PostgreSQL /<br/>Oracle / NAS / object store)]
 
-  SC -->|S3 + SigV4| OPDG -->|http(s) to :9000| PX -->|SQL pushdown / byte passthrough| SRC
+  SC -->|S3 + SigV4| OPDG -->|http or https to :9000| PX -->|SQL pushdown / byte passthrough| SRC
   MG -. supervises .- PX
 ```
 

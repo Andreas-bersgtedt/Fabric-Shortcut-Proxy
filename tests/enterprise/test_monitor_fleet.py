@@ -131,3 +131,28 @@ async def test_proxy_summary_with_no_agents(proxy_app):
         assert d["totals"]["tables"] == 0
         r2 = await c.post("/_monitor/api/reset")
         assert r2.status_code == 200 and r2.json()["reset_agents"] == 0
+
+
+async def test_proxy_logs_with_no_agents(proxy_app):
+    from observability.logbuffer import get_buffer
+
+    buf = get_buffer()
+    buf.clear()
+    buf.append("manager startup ready")
+    buf.append("gateway routed request table=Product")
+
+    transport = httpx.ASGITransport(app=proxy_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.get("/_monitor/api/logs")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["agents_total"] == 0
+        # Manager's own lines are tagged and returned.
+        assert all(ln.startswith("[manager] ") for ln in d["lines"])
+        assert any("gateway routed request" in ln for ln in d["lines"])
+
+        r = await c.get("/_monitor/api/logs", params={"q": "gateway"})
+        d = r.json()
+        assert d["returned"] == 1
+        assert "gateway" in d["lines"][0]
+    buf.clear()

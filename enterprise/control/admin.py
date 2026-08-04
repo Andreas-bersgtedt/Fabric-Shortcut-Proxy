@@ -303,6 +303,17 @@ _ADMIN_HTML = r"""<!doctype html>
   .warnrow td { background: rgba(239,68,68,.06); }
   .monitor-controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
   .monitor-controls label { color: #8a93a6; font-size: 12px; }
+  .logbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #232a3a; flex-wrap: wrap; }
+  .logbar .grow { flex: 1; min-width: 160px; }
+  .logbar input[type=text] { width: 100%; }
+  .logview { margin: 0; max-height: 440px; overflow: auto; padding: 10px 12px;
+     font: 12px/1.5 "Cascadia Code", Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+  .logview .ln { display: block; padding: 0 2px; border-radius: 2px; }
+  .logview .ln:hover { background: #131a29; }
+  .logview .ln.lvl-err { color: #fca5a5; }
+  .logview .ln.lvl-warn { color: #fcd34d; }
+  .logview mark { background: #f5a623; color: #000; border-radius: 2px; padding: 0 1px; }
+  .logmeta { color: #8a93a6; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -384,6 +395,17 @@ _ADMIN_HTML = r"""<!doctype html>
     <div class="panel">
       <div class="rq muted"><div>Table</div><div>Cache</div><div>Avg Fabric→SQL→Parquet lag</div><div>Avg total</div></div>
       <div id="recentBody"></div>
+    </div>
+
+    <h2>Fleet logs — last 1000 lines</h2>
+    <div class="panel">
+      <div class="logbar">
+        <span class="grow"><input type="text" id="logSearch" placeholder="Search logs (case-insensitive substring)…" autocomplete="off" spellcheck="false"/></span>
+        <label class="logmeta"><input type="checkbox" id="logTail" checked/> follow tail</label>
+        <button onclick="pollLogs()">Refresh</button>
+        <span class="logmeta" id="logMeta"></span>
+      </div>
+      <pre class="logview" id="logView"></pre>
     </div>
   </div>
 </main>
@@ -553,6 +575,7 @@ async function monitorRefresh(){
   }catch(e){
     console.error("Monitor error:", e);
   }
+  pollLogs();
 }
 
 function monitorRender(d){
@@ -622,6 +645,41 @@ function scheduleMonitor(){
   if($("auto").checked) monitorTimer = setInterval(monitorRefresh, parseInt($("interval").value));
 }
 $("interval").onchange = scheduleMonitor;
+
+// ====== LOG VIEWER ======
+function esc(s){ return s.replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function logLevel(line){
+  if(/\b(error|critical|exception|traceback|failed)\b/i.test(line)) return "lvl-err";
+  if(/\bwarn/i.test(line)) return "lvl-warn";
+  return "";
+}
+function highlight(escaped, q){
+  if(!q) return escaped;
+  const rq = q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  return escaped.replace(new RegExp("("+rq+")","ig"), "<mark>$1</mark>");
+}
+async function pollLogs(){
+  try{
+    const q = $("logSearch").value.trim();
+    const url = "/_monitor/api/logs?limit=1000" + (q ? "&q="+encodeURIComponent(q) : "");
+    const r = await fetch(url, {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const d = await r.json();
+    const view = $("logView");
+    const follow = $("logTail").checked;
+    view.innerHTML = (d.lines||[]).length
+      ? d.lines.map(ln => `<span class="ln ${logLevel(ln)}">${highlight(esc(ln), d.query)}</span>`).join("\n")
+      : `<span class="muted">No log lines captured yet.</span>`;
+    $("logMeta").textContent = d.query
+      ? `${d.returned} match${d.returned===1?"":"es"} · ${d.total} buffered`
+      : `${d.total} buffered`;
+    if(follow) view.scrollTop = view.scrollHeight;
+  }catch(e){
+    $("logMeta").textContent = "✗ "+e.message;
+  }
+}
+let logSearchTimer = null;
+$("logSearch").oninput = () => { clearTimeout(logSearchTimer); logSearchTimer = setTimeout(pollLogs, 250); };
 
 // ====== MEMORY TRENDS ======
 function toggleMemoryTrends() {

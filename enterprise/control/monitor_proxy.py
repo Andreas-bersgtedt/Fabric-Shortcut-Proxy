@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter
@@ -23,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
 from enterprise.control.monitor_agg import merge_summaries
+from observability.logbuffer import get_buffer
 from observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -94,5 +96,38 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
                 )
             n = sum(1 for r in results if r is True)
         return JSONResponse({"ok": True, "reset_agents": n})
+
+    @router.get("/api/logs")
+    async def logs(limit: int = 1000, q: str | None = None) -> JSONResponse:
+        """Fleet log tail: the Manager's own lines plus each live Agent's buffer.
+
+        Every line is tagged with its source (``[manager]`` / ``[agent <port>]``)
+        so the operator can tell which process emitted it. Read-only.
+        """
+        limit = max(1, min(limit, 1000))
+        query = (q or "").strip() or None
+        tagged: list[str] = [f"[manager] {ln}" for ln in get_buffer().tail(query=query)]
+
+        bases = _agent_base_urls(supervisors)
+        if bases:
+            path = "/_monitor/api/logs?limit=1000"
+            if query:
+                path += "&q=" + quote(query)
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                results = await asyncio.gather(*(_scrape(client, b, path) for b in bases))
+            for base, res in zip(bases, results):
+                if isinstance(res, dict):
+                    port = base.rsplit(":", 1)[-1]
+                    tagged.extend(f"[agent {port}] {ln}" for ln in res.get("lines", []))
+
+        tagged = tagged[-limit:]
+        return JSONResponse({
+            "lines": tagged,
+            "returned": len(tagged),
+            "total": len(tagged),
+            "capacity": 1000,
+            "query": query or "",
+            "agents_total": len(bases),
+        })
 
     return router

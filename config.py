@@ -698,14 +698,15 @@ def settings_catalog() -> list[dict]:
     items = []
     for reg in _SETTINGS_REGISTRY.values():
         meta = SETTINGS_META.get(reg["key"], {})
+        secret = bool(meta.get("secret", False))
         items.append({
             "key": reg["key"],
             "env": reg["env"],
             "type": reg["type"],
-            "default": reg["default"],
+            "default": "" if secret else reg["default"],
             "category": meta.get("cat", "Other"),
             "help": meta.get("help", ""),
-            "secret": bool(meta.get("secret", False)),
+            "secret": secret,
             "choices": meta.get("choices"),
             "live": reg["key"] in LIVE_SETTINGS,
         })
@@ -869,8 +870,10 @@ def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
         if secret and redact_secrets:
             value = "***set***" if (source != "default" and str(raw)) else ""
 
+        exposed_default = "" if secret and redact_secrets else default
+
         out.append({
-            "key": key, "env": env, "type": typ, "default": default,
+            "key": key, "env": env, "type": typ, "default": exposed_default,
             "value": value, "source": source,
             "category": meta.get("cat", "Other"),
             "help": meta.get("help", ""), "secret": secret,

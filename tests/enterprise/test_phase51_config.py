@@ -37,6 +37,11 @@ def test_effective_settings_redacts_secrets():
     by_key = {s["key"]: s for s in config.effective_settings()}
     assert by_key["db_url"]["secret"] is True
     assert by_key["db_url"]["value"] in ("", "***set***")   # never the real URL
+    assert by_key["db_url"]["default"] == ""
+
+    catalog = {s["key"]: s for s in config.settings_catalog()}
+    assert catalog["db_url"]["default"] == ""
+    assert catalog["secret_access_key"]["default"] == ""
 
 
 def test_validate_updates_coerces_and_rejects():

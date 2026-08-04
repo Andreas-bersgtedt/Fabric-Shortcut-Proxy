@@ -75,6 +75,20 @@ def test_write_config_updates_rejects_bad(monkeypatch, tmp_path):
         config.write_config_updates({"num_splits": "not-an-int"})
 
 
+def test_manager_auth_settings_persist_to_system(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    clean, errors = config.validate_setting_updates(
+        {"manager_auth_enabled": "true", "manager_auth_username": "ops", "manager_auth_password": "pw"})
+    assert not errors
+    assert clean == {"manager_auth_enabled": True, "manager_auth_username": "ops", "manager_auth_password": "pw"}
+
+    config.write_config_updates(clean)
+    system = json.loads((tmp_path / "config.system.json").read_text())["system"]
+    assert system["manager_auth_enabled"] is True
+    assert system["manager_auth_username"] == "ops"
+    assert system["manager_auth_password"] == "pw"
+
+
 # ---------------------------------------------------------------------------
 # config builder /_config API
 # ---------------------------------------------------------------------------

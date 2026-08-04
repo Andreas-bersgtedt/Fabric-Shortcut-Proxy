@@ -1376,8 +1376,9 @@ function renderSettings(){
         + s.choices.map(c=>`<option value="${c}">${c}</option>`).join("");
     } else {
       inp=document.createElement("input");
-      inp.type=(s.type==="int"||s.type==="float")?"number":"text";
-      inp.placeholder = s.secret ? "•••• (default hidden)" : ("default: "+String(s.default));
+      inp.type=s.secret?"password":((s.type==="int"||s.type==="float")?"number":"text");
+      inp.autocomplete = s.secret ? "new-password" : "off";
+      inp.placeholder = s.secret ? "•••• (leave blank to keep)" : ("default: "+String(s.default));
     }
     inp.dataset.key=s.key; inp.dataset.type=s.type; inp.dataset.default=String(s.default);
     inp.addEventListener("input", updatePreview); inp.addEventListener("change", updatePreview);

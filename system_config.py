@@ -250,3 +250,14 @@ ENABLE_ADMIN_UI: bool = _get_bool("ENABLE_ADMIN_UI", "enable_admin_ui", False)
 
 # Token required for mutating /_manager actions (X-Admin-Token header or ?token=)
 ADMIN_TOKEN: str = _get_str("ADMIN_TOKEN", "admin_token", "").strip()
+
+# ---------------------------------------------------------------------------
+# Manager auth (standalone HTTP Basic gate over the whole control-plane surface)
+# ---------------------------------------------------------------------------
+# When enabled with a non-empty password, the Manager port requires HTTP Basic
+# credentials for the operator surface (/_manager, /_config, /_monitor, /agents,
+# root). Machine + liveness endpoints (/control, /healthz, /readyz) stay open so
+# the fleet keeps registering and load balancers can probe.
+MANAGER_AUTH_ENABLED: bool = _get_bool("MANAGER_AUTH_ENABLED", "manager_auth_enabled", False)
+MANAGER_AUTH_USERNAME: str = _get_str("MANAGER_AUTH_USERNAME", "manager_auth_username", "admin").strip()
+MANAGER_AUTH_PASSWORD: str = _get_str("MANAGER_AUTH_PASSWORD", "manager_auth_password", "")

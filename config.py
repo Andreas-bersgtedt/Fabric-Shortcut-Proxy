@@ -49,6 +49,7 @@ from system_config import (
     RETENTION_GC, RETENTION_GC_INTERVAL_SECONDS, ROLLING_RESTART_HEALTH_TIMEOUT,
     # Admin
     ENABLE_ADMIN_UI, ADMIN_TOKEN,
+    MANAGER_AUTH_ENABLED, MANAGER_AUTH_USERNAME, MANAGER_AUTH_PASSWORD,
 )
 
 from connection_config import (
@@ -163,6 +164,11 @@ _register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
 _register("ENABLE_GATEWAY", "enable_gateway", "bool", ENABLE_GATEWAY)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
+
+# Manager auth (standalone HTTP Basic gate over the control-plane surface)
+_register("MANAGER_AUTH_ENABLED", "manager_auth_enabled", "bool", MANAGER_AUTH_ENABLED)
+_register("MANAGER_AUTH_USERNAME", "manager_auth_username", "str", MANAGER_AUTH_USERNAME)
+_register("MANAGER_AUTH_PASSWORD", "manager_auth_password", "str", MANAGER_AUTH_PASSWORD)
 
 # Register memory monitoring settings
 _register("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", "int", 800)
@@ -597,6 +603,9 @@ SETTINGS_META: dict[str, dict] = {
     "materialize_wait_seconds": {"cat": "Cluster (scale)", "help": "Non-owner Agent: max wait for a sharded split to appear in the store before generating it locally."},
     "enable_admin_ui": {"cat": "Cluster (scale)", "help": "Manager: serve the /_manager operator console (fleet monitor + start/stop/restart/drain)."},
     "admin_token": {"cat": "Cluster (scale)", "help": "Manager: token required for mutating /_manager actions (X-Admin-Token header or ?token=). Blank = no auth.", "secret": True},
+    "manager_auth_enabled": {"cat": "Cluster (scale)", "help": "Manager: require HTTP Basic auth on the whole control-plane surface (/_manager, /_config, /_monitor, /agents). /control + health probes stay open. Needs a password set. Restart to apply."},
+    "manager_auth_username": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic username (default 'admin'). Restart to apply."},
+    "manager_auth_password": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic password. Blank = auth off even when enabled. Restart to apply.", "secret": True},
     "manager_ha": {"cat": "Cluster (scale)", "help": "Manager HA: run a leader lease over the shared store; only the primary supervises Agents + serves the gateway."},
     "leader_lease_ttl_ms": {"cat": "Cluster (scale)", "help": "Leader lease TTL (ms): a standby takes over if the primary doesn't renew within this window."},
     "leader_lease_renew_ms": {"cat": "Cluster (scale)", "help": "Leader lease renew interval (ms); must be < TTL."},
@@ -779,6 +788,9 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "rolling_restart_health_timeout": "config.system.json",
     "enable_admin_ui": "config.system.json",
     "admin_token": "config.system.json",
+    "manager_auth_enabled": "config.system.json",
+    "manager_auth_username": "config.system.json",
+    "manager_auth_password": "config.system.json",
     # Connection settings → config.connection.json
     "db_url": "config.connection.json",
     "source_table": "config.connection.json",

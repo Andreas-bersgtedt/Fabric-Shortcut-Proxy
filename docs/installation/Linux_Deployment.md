@@ -4,11 +4,11 @@ A complete, copy‑paste installation baseline for running the Fabric Shortcut P
 **Linux**, from a bare VM to a working Microsoft Fabric shortcut. Written for **low‑to‑
 moderate IT skills**: every step has commands you can paste.
 
-> **Golden rule for every pattern in this guide:** Microsoft Fabric never talks to the
-> proxy directly. An **On‑Premises Data Gateway (OPDG)** always sits in front of the
-> Fabric Shortcut Proxy. The OPDG is the single, controlled bridge from OneLake to your
-> proxy — on a private network (recommended) or, for the public‑internet variant, to a
-> TLS‑fronted public endpoint.
+> **Golden rule:** for the **private** pattern (the recommended baseline), Microsoft
+> Fabric never talks to the proxy directly — an **On‑Premises Data Gateway (OPDG)** sits
+> in front as the controlled bridge from OneLake to your proxy. For the **public‑internet**
+> variant there is **no OPDG**: Fabric connects **directly** to the proxy's TLS‑protected
+> public FQDN (HTTPS + SigV4 + auth).
 
 **Companion docs:** [../CONFIGURATION.md](../CONFIGURATION.md) (all settings) ·
 [../SECURITY.md](../SECURITY.md) (auth/TLS/audit) ·
@@ -19,24 +19,27 @@ moderate IT skills**: every step has commands you can paste.
 
 ---
 
-## 1. Architecture choices (OPDG is mandatory)
+## 1. Architecture choices
 
-The proxy exposes an **S3‑compatible endpoint with AWS SigV4 auth**. Fabric reaches it
-through an **On‑Premises Data Gateway** in every supported topology:
+The proxy exposes an **S3‑compatible endpoint with AWS SigV4 auth**. How Fabric reaches it
+depends on the pattern: through an **On‑Premises Data Gateway (OPDG)** for the private
+baseline, or **directly** over HTTPS for the public‑internet variant.
 
 ```mermaid
 flowchart LR
   subgraph Fab[Microsoft Fabric / OneLake]
     SC[S3-compatible shortcut]
   end
-  OPDG[On-Premises Data Gateway<br/>Windows host in your network]
+  OPDG[On-Premises Data Gateway<br/>Windows host · private pattern only]
   subgraph Host[Linux host / VNet]
     PX[Fabric Shortcut Proxy<br/>S3 + SigV4 · agents :9000+]
     MG[Manager control plane :9200<br/>console + config API]
   end
   SRC[(Source: SQL Server / PostgreSQL /<br/>Oracle / NAS / object store)]
 
-  SC -->|S3 + SigV4| OPDG -->|http or https to :9000| PX -->|SQL pushdown / byte passthrough| SRC
+  SC -->|A private: S3 + SigV4| OPDG -->|http to :9000| PX
+  SC -->|B public: HTTPS + SigV4 direct to FQDN| PX
+  PX -->|SQL pushdown / byte passthrough| SRC
   MG -. supervises .- PX
 ```
 
@@ -44,14 +47,15 @@ Pick the connectivity pattern that matches your network:
 
 | Pattern | When | Fabric → proxy path | Public exposure |
 |---|---|---|---|
-| **A. Private (recommended)** | Proxy and OPDG share a LAN / VNet / VPC | OPDG dials the proxy's **private IP** `http://10.x.x.x:9000` | **None** — proxy has no public listener |
-| **B. Public internet (Linux)** | No private path between OPDG and proxy | OPDG dials a **public `https://` FQDN** terminated by nginx | 443 only, TLS + auth (see [SSL_Deployment.md](../../SSL_Deployment.md)) |
+| **A. Private (recommended)** | Fabric must reach a proxy that has no public exposure | **OPDG** dials the proxy's **private IP** `http://10.x.x.x:9000` | **None** — proxy has no public listener |
+| **B. Public internet (Linux)** | You want Fabric to reach the proxy directly, no gateway | Fabric connects **directly** to a **public `https://` FQDN** terminated by nginx — **no OPDG** | 443 only, TLS + auth (see [SSL_Deployment.md](../../SSL_Deployment.md)) |
 
 Both keep the source database credentials **inside the proxy** (credential mediation):
 Fabric only ever sees SigV4 keys, never your DB password. Pattern A is the default
-recommendation; Pattern B is documented in section 11 and defers to the SSL guide.
+recommendation and uses the OPDG; Pattern B (section 11) exposes a public TLS endpoint that
+Fabric connects to directly.
 
-> Background on the OPDG connectivity primitive:
+> OPDG background (Pattern A):
 > <https://learn.microsoft.com/fabric/onelake/create-on-premises-shortcut>
 
 ---
@@ -359,8 +363,8 @@ summary means the DB is reachable.
 
 ## 11. Public‑internet variant (Pattern B) — TLS via nginx
 
-Use this only when the OPDG cannot reach the proxy over a private path and must dial a
-public HTTPS endpoint. The full, tested procedure is in
+Use this when you want Fabric to reach the proxy **directly over the internet** rather than
+through a gateway. There is **no OPDG** in this pattern. The full, tested procedure is in
 **[../../SSL_Deployment.md](../../SSL_Deployment.md)**. In short:
 
 1. Bind the app to loopback (`HOST=127.0.0.1`, `CONTROL_HOST=127.0.0.1`) so `9000/9200`
@@ -369,31 +373,32 @@ public HTTPS endpoint. The full, tested procedure is in
    or an enterprise/public CA) — Fabric rejects self‑signed on the data plane.
 3. Front the S3 data plane on `443` (SigV4 preserved by passing `Host` + `Authorization`
    unchanged) and the console on `9443`, and turn on `MANAGER_AUTH_*`.
-4. Point the OPDG's shortcut at `https://<your-fqdn>` (section 12).
+4. Create the Fabric shortcut pointing **directly** at `https://<your-fqdn>` with the
+   **Data gateway** left as *None* (section 12).
 
 Follow [SSL_Deployment.md](../../SSL_Deployment.md) end‑to‑end for the cert commands,
 nginx vhosts, firewall rules, and zero‑downtime renewal.
 
 ---
 
-## 12. Create the OPDG and the Fabric shortcut
+## 12. Create the Fabric shortcut (with the OPDG for Pattern A)
 
-The OPDG runs on a **Windows** host that can reach the proxy (same LAN/VNet for Pattern A;
-any host with internet egress for Pattern B).
+**Pattern A** uses an OPDG on a **Windows** host that can reach the proxy on the same
+LAN/VNet. **Pattern B** uses **no gateway** — skip steps 1–2 and set *Data gateway* to *None*.
 
-1. **Install the gateway** on a Windows host and sign in with your Fabric/Power BI account:
-   download "On‑premises data gateway" (standard mode), install, and register it to your
-   tenant. Confirm it shows **online** in the Fabric admin → *Connections and gateways*.
-2. **Open the proxy port to the gateway host** (Pattern A): allow the OPDG host's IP to
+1. **(Pattern A) Install the gateway** on a Windows host and sign in with your Fabric/Power
+   BI account: download "On‑premises data gateway" (standard mode), install, and register it
+   to your tenant. Confirm it shows **online** in Fabric admin → *Connections and gateways*.
+2. **(Pattern A) Open the proxy port to the gateway host**: allow the OPDG host's IP to
    reach `tcp/9000` on the Linux host; keep `9200` closed to everyone but admins.
 3. **Create the shortcut** in a Fabric Lakehouse:
    - *New shortcut → Amazon S3 compatible*.
    - **URL**: `http://<proxy-private-ip>:9000` (Pattern A) or `https://<your-fqdn>` (Pattern B).
    - **Access key / Secret**: the `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` from section 8.
-   - **Data gateway**: select your OPDG from the dropdown.
+   - **Data gateway**: select your **OPDG** (Pattern A) or leave **None** (Pattern B).
    - Browse to the bucket (`fabric-iceberg-poc`) and select the table folder(s).
 
-Only the queried rows traverse the gateway; nothing lands in a public bucket. Reference:
+Only the queried rows are read. Reference:
 <https://learn.microsoft.com/fabric/onelake/create-on-premises-shortcut>.
 
 ---

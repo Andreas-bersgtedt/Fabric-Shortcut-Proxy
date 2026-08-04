@@ -5,11 +5,12 @@ A complete, copy‑paste installation baseline for running the Fabric Shortcut P
 shortcut. Written for **low‑to‑moderate IT skills**: every step has PowerShell you can
 paste from an elevated (Administrator) prompt.
 
-> **Golden rule for every pattern in this guide:** Microsoft Fabric never talks to the
-> proxy directly. An **On‑Premises Data Gateway (OPDG)** always sits in front of the
-> Fabric Shortcut Proxy. On Windows the OPDG frequently runs on the **same host** as the
+> **Golden rule (private baseline):** in the recommended private pattern, Microsoft Fabric
+> never talks to the proxy directly — an **On‑Premises Data Gateway (OPDG)** sits in front of
+> the Fabric Shortcut Proxy. On Windows the OPDG frequently runs on the **same host** as the
 > proxy (or an adjacent Windows box on the same LAN), which is why Windows is a natural
-> fit next to an on‑prem SQL Server.
+> fit next to an on‑prem SQL Server. (A public‑internet endpoint needs no OPDG — Fabric
+> connects directly to the TLS FQDN; see section 12.)
 
 **Companion docs:** [../CONFIGURATION.md](../CONFIGURATION.md) (all settings) ·
 [../SECURITY.md](../SECURITY.md) (auth/TLS/audit) ·
@@ -43,7 +44,7 @@ flowchart LR
 | Pattern | When | Fabric → proxy path | Public exposure |
 |---|---|---|---|
 | **A. Private (recommended)** | OPDG + proxy on the same host or LAN | OPDG dials `http://127.0.0.1:9000` or a private IP | **None** |
-| **B. Public internet** | No private path OPDG↔proxy | Terminate TLS in front; OPDG dials `https://<fqdn>` | 443 only |
+| **B. Public internet** | No private path OPDG↔proxy | Terminate TLS in front; Fabric connects **directly** to `https://<fqdn>` — **no OPDG** | 443 only |
 
 On Windows, **Pattern A** is the norm and this guide focuses on it. The public‑internet
 variant is documented for **Linux + nginx** in [SSL_Deployment.md](../../SSL_Deployment.md);
@@ -361,7 +362,8 @@ Reference: <https://learn.microsoft.com/fabric/onelake/create-on-premises-shortc
 run a single standalone process with native TLS (`TLS_CERT_FILE` + `TLS_KEY_FILE` in
 `config.system.json`, a CA‑trusted cert Fabric will accept) or front it with IIS + ARR as a
 reverse proxy that passes the `Host` and `Authorization` headers unchanged (SigV4 depends on
-them). Keep the OPDG in front in all cases.
+them). In this public path there is **no OPDG** — Fabric connects directly to the HTTPS
+endpoint (set *Data gateway* to *None* in the shortcut).
 
 ---
 

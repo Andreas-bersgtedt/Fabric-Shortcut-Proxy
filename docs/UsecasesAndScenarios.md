@@ -10,6 +10,9 @@ mechanism.
 > [TechnicalArchitecture.md](TechnicalArchitecture.md) (per-process flows),
 > [SECURITY.md](SECURITY.md) (auth/TLS/audit/credential mediation),
 > [CONFIGURATION.md](CONFIGURATION.md) (settings).
+>
+> **Setup guide:** step-by-step wiring for the connectivity patterns below (OPDG shortcut,
+> Spark MPE/PLS, storage-proxy mounts) is in [CONNECTIVITY_SETUP.md](CONNECTIVITY_SETUP.md).
 
 Grounded in the Fabric connectivity mechanisms documented at:
 - On-premises data gateway shortcuts, <https://learn.microsoft.com/fabric/onelake/create-on-premises-shortcut>

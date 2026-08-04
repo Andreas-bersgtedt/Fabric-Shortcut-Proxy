@@ -97,3 +97,35 @@ async def test_reset_clears(client):
     r = await client.post("/_monitor/api/reset")
     assert r.status_code == 200
     assert querystats.summary()["tables"] == {}
+
+
+async def test_logs_tail_and_search(client):
+    from observability.logbuffer import get_buffer
+
+    buf = get_buffer()
+    buf.clear()
+    buf.append("startup bucket=demo")
+    buf.append("\x1b[31merror\x1b[0m sql_query_id=42 failed to connect")
+    buf.append("request served table=Product")
+
+    r = await client.get("/_monitor/api/logs")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["total"] == 3
+    assert d["capacity"] == 1000
+    assert d["lines"][-1] == "request served table=Product"
+    # ANSI colour codes are stripped before buffering.
+    assert "\x1b" not in "".join(d["lines"])
+
+    r = await client.get("/_monitor/api/logs", params={"q": "sql_query_id"})
+    d = r.json()
+    assert d["returned"] == 1
+    assert "sql_query_id=42" in d["lines"][0]
+    assert d["total"] == 3
+
+    r = await client.get("/_monitor/api/logs", params={"limit": 1})
+    d = r.json()
+    assert d["returned"] == 1
+    assert d["lines"] == ["request served table=Product"]
+    buf.clear()
+

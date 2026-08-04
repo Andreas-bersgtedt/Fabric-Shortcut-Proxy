@@ -13,6 +13,8 @@ import sys
 
 import structlog
 
+from observability.logbuffer import RingBufferHandler, capture_renderer
+
 
 class _Suppress404AccessFilter(logging.Filter):
     """Drop uvicorn access-log records for 404 responses.
@@ -48,13 +50,25 @@ def configure_logging(level: str = "INFO") -> None:
     if os.environ.get("QUIET_404_LOGS", "1").lower() not in ("0", "false", "no"):
         logging.getLogger("uvicorn.access").addFilter(_Suppress404AccessFilter())
 
+    # Mirror stdlib logs into the rolling in-memory buffer (monitor log viewer).
+    root = logging.getLogger()
+    if not any(isinstance(h, RingBufferHandler) for h in root.handlers):
+        ring = RingBufferHandler()
+        ring.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s %(message)s",
+                datefmt="%H:%M:%S",
+            )
+        )
+        root.addHandler(ring)
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
-            structlog.dev.ConsoleRenderer(),
+            capture_renderer(structlog.dev.ConsoleRenderer()),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
         context_class=dict,

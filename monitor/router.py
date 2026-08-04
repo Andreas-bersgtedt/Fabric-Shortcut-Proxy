@@ -25,6 +25,7 @@ import config
 import cache.lru_cache as cache
 from iceberg.state_store import get_all_snapshots
 from observability import metrics, trace, querystats
+from observability.logbuffer import get_buffer
 from observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -144,3 +145,24 @@ async def reset() -> dict:
     trace.reset()
     querystats.reset()
     return {"status": "cleared"}
+
+
+@router.get("/api/logs")
+async def logs(limit: int = 1000, q: str | None = None) -> dict:
+    """Tail of the rolling in-memory log buffer, optionally filtered by ``q``.
+
+    Read-only. Returns at most ``buffer.maxlen`` (1000) lines, oldest first.
+    ``q`` is a case-insensitive substring filter applied server-side.
+    """
+    buf = get_buffer()
+    limit = max(1, min(limit, buf.maxlen))
+    query = (q or "").strip() or None
+    lines = buf.tail(limit=limit, query=query)
+    return {
+        "lines": lines,
+        "returned": len(lines),
+        "total": len(buf),
+        "capacity": buf.maxlen,
+        "query": query or "",
+        "generated_at": round(time.time(), 3),
+    }

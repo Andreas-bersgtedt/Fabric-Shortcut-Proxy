@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0]: 2026-08-05
+
+### Added
+- **SQL Server tokenization pushdown.** Column policies can produce deterministic
+  SHA-256 tokens with `HASHBYTES`, random UUID tokens with `NEWID`, or omit source
+  columns before data leaves SQL Server. Deterministic tokens support equality
+  joins, grouping, and distinct operations without exposing plaintext values.
+- **Config Builder policy controls.** Reflected columns can be marked Keep,
+  Deterministic token, Random token, or Remove. Existing explicit schemas and
+  transformations survive Config Builder reloads and apply operations.
+- Source/output column aliases, environment-backed token key references,
+  normalization modes (`none`, `trim`, `trim_lower`), and per-dialect capability
+  reporting.
+
 ### Changed
 - **Split into two distributions.** The single-node core continues to ship as
   `fabric-shortcut-proxy` (Lite); the scale-out cluster code moves into a new
@@ -21,6 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CI splits into a Lite suite (core only, enterprise excluded) and an Enterprise
     suite; a new import-contract test fails if the Lite core imports the enterprise
     surface.
+- Both distributions and their runtime API/agent version metadata now report
+  `2.1.0`.
+
+### Security
+- Token key values are resolved only from `FSP_TOKENIZATION_KEY_*` environment
+  variables. Table configuration stores non-secret key references.
+- Token bind parameters are redacted from structured logs, and SQLAlchemy hides
+  parameter values in exception output.
+- Unsupported dialects, missing token keys, transformed split keys, malformed
+  policy schemas, and random-token/content-hash refresh conflicts fail closed.
+
+### Validation
+- Fabric UAT confirmed deterministic tokens remain stable after rematerialization
+  with the same key and retain matching `GROUP BY` values and counts across reads.
 
 ## [2.0.0]: 2026-07-30
 
@@ -122,5 +150,6 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[2.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/1.0.0...main
+[2.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.0.0...main
+[2.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/1.0.0...2.0.0
 [1.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/releases/tag/1.0.0

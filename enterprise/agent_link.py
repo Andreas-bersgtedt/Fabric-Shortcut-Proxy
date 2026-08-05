@@ -25,7 +25,7 @@ from observability.logging import get_logger
 
 log = get_logger(__name__)
 
-_APP_VERSION = "2.0.0"
+_APP_VERSION = "2.1.0"
 
 
 def _default_agent_id() -> str:

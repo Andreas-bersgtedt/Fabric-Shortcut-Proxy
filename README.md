@@ -7,6 +7,10 @@
 S3 table gateway for Microsoft Fabric. It exposes relational source data as shortcut-readable
 table objects and generates Parquet files on demand from SQL pushdown queries.
 
+> **New here? Start with the [User Manual](docs/manual/README.md)** — an end-to-end guide to
+> installing, configuring, connecting, securing, and operating the proxy, with worked
+> tutorials.
+
 > The proxy supports two output modes from the same backend data path:
 > `TABLE_FORMAT=iceberg` and `TABLE_FORMAT=delta`.
 > In Fabric environments, Delta mode is often preferred because Fabric reads `_delta_log`
@@ -493,6 +497,7 @@ Use this order when docs appear to conflict:
 1. **Runtime source of truth**: [config.py](config.py) (defaults, validation, effective-setting sources) and API/router modules.
 2. **Operator docs (kept current)**:
   - [README.md](README.md) for setup and quick operations.
+  - [User Manual](docs/manual/README.md) for the full end-to-end guide (install, configure, connect, secure, operate).
   - [CONFIGURATION.md](docs/CONFIGURATION.md) for complete settings and behavior.
   - [DELTA_FORMAT.md](docs/DELTA_FORMAT.md) for `TABLE_FORMAT=delta` semantics.
   - [TOKENIZATION_PUSHDOWN.md](docs/TOKENIZATION_PUSHDOWN.md) for column policy,

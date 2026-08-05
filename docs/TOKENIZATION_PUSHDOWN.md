@@ -1,6 +1,7 @@
 # Pushdown tokenization investigation
 
-Status: implemented for SQL Server through the Python agent and Config Builder; UAT pending
+Status: implemented for SQL Server through the Python agent and Config Builder;
+deterministic tokenization UAT passed in Fabric
 
 The implemented scope includes deterministic SHA-256 tokens, random UUID tokens,
 column omission, source/output aliases, key resolution from environment variables,

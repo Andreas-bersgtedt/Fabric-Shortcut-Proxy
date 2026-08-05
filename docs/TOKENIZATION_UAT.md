@@ -1,5 +1,15 @@
 # SQL Server pushdown tokenization UAT
 
+## Result
+
+Passed on August 5, 2026. Deterministic `HASHBYTES` tokens remained identical
+after rematerialization with the same key. Fabric `GROUP BY` results retained
+the same token and count for each source-value group, confirming equality and
+frequency behavior across reads.
+
+Random-token rotation, key rotation, and the negative startup checks remain
+separate acceptance checks.
+
 ## Scope
 
 This UAT exercises the Python agent against SQL Server. It covers deterministic
@@ -187,4 +197,4 @@ a live SQL Server.
 - Normalization follows SQL Server collation and `LOWER` behavior.
 - The standalone C++ native publisher does not consume `config.tables.json` and
   is outside this UAT path.
-- Transform configuration is manual JSON in this release.
+- Config Builder policy controls are limited to SQL Server in this release.

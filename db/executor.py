@@ -39,7 +39,7 @@ class SourceUnavailable(RuntimeError):
 def _params_for_log(params: dict[str, Any]) -> dict[str, Any]:
     """Return query parameters with tokenization secrets removed."""
     return {
-        key: "[REDACTED]" if key.startswith("__token_") else value
+        key: "[REDACTED]" if key.startswith(("fsp_token_", "__token_")) else value
         for key, value in params.items()
     }
 

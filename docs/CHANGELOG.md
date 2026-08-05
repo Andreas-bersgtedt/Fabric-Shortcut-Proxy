@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **PostgreSQL, Oracle, and Databricks SQL tokenization pushdown.** Deterministic
+  SHA-256 and random token policies now use each engine's native SQL functions.
+  Config Builder exposes token policies for all four supported tokenizing
+  dialects.
+
+### Fixed
+- Databricks range-split queries now use `LIMIT` instead of the unsupported
+  SQL Server `TOP` syntax.
+
 ## [2.1.0]: 2026-08-05
 
 ### Added

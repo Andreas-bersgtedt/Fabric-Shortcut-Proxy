@@ -145,6 +145,7 @@ async def test_index_serves_html(app):
     assert 'kind:"deterministic_hash"' in r.text
     assert 'kind:"random_token"' in r.text
     assert 'column.policy!=="remove"' in r.text
+    assert '["mssql", "postgresql", "postgres", "oracle", "databricks"]' in r.text
 
 
 def test_settings_catalog_has_defaults():

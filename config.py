@@ -565,14 +565,9 @@ def validate_config() -> None:
             if not transforms:
                 continue
 
-            from db.capabilities import flavor_from_db_url
+            from db.capabilities import capabilities_for_db_url
 
-            flavor = flavor_from_db_url(effective_db_url(t.connection_id))
-            if flavor != "mssql":
-                problems.append(
-                    f"Table {t.name!r}: column transforms are not supported for "
-                    f"dialect {flavor!r}; this release supports mssql only."
-                )
+            capabilities = capabilities_for_db_url(effective_db_url(t.connection_id))
             for col in transforms:
                 if t.key_column in {col.name, col.source_name}:
                     problems.append(
@@ -580,10 +575,23 @@ def validate_config() -> None:
                         "a column transform."
                     )
                 if col.transform.kind == "deterministic_hash":
+                    if not capabilities.supports_deterministic_tokenization:
+                        problems.append(
+                            f"Table {t.name!r}: deterministic_hash is not supported "
+                            f"for dialect {capabilities.flavor!r}."
+                        )
                     try:
                         resolve_tokenization_key(col.transform.key_ref)
                     except ValueError as exc:
                         problems.append(f"Table {t.name!r}: {exc}")
+                if (
+                    col.transform.kind == "random_token"
+                    and not capabilities.supports_random_tokenization
+                ):
+                    problems.append(
+                        f"Table {t.name!r}: random_token is not supported for "
+                        f"dialect {capabilities.flavor!r}."
+                    )
                 if (
                     col.transform.kind == "random_token"
                     and AUTO_REFRESH

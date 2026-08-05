@@ -1,13 +1,14 @@
-# Pushdown tokenization investigation
+# Pushdown tokenization
 
-Status: implemented for SQL Server through the Python agent and Config Builder;
-deterministic tokenization UAT passed in Fabric
+Status: implemented for SQL Server, PostgreSQL, Oracle, and Databricks SQL through
+the Python agent and Config Builder. SQL Server deterministic tokenization passed
+live Fabric UAT. Live UAT remains pending for the other three engines.
 
 The implemented scope includes deterministic SHA-256 tokens, random UUID tokens,
 column omission, source/output aliases, key resolution from environment variables,
 startup validation, parameter redaction, capability reporting, and Config Builder
-policy controls. PostgreSQL, Oracle, Databricks, SQLite cryptographic transforms,
-and the standalone C++ native publisher remain future work.
+policy controls. SQLite cryptographic transforms and the standalone C++ native
+publisher remain unsupported.
 
 ## Decision
 
@@ -24,32 +25,27 @@ Do not accept free-form SQL expressions in configuration. A policy allowlist
 keeps identifiers quoted, secrets parameterized, output types predictable, and
 dialect behavior testable.
 
-This feature belongs in the projection path. Today,
-`planner.split_planner.build_split_query()` renders every `ColumnDef` as a quoted
-identifier. Split predicates and ordering operate on the source key separately,
-so projection policies do not need to change modulo, range, or row-number split
-planning.
+This feature belongs in the projection path. The split planner asks the selected
+dialect to render every `ColumnDef`. Split predicates and ordering operate on the
+source key separately, so projection policies do not alter modulo, range, or
+row-number split assignment.
 
 ## Current behavior
 
-The current implementation already supports column removal when an explicit
-schema omits the column. Auto-derived schemas include every reflected source
-column, so removal requires an explicit schema today.
+Column removal omits the column from the explicit schema. Config Builder starts
+from reflected columns and removes fields marked **Remove** when it serializes
+the runtime schema.
 
-Two contracts need to change before transformed columns work:
-
-- `ColumnDef.name` currently serves as both the source identifier and Iceberg
-  output name. Add `source` so a transformed source can be aliased back to the
-  stable output name.
-- `db.executor.validate_source_schema()` validates output names against source
-  metadata. It must validate `source or name` instead.
+`ColumnDef.source` identifies the source column while `ColumnDef.name` defines
+the output alias. Source-schema validation checks `source or name`, and Parquet
+generation reads each result by its output alias.
 
 The Parquet path already reads result dictionaries by output name and coerces
 values to the declared Iceberg type. A projection such as
 `... AS [customer_token]` therefore fits the downstream contract without a
 post-query transformation.
 
-## Proposed configuration
+## Configuration
 
 ```json
 {
@@ -152,9 +148,9 @@ cases, `drop` is preferable because a random token retains no analytical value.
 | Dialect | Deterministic primitive | Random primitive | Initial support |
 | --- | --- | --- | --- |
 | SQL Server | `HASHBYTES('SHA2_256', ...)` | `NEWID()` | Full |
-| PostgreSQL | `digest(..., 'sha256')` from `pgcrypto` | `gen_random_uuid()` | Probe extension, then enable |
-| Oracle | `STANDARD_HASH(..., 'SHA256')` | `SYS_GUID()` | Full after driver test |
-| Databricks | `sha2(..., 256)` | `uuid()` | Full after SQL warehouse test |
+| PostgreSQL | `digest(..., 'sha256')` from `pgcrypto` | `gen_random_uuid()` | Implemented; requires `pgcrypto` for deterministic tokens |
+| Oracle | `STANDARD_HASH(..., 'SHA256')` | `SYS_GUID()` | Implemented; live UAT pending |
+| Databricks | `sha2(..., 256)` | `uuid()` | Implemented; live SQL warehouse UAT pending |
 | SQLite | No cryptographic hash in core | `randomblob(16)` | `drop` only by default |
 | Generic | Unknown | Unknown | `drop` and pass-through only |
 
@@ -224,10 +220,10 @@ agent with a clear startup error.
 
 ### Phase 2: random tokens and more dialects
 
-Add `random_token` only after freshness behavior is explicit. Then add PostgreSQL,
-Oracle, and Databricks adapters behind integration tests against real engines.
-SQLite should remain unsupported for deterministic PII hashing unless a vetted
-cryptographic extension is explicitly installed and detected.
+Complete. PostgreSQL, Oracle, and Databricks adapters emit native deterministic
+and random token expressions. Random-token tables reject content-hash freshness.
+SQLite remains unsupported for deterministic PII hashing because core SQLite has
+no SHA-256 function.
 
 ### Phase 3: key lifecycle
 
@@ -241,6 +237,9 @@ joins between snapshots.
 - Existing pass-through SQL is byte-for-byte unchanged.
 - SQL Server emits `HASHBYTES('SHA2_256', ...) AS [output_name]` with the key as a
   bind parameter, not a SQL literal.
+- PostgreSQL emits `digest(..., 'sha256')`, Oracle emits `STANDARD_HASH(...,
+  'SHA256')`, and Databricks emits `sha2(..., 256)`. All key and domain values use
+  bind parameters.
 - Equal normalized non-null inputs produce equal tokens across splits and pulls.
 - Different inputs and different domains produce different tokens.
 - Null input remains null and empty string remains distinct from null.
@@ -255,13 +254,11 @@ joins between snapshots.
 - Python and C++ agents produce the same policy outcome or the unsupported agent
   rejects the configuration at startup.
 
-## Recommendation
+## Rollout
 
-Implement Phase 1 first. It covers the analytical requirement for stable grouping
-and the stronger minimization option of column removal without introducing
-unstable snapshots. Treat random tokens as an opt-in second phase; for a column
-that no longer supports equality analysis, removal is simpler and exposes less
-data.
+Run the engine-specific checks in `TOKENIZATION_MULTI_DIALECT_UAT.md` before
+production use. Keep random tokens opt-in. When a column no longer needs equality
+analysis, removal exposes less data than replacing each value with a random token.
 
 ## References
 

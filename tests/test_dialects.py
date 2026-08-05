@@ -134,6 +134,21 @@ def test_split_query_databricks(monkeypatch):
     assert "LIMIT :max_rows" in sql
 
 
+def test_split_query_databricks_range_uses_limit(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "databricks://token:pat@dbc.cloud")
+    split = SplitDescriptor(
+        split_index=1, num_splits=4,
+        object_key="warehouse/db/widgets/data/split-1-x.parquet",
+        watermark_ms=0, table=_TABLE, key_lo=25, key_hi=50,
+    )
+    sql, params = build_split_query(split)
+    assert sql.startswith("SELECT `id`, `name`")
+    assert "`id` >= :key_lo AND `id` < :key_hi" in sql
+    assert "TOP" not in sql
+    assert sql.rstrip().endswith("LIMIT :max_rows")
+    assert params == {"key_lo": 25, "key_hi": 50, "max_rows": config.QUERY_MAX_ROWS}
+
+
 def _tokenized_table(*, random: bool = False, string_key: bool = False) -> TableDef:
     transform = (
         ColumnTransform(kind="random_token")
@@ -188,8 +203,8 @@ def test_mssql_deterministic_hash_projection(monkeypatch):
     assert "LOWER(LTRIM(RTRIM(CONVERT(nvarchar(max), [email]))))" in sql
     assert "END AS [email_token]" in sql
     assert "uat-secret" not in sql
-    assert params["__token_key_1"] == "uat-secret"
-    assert params["__token_domain_1"] == "customer-email"
+    assert params["fsp_token_key_1"] == "uat-secret"
+    assert params["fsp_token_domain_1"] == "customer-email"
 
 
 def test_mssql_random_token_projection(monkeypatch):
@@ -197,7 +212,73 @@ def test_mssql_random_token_projection(monkeypatch):
     sql, params = build_split_query(_table_split(_tokenized_table(random=True)))
     assert "CONVERT(varchar(36), NEWID())" in sql
     assert "END AS [email_token]" in sql
-    assert not any(key.startswith("__token_") for key in params)
+    assert not any(key.startswith("fsp_token_") for key in params)
+
+
+def test_postgres_deterministic_hash_projection(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "postgresql+asyncpg://h/db")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+
+    sql, params = build_split_query(_table_split(_tokenized_table()))
+
+    assert "UPPER(ENCODE(DIGEST(" in sql
+    assert "LOWER(BTRIM(CAST(\"email\" AS text)))" in sql
+    assert "'sha256'), 'hex')" in sql
+    assert "END AS \"email_token\"" in sql
+    assert "uat-secret" not in sql
+    assert params["fsp_token_key_1"] == "uat-secret"
+    assert params["fsp_token_domain_1"] == "customer-email"
+
+
+def test_postgres_random_token_projection(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "postgresql+asyncpg://h/db")
+    sql, params = build_split_query(_table_split(_tokenized_table(random=True)))
+    assert "CAST(gen_random_uuid() AS text)" in sql
+    assert "END AS \"email_token\"" in sql
+    assert not any(key.startswith("fsp_token_") for key in params)
+
+
+def test_oracle_deterministic_hash_projection(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "oracle+oracledb://h/db")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+
+    sql, params = build_split_query(_table_split(_tokenized_table()))
+
+    assert "RAWTOHEX(STANDARD_HASH(" in sql
+    assert "LOWER(TRIM(CAST(\"email\" AS VARCHAR2(4000))))" in sql
+    assert "'SHA256')) END AS \"email_token\"" in sql
+    assert "uat-secret" not in sql
+    assert params["fsp_token_key_1"] == "uat-secret"
+    assert params["fsp_token_domain_1"] == "customer-email"
+
+
+def test_oracle_random_token_projection(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "oracle+oracledb://h/db")
+    sql, params = build_split_query(_table_split(_tokenized_table(random=True)))
+    assert "RAWTOHEX(SYS_GUID())" in sql
+    assert "END AS \"email_token\"" in sql
+    assert not any(key.startswith("fsp_token_") for key in params)
+
+
+def test_databricks_deterministic_hash_projection(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "databricks://token:pat@dbc.cloud")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+
+    sql, params = build_split_query(_table_split(_tokenized_table()))
+
+    assert "upper(sha2(concat(" in sql
+    assert "lower(trim(CAST(`email` AS STRING)))" in sql
+    assert "), 256)) END AS `email_token`" in sql
+    assert "uat-secret" not in sql
+    assert params["fsp_token_key_1"] == "uat-secret"
+    assert params["fsp_token_domain_1"] == "customer-email"
+
+
+def test_databricks_random_token_projection(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "databricks://token:pat@dbc.cloud")
+    sql, params = build_split_query(_table_split(_tokenized_table(random=True)))
+    assert "ELSE uuid() END AS `email_token`" in sql
+    assert not any(key.startswith("fsp_token_") for key in params)
 
 
 def test_tokenization_fails_closed_on_unsupported_dialect(monkeypatch):
@@ -222,3 +303,21 @@ def test_token_projection_uses_alias_in_row_number_outer_query(monkeypatch):
         "SELECT TOP (:max_rows) [customer_id], [email_token] FROM (SELECT "
     )
     assert sql.count("HASHBYTES('SHA2_256'") == 1
+
+
+@pytest.mark.parametrize(
+    ("db_url", "hash_expression", "outer_columns"),
+    [
+        ("postgresql+asyncpg://h/db", "DIGEST(", '"customer_id", "email_token"'),
+        ("oracle+oracledb://h/db", "STANDARD_HASH(", '"customer_id", "email_token"'),
+        ("databricks://token:pat@dbc.cloud", "sha2(", "`customer_id`, `email_token`"),
+    ],
+)
+def test_multi_dialect_token_projection_uses_row_number_alias(
+    monkeypatch, db_url, hash_expression, outer_columns
+):
+    monkeypatch.setattr(config, "DB_URL", db_url)
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+    sql, _ = build_split_query(_table_split(_tokenized_table(string_key=True)))
+    assert sql.startswith(f"SELECT {outer_columns} FROM (SELECT ")
+    assert sql.count(hash_expression) == 1

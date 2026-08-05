@@ -1079,7 +1079,8 @@ async function runInspect(){
 // ---- selected config rows ----
 function connectionSupportsTokens(entry){
   const conn = state.connections.get(entry.connection || "default");
-  return !!conn && String(conn.flavor || conn.dialect || "").toLowerCase().startsWith("mssql");
+  const flavor = String(conn?.flavor || conn?.dialect || "").toLowerCase();
+  return ["mssql", "postgresql", "postgres", "oracle", "databricks"].includes(flavor);
 }
 
 function policyLabel(kind){
@@ -1125,7 +1126,7 @@ function renderPolicyEditor(entry){
         || ((kind==="deterministic_hash" || kind==="random_token") && !tokenCapable);
       policy.appendChild(option);
     }
-    policy.title = tokenCapable ? "Select how this source column is exposed" : "Tokenization is currently supported for SQL Server sources";
+    policy.title = tokenCapable ? "Select how this source column is exposed" : "Tokenization is not supported for this source";
     policy.onchange=()=>{
       column.policy=policy.value;
       if(column.policy!=="keep" && column.policy!=="remove" && column.name===column.source) column.name=column.source+"_token";

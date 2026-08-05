@@ -7,11 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1]: 2026-08-05
+
 ### Added
 - **PostgreSQL, Oracle, and Databricks SQL tokenization pushdown.** Deterministic
-  SHA-256 and random token policies now use each engine's native SQL functions.
-  Config Builder exposes token policies for all four supported tokenizing
-  dialects.
+  SHA-256 and random token policies now render each engine's native SQL:
+  `digest`/`gen_random_uuid` (requires `pgcrypto`), `STANDARD_HASH`/`SYS_GUID`, and
+  `sha2`/`uuid`. Startup validation and the Config Builder gate token policies on
+  the per-dialect capability matrix, so all four supported engines expose Keep,
+  Deterministic token, Random token, and Remove.
+- `TOKENIZATION_MULTI_DIALECT_UAT.md` runbook with engine-specific setup, token
+  format expectations, and negative checks.
+
+### Changed
+- Token bind parameters use portable `fsp_token_*` names (letter-prefixed) so
+  named binds work across Oracle and the other drivers. Both `fsp_token_*` and the
+  legacy `__token_*` names are redacted from logs.
+- Runtime API and agent version metadata now report `2.1.1`.
 
 ### Fixed
 - Databricks range-split queries now use `LIMIT` instead of the unsupported

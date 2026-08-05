@@ -24,6 +24,12 @@ def test_capability_matrix_has_oracle_and_databricks():
     assert m["oracle"]["execution_mode"] == "sync-threadpool-fallback"
     assert m["databricks"]["supports_primary_key_reflection"] is False
 
+def test_tokenization_capabilities_are_sql_server_only():
+    matrix = capability_matrix()
+    assert matrix["mssql"]["supports_deterministic_tokenization"] is True
+    assert matrix["mssql"]["supports_random_tokenization"] is True
+    assert matrix["generic"]["supports_deterministic_tokenization"] is False
+
 
 def test_databricks_requires_http_path():
     assert missing_required_fields("databricks", {}) == ["http_path"]

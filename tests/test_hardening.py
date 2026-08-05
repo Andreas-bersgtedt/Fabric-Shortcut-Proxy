@@ -155,6 +155,56 @@ def test_validate_config_rejects_duplicate_field_ids(monkeypatch):
         config.validate_config()
 
 
+def _transformed_table(transform):
+    return config.TableDef(
+        name="customers_safe",
+        source_table="dbo.customers",
+        key_column="customer_id",
+        schema=[
+            config.ColumnDef(1, "customer_id", "long", nullable=False),
+            config.ColumnDef(
+                2,
+                "email_token",
+                "string",
+                source="email",
+                transform=transform,
+            ),
+        ],
+    )
+
+
+def test_validate_config_rejects_missing_token_key(monkeypatch):
+    table = _transformed_table(config.ColumnTransform(
+        kind="deterministic_hash", key_ref="missing-key-v1"
+    ))
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    monkeypatch.setattr(config, "TABLES", [table])
+    monkeypatch.delenv("FSP_TOKENIZATION_KEY_MISSING_KEY_V1", raising=False)
+    with pytest.raises(ValueError, match="FSP_TOKENIZATION_KEY_MISSING_KEY_V1"):
+        config.validate_config()
+
+
+def test_validate_config_rejects_transform_on_unsupported_dialect(monkeypatch):
+    table = _transformed_table(config.ColumnTransform(
+        kind="deterministic_hash", key_ref="customer-pii-v1"
+    ))
+    monkeypatch.setattr(config, "DB_URL", "sqlite+aiosqlite:///x.db")
+    monkeypatch.setattr(config, "TABLES", [table])
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "test-secret")
+    with pytest.raises(ValueError, match="supports mssql only"):
+        config.validate_config()
+
+
+def test_validate_config_rejects_random_token_content_refresh(monkeypatch):
+    table = _transformed_table(config.ColumnTransform(kind="random_token"))
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    monkeypatch.setattr(config, "TABLES", [table])
+    monkeypatch.setattr(config, "AUTO_REFRESH", True)
+    monkeypatch.setattr(config, "REFRESH_STRATEGY", "content_hash")
+    with pytest.raises(ValueError, match="incompatible with content-based"):
+        config.validate_config()
+
+
 def test_redact_db_url_masks_password():
     assert (
         config.redact_db_url("mssql+aioodbc://user:s3cr3t@host/db")

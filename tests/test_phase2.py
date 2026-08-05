@@ -128,3 +128,46 @@ async def test_validate_source_schema_missing_column(seeded, monkeypatch):
 
     with pytest.raises(RuntimeError, match="missing declared"):
         await validate_source_schema()
+
+
+async def test_validate_source_schema_uses_transform_source(monkeypatch):
+    from db.executor import validate_source_schema
+    from config import ColumnDef, ColumnTransform, TableDef
+
+    async def _columns(_table, _connection):
+        return ["customer_id", "email"]
+
+    monkeypatch.setattr("db.executor.introspect_columns", _columns)
+    table = TableDef(
+        name="customers_safe",
+        source_table="dbo.customers",
+        key_column="customer_id",
+        schema=[
+            ColumnDef(1, "customer_id", "long", nullable=False),
+            ColumnDef(
+                2,
+                "email_token",
+                "string",
+                source="email",
+                transform=ColumnTransform(
+                    kind="deterministic_hash", key_ref="customer-pii-v1"
+                ),
+            ),
+        ],
+    )
+    await validate_source_schema(table)
+
+
+def test_token_query_params_are_redacted_for_logs():
+    from db.executor import _params_for_log
+
+    logged = _params_for_log({
+        "split_index": 1,
+        "__token_key_1": "secret",
+        "__token_domain_1": "customer-email",
+    })
+    assert logged == {
+        "split_index": 1,
+        "__token_key_1": "[REDACTED]",
+        "__token_domain_1": "[REDACTED]",
+    }

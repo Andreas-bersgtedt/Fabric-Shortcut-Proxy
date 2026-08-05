@@ -19,7 +19,8 @@
   .navbtn:hover { border-color:var(--accent2); color:#dff4ff; }
   .warn-banner { background:#3b2f14; border:1px solid var(--warn); color:#fcd34d;
                  padding:8px 12px; border-radius:8px; margin:12px 24px; font-size:12px; }
-  .tabs { display:flex; gap:0; border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg); }
+    .tabs { display:flex; gap:0; border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg);
+      max-width:100%; overflow-x:auto; }
   .tab-btn { appearance:none; background:none; border:none; color:var(--muted); padding:14px 16px;
             font:inherit; font-weight:600; cursor:pointer; font-size:12px; letter-spacing:.04em;
             text-transform:uppercase; border-bottom:2px solid transparent; margin-bottom:-1px;
@@ -56,6 +57,20 @@
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
   .cfgrow .rows { font-size:11px; color:var(--muted); }
+  .cfgtable { border-top:1px solid var(--line); }
+  .cfgtable .cfgrow { border-top:0; }
+  .policy-toggle { margin:0 10px 9px; color:var(--accent); border-color:var(--line); }
+  .policy-editor { margin:0 10px 10px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .policy-head, .policy-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(130px,1fr) 150px minmax(150px,1fr);
+                              gap:8px; align-items:center; padding:7px 9px; }
+  .policy-head { background:#0b1220; color:var(--muted); font-size:10px; text-transform:uppercase; }
+  .policy-row { border-top:1px solid var(--line); }
+  .policy-row:first-of-type { border-top:0; }
+  .policy-row input, .policy-row select { min-width:0; padding:5px 7px; font-size:12px; }
+  .policy-source { min-width:0; font:12px ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
+  .policy-detail { grid-column:2 / -1; display:grid; grid-template-columns:1fr 1fr 150px; gap:8px; }
+  .policy-note { grid-column:1 / -1; color:var(--muted); font-size:11px; }
+  .policy-error { color:var(--err); font-size:11px; margin:0 10px 10px; }
   .pill { display:inline-block; font-size:10px; padding:0 6px; border:1px solid var(--accent);
           color:var(--accent); border-radius:20px; vertical-align:middle; }
   .connlist { display:flex; flex-direction:column; gap:8px; }
@@ -104,6 +119,13 @@
   .setrow input, .setrow select { padding:5px 8px; }
   .setrow .sethelp { color:var(--muted); font-size:11px; }
   .tab-settings { max-height:460px; overflow:auto; }
+  @media (max-width:760px) {
+    .cfgrow { grid-template-columns:1fr auto; }
+    .cfgrow .src { grid-column:1 / -1; }
+    .policy-head { display:none; }
+    .policy-row { grid-template-columns:1fr; }
+    .policy-detail { grid-column:1; grid-template-columns:1fr; }
+  }
 </style>
 </head>
 <body>
@@ -763,6 +785,7 @@ function applyBootstrap(builder){
   // Only the MASKED url is known from bootstrap; leave db_url empty so the masked
   // value can never be mistaken for a real, connectable URL (or saved as a secret).
   if(builder.has_db_url && builder.db_url_masked){ d.db_url_masked = builder.db_url_masked; }
+  d.flavor = builder.flavor || "";
   state.connections.set("default", d);
   for(const c of (builder.connections||[])){
     if(!c || !c.id) continue;
@@ -778,18 +801,21 @@ function applyBootstrap(builder){
     const source = String(t.source_table);
     const name = String(t.name || source.split(".").pop() || "table");
     const connId = String(t.connection || "default");
+    const configuredSchema = Array.isArray(t.schema) ? t.schema : [];
     state.selected.set(selKey(connId, source), {
       name,
-      schema: null,
+      schema: source.includes(".") ? source.split(".").slice(0,-1).join(".") : null,
       source_table: source,
       connection: connId,
       key_column: t.key_column || null,
       num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
       integer_keys: t.key_column ? [t.key_column] : [],
-      columns: [],
+      columns: configuredSchema.map((column, index)=>policyColumn(column, index)),
+      schema_explicit: configuredSchema.length>0,
       approx_rows: null,
       invalid: !t.key_column,
       pending: false,
+      policies_open: configuredSchema.some(column=>column.transform),
     });
   }
 
@@ -1000,7 +1026,26 @@ function bulk(on){
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
   key_column:null, num_splits:null,
-  integer_keys:[], columns:[], approx_rows:null, pending:true }; }
+  integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false }; }
+
+function policyColumn(column, index){
+  const transform = column.transform || null;
+  return {
+    field_id: Number(column.field_id) || index + 1,
+    source: String(column.source || column.name || ""),
+    name: String(column.name || column.source || ""),
+    type: String(column.type || column.iceberg_type || "string"),
+    nullable: column.nullable !== false,
+    policy: transform ? transform.kind : "keep",
+    key_ref: transform && transform.key_ref ? String(transform.key_ref) : "",
+    domain: transform && transform.domain != null ? String(transform.domain) : "",
+    normalization: transform && transform.normalization ? transform.normalization : "none",
+  };
+}
+
+function reflectedPolicyColumns(columns){
+  return (columns||[]).map((column, index)=>policyColumn({...column, field_id:index+1}, index));
+}
 function toggleTable(t, on){
   const key = selKey(state.activeConnId, (t.schema? t.schema+"." : "") + t.name);
   if(on) state.selected.set(key, stub(t)); else state.selected.delete(key);
@@ -1021,7 +1066,7 @@ async function runInspect(){
     const entry = state.selected.get(selKey(state.activeConnId, meta.source_table));
     if(!entry) continue;
     entry.integer_keys = meta.integer_keys || [];
-    entry.columns = meta.columns || [];
+    entry.columns = reflectedPolicyColumns(meta.columns);
     entry.approx_rows = meta.approx_rows;
     entry.key_column = meta.detected_key || (entry.integer_keys[0]||null);
     entry.invalid = entry.integer_keys.length===0;
@@ -1031,6 +1076,87 @@ async function runInspect(){
 }
 
 // ---- selected config rows ----
+function connectionSupportsTokens(entry){
+  const conn = state.connections.get(entry.connection || "default");
+  return !!conn && String(conn.flavor || conn.dialect || "").toLowerCase().startsWith("mssql");
+}
+
+function policyLabel(kind){
+  return ({keep:"Keep", deterministic_hash:"Deterministic token", random_token:"Random token", remove:"Remove"})[kind] || kind;
+}
+
+function policyErrors(entry){
+  const errors = [];
+  const kept = entry.columns.filter(column=>column.policy!=="remove");
+  const names = kept.map(column=>column.name.trim());
+  if(!kept.some(column=>column.source===entry.key_column)) errors.push("The split key must be kept.");
+  if(names.some(name=>!name)) errors.push("Every kept column needs an output name.");
+  if(new Set(names).size!==names.length) errors.push("Output names must be unique.");
+  for(const column of kept){
+    if(column.policy==="deterministic_hash" && !column.key_ref.trim()){
+      errors.push(`${column.source}: deterministic tokens require a key reference.`);
+    }
+  }
+  const random = kept.some(column=>column.policy==="random_token");
+  if(random && $("autoRefresh").checked && $("refreshStrategy").value==="content_hash"){
+    errors.push("Random tokens cannot be used with content-hash refresh.");
+  }
+  return errors;
+}
+
+function renderPolicyEditor(entry){
+  const editor = document.createElement("div"); editor.className="policy-editor";
+  const head = document.createElement("div"); head.className="policy-head";
+  head.innerHTML="<span>Source column</span><span>Output name</span><span>Policy</span><span>Type</span>";
+  editor.appendChild(head);
+  const tokenCapable = connectionSupportsTokens(entry);
+  for(const column of entry.columns){
+    const row = document.createElement("div"); row.className="policy-row";
+    const source = document.createElement("div"); source.className="policy-source"; source.textContent=column.source;
+    const output = document.createElement("input"); output.value=column.name; output.placeholder="Output column";
+    output.disabled = column.policy==="remove" || column.source===entry.key_column;
+    output.oninput=()=>{ column.name=output.value; updatePreview(); };
+    const policy = document.createElement("select");
+    for(const kind of ["keep","deterministic_hash","random_token","remove"]){
+      const option=document.createElement("option"); option.value=kind; option.textContent=policyLabel(kind);
+      option.selected=column.policy===kind;
+      option.disabled=(kind!=="keep" && column.source===entry.key_column)
+        || ((kind==="deterministic_hash" || kind==="random_token") && !tokenCapable);
+      policy.appendChild(option);
+    }
+    policy.title = tokenCapable ? "Select how this source column is exposed" : "Tokenization is currently supported for SQL Server sources";
+    policy.onchange=()=>{
+      column.policy=policy.value;
+      if(column.policy!=="keep" && column.policy!=="remove" && column.name===column.source) column.name=column.source+"_token";
+      if(column.policy==="deterministic_hash" && !column.domain) column.domain=entry.name+"."+column.source;
+      renderSelected();
+    };
+    const type = document.createElement("span"); type.className="rows";
+    type.textContent=(column.policy==="deterministic_hash" || column.policy==="random_token") ? "string" : column.type;
+    row.append(source, output, policy, type);
+    if(column.policy==="deterministic_hash"){
+      const detail=document.createElement("div"); detail.className="policy-detail";
+      const keyRef=document.createElement("input"); keyRef.placeholder="Key reference"; keyRef.value=column.key_ref;
+      keyRef.title="Resolves from FSP_TOKENIZATION_KEY_<KEY_REF>; the secret is never stored here";
+      keyRef.oninput=()=>{ column.key_ref=keyRef.value; updatePreview(); };
+      const domain=document.createElement("input"); domain.placeholder="Domain"; domain.value=column.domain;
+      domain.oninput=()=>{ column.domain=domain.value; updatePreview(); };
+      const normalization=document.createElement("select");
+      for(const value of ["none","trim","trim_lower"]){
+        const option=document.createElement("option"); option.value=value; option.textContent=value; option.selected=column.normalization===value;
+        normalization.appendChild(option);
+      }
+      normalization.onchange=()=>{ column.normalization=normalization.value; updatePreview(); };
+      detail.append(keyRef, domain, normalization); row.appendChild(detail);
+      const note=document.createElement("div"); note.className="policy-note";
+      note.textContent="Secret environment variable: "+("FSP_TOKENIZATION_KEY_"+column.key_ref.replace(/[^A-Za-z0-9]+/g,"_").toUpperCase());
+      row.appendChild(note);
+    }
+    editor.appendChild(row);
+  }
+  return editor;
+}
+
 function renderSelected(){
   const wrap = $("selectedList"); const card = $("selectedCard");
   const items = [...state.selected.values()];
@@ -1064,6 +1190,7 @@ function renderSelected(){
     const body = document.createElement("div"); body.className = "tgbody";
     for(const s of list){
       const key = selKey(s.connection, s.source_table);
+      const table = document.createElement("div"); table.className="cfgtable";
       const row = document.createElement("div"); row.className="cfgrow";
       const src = document.createElement("div"); src.className="src";
       src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
@@ -1076,7 +1203,12 @@ function renderSelected(){
       for(const k of keys){ const o=document.createElement("option"); o.value=k; o.textContent=k;
         if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
       if(keys.length===0){ const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true; }
-      keysel.onchange = ()=>{ s.key_column=keysel.value; updatePreview(); persistConns(); };
+      keysel.onchange = ()=>{
+        s.key_column=keysel.value;
+        const splitColumn=s.columns.find(column=>column.source===s.key_column);
+        if(splitColumn){ splitColumn.policy="keep"; splitColumn.name=splitColumn.source; }
+        renderSelected(); persistConns();
+      };
 
       const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
       splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
@@ -1087,7 +1219,17 @@ function renderSelected(){
         renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
       };
 
-      row.append(src, keysel, splits, rm); body.appendChild(row);
+      row.append(src, keysel, splits, rm); table.appendChild(row);
+      if(s.columns.length){
+        const toggle=document.createElement("button"); toggle.className="iconbtn policy-toggle";
+        toggle.textContent=(s.policies_open ? "Hide" : "Edit")+" column policies";
+        toggle.onclick=()=>{ s.policies_open=!s.policies_open; renderSelected(); };
+        table.appendChild(toggle);
+        if(s.policies_open) table.appendChild(renderPolicyEditor(s));
+        const errors=policyErrors(s);
+        if(errors.length){ const error=document.createElement("div"); error.className="policy-error"; error.textContent=errors.join(" "); table.appendChild(error); }
+      }
+      body.appendChild(table);
     }
 
     grp.append(head, body); wrap.appendChild(grp);
@@ -1096,6 +1238,29 @@ function renderSelected(){
 }
 
 // ---- config assembly + preview ----
+function tableConfig(entry){
+  const table = {name:entry.name, source_table:entry.source_table, key_column:entry.key_column};
+  if(entry.num_splits) table.num_splits=parseInt(entry.num_splits);
+  if(entry.connection && entry.connection!=="default") table.connection=entry.connection;
+  const policyChanged = entry.columns.some(column=>column.policy!=="keep" || column.name!==column.source);
+  if(entry.columns.length && (entry.schema_explicit || policyChanged)){
+    table.schema=entry.columns.filter(column=>column.policy!=="remove").map(column=>{
+      const transformed=column.policy==="deterministic_hash" || column.policy==="random_token";
+      const item={field_id:column.field_id, name:column.name.trim(),
+        type:transformed ? "string" : column.type, nullable:column.nullable};
+      if(column.name!==column.source || transformed) item.source=column.source;
+      if(column.policy==="deterministic_hash"){
+        item.transform={kind:"deterministic_hash", key_ref:column.key_ref.trim(),
+          domain:column.domain, normalization:column.normalization};
+      }else if(column.policy==="random_token"){
+        item.transform={kind:"random_token"};
+      }
+      return item;
+    });
+  }
+  return table;
+}
+
 function buildConfig(){
   const cfg = {};
   const withPw = $("includePassword").checked;
@@ -1127,12 +1292,7 @@ function buildConfig(){
     const ttl = parseInt($("refreshTtl").value);
     if(ttl && ttl!==1200) cfg.refresh_ttl_seconds = ttl;
   }
-  cfg.tables = [...state.selected.values()].filter(s=>!s.invalid && s.key_column).map(s=>{
-    const e = { name:s.name, source_table:s.source_table, key_column:s.key_column };
-    if(s.num_splits) e.num_splits = s.num_splits;
-    if(s.connection && s.connection!=="default") e.connection = s.connection;
-    return e;
-  });
+  cfg.tables = [...state.selected.values()].filter(s=>!s.invalid && s.key_column).map(tableConfig);
   // Advanced overrides (section 4). Only emit values changed from their default.
   document.querySelectorAll('#allSettings [data-key]').forEach(inp=>{
     const raw = (inp.value||"").trim();
@@ -1242,12 +1402,13 @@ async function saveSettings(){
 async function applyTables(){
   const status = $("tableStatus");
   const valid = [...state.selected.values()].filter(s=>!s.invalid && s.key_column);
-  const tables = valid.map(s=>{
-    const e = { name:s.name, source_table:s.source_table, key_column:s.key_column };
-    if(s.num_splits) e.num_splits = parseInt(s.num_splits);
-    if(s.connection && s.connection!=="default") e.connection = s.connection;
-    return e;
-  });
+  const policyProblems = valid.flatMap(s=>policyErrors(s).map(error=>`${s.name}: ${error}`));
+  if(policyProblems.length){
+    status.className="status err";
+    status.textContent=policyProblems.join(" ");
+    return;
+  }
+  const tables = valid.map(tableConfig);
   if(!tables.length){
     status.className="status err";
     status.textContent="Select at least one table with a valid key column to apply.";

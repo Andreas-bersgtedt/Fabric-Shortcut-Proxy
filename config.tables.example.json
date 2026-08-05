@@ -28,6 +28,34 @@
         { "field_id": 2, "name": "occurred", "type": "timestamp" },
         { "field_id": 3, "name": "payload", "type": "string" }
       ]
+    },
+    {
+      "_comment": "SQL Server tokenization example. The source ssn column is removed by omitting it from this schema. Set FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1 before startup.",
+      "name": "customers_safe",
+      "source_table": "dbo.customers_pii",
+      "key_column": "customer_id",
+      "schema": [
+        { "field_id": 1, "name": "customer_id", "type": "long", "nullable": false },
+        {
+          "field_id": 2,
+          "name": "email_token",
+          "source": "email",
+          "type": "string",
+          "transform": {
+            "kind": "deterministic_hash",
+            "key_ref": "customer-pii-v1",
+            "domain": "customer-email",
+            "normalization": "trim_lower"
+          }
+        },
+        {
+          "field_id": 3,
+          "name": "support_token",
+          "source": "support_note",
+          "type": "string",
+          "transform": { "kind": "random_token" }
+        }
+      ]
     }
   ]
 }

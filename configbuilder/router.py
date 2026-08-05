@@ -144,12 +144,34 @@ async def bootstrap_builder() -> JSONResponse:
     """
     tables = []
     for t in config.TABLES:
+        schema = []
+        for column in t.schema or []:
+            item = {
+                "field_id": column.field_id,
+                "name": column.name,
+                "type": column.iceberg_type,
+                "nullable": column.nullable,
+            }
+            if column.source:
+                item["source"] = column.source
+            if column.transform:
+                transform = {
+                    "kind": column.transform.kind,
+                    "normalization": column.transform.normalization,
+                }
+                if column.transform.key_ref:
+                    transform["key_ref"] = column.transform.key_ref
+                if column.transform.domain is not None:
+                    transform["domain"] = column.transform.domain
+                item["transform"] = transform
+            schema.append(item)
         tables.append({
             "name": t.name,
             "source_table": t.source_table,
             "connection": t.connection_id,
             "key_column": t.key_column,
             "num_splits": int(t.num_splits),
+            "schema": schema or None,
         })
 
     # Named source connections (exclude the reserved 'default', which is the db_url
@@ -168,6 +190,7 @@ async def bootstrap_builder() -> JSONResponse:
         "builder": {
             "db_url_masked": config.redact_db_url(config.DB_URL),
             "has_db_url": bool(config.DB_URL),
+            "flavor": _flavor_from_url(config.DB_URL),
             "bucket": config.BUCKET_NAME,
             "num_splits": int(config.NUM_SPLITS),
             "table_format": config.TABLE_FORMAT,

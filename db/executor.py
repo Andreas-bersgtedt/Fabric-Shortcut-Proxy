@@ -36,6 +36,14 @@ class SourceUnavailable(RuntimeError):
     """
 
 
+def _params_for_log(params: dict[str, Any]) -> dict[str, Any]:
+    """Return query parameters with tokenization secrets removed."""
+    return {
+        key: "[REDACTED]" if key.startswith("__token_") else value
+        for key, value in params.items()
+    }
+
+
 def _db_url_uses_async_driver(db_url: str) -> bool:
     scheme = (db_url or "").lower().split("://", 1)[0]
     return (
@@ -46,7 +54,7 @@ def _db_url_uses_async_driver(db_url: str) -> bool:
 
 
 def _make_async_engine(db_url: str) -> AsyncEngine:
-    kwargs: dict = {"echo": False}
+    kwargs: dict = {"echo": False, "hide_parameters": True}
     # SQLite (including aiosqlite) uses StaticPool and does not accept
     # pool_size / max_overflow / pool_timeout.
     if "sqlite" not in db_url:
@@ -55,7 +63,11 @@ def _make_async_engine(db_url: str) -> AsyncEngine:
 
 
 def _make_sync_engine(db_url: str) -> Engine:
-    kwargs: dict = {"echo": False, "pool_pre_ping": True}
+    kwargs: dict = {
+        "echo": False,
+        "hide_parameters": True,
+        "pool_pre_ping": True,
+    }
     if "sqlite" not in db_url:
         kwargs.update({"pool_size": 5, "max_overflow": 10, "pool_timeout": 30})
     return create_engine(db_url, **kwargs)
@@ -316,7 +328,7 @@ async def _execute_once(
                 "sql_execute",
                 split_index=split_index,
                 sql=sql,
-                params=params,
+                params=_params_for_log(params),
                 connection=connection,
                 mode=("async" if _async_mode_for(connection) else "sync-fallback"),
             )
@@ -363,7 +375,8 @@ async def stream_split_query(
         async with _gate_for(connection):
             async with asyncio.timeout(_query_timeout_for(connection)):
                 log.info("sql_stream", split_index=split_index, sql=sql,
-                         params=params, batch_rows=batch_rows, connection=connection,
+                         params=_params_for_log(params), batch_rows=batch_rows,
+                         connection=connection,
                          mode=("async" if _async_mode_for(connection) else "sync-fallback"))
 
                 if _async_mode_for(connection):
@@ -531,10 +544,12 @@ async def validate_source_schema(table=None) -> None:
     if table is None:
         source_table = config.DB_SOURCE_TABLE
         declared = [c.name for c in config.TABLE_SCHEMA]
+        mappings = [(c.name, c.name) for c in config.TABLE_SCHEMA]
         connection = "default"
     else:
         source_table = table.source_table
-        declared = [c.name for c in table.schema]
+        declared = [c.source_name for c in table.schema]
+        mappings = [(c.name, c.source_name) for c in table.schema]
         connection = table.connection_id
 
     try:
@@ -559,7 +574,8 @@ async def validate_source_schema(table=None) -> None:
     if missing:
         raise RuntimeError(
             f"Source table {source_table!r} is missing declared "
-            f"column(s): {missing}. Update the table schema or the source "
+            f"column(s): {missing}. Output/source mappings: {mappings}. "
+            f"Update the table schema or the source "
             f"table so they match. Source columns present: {actual}"
         )
 

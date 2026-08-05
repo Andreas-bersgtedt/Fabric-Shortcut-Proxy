@@ -283,6 +283,48 @@ REFRESH_TTL_SECONDS: int = _get_int("REFRESH_TTL_SECONDS", "refresh_ttl_seconds"
 # Iceberg table schema definition
 # ---------------------------------------------------------------------------
 
+_COLUMN_TRANSFORM_KINDS = {"deterministic_hash", "random_token"}
+_COLUMN_NORMALIZATIONS = {"none", "trim", "trim_lower"}
+
+
+@dataclass(frozen=True)
+class ColumnTransform:
+    """Allowlisted source-side transformation for one output column."""
+    kind: str
+    key_ref: str | None = None
+    domain: str | None = None
+    normalization: str = "none"
+
+    def __post_init__(self):
+        if self.kind not in _COLUMN_TRANSFORM_KINDS:
+            raise ValueError(f"Unsupported column transform kind: {self.kind!r}")
+        if self.normalization not in _COLUMN_NORMALIZATIONS:
+            raise ValueError(
+                f"Unsupported column normalization: {self.normalization!r}"
+            )
+        if self.kind == "deterministic_hash" and not self.key_ref:
+            raise ValueError("deterministic_hash requires a non-empty key_ref")
+        if self.kind == "random_token" and self.key_ref:
+            raise ValueError("random_token does not accept key_ref")
+
+
+def tokenization_key_env_var(key_ref: str) -> str:
+    """Return the environment variable used to resolve a tokenization key."""
+    normalized = "".join(ch if ch.isalnum() else "_" for ch in key_ref.upper())
+    return f"FSP_TOKENIZATION_KEY_{normalized}"
+
+
+def resolve_tokenization_key(key_ref: str) -> str:
+    """Resolve a tokenization key without storing it in table configuration."""
+    env_var = tokenization_key_env_var(key_ref)
+    value = os.environ.get(env_var)
+    if not value:
+        raise ValueError(
+            f"Tokenization key {key_ref!r} is not configured; set {env_var}"
+        )
+    return value
+
+
 @dataclass
 class ColumnDef:
     """Iceberg column definition."""
@@ -290,6 +332,18 @@ class ColumnDef:
     name: str
     iceberg_type: str
     nullable: bool = True
+    source: str | None = None
+    transform: ColumnTransform | None = None
+
+    @property
+    def source_name(self) -> str:
+        return self.source or self.name
+
+    def __post_init__(self):
+        if self.transform and self.iceberg_type.strip().lower() != "string":
+            raise ValueError(
+                f"Transformed column {self.name!r} must use Iceberg type 'string'"
+            )
 
 
 TABLE_SCHEMA: list[ColumnDef] = [
@@ -332,12 +386,29 @@ def _tabledef_from_json(d: dict) -> "TableDef":
     raw_schema = d.get("schema")
     schema = None
     if raw_schema:
+        def _transform(c: dict) -> ColumnTransform | None:
+            raw = c.get("transform")
+            if not raw:
+                return None
+            if not isinstance(raw, dict):
+                raise ValueError(
+                    f"Column {c.get('name')!r} transform must be an object"
+                )
+            return ColumnTransform(
+                kind=str(raw.get("kind", "")).strip().lower(),
+                key_ref=(str(raw["key_ref"]).strip() if raw.get("key_ref") else None),
+                domain=(str(raw["domain"]) if raw.get("domain") is not None else None),
+                normalization=str(raw.get("normalization", "none")).strip().lower(),
+            )
+
         schema = [
             ColumnDef(
                 field_id=int(c["field_id"]),
                 name=c["name"],
                 iceberg_type=c.get("type") or c.get("iceberg_type"),
                 nullable=bool(c.get("nullable", True)),
+                source=(str(c["source"]) if c.get("source") else None),
+                transform=_transform(c),
             )
             for c in raw_schema
         ]
@@ -490,6 +561,44 @@ def validate_config() -> None:
                     f"Table {t.name!r}: connection {t.connection_id!r} is not defined "
                     f"(known: {sorted(CONNECTIONS)})."
                 )
+            transforms = [c for c in (t.schema or []) if c.transform]
+            if not transforms:
+                continue
+
+            from db.capabilities import flavor_from_db_url
+
+            flavor = flavor_from_db_url(effective_db_url(t.connection_id))
+            if flavor != "mssql":
+                problems.append(
+                    f"Table {t.name!r}: column transforms are not supported for "
+                    f"dialect {flavor!r}; this release supports mssql only."
+                )
+            for col in transforms:
+                if t.key_column in {col.name, col.source_name}:
+                    problems.append(
+                        f"Table {t.name!r}: split key {t.key_column!r} cannot have "
+                        "a column transform."
+                    )
+                if col.transform.kind == "deterministic_hash":
+                    try:
+                        resolve_tokenization_key(col.transform.key_ref)
+                    except ValueError as exc:
+                        problems.append(f"Table {t.name!r}: {exc}")
+                if (
+                    col.transform.kind == "random_token"
+                    and AUTO_REFRESH
+                    and (
+                        REFRESH_STRATEGY == "content_hash"
+                        or (
+                            REFRESH_STRATEGY == "auto"
+                            and REFRESH_ALLOW_FULL_PULL
+                        )
+                    )
+                ):
+                    problems.append(
+                        f"Table {t.name!r}: random_token is incompatible with "
+                        "content-based auto-refresh."
+                    )
 
     for cid, conn in CONNECTIONS.items():
         url = DB_URL if cid == "default" else conn.db_url
@@ -919,7 +1028,51 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                 if dups:
                     errors.append(f"tables: duplicate table name(s) {dups} — names must be unique across all sources")
                 else:
-                    clean[k] = v  # Pass through as-is
+                    table_errors: list[str] = []
+                    for index, raw_table in enumerate(v):
+                        prefix = f"tables[{index}]"
+                        if not isinstance(raw_table, dict):
+                            table_errors.append(f"{prefix}: must be an object")
+                            continue
+                        if not str(raw_table.get("name") or "").strip():
+                            table_errors.append(f"{prefix}: name must be non-empty")
+                        if not str(raw_table.get("source_table") or "").strip():
+                            table_errors.append(f"{prefix}: source_table must be non-empty")
+                        if not str(raw_table.get("key_column") or "").strip():
+                            table_errors.append(f"{prefix}: key_column must be non-empty")
+                        raw_schema = raw_table.get("schema")
+                        if raw_schema is not None and not isinstance(raw_schema, list):
+                            table_errors.append(f"{prefix}.schema: must be a list")
+                            continue
+                        if isinstance(raw_schema, list):
+                            field_ids = [c.get("field_id") for c in raw_schema if isinstance(c, dict)]
+                            output_names = [str(c.get("name") or "") for c in raw_schema if isinstance(c, dict)]
+                            if len(field_ids) != len(raw_schema):
+                                table_errors.append(f"{prefix}.schema: every column must be an object")
+                                continue
+                            if len({repr(field_id) for field_id in field_ids}) != len(field_ids):
+                                table_errors.append(f"{prefix}.schema: field_id values must be unique")
+                            if any(not name for name in output_names):
+                                table_errors.append(f"{prefix}.schema: output names must be non-empty")
+                            if len(set(output_names)) != len(output_names):
+                                table_errors.append(f"{prefix}.schema: output names must be unique")
+                            for column_index, column in enumerate(raw_schema):
+                                column_prefix = f"{prefix}.schema[{column_index}]"
+                                if not (column.get("type") or column.get("iceberg_type")):
+                                    table_errors.append(f"{column_prefix}: type must be non-empty")
+                                source_name = str(column.get("source") or column.get("name") or "")
+                                if column.get("transform") and source_name == raw_table.get("key_column"):
+                                    table_errors.append(
+                                        f"{column_prefix}: split key {source_name!r} cannot have a transform"
+                                    )
+                        try:
+                            _tabledef_from_json(raw_table)
+                        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                            table_errors.append(f"{prefix}: {exc}")
+                    if table_errors:
+                        errors.extend(table_errors)
+                    else:
+                        clean[k] = v
             continue
 
         # Special case: "connections" is an array of named source definitions.

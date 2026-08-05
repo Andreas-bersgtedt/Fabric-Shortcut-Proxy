@@ -22,6 +22,8 @@ class FlavorCapabilities:
     supports_range_key_bounds: bool
     supports_modulo_split: bool
     supports_fast_row_estimate: bool
+    supports_deterministic_tokenization: bool = False
+    supports_random_tokenization: bool = False
     required_connection_fields: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
@@ -36,6 +38,8 @@ class FlavorCapabilities:
             "supports_range_key_bounds": self.supports_range_key_bounds,
             "supports_modulo_split": self.supports_modulo_split,
             "supports_fast_row_estimate": self.supports_fast_row_estimate,
+            "supports_deterministic_tokenization": self.supports_deterministic_tokenization,
+            "supports_random_tokenization": self.supports_random_tokenization,
             "required_connection_fields": list(self.required_connection_fields),
         }
 
@@ -70,6 +74,8 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_range_key_bounds=True,
         supports_modulo_split=True,
         supports_fast_row_estimate=True,
+        supports_deterministic_tokenization=True,
+        supports_random_tokenization=True,
     ),
     "oracle": FlavorCapabilities(
         flavor="oracle",

@@ -32,6 +32,18 @@ class Dialect:
     def cast_int(self, expr: str) -> str:
         return f"CAST({expr} AS {self.int_cast_type})"
 
+    def render_projection(self, column, param_prefix: str) -> tuple[str, str, dict]:
+        """Render one source expression, its output reference, and bind values."""
+        source = self.quote(column.source_name)
+        output = self.quote(column.name)
+        if column.transform:
+            raise ValueError(
+                f"Dialect {self.name!r} does not support column transform "
+                f"{column.transform.kind!r}"
+            )
+        projected = source if column.source_name == column.name else f"{source} AS {output}"
+        return projected, output, {}
+
     def build_select(
         self,
         *,
@@ -78,6 +90,7 @@ class Dialect:
         self,
         *,
         projected: str,
+        outer_projected: str | None = None,
         source: str,
         order_by: str,
         num_splits_param: str,
@@ -97,8 +110,9 @@ class Dialect:
             f"FROM {source}"
         )
         predicate = f"(({rownum} - 1) % :{num_splits_param}) = :{split_index_param}"
+        outer = outer_projected or projected
         return (
-            f"SELECT {projected} "
+            f"SELECT {outer} "
             f"FROM ({inner}) AS q "
             f"WHERE {predicate} "
             f"ORDER BY {rownum} "
@@ -126,6 +140,45 @@ class MSSQLDialect(Dialect):
     def quote(self, ident: str) -> str:
         escaped = ident.replace("]", "]]")
         return f"[{escaped}]"
+
+    def render_projection(self, column, param_prefix: str) -> tuple[str, str, dict]:
+        if not column.transform:
+            return super().render_projection(column, param_prefix)
+
+        source = self.quote(column.source_name)
+        output = self.quote(column.name)
+        transform = column.transform
+        if transform.kind == "random_token":
+            expression = (
+                f"CASE WHEN {source} IS NULL THEN NULL "
+                f"ELSE CONVERT(varchar(36), NEWID()) END AS {output}"
+            )
+            return expression, output, {}
+
+        if transform.kind == "deterministic_hash":
+            import config
+
+            key_param = f"__token_key_{param_prefix}"
+            domain_param = f"__token_domain_{param_prefix}"
+            value = f"CONVERT(nvarchar(max), {source})"
+            if transform.normalization in {"trim", "trim_lower"}:
+                value = f"LTRIM(RTRIM({value}))"
+            if transform.normalization == "trim_lower":
+                value = f"LOWER({value})"
+            expression = (
+                f"CASE WHEN {source} IS NULL THEN NULL "
+                "ELSE CONVERT(varchar(64), HASHBYTES('SHA2_256', "
+                f"CONCAT(CONVERT(nvarchar(max), :{key_param}), N'|', "
+                f"CONVERT(nvarchar(max), :{domain_param}), N'|', {value})), 2) "
+                f"END AS {output}"
+            )
+            params = {
+                key_param: config.resolve_tokenization_key(transform.key_ref),
+                domain_param: transform.domain or column.name,
+            }
+            return expression, output, params
+
+        return super().render_projection(column, param_prefix)
 
     def build_select(
         self,
@@ -171,6 +224,7 @@ class MSSQLDialect(Dialect):
         self,
         *,
         projected: str,
+        outer_projected: str | None = None,
         source: str,
         order_by: str,
         num_splits_param: str,
@@ -184,8 +238,9 @@ class MSSQLDialect(Dialect):
             f"FROM {source}"
         )
         predicate = f"((q.{rownum} - 1) % :{num_splits_param}) = :{split_index_param}"
+        outer = outer_projected or projected
         return (
-            f"SELECT TOP (:{max_rows_param}) {projected} "
+            f"SELECT TOP (:{max_rows_param}) {outer} "
             f"FROM ({inner}) AS q "
             f"WHERE {predicate} "
             f"ORDER BY q.{rownum}"
@@ -242,6 +297,7 @@ class OracleDialect(Dialect):
         self,
         *,
         projected: str,
+        outer_projected: str | None = None,
         source: str,
         order_by: str,
         num_splits_param: str,
@@ -255,8 +311,9 @@ class OracleDialect(Dialect):
             f"FROM {source}"
         )
         predicate = f"(MOD((q.{rownum} - 1), :{num_splits_param})) = :{split_index_param}"
+        outer = outer_projected or projected
         return (
-            f"SELECT {projected} "
+            f"SELECT {outer} "
             f"FROM ({inner}) q "
             f"WHERE {predicate} "
             f"ORDER BY q.{rownum} "

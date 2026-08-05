@@ -102,19 +102,60 @@ supervisor restarts crashed agents with backoff and will not crash-loop on a per
 configuration error; it emits a clear, redacted message instead. The scale design is in
 [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md).
 
-## 8.7 High availability
+## 8.7 Materialization and data size
+
+Understanding when data is read matters most for large tables. The proxy materializes each
+split eagerly at startup: it runs the split's SQL and encodes the result as Parquet before
+serving begins. This is deliberate, not lazy per-request generation, because Iceberg and
+Delta manifests must declare accurate row counts and file sizes; readers, including OneLake's
+Iceberg-to-Delta virtualization, use the declared size to locate the Parquet footer.
+
+What this means for, say, a 1 TB source table:
+
+- **The first cold start reads the whole table once** and writes it as Parquet to the durable
+  store. It is not re-queried from the database on every Fabric read; Fabric streams the
+  already-materialized bytes on demand (ranged reads).
+- **The stored footprint is Parquet-encoded, not raw 1 TB.** Parquet is columnar and
+  compressed, so the on-disk size is materially smaller than the raw source, though still
+  proportional to it.
+- **Memory stays bounded.** With `STREAMING_PARQUET=1` each split materializes in row batches
+  (`STREAM_BATCH_ROWS`, default 50,000) instead of loading whole into RAM; concurrency is
+  capped by `MAX_CONCURRENT_GENERATIONS`; the in-memory Parquet cache is capped by
+  `PARQUET_CACHE_MAX_BYTES`. Durable bytes live on disk in the artifact store, not RAM.
+- **Warm restarts skip regeneration.** With `PIN_MATERIALIZED_SPLITS=1` (default) and
+  artifact-store serving, a restart serves the materialized splits from disk with no SQL and
+  no re-read of the source.
+- **A cluster divides the seed.** Each agent materializes only its shard of splits
+  (`AGENT_SHARD_COUNT`); `shard_strategy=weighted` balances by bytes, not just count. So N
+  agents each seed roughly `1 TB / N`, and non-owner agents wait for the owning shard to
+  publish rather than re-reading the source.
+
+Sizing guidance for large tables:
+
+- Budget artifact-store or disk-cache space near the Parquet-encoded size, and keep
+  `PIN_MATERIALIZED_SPLITS=1` with artifact-store serving so restarts do not re-read.
+- Enable `STREAMING_PARQUET=1` to bound memory during the initial materialization.
+- Keep range split planning (default) so each split scans only its key slice instead of the
+  full table, and shard across agents to parallelize the seed.
+- Expect a real cold-start cost; there is no metadata-only, generate-per-request startup
+  mode. Materialization is always eager so the manifests are correct.
+- Prefer a cheap change probe (`REFRESH_STRATEGY=auto` or `dialect_probe`) or `ttl` over
+  `content_hash` for auto-refresh, because content hashing re-materializes the table to
+  detect change.
+
+## 8.8 High availability
 
 Enable Manager HA with `-Ha` (leader lease over the shared artifact store). Only the primary
 Manager supervises agents; a standby is a warm spare and reports as ready. The gateway on a
 standby naturally returns 503 because no agents register to it. Roll agents with health-gated
 restarts (`rolling_restart_health_timeout`).
 
-## 8.8 Retention
+## 8.9 Retention
 
 Enable the retention garbage collector with `-RetentionGc` to prune orphaned Parquet splits
 on a timer (`retention_gc_interval_seconds`), or trigger it once with `POST /_admin/gc`.
 
-## 8.9 Troubleshooting
+## 8.10 Troubleshooting
 
 | Symptom | Likely cause | First check |
 |---|---|---|
@@ -131,7 +172,7 @@ Launcher and host issues are covered in
 guides. Oracle and Databricks operational specifics are in
 [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](../ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
-## 8.10 Next
+## 8.11 Next
 
 Continue to [Chapter 9: Reference](09-reference.md) for the settings groups, dialect matrix,
 path formats, and launcher flags.

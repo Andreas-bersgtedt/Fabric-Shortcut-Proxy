@@ -90,7 +90,7 @@ In a Fabric Lakehouse: New shortcut → Amazon S3 compatible.
 
 Only the queried rows traverse the gateway. If the shortcut resolves and shows rows, the path
 works end to end. For 403s, recheck the access key and its ACL (chapter 7); for a stuck
-`readyz`, recheck the connection string and driver (chapter 8, §8.9).
+`readyz`, recheck the connection string and driver (chapter 8, §8.10).
 
 ## 10.3 Serving a file share as passthrough
 

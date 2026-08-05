@@ -8,7 +8,8 @@ Verifies build_split_query() emits correct SQL per dialect:
 from __future__ import annotations
 
 import config
-from config import ColumnDef, TableDef
+import pytest
+from config import ColumnDef, ColumnTransform, TableDef
 from iceberg.state_store import SplitDescriptor
 from planner.dialects import (
     get_dialect,
@@ -131,3 +132,93 @@ def test_split_query_databricks(monkeypatch):
     assert "SELECT `id`, `name`" in sql
     assert "CAST(`id` AS BIGINT)" in sql
     assert "LIMIT :max_rows" in sql
+
+
+def _tokenized_table(*, random: bool = False, string_key: bool = False) -> TableDef:
+    transform = (
+        ColumnTransform(kind="random_token")
+        if random
+        else ColumnTransform(
+            kind="deterministic_hash",
+            key_ref="customer-pii-v1",
+            domain="customer-email",
+            normalization="trim_lower",
+        )
+    )
+    return TableDef(
+        name="customers_safe",
+        source_table="dbo.customers",
+        key_column="customer_id",
+        num_splits=4,
+        schema=[
+            ColumnDef(
+                field_id=1,
+                name="customer_id",
+                iceberg_type="string" if string_key else "long",
+                nullable=False,
+            ),
+            ColumnDef(
+                field_id=2,
+                name="email_token",
+                source="email",
+                iceberg_type="string",
+                transform=transform,
+            ),
+        ],
+    )
+
+
+def _table_split(table: TableDef) -> SplitDescriptor:
+    return SplitDescriptor(
+        split_index=1,
+        num_splits=4,
+        object_key="warehouse/db/customers_safe/data/split-1.parquet",
+        watermark_ms=0,
+        table=table,
+    )
+
+
+def test_mssql_deterministic_hash_projection(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+
+    sql, params = build_split_query(_table_split(_tokenized_table()))
+
+    assert "HASHBYTES('SHA2_256'" in sql
+    assert "LOWER(LTRIM(RTRIM(CONVERT(nvarchar(max), [email]))))" in sql
+    assert "END AS [email_token]" in sql
+    assert "uat-secret" not in sql
+    assert params["__token_key_1"] == "uat-secret"
+    assert params["__token_domain_1"] == "customer-email"
+
+
+def test_mssql_random_token_projection(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    sql, params = build_split_query(_table_split(_tokenized_table(random=True)))
+    assert "CONVERT(varchar(36), NEWID())" in sql
+    assert "END AS [email_token]" in sql
+    assert not any(key.startswith("__token_") for key in params)
+
+
+def test_tokenization_fails_closed_on_unsupported_dialect(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "sqlite+aiosqlite:///x.db")
+    with pytest.raises(ValueError, match="does not support column transform"):
+        build_split_query(_table_split(_tokenized_table()))
+
+
+def test_split_key_transform_is_rejected(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    table = _tokenized_table()
+    table.schema[0].transform = ColumnTransform(kind="random_token")
+    with pytest.raises(ValueError, match="Split key 'customer_id'"):
+        build_split_query(_table_split(table))
+
+
+def test_token_projection_uses_alias_in_row_number_outer_query(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+    sql, _ = build_split_query(_table_split(_tokenized_table(string_key=True)))
+    assert sql.startswith(
+        "SELECT TOP (:max_rows) [customer_id], [email_token] FROM (SELECT "
+    )
+    assert sql.count("HASHBYTES('SHA2_256'") == 1

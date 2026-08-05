@@ -227,7 +227,23 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
     key_name = split.split_key_column or _pk_column(table)
     key_type = _column_type(table, key_name)
     pk = dialect.quote(key_name)
-    projected = ", ".join(dialect.quote(col.name) for col in table.schema)
+    if any(
+        col.transform and key_name in {col.name, col.source_name}
+        for col in table.schema
+    ):
+        raise ValueError(f"Split key {key_name!r} cannot have a column transform")
+
+    rendered = [
+        dialect.render_projection(col, str(index))
+        for index, col in enumerate(table.schema)
+    ]
+    projected = ", ".join(item[0] for item in rendered)
+    outer_projected = ", ".join(item[1] for item in rendered)
+    projection_params = {
+        key: value
+        for item in rendered
+        for key, value in item[2].items()
+    }
     source = dialect.quote_qualified(table.source_table)
     max_rows = config.effective_query_max_rows(table.connection_id)
 
@@ -241,6 +257,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
             max_rows_param="max_rows",
         )
         params = {
+            **projection_params,
             "key_lo": split.key_lo,
             "key_hi": split.key_hi,
             "max_rows": max_rows,
@@ -250,6 +267,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
     if key_type not in _INTEGER_TYPES:
         sql = dialect.build_select_row_number(
             projected=projected,
+            outer_projected=outer_projected,
             source=source,
             order_by=pk,
             num_splits_param="num_splits",
@@ -257,6 +275,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
             max_rows_param="max_rows",
         )
         params = {
+            **projection_params,
             "num_splits": split.num_splits,
             "split_index": split.split_index,
             "max_rows": max_rows,
@@ -273,6 +292,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
     )
 
     params = {
+        **projection_params,
         "num_splits": split.num_splits,
         "split_index": split.split_index,
         "max_rows": max_rows,

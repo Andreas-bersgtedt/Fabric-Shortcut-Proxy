@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import config
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,58 @@ def test_tabledef_from_json_with_schema():
     assert t.schema[0].iceberg_type == "long"
     assert t.schema[0].nullable is False
     assert t.schema[1].nullable is True        # default
+
+
+def test_tabledef_from_json_with_tokenization(monkeypatch):
+    t = config._tabledef_from_json({
+        "name": "customers_safe",
+        "source_table": "dbo.customers",
+        "key_column": "customer_id",
+        "schema": [
+            {"field_id": 1, "name": "customer_id", "type": "long"},
+            {
+                "field_id": 2,
+                "name": "email_token",
+                "source": "email",
+                "type": "string",
+                "transform": {
+                    "kind": "deterministic_hash",
+                    "key_ref": "customer-pii-v1",
+                    "domain": "customer-email",
+                    "normalization": "trim_lower",
+                },
+            },
+        ],
+    })
+    token = t.schema[1]
+    assert token.source_name == "email"
+    assert token.transform.kind == "deterministic_hash"
+    assert token.transform.domain == "customer-email"
+    assert config.tokenization_key_env_var("customer-pii-v1") == (
+        "FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1"
+    )
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+    assert config.resolve_tokenization_key("customer-pii-v1") == "uat-secret"
+
+
+def test_column_transform_validation():
+    with pytest.raises(ValueError, match="requires a non-empty key_ref"):
+        config.ColumnTransform(kind="deterministic_hash")
+    with pytest.raises(ValueError, match="must use Iceberg type 'string'"):
+        config.ColumnDef(
+            field_id=1,
+            name="bad_token",
+            iceberg_type="long",
+            transform=config.ColumnTransform(
+                kind="deterministic_hash", key_ref="key-v1"
+            ),
+        )
+
+
+def test_missing_tokenization_key_fails_closed(monkeypatch):
+    monkeypatch.delenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", raising=False)
+    with pytest.raises(ValueError, match="FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1"):
+        config.resolve_tokenization_key("customer-pii-v1")
 
 
 # ---------------------------------------------------------------------------

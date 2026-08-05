@@ -1,12 +1,12 @@
 # Pushdown tokenization investigation
 
-Status: implemented for SQL Server through the Python agent; UAT pending
+Status: implemented for SQL Server through the Python agent and Config Builder; UAT pending
 
 The implemented scope includes deterministic SHA-256 tokens, random UUID tokens,
 column omission, source/output aliases, key resolution from environment variables,
-startup validation, parameter redaction, and capability reporting. PostgreSQL,
-Oracle, Databricks, SQLite cryptographic transforms, Config Builder controls, and
-the standalone C++ native publisher remain future work.
+startup validation, parameter redaction, capability reporting, and Config Builder
+policy controls. PostgreSQL, Oracle, Databricks, SQLite cryptographic transforms,
+and the standalone C++ native publisher remain future work.
 
 ## Decision
 

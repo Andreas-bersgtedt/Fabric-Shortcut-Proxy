@@ -1028,7 +1028,51 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                 if dups:
                     errors.append(f"tables: duplicate table name(s) {dups} — names must be unique across all sources")
                 else:
-                    clean[k] = v  # Pass through as-is
+                    table_errors: list[str] = []
+                    for index, raw_table in enumerate(v):
+                        prefix = f"tables[{index}]"
+                        if not isinstance(raw_table, dict):
+                            table_errors.append(f"{prefix}: must be an object")
+                            continue
+                        if not str(raw_table.get("name") or "").strip():
+                            table_errors.append(f"{prefix}: name must be non-empty")
+                        if not str(raw_table.get("source_table") or "").strip():
+                            table_errors.append(f"{prefix}: source_table must be non-empty")
+                        if not str(raw_table.get("key_column") or "").strip():
+                            table_errors.append(f"{prefix}: key_column must be non-empty")
+                        raw_schema = raw_table.get("schema")
+                        if raw_schema is not None and not isinstance(raw_schema, list):
+                            table_errors.append(f"{prefix}.schema: must be a list")
+                            continue
+                        if isinstance(raw_schema, list):
+                            field_ids = [c.get("field_id") for c in raw_schema if isinstance(c, dict)]
+                            output_names = [str(c.get("name") or "") for c in raw_schema if isinstance(c, dict)]
+                            if len(field_ids) != len(raw_schema):
+                                table_errors.append(f"{prefix}.schema: every column must be an object")
+                                continue
+                            if len({repr(field_id) for field_id in field_ids}) != len(field_ids):
+                                table_errors.append(f"{prefix}.schema: field_id values must be unique")
+                            if any(not name for name in output_names):
+                                table_errors.append(f"{prefix}.schema: output names must be non-empty")
+                            if len(set(output_names)) != len(output_names):
+                                table_errors.append(f"{prefix}.schema: output names must be unique")
+                            for column_index, column in enumerate(raw_schema):
+                                column_prefix = f"{prefix}.schema[{column_index}]"
+                                if not (column.get("type") or column.get("iceberg_type")):
+                                    table_errors.append(f"{column_prefix}: type must be non-empty")
+                                source_name = str(column.get("source") or column.get("name") or "")
+                                if column.get("transform") and source_name == raw_table.get("key_column"):
+                                    table_errors.append(
+                                        f"{column_prefix}: split key {source_name!r} cannot have a transform"
+                                    )
+                        try:
+                            _tabledef_from_json(raw_table)
+                        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                            table_errors.append(f"{prefix}: {exc}")
+                    if table_errors:
+                        errors.extend(table_errors)
+                    else:
+                        clean[k] = v
             continue
 
         # Special case: "connections" is an array of named source definitions.

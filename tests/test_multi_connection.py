@@ -205,6 +205,47 @@ def test_validate_rejects_duplicate_table_names():
     assert not errs and "tables" in clean
 
 
+def test_validate_table_column_policy_payloads():
+    valid = {
+        "name": "customers_safe",
+        "source_table": "dbo.customers",
+        "key_column": "customer_id",
+        "schema": [
+            {"field_id": 1, "name": "customer_id", "type": "long", "nullable": False},
+            {
+                "field_id": 2,
+                "name": "email_token",
+                "source": "email",
+                "type": "string",
+                "transform": {
+                    "kind": "deterministic_hash",
+                    "key_ref": "customer-pii-v1",
+                    "domain": "customer-email",
+                    "normalization": "trim_lower",
+                },
+            },
+        ],
+    }
+    clean, errors = config.validate_setting_updates({"tables": [valid]})
+    assert not errors and clean["tables"][0]["schema"][1]["source"] == "email"
+
+    invalid = dict(valid)
+    invalid["schema"] = [
+        {
+            "field_id": 1,
+            "name": "customer_id_token",
+            "source": "customer_id",
+            "type": "string",
+            "transform": {"kind": "random_token"},
+        },
+        {"field_id": 1, "name": "customer_id_token", "type": "string"},
+    ]
+    _, errors = config.validate_setting_updates({"tables": [invalid]})
+    assert any("field_id values must be unique" in error for error in errors)
+    assert any("output names must be unique" in error for error in errors)
+    assert any("split key 'customer_id'" in error for error in errors)
+
+
 def test_validate_rejects_table_on_undefined_connection_in_same_apply():
     # The config-builder "Apply" rewrites tables + connections together. A table
     # pointing at a source that is NOT in that connections[] would pass here but

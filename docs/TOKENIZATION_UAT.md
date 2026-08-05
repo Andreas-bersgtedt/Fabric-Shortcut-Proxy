@@ -7,8 +7,8 @@ hashing with `HASHBYTES`, random UUID tokens with `NEWID`, and source-column
 removal through an explicit output schema.
 
 Use SQL Server 2016 or later. The first implementation supports the `mssql`
-dialect only. The Config Builder does not yet edit transforms, so configure the
-table in `config.tables.json`.
+dialect only. Configure policies through the Config Builder or edit
+`config.tables.json` directly.
 
 ## 1. Create source data
 
@@ -37,8 +37,23 @@ is required.
 
 ## 2. Configure the table
 
-Add this entry to the `tables` array in `config.tables.json`. Remove other table
-entries for the simplest UAT.
+In the Config Builder, connect to SQL Server and select `dbo.customers_pii`.
+Open **Per-Table Configuration**, expand the SQL Server source, then select
+**Edit column policies**:
+
+1. Leave `customer_id` as **Keep**. Split-key policies are locked.
+2. Set `email` to **Deterministic token**, output name `email_token`, key
+  reference `customer-pii-v1`, domain `customer-email`, and normalization
+  `trim_lower`.
+3. Set `support_note` to **Random token** and output name `support_token`.
+4. Set `ssn` to **Remove**, then apply the table configuration and restart.
+
+The key reference produces the environment variable name
+`FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1`. The key value is not stored in the
+table configuration.
+
+For a direct JSON setup, add this entry to the `tables` array in
+`config.tables.json`. Remove other table entries for the simplest UAT.
 
 ```json
 {

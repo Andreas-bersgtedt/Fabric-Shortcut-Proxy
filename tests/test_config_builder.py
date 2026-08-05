@@ -141,6 +141,10 @@ async def test_index_serves_html(app):
         r = await c.get("/_config/")
     assert r.status_code == 200
     assert "Config Builder" in r.text
+    assert "column policies" in r.text
+    assert 'kind:"deterministic_hash"' in r.text
+    assert 'kind:"random_token"' in r.text
+    assert 'column.policy!=="remove"' in r.text
 
 
 def test_settings_catalog_has_defaults():
@@ -176,6 +180,51 @@ async def test_bootstrap_api_prefills_running_builder_config(app):
     assert isinstance(b.get("num_splits"), int)
     assert b.get("table_format") in ("iceberg", "delta")
     assert isinstance(b.get("tables"), list)
+    assert isinstance(b.get("flavor"), str)
+
+
+async def test_bootstrap_api_preserves_column_policies(app, monkeypatch):
+    import config
+
+    table = config.TableDef(
+        name="customers_safe",
+        source_table="dbo.customers",
+        key_column="customer_id",
+        schema=[
+            config.ColumnDef(1, "customer_id", "long", nullable=False),
+            config.ColumnDef(
+                2,
+                "email_token",
+                "string",
+                source="email",
+                transform=config.ColumnTransform(
+                    kind="deterministic_hash",
+                    key_ref="customer-pii-v1",
+                    domain="customer-email",
+                    normalization="trim_lower",
+                ),
+            ),
+        ],
+    )
+    monkeypatch.setattr(config, "TABLES", [table])
+    async with _client(app) as c:
+        response = await c.get("/_config/api/bootstrap")
+
+    schema = response.json()["builder"]["tables"][0]["schema"]
+    assert schema[1] == {
+        "field_id": 2,
+        "name": "email_token",
+        "type": "string",
+        "nullable": True,
+        "source": "email",
+        "transform": {
+            "kind": "deterministic_hash",
+            "normalization": "trim_lower",
+            "key_ref": "customer-pii-v1",
+            "domain": "customer-email",
+        },
+    }
+    assert "uat-secret" not in response.text
 
 
 async def test_connect_lists_tables(app, db_path):

@@ -202,7 +202,10 @@ async def test_agent_manager_path_hint_when_standalone(monkeypatch):
         assert "Manager" in r.json()["detail"]
 
 
-async def test_agent_favicon_is_no_content():
+async def test_agent_favicon_serves_brand_icon():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                  base_url="http://agent") as c:
-        assert (await c.get("/favicon.ico")).status_code == 204
+            response = await c.get("/favicon.ico")
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "image/png"
+            assert response.content.startswith(b"\x89PNG\r\n\x1a\n")

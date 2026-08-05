@@ -119,6 +119,19 @@ async def test_gateway_reserves_manager_namespace():
         await gw.aclose()
 
 
+async def test_manager_serves_brand_favicon(monkeypatch):
+    monkeypatch.setattr(config, "ENABLE_GATEWAY", False)
+    from enterprise.control.manager_app import create_manager_app
+
+    app = create_manager_app()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://mgr") as client:
+        response = await client.get("/favicon.ico")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/png"
+        assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
 # ---------------------------------------------------------------------------
 # Multi-Agent supervisor wiring (no processes spawned)
 # ---------------------------------------------------------------------------

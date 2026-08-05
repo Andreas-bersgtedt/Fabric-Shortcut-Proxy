@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import pathlib
 import sys
 
 from fastapi import FastAPI, HTTPException
@@ -624,8 +625,11 @@ async def _manager_console_redirect(rest: str = ""):
 
 @app.get("/favicon.ico")
 async def _favicon():
-    from fastapi.responses import Response as _Resp
-    return _Resp(status_code=204)
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        pathlib.Path(__file__).parent / "docs" / "images" / "FSP_FaviIcon.png",
+        media_type="image/png",
+    )
 
 
 # Mount S3 router at root – all routes are /{bucket}/...

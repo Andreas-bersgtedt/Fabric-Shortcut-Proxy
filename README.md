@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/FSP_Logo.png" alt="Fabric Shortcut Proxy" width="360" />
+</p>
+
 # Fabric Shortcut Proxy
 
 S3 table gateway for Microsoft Fabric. It exposes relational source data as shortcut-readable

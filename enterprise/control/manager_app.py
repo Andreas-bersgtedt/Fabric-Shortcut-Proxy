@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import pathlib
 import shlex
 import sys
 
@@ -226,6 +227,14 @@ def create_manager_app() -> FastAPI:
                 "crash_looped": looped,
                 "restarts": {s.name: s.restart_count for s in supervisors},
             },
+        )
+
+    @app.get("/favicon.ico")
+    async def favicon():
+        from fastapi.responses import FileResponse
+        return FileResponse(
+            pathlib.Path(__file__).parents[2] / "docs" / "images" / "FSP_FaviIcon.png",
+            media_type="image/png",
         )
 
     @app.get("/agents")

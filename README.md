@@ -495,6 +495,10 @@ Use this order when docs appear to conflict:
   - [README.md](README.md) for setup and quick operations.
   - [CONFIGURATION.md](docs/CONFIGURATION.md) for complete settings and behavior.
   - [DELTA_FORMAT.md](docs/DELTA_FORMAT.md) for `TABLE_FORMAT=delta` semantics.
+  - [TOKENIZATION_PUSHDOWN.md](docs/TOKENIZATION_PUSHDOWN.md) for column policy,
+    security, and dialect behavior.
+  - [TOKENIZATION_MULTI_DIALECT_UAT.md](docs/TOKENIZATION_MULTI_DIALECT_UAT.md) for
+    PostgreSQL, Oracle, and Databricks SQL validation.
 3. **Design/history docs (may describe prior states)**:
   - [PLANNING.md](docs/PLANNING.md)
   - [SCALE_ARCHITECTURE_PLAN.md](docs/SCALE_ARCHITECTURE_PLAN.md)

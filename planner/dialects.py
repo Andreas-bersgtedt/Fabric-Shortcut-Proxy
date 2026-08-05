@@ -128,6 +128,45 @@ class PostgresDialect(Dialect):
     name = "postgresql"
     int_cast_type = "BIGINT"
 
+    def render_projection(self, column, param_prefix: str) -> tuple[str, str, dict]:
+        if not column.transform:
+            return super().render_projection(column, param_prefix)
+
+        source = self.quote(column.source_name)
+        output = self.quote(column.name)
+        transform = column.transform
+        if transform.kind == "random_token":
+            expression = (
+                f"CASE WHEN {source} IS NULL THEN NULL "
+                f"ELSE CAST(gen_random_uuid() AS text) END AS {output}"
+            )
+            return expression, output, {}
+
+        if transform.kind == "deterministic_hash":
+            import config
+
+            key_param = f"fsp_token_key_{param_prefix}"
+            domain_param = f"fsp_token_domain_{param_prefix}"
+            value = f"CAST({source} AS text)"
+            if transform.normalization in {"trim", "trim_lower"}:
+                value = f"BTRIM({value})"
+            if transform.normalization == "trim_lower":
+                value = f"LOWER({value})"
+            expression = (
+                f"CASE WHEN {source} IS NULL THEN NULL "
+                "ELSE UPPER(ENCODE(DIGEST("
+                f"CAST(:{key_param} AS text) || '|' || "
+                f"CAST(:{domain_param} AS text) || '|' || {value}, "
+                f"'sha256'), 'hex')) END AS {output}"
+            )
+            params = {
+                key_param: config.resolve_tokenization_key(transform.key_ref),
+                domain_param: transform.domain or column.name,
+            }
+            return expression, output, params
+
+        return super().render_projection(column, param_prefix)
+
 
 class MSSQLDialect(Dialect):
     """SQL Server / T-SQL: bracket-quoted identifiers, TOP prefix, no LIMIT."""
@@ -158,8 +197,8 @@ class MSSQLDialect(Dialect):
         if transform.kind == "deterministic_hash":
             import config
 
-            key_param = f"__token_key_{param_prefix}"
-            domain_param = f"__token_domain_{param_prefix}"
+            key_param = f"fsp_token_key_{param_prefix}"
+            domain_param = f"fsp_token_domain_{param_prefix}"
             value = f"CONVERT(nvarchar(max), {source})"
             if transform.normalization in {"trim", "trim_lower"}:
                 value = f"LTRIM(RTRIM({value}))"
@@ -253,6 +292,45 @@ class OracleDialect(Dialect):
     name = "oracle"
     int_cast_type = "NUMBER(19)"
 
+    def render_projection(self, column, param_prefix: str) -> tuple[str, str, dict]:
+        if not column.transform:
+            return super().render_projection(column, param_prefix)
+
+        source = self.quote(column.source_name)
+        output = self.quote(column.name)
+        transform = column.transform
+        if transform.kind == "random_token":
+            expression = (
+                f"CASE WHEN {source} IS NULL THEN NULL "
+                f"ELSE RAWTOHEX(SYS_GUID()) END AS {output}"
+            )
+            return expression, output, {}
+
+        if transform.kind == "deterministic_hash":
+            import config
+
+            key_param = f"fsp_token_key_{param_prefix}"
+            domain_param = f"fsp_token_domain_{param_prefix}"
+            value = f"CAST({source} AS VARCHAR2(4000))"
+            if transform.normalization in {"trim", "trim_lower"}:
+                value = f"TRIM({value})"
+            if transform.normalization == "trim_lower":
+                value = f"LOWER({value})"
+            expression = (
+                f"CASE WHEN {source} IS NULL THEN NULL "
+                "ELSE RAWTOHEX(STANDARD_HASH("
+                f"CAST(:{key_param} AS VARCHAR2(4000)) || '|' || "
+                f"CAST(:{domain_param} AS VARCHAR2(4000)) || '|' || {value}, "
+                f"'SHA256')) END AS {output}"
+            )
+            params = {
+                key_param: config.resolve_tokenization_key(transform.key_ref),
+                domain_param: transform.domain or column.name,
+            }
+            return expression, output, params
+
+        return super().render_projection(column, param_prefix)
+
     def build_select(
         self,
         *,
@@ -329,6 +407,45 @@ class DatabricksDialect(Dialect):
     quote_open = "`"
     quote_close = "`"
 
+    def render_projection(self, column, param_prefix: str) -> tuple[str, str, dict]:
+        if not column.transform:
+            return super().render_projection(column, param_prefix)
+
+        source = self.quote(column.source_name)
+        output = self.quote(column.name)
+        transform = column.transform
+        if transform.kind == "random_token":
+            expression = (
+                f"CASE WHEN {source} IS NULL THEN NULL "
+                f"ELSE uuid() END AS {output}"
+            )
+            return expression, output, {}
+
+        if transform.kind == "deterministic_hash":
+            import config
+
+            key_param = f"fsp_token_key_{param_prefix}"
+            domain_param = f"fsp_token_domain_{param_prefix}"
+            value = f"CAST({source} AS STRING)"
+            if transform.normalization in {"trim", "trim_lower"}:
+                value = f"trim({value})"
+            if transform.normalization == "trim_lower":
+                value = f"lower({value})"
+            expression = (
+                f"CASE WHEN {source} IS NULL THEN NULL "
+                "ELSE upper(sha2(concat("
+                f"CAST(:{key_param} AS STRING), '|', "
+                f"CAST(:{domain_param} AS STRING), '|', {value}), 256)) "
+                f"END AS {output}"
+            )
+            params = {
+                key_param: config.resolve_tokenization_key(transform.key_ref),
+                domain_param: transform.domain or column.name,
+            }
+            return expression, output, params
+
+        return super().render_projection(column, param_prefix)
+
     def build_select_range(
         self,
         *,
@@ -341,10 +458,11 @@ class DatabricksDialect(Dialect):
     ) -> str:
         predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
         return (
-            f"SELECT TOP (:{max_rows_param}) {projected} "
+            f"SELECT {projected} "
             f"FROM {source} "
             f"WHERE {predicate} "
-            f"ORDER BY {pk}"
+            f"ORDER BY {pk} "
+            f"LIMIT :{max_rows_param}"
         )
 
 

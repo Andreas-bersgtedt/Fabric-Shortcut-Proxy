@@ -64,6 +64,8 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_range_key_bounds=True,
         supports_modulo_split=True,
         supports_fast_row_estimate=True,
+        supports_deterministic_tokenization=True,
+        supports_random_tokenization=True,
     ),
     "mssql": FlavorCapabilities(
         flavor="mssql",
@@ -86,6 +88,8 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_range_key_bounds=True,
         supports_modulo_split=True,
         supports_fast_row_estimate=True,
+        supports_deterministic_tokenization=True,
+        supports_random_tokenization=True,
     ),
     "databricks": FlavorCapabilities(
         flavor="databricks",
@@ -96,6 +100,8 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_range_key_bounds=True,
         supports_modulo_split=True,
         supports_fast_row_estimate=False,
+        supports_deterministic_tokenization=True,
+        supports_random_tokenization=True,
         required_connection_fields=("http_path",),
     ),
     "generic": FlavorCapabilities(

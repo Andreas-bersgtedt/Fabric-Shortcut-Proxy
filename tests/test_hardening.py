@@ -191,8 +191,23 @@ def test_validate_config_rejects_transform_on_unsupported_dialect(monkeypatch):
     monkeypatch.setattr(config, "DB_URL", "sqlite+aiosqlite:///x.db")
     monkeypatch.setattr(config, "TABLES", [table])
     monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "test-secret")
-    with pytest.raises(ValueError, match="supports mssql only"):
+    with pytest.raises(ValueError, match="deterministic_hash is not supported"):
         config.validate_config()
+
+
+@pytest.mark.parametrize("db_url", [
+    "postgresql+asyncpg://h/db",
+    "oracle+oracledb://h/db",
+    "databricks://token:pat@dbc.cloud",
+])
+def test_validate_config_accepts_supported_token_dialects(monkeypatch, db_url):
+    table = _transformed_table(config.ColumnTransform(
+        kind="deterministic_hash", key_ref="customer-pii-v1"
+    ))
+    monkeypatch.setattr(config, "DB_URL", db_url)
+    monkeypatch.setattr(config, "TABLES", [table])
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "test-secret")
+    config.validate_config()
 
 
 def test_validate_config_rejects_random_token_content_refresh(monkeypatch):

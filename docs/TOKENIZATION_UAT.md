@@ -121,8 +121,8 @@ Replace the connection string with the UAT SQL Server. Do not place the
 tokenization key in `config.tables.json` or the database URL.
 
 Startup must complete without a configuration error. SQL execution logs should
-contain `HASHBYTES('SHA2_256', ...)`, while `__token_key_*` and
-`__token_domain_*` parameter values appear as `[REDACTED]`.
+contain `HASHBYTES('SHA2_256', ...)`, while `fsp_token_key_*` and
+`fsp_token_domain_*` parameter values appear as `[REDACTED]`.
 
 ## 4. Query through Fabric
 
@@ -170,8 +170,8 @@ Run each check separately and confirm startup fails before reading source rows:
 
 1. Remove `FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1`. The error names the missing
    environment variable.
-2. Point the transformed table at SQLite or PostgreSQL. The error states that
-   this release supports `mssql` transforms only.
+2. Point the transformed table at SQLite. The error states that the dialect does
+  not support the requested transform.
 3. Apply a transform to `customer_id`. The error rejects transforms on the split
    key.
 4. Enable content-hash auto-refresh while retaining `random_token`. The error
@@ -197,4 +197,5 @@ a live SQL Server.
 - Normalization follows SQL Server collation and `LOWER` behavior.
 - The standalone C++ native publisher does not consume `config.tables.json` and
   is outside this UAT path.
-- Config Builder policy controls are limited to SQL Server in this release.
+- PostgreSQL, Oracle, and Databricks SQL have separate checks in
+  `TOKENIZATION_MULTI_DIALECT_UAT.md`.

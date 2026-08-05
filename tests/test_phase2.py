@@ -163,11 +163,11 @@ def test_token_query_params_are_redacted_for_logs():
 
     logged = _params_for_log({
         "split_index": 1,
-        "__token_key_1": "secret",
-        "__token_domain_1": "customer-email",
+        "fsp_token_key_1": "secret",
+        "fsp_token_domain_1": "customer-email",
     })
     assert logged == {
         "split_index": 1,
-        "__token_key_1": "[REDACTED]",
-        "__token_domain_1": "[REDACTED]",
+        "fsp_token_key_1": "[REDACTED]",
+        "fsp_token_domain_1": "[REDACTED]",
     }

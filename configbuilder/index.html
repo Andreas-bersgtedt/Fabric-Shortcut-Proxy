@@ -58,6 +58,7 @@
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
   .cfgrow .rows { font-size:11px; color:var(--muted); }
+  .splitinfo { color:var(--accent); }
   .cfgtable { border-top:1px solid var(--line); }
   .cfgtable .cfgrow { border-top:0; }
   .policy-toggle { margin:0 10px 9px; color:var(--accent); border-color:var(--line); }
@@ -221,7 +222,7 @@
 
   <div class="card" id="selectedCard" style="margin-top:16px; display:none;">
     <h2>Per-Table Configuration</h2>
-    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Adjust the key column, split strategy, split count and target rows per split, or remove a table with ✕. Blank strategy/count/target inherit the global defaults.</div>
+    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Set the key column, split <b>strategy</b> (how each split is sliced), <b>splits</b> (count) and <b>target rows</b> (rows per split), or remove a table with ✕. Precedence: when <b>target rows</b> &gt; 0 (global default 100000) the split count is derived from the row count and overrides <b>splits</b> — which then applies only as a fallback; set target rows to 0 to fix the count at <b>splits</b>. <b>Strategy</b> never changes the count. The badge under each table shows the effective split count.</div>
     <div id="selectedList"></div>
     <div class="actions">
       <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
@@ -586,7 +587,8 @@ const state = {
   storedCreds: new Set(),    // connection ids with an encrypted credential in the Manager store
   credBackend: "",           // encryption backend the Manager store is using
   credAvailable: false,      // whether the Manager can encrypt/persist credentials
-  showHiddenPrimary: false   // reveal the empty default card even when auto-hidden
+  showHiddenPrimary: false,  // reveal the empty default card even when auto-hidden
+  globals: { num_splits: 8, split_target_rows: 100000, split_count_min: 1, split_count_max: 256, split_strategy: "modulo" }
 };
 
 // Composite key so same-named tables from different sources never collide.
@@ -780,6 +782,12 @@ function renderConnList(){
 
 function applyBootstrap(builder){
   if(!builder) return;
+  // Global split-planning defaults drive the per-table "effective splits" badge.
+  if(builder.num_splits!=null) state.globals.num_splits = parseInt(builder.num_splits);
+  if(builder.split_target_rows!=null) state.globals.split_target_rows = parseInt(builder.split_target_rows);
+  if(builder.split_count_min!=null) state.globals.split_count_min = parseInt(builder.split_count_min);
+  if(builder.split_count_max!=null) state.globals.split_count_max = parseInt(builder.split_count_max);
+  if(builder.split_strategy) state.globals.split_strategy = String(builder.split_strategy);
   // Prime the main builder form from runtime config.
   if(builder.bucket) $("bucket").value = String(builder.bucket);
   if(builder.num_splits!=null) $("numSplits").value = String(builder.num_splits);
@@ -1178,6 +1186,28 @@ function renderPolicyEditor(entry){
   return editor;
 }
 
+// Resolve the split count the runtime will actually use, mirroring
+// choose_table_num_splits: a per-table/global split_target_rows > 0 derives the
+// count from the row estimate (clamped by split_count_min/max) and overrides the
+// configured 'splits'; otherwise the configured/global 'splits' is authoritative.
+function effectiveSplitCount(s){
+  const g = state.globals;
+  const target = (s.split_target_rows!=null ? s.split_target_rows : g.split_target_rows);
+  const configured = (s.num_splits!=null ? s.num_splits : g.num_splits);
+  if(!target || target<=0){
+    return { text:`= ${configured} splits (fixed)`,
+             title:`target rows = 0, so the configured splits count (${configured}) is authoritative.` };
+  }
+  if(s.approx_rows==null){
+    return { text:`≈ dynamic splits`,
+             title:`Split count is derived from the row count / target (${Intl.NumberFormat().format(target)}). Inspect the table to preview the number; 'splits' (${configured}) is only the fallback if the estimate is unavailable.` };
+  }
+  const proposed = Math.ceil(s.approx_rows / target);
+  const count = Math.max(g.split_count_min, Math.min(g.split_count_max, proposed));
+  return { text:`≈ ${count} splits`,
+           title:`ceil(${Intl.NumberFormat().format(s.approx_rows)} rows / ${Intl.NumberFormat().format(target)} target) clamped to ${g.split_count_min}..${g.split_count_max}. Overrides the 'splits' input (${configured}).` };
+}
+
 function renderSelected(){
   const wrap = $("selectedList"); const card = $("selectedCard");
   const items = [...state.selected.values()];
@@ -1232,20 +1262,31 @@ function renderSelected(){
       };
 
       const strat = document.createElement("select"); strat.className="stratsel";
-      strat.title="Split strategy for this table (blank = global default): modulo, range, date or auto";
+      strat.title="How each split is SLICED (does not change the split count): modulo (full scan), range (integer key ranges), date (temporal ranges) or auto. Blank = global default.";
       for(const [val,label] of [["","strategy"],["modulo","modulo"],["range","range"],["date","date"],["auto","auto"]]){
         const o=document.createElement("option"); o.value=val; o.textContent=label;
         if(val===(s.split_strategy||"")) o.selected=true; strat.appendChild(o);
       }
-      strat.onchange = ()=>{ s.split_strategy = strat.value||null; updatePreview(); };
 
       const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
-      splits.title="Splits (virtual Parquet files) for this table (blank = global default)";
-      splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
+      splits.title="Requested split count. Used only as a FALLBACK when 'target rows' > 0 (the row-target planner then derives the count and this value applies only if the row estimate is unavailable). Authoritative when 'target rows' = 0. Blank = global default.";
+      splits.value = s.num_splits||"";
 
       const target = document.createElement("input"); target.className="mini"; target.placeholder="target rows";
-      target.title="Per-table split_target_rows (blank = global default)";
-      target.value = s.split_target_rows||""; target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; updatePreview(); };
+      target.title="Target rows per split. When > 0 (global default 100000) the split count is derived from the table's row count and OVERRIDES 'splits'. Set to 0 to use the fixed 'splits' count. Blank = global default.";
+      target.value = s.split_target_rows||"";
+
+      const splitInfo = document.createElement("span"); splitInfo.className="rows splitinfo";
+      const refreshBadge = ()=>{
+        const info = effectiveSplitCount(s);
+        splitInfo.textContent = info.text;
+        splitInfo.title = info.title;
+      };
+      strat.onchange = ()=>{ s.split_strategy = strat.value||null; refreshBadge(); updatePreview(); };
+      splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; refreshBadge(); updatePreview(); };
+      target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; refreshBadge(); updatePreview(); };
+      refreshBadge();
+      src.appendChild(document.createElement("br")); src.appendChild(splitInfo);
 
       const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
       rm.onclick = ()=>{

@@ -168,7 +168,8 @@ async def choose_table_num_splits(table: TableDef) -> int:
     Returns the existing ``table.num_splits`` when dynamic planning is disabled
     or when row estimation fails.
     """
-    if config.SPLIT_TARGET_ROWS <= 0:
+    target_rows = table.effective_split_target_rows
+    if target_rows <= 0:
         return table.num_splits
 
     from db.executor import fetch_table_row_count
@@ -186,7 +187,7 @@ async def choose_table_num_splits(table: TableDef) -> int:
 
     chosen = compute_split_count(
         estimated_rows=est,
-        target_rows=config.SPLIT_TARGET_ROWS,
+        target_rows=target_rows,
         min_splits=config.SPLIT_COUNT_MIN,
         max_splits=config.SPLIT_COUNT_MAX,
         default_splits=table.num_splits,
@@ -195,7 +196,7 @@ async def choose_table_num_splits(table: TableDef) -> int:
         "split_count_planned",
         table=table.name,
         estimated_rows=est,
-        target_rows=config.SPLIT_TARGET_ROWS,
+        target_rows=target_rows,
         min_splits=config.SPLIT_COUNT_MIN,
         max_splits=config.SPLIT_COUNT_MAX,
         chosen_splits=chosen,
@@ -245,7 +246,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
         for key, value in item[2].items()
     }
     source = dialect.quote_qualified(table.source_table)
-    max_rows = config.effective_query_max_rows(table.connection_id)
+    max_rows = table.effective_max_rows
 
     if split.key_lo is not None and split.key_hi is not None:
         sql = dialect.build_select_range(
@@ -315,7 +316,7 @@ async def plan_ranges_for_snapshot(snap) -> bool:
     strategy = config.SPLIT_STRATEGY
     # Dynamic split planning targets bounded rows/split; when enabled, treat the
     # legacy modulo default as range planning so each split reads only its slice.
-    if strategy == "modulo" and config.SPLIT_TARGET_ROWS > 0:
+    if strategy == "modulo" and table.effective_split_target_rows > 0:
         strategy = "range"
 
     if strategy == "modulo":

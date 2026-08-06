@@ -376,12 +376,24 @@ class TableDef:
     num_splits: int | None = None
     key_column: str | None = None
     connection_id: str = "default"
+    split_target_rows: int | None = None
 
     def __post_init__(self):
         if self.num_splits is None:
             self.num_splits = NUM_SPLITS
         if not self.connection_id:
             self.connection_id = "default"
+
+    @property
+    def effective_split_target_rows(self) -> int:
+        """Per-table target rows/split, falling back to the global default."""
+        return SPLIT_TARGET_ROWS if self.split_target_rows is None else self.split_target_rows
+
+    @property
+    def effective_max_rows(self) -> int:
+        """Per-split row cap. A per-table split_target_rows above the connection
+        cap raises this so a larger target is never truncated by the default."""
+        return max(effective_query_max_rows(self.connection_id), self.effective_split_target_rows)
 
 
 def _tabledef_from_json(d: dict) -> "TableDef":
@@ -424,6 +436,7 @@ def _tabledef_from_json(d: dict) -> "TableDef":
         num_splits=int(d.get("num_splits", NUM_SPLITS)),
         key_column=d.get("key_column") or None,
         connection_id=str(d.get("connection") or d.get("connection_id") or "default"),
+        split_target_rows=(int(d["split_target_rows"]) if d.get("split_target_rows") is not None else None),
     )
 
 
@@ -575,6 +588,8 @@ def validate_config() -> None:
                 problems.append(f"Table {t.name!r}: source_table must be non-empty.")
             if t.num_splits < 1:
                 problems.append(f"Table {t.name!r}: num_splits must be >= 1.")
+            if t.split_target_rows is not None and t.split_target_rows < 0:
+                problems.append(f"Table {t.name!r}: split_target_rows must be >= 0 (got {t.split_target_rows}).")
             if t.connection_id not in CONNECTIONS:
                 problems.append(
                     f"Table {t.name!r}: connection {t.connection_id!r} is not defined "

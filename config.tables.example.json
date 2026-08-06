@@ -13,6 +13,13 @@
       "num_splits": 4
     },
     {
+      "_comment": "Narrow, high-volume table: override the global split_target_rows (100000) with 1000000 so the planner packs ~1M rows per split. This also raises the per-split row cap (query_max_rows) for this table so the larger target is not truncated.",
+      "name": "clickstream",
+      "source_table": "dbo.clickstream",
+      "key_column": "event_id",
+      "split_target_rows": 1000000
+    },
+    {
       "_comment": "Served from a DIFFERENT source (id 'warehouse_pg' in config.connection.json).",
       "name": "shipments",
       "source_table": "public.shipments",

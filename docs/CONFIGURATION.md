@@ -185,6 +185,20 @@ Each split returns up to `QUERY_MAX_ROWS` (default 500,000) rows. Ensure
 `total_rows ≤ num_splits × QUERY_MAX_ROWS`; otherwise raise `NUM_SPLITS` (or the
 table's `num_splits`) or `QUERY_MAX_ROWS`.
 
+Per-table `split_target_rows` overrides the global default for a single table —
+useful when a narrow, high-volume table should pack far more rows per split than
+the 100,000 default:
+
+```json
+{ "name": "clickstream", "source_table": "dbo.clickstream",
+  "key_column": "event_id", "split_target_rows": 1000000 }
+```
+
+A per-table `split_target_rows` also raises that table's per-split row cap: the
+effective cap is `max(query_max_rows, split_target_rows)`, so a larger target is
+never truncated by the smaller default. Omit the field to inherit the global
+`split_target_rows`.
+
 ---
 
 ## 4. PostgreSQL: single table (env only, no Python)

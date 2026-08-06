@@ -826,6 +826,7 @@ function applyBootstrap(builder){
       connection: connId,
       key_column: t.key_column || null,
       num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
+      split_target_rows: (t.split_target_rows==null ? null : parseInt(t.split_target_rows)),
       integer_keys: t.key_column ? [t.key_column] : [],
       columns: configuredSchema.map((column, index)=>policyColumn(column, index)),
       schema_explicit: configuredSchema.length>0,
@@ -1043,7 +1044,7 @@ function bulk(on){
 }
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
-  key_column:null, num_splits:null,
+  key_column:null, num_splits:null, split_target_rows:null,
   integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false }; }
 
 function policyColumn(column, index){
@@ -1232,13 +1233,17 @@ function renderSelected(){
       const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
       splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
 
+      const target = document.createElement("input"); target.className="mini"; target.placeholder="target rows";
+      target.title="Per-table split_target_rows (blank = global default)";
+      target.value = s.split_target_rows||""; target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; updatePreview(); };
+
       const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
       rm.onclick = ()=>{
         state.selected.delete(key);
         renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
       };
 
-      row.append(src, keysel, splits, rm); table.appendChild(row);
+      row.append(src, keysel, splits, target, rm); table.appendChild(row);
       if(s.columns.length){
         const toggle=document.createElement("button"); toggle.className="iconbtn policy-toggle";
         toggle.textContent=(s.policies_open ? "Hide" : "Edit")+" column policies";
@@ -1260,6 +1265,7 @@ function renderSelected(){
 function tableConfig(entry){
   const table = {name:entry.name, source_table:entry.source_table, key_column:entry.key_column};
   if(entry.num_splits) table.num_splits=parseInt(entry.num_splits);
+  if(entry.split_target_rows) table.split_target_rows=parseInt(entry.split_target_rows);
   if(entry.connection && entry.connection!=="default") table.connection=entry.connection;
   const policyChanged = entry.columns.some(column=>column.policy!=="keep" || column.name!==column.source);
   if(entry.columns.length && (entry.schema_explicit || policyChanged)){

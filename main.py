@@ -166,7 +166,7 @@ async def lifespan(app: FastAPI):
 
         # Phase 2 split planner v2 (opt-in): dynamic split-count selection from
         # row-target planning with min/max guardrails.
-        if config.SPLIT_TARGET_ROWS > 0:
+        if any(t.effective_split_target_rows > 0 for t in runtime_tables):
             from planner.split_planner import choose_table_num_splits
             for t in runtime_tables:
                 t.num_splits = await choose_table_num_splits(t)
@@ -187,7 +187,9 @@ async def lifespan(app: FastAPI):
         # contiguous key range (from the source MIN/MAX) so materialization reads
         # only its slice off the PK index instead of a full-table modulo scan.
         # Best-effort: falls back to modulo per table on empty/non-integer keys.
-        if config.SPLIT_STRATEGY in ("range", "date", "auto") or config.SPLIT_TARGET_ROWS > 0:
+        if config.SPLIT_STRATEGY in ("range", "date", "auto") or any(
+            t.effective_split_target_rows > 0 for t in runtime_tables
+        ):
             from planner.split_planner import plan_ranges_for_snapshot
             for snap in snapshots:
                 await plan_ranges_for_snapshot(snap)

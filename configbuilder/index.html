@@ -1208,6 +1208,25 @@ function effectiveSplitCount(s){
            title:`ceil(${Intl.NumberFormat().format(s.approx_rows)} rows / ${Intl.NumberFormat().format(target)} target) clamped to ${g.split_count_min}..${g.split_count_max}. Overrides the 'splits' input (${configured}).` };
 }
 
+const KEY_INT_TYPES = new Set(["int","integer","long","bigint","smallint","tinyint"]);
+const KEY_TEMPORAL_TYPES = new Set(["date","timestamp","timestamptz","timestamp_ntz","datetime"]);
+
+// Candidate split-key columns from the known schema, filtered by the chosen
+// strategy (integer for range/modulo, temporal for date, both for auto). Falls
+// back to all columns so a known schema is never left unselectable, and always
+// includes any inspected integer keys and the current selection.
+function keyCandidates(s){
+  const cols = (s.columns||[]).map(c=>({name:c.source||c.name, type:(c.type||"").toLowerCase()})).filter(c=>c.name);
+  const strat = s.split_strategy || state.globals.split_strategy || "modulo";
+  const byType = strat==="date" ? cols.filter(c=>KEY_TEMPORAL_TYPES.has(c.type))
+    : strat==="auto" ? cols.filter(c=>KEY_INT_TYPES.has(c.type) || KEY_TEMPORAL_TYPES.has(c.type))
+    : cols.filter(c=>KEY_INT_TYPES.has(c.type));
+  const names = (byType.length ? byType : cols).map(c=>c.name);
+  for(const k of (s.integer_keys||[])) if(!names.includes(k)) names.push(k);
+  if(s.key_column && !names.includes(s.key_column)) names.unshift(s.key_column);
+  return names;
+}
+
 function renderSelected(){
   const wrap = $("selectedList"); const card = $("selectedCard");
   const items = [...state.selected.values()];
@@ -1247,15 +1266,22 @@ function renderSelected(){
       src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
         s.approx_rows!=null? " · ~"+Intl.NumberFormat().format(s.approx_rows)+" rows":""}</span>`;
       if(s.pending){ src.innerHTML += `<br><span class="rows">reflecting…</span>`; }
-      if(s.invalid){ src.innerHTML += `<br><span class="invalid">no integer key — cannot split</span>`; }
+      const cands = keyCandidates(s);
+      if(cands.length===0){ src.innerHTML += `<br><span class="invalid">no columns known — reflect the table to pick a key</span>`; }
+      else if(!s.key_column){ src.innerHTML += `<br><span class="invalid">choose a key column to split</span>`; }
 
       const keysel = document.createElement("select"); keysel.className="keysel";
-      const keys = s.integer_keys.length? s.integer_keys : (s.key_column? [s.key_column]: []);
-      for(const k of keys){ const o=document.createElement("option"); o.value=k; o.textContent=k;
-        if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
-      if(keys.length===0){ const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true; }
+      keysel.title="Split key column (candidates come from the schema, filtered by the chosen strategy).";
+      if(cands.length===0){
+        const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true;
+      } else {
+        if(!s.key_column){ const o=document.createElement("option"); o.value=""; o.textContent="(choose key)"; o.selected=true; keysel.appendChild(o); }
+        for(const k of cands){ const o=document.createElement("option"); o.value=k; o.textContent=k;
+          if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
+      }
       keysel.onchange = ()=>{
-        s.key_column=keysel.value;
+        s.key_column = keysel.value || null;
+        s.invalid = !s.key_column;
         const splitColumn=s.columns.find(column=>column.source===s.key_column);
         if(splitColumn){ splitColumn.policy="keep"; splitColumn.name=splitColumn.source; }
         renderSelected(); persistConns();
@@ -1282,7 +1308,7 @@ function renderSelected(){
         splitInfo.textContent = info.text;
         splitInfo.title = info.title;
       };
-      strat.onchange = ()=>{ s.split_strategy = strat.value||null; refreshBadge(); updatePreview(); };
+      strat.onchange = ()=>{ s.split_strategy = strat.value||null; renderSelected(); persistConns(); };
       splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; refreshBadge(); updatePreview(); };
       target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; refreshBadge(); updatePreview(); };
       refreshBadge();

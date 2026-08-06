@@ -140,6 +140,7 @@ def test_build_supervisors_assigns_ports_and_shards(monkeypatch):
     from enterprise.control import manager_app
     monkeypatch.setattr(config, "AGENT_COUNT", 3, raising=False)
     monkeypatch.setattr(config, "PORT", 9000, raising=False)
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "lazy", raising=False)
     sups = manager_app._build_supervisors()
     assert [s.name for s in sups] == ["agent-1", "agent-2", "agent-3"]
     envs = [s.env for s in sups]
@@ -147,3 +148,7 @@ def test_build_supervisors_assigns_ports_and_shards(monkeypatch):
     assert [e["AGENT_SHARD_INDEX"] for e in envs] == ["0", "1", "2"]
     assert all(e["AGENT_SHARD_COUNT"] == "3" for e in envs)
     assert all("MANAGER_URL" in e for e in envs)
+    # Materialization mode + a shared store propagate to every agent so multi-shard
+    # lazy serves byte-identical splits across the fleet.
+    assert all(e["MATERIALIZE_MODE"] == "lazy" for e in envs)
+    assert all(e["ARTIFACT_STORE_SERVING"] == "1" for e in envs)

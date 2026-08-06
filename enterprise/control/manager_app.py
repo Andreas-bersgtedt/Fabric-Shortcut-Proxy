@@ -22,7 +22,7 @@ import pathlib
 import shlex
 import sys
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 import config
 from enterprise.control.auth import ManagerAuthMiddleware, manager_auth_active
@@ -73,6 +73,9 @@ def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int) 
         "AGENT_SHARD_COUNT": str(shard_count),
         # Split-ownership strategy — shared fleet-wide so every shard agrees.
         "SHARD_STRATEGY": config.SHARD_STRATEGY,
+        # Materialization mode — shared fleet-wide so every Agent agrees (eager vs
+        # lazy). Multi-shard lazy relies on the shared store forced above.
+        "MATERIALIZE_MODE": config.MATERIALIZE_MODE,
         # Expose each Agent's monitor API so the Manager's operator console can
         # scrape + aggregate it (the console's Monitor tab lives on the Manager).
         "ENABLE_MONITOR": "1" if (config.ENABLE_MONITOR or config.ENABLE_ADMIN_UI)
@@ -240,6 +243,33 @@ def create_manager_app() -> FastAPI:
     @app.get("/agents")
     async def agents():
         return {"agents": registry.list_public(), "dead": registry.dead_agents()}
+
+    @app.post("/control/materialize")
+    async def control_materialize(request: Request):
+        """On-demand materialization for stateless (e.g. C++) Agents under lazy mode.
+
+        An Agent that hits a store miss posts ``{"key": "<object key>"}``; the
+        Manager materializes that table into the shared artifact store (data +
+        metadata) so the Agent can then serve it. No-op-safe / idempotent.
+        """
+        from fastapi.responses import JSONResponse
+        if config.MATERIALIZE_MODE != "lazy":
+            return JSONResponse(status_code=409,
+                                content={"ok": False, "error": "materialize_mode is not lazy"})
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        key = str((body or {}).get("key", "")).strip()
+        if not key:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "missing key"})
+        from enterprise.control import materialize_service
+        try:
+            result = await materialize_service.materialize_for_key(key)
+        except Exception as exc:  # noqa: BLE001 - report, never crash the control plane
+            log.exception("control_materialize_failed", key=key)
+            return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+        return JSONResponse(status_code=200 if result.get("ok") else 404, content=result)
 
     # Phase 5.1: live fleet scaling — grow/shrink the supervised Agent fleet at
     # runtime and persist agent_count. Mutates `supervisors` IN PLACE so the

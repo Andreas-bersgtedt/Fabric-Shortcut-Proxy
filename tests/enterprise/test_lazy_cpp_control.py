@@ -14,7 +14,6 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import httpx
-import pytest
 
 import config
 

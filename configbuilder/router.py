@@ -194,6 +194,7 @@ async def bootstrap_builder() -> JSONResponse:
             "bucket": config.BUCKET_NAME,
             "num_splits": int(config.NUM_SPLITS),
             "table_format": config.TABLE_FORMAT,
+            "materialize_mode": config.MATERIALIZE_MODE,
             "require_sigv4": bool(config.REQUIRE_SIGV4),
             "auto_refresh": bool(config.AUTO_REFRESH),
             "refresh_poll_seconds": int(config.REFRESH_POLL_SECONDS),

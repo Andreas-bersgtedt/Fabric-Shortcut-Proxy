@@ -866,7 +866,56 @@ static void control_loop() {
 // main
 // ---------------------------------------------------------------------------
 
-int main() {
+static void print_usage(const char* prog) {
+    std::printf(
+        "Fabric Shortcut Proxy - C++ serving Agent (%s)\n\n"
+        "A stateless S3 data-plane Agent that serves objects from a shared artifact\n"
+        "store. It performs no SQL/Parquet/Iceberg work of its own. Under lazy mode it\n"
+        "asks the Manager to materialize an object's table on a store miss, then serves it.\n\n"
+        "Usage:\n"
+        "  %s [--help|-h] [--version|-V]\n\n"
+        "Configuration is read from environment variables (defaults in parentheses):\n\n"
+        "  HOST (0.0.0.0)                 Bind address for the S3 port.\n"
+        "  PORT (9400)                    S3 data-plane listen port.\n"
+        "  STORE_DIR / ARTIFACT_STORE_DIR (./.artifacts)\n"
+        "                                 Artifact store directory to serve from (shared with\n"
+        "                                 the Manager under lazy mode).\n"
+        "  S3_BUCKET (fabric-iceberg-poc) Advertised bucket name.\n"
+        "  AGENT_ID (cpp-agent-1)         Identity used for Manager registration.\n"
+        "  AGENT_ADVERTISE_HOST ()        Routable host advertised to the Manager/gateway.\n"
+        "  MANAGER_URL ()                 Manager control plane URL; empty = standalone (no\n"
+        "                                 register/heartbeat, no lazy materialize requests).\n"
+        "  HEARTBEAT_MS (2000)            Heartbeat cadence to the Manager (ms).\n"
+        "  SOCKET_TIMEOUT_MS (10000)      Socket send/recv timeout (ms).\n"
+        "  MAX_INFLIGHT (256)             Max concurrent connections.\n"
+        "  MATERIALIZE_MODE (eager)       eager | lazy. lazy: on a store miss, ask the Manager\n"
+        "                                 (POST /control/materialize) to materialize the object's\n"
+        "                                 table into the shared store, then serve it.\n"
+        "  MATERIALIZE_TIMEOUT_MS (120000) Max wait for a lazy materialize request (ms).\n"
+        "  AGENT_DRAIN_GRACE_SECONDS (15) Drain grace window before exit (s).\n\n"
+        "Endpoints: GET/HEAD /{bucket}/{key} (range-aware), GET /{bucket}?list-type=2,\n"
+        "           GET /healthz, GET /readyz (503 while draining).\n\n"
+        "Effective configuration (from the current environment):\n"
+        "  host=%s port=%d store_dir=%s bucket=%s\n"
+        "  agent_id=%s manager_url=%s\n"
+        "  materialize_mode=%s materialize_timeout_ms=%d\n"
+        "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d drain_grace_ms=%d\n",
+        APP_VERSION, prog,
+        CFG.host.c_str(), CFG.port, CFG.store_dir.c_str(), CFG.bucket.c_str(),
+        CFG.agent_id.c_str(), CFG.manager_url.empty() ? "(standalone)" : CFG.manager_url.c_str(),
+        CFG.materialize_mode.c_str(), CFG.materialize_timeout_ms,
+        CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.drain_grace_ms);
+}
+
+int main(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--help" || a == "-h") { print_usage(argv[0]); return 0; }
+        if (a == "--version" || a == "-V") { std::printf("%s\n", APP_VERSION); return 0; }
+        std::fprintf(stderr, "unknown argument: %s (try --help)\n", a.c_str());
+        return 2;
+    }
+
     if (!net_init()) {
         log_line("network init failed");
         return 1;

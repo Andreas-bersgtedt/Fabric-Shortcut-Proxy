@@ -138,6 +138,9 @@ Sizing guidance for large tables:
 - Enable `STREAMING_PARQUET=1` to bound memory during the initial materialization.
 - Keep range split planning (default) so each split scans only its key slice instead of the
   full table, and shard across agents to parallelize the seed.
+- For a skewed key, set `split_balance=count` so each split holds ~equal rows (no straggler
+  split). On SQL Server / PostgreSQL the boundaries come from the optimizer's statistics
+  histogram with no data scan; elsewhere from `NTILE`, optionally capped by `split_sample_rows`.
 - In `eager` mode expect a real cold-start cost. To avoid seeding tables no one reads, use
   `lazy` or `virtual` (below).
 - Prefer a cheap change probe (`REFRESH_STRATEGY=auto` or `dialect_probe`) or `ttl` over

@@ -121,7 +121,9 @@ mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&
 
 By default, split count is dynamic (`split_target_rows=100000`) and planning uses
 contiguous key ranges for index-pruned reads when possible. The legacy modulo
-predicate remains as deterministic fallback.
+predicate remains as deterministic fallback. Range/date splits are sized by equal
+key width by default (`split_balance=span`) or by equal rows (`split_balance=count`);
+see §3.5.
 
 Range form (preferred):
 

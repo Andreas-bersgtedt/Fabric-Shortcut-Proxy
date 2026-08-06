@@ -513,7 +513,7 @@ Current defaults and behavior to assume unless overridden:
 
 - Canonical object paths are enabled by default: `db/<server>/<database>/<schema>/<object>`.
 - Legacy path aliases are disabled by default.
-- Split planning is row-targeted by default (`split_target_rows=100000`) and prefers range-based slices.
+- Split planning is row-targeted by default (`split_target_rows=100000`) and prefers range-based slices. Strategy, target rows, and balance (`span` equal width vs `count` equal rows) are overridable per table.
 - In Manager mode, the config UI is served from the control plane (`http://localhost:9200/_config/`).
 
 ## Operational endpoints

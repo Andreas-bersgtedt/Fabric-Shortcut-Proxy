@@ -140,9 +140,9 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 |---|---|
 | `config.system.json` | ports, host binds, `table_format`, `require_sigv4`, feature flags, control plane, auth |
 | `config.connection.json` | source `db_url` (default) + a `connections[]` array of named extra sources |
-| `config.tables.json` | `tables[]`: `name`, `source_table`, `key_column`, optional `num_splits`, optional `schema` |
+| `config.tables.json` | `tables[]`: `name`, `source_table`, `key_column`, optional `num_splits`, `split_strategy`, `split_target_rows`, `split_balance`, `split_sample_rows`, `schema` |
 | `config.freshness.json` | `auto_refresh`, `refresh_poll_seconds`, `refresh_strategy`, `refresh_allow_full_pull`, `refresh_ttl_seconds` |
-| `config.performance.json` | `num_splits`, `split_strategy`, streaming, caching, memory thresholds |
+| `config.performance.json` | `num_splits`, `split_strategy`, `split_balance`, `split_sample_rows`, streaming, caching, memory thresholds |
 | `config.mounts.json` | storage‑proxy mounts (`local`/`s3`/`azure`) — credentials by id, never inline |
 
 **Single table with env vars only?** Set `DB_URL`, `DB_SOURCE_TABLE`, `KEY_COLUMN`,
@@ -349,6 +349,13 @@ Fabric reads splits in parallel. `NUM_SPLITS` (default 8) sets the count, or set
 
 > On SQL Server, use `range` only on a build with the T‑SQL `TOP` fix; older builds emit `LIMIT`
 > and crash — the stopgap is `SPLIT_STRATEGY=modulo`. See [Troubleshooting](#11-troubleshooting).
+
+**Split balance (`SPLIT_BALANCE`):** `span` (default) sizes `range`/`date` splits by equal
+key/time width; `count` sizes them by equal rows per split, cutting at quantile boundaries so a
+skewed key does not produce one giant split. Boundaries come from the source's statistics
+histogram on SQL Server / PostgreSQL (a zero-scan metadata read, `SPLIT_USE_STATS_HISTOGRAM=1`)
+or `NTILE`, optionally capped by `SPLIT_SAMPLE_ROWS`. Strategy, balance, and target rows are all
+overridable per table.
 
 **Caching & pinning:** in‑memory metadata/Parquet cache (always on); optional disk cache
 (`PARQUET_DISK_CACHE=1`, dir `./.parquet_cache`) for warm restarts; **split pinning**

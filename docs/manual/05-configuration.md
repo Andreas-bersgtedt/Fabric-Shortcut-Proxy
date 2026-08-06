@@ -121,6 +121,10 @@ Per-table fields you will use most:
 | `source_table` | Schema-qualified source table or view |
 | `key_column` | Split key (required for views) |
 | `num_splits` | Pin a fixed split count for this table (otherwise dynamic) |
+| `split_strategy` | `modulo`, `range`, `date`, or `auto` for this table (else the global default) |
+| `split_target_rows` | Target rows per split for this table; a value above the row cap also raises the cap for this table |
+| `split_balance` | `span` (equal key/time width) or `count` (equal rows per split) for this table |
+| `split_sample_rows` | Cap rows fed into `count` quantile planning for this table (0 = full scan) |
 | `schema` | Optional explicit column list; omit a column to remove it from output |
 | `connection_id` | Bind this table to a named connection (see §5.8) |
 

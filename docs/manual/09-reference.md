@@ -33,6 +33,11 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `KEY_COLUMN` | `key_column` | *(unset)* | Split key; enables reflection |
 | `TABLE_FORMAT` | `table_format` | `iceberg` | `iceberg` or `delta` |
 | `NUM_SPLITS` | `num_splits` | `8` | Fixed split count (else dynamic) |
+| `SPLIT_STRATEGY` | `split_strategy` | `modulo` | `modulo`, `range`, `date`, or `auto` (per-table overridable) |
+| `SPLIT_TARGET_ROWS` | `split_target_rows` | `100000` | Target rows per split for dynamic count (0 = fixed `num_splits`) |
+| `SPLIT_BALANCE` | `split_balance` | `span` | `span` (equal width) or `count` (equal rows via histogram/NTILE) |
+| `SPLIT_SAMPLE_ROWS` | `split_sample_rows` | `0` | Cap rows fed into `count` quantile planning (0 = full scan) |
+| `SPLIT_USE_STATS_HISTOGRAM` | `split_use_stats_histogram` | `1` | Use the source stats histogram for `count` boundaries (SQL Server/PostgreSQL) |
 | `QUERY_MAX_ROWS` | `query_max_rows` | `500000` | Max rows per split query |
 | `QUERY_TIMEOUT` | `query_timeout_seconds` | `30` | SQL query timeout (seconds) |
 | `BUCKET_NAME` | `bucket` | `fabric-iceberg-poc` | Warehouse bucket name |

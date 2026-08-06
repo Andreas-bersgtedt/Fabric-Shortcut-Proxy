@@ -318,11 +318,12 @@ async def lifespan(app: FastAPI):
                     split.stats = collect_split_stats(pq_bytes, split.table.schema)
                 return nrows
 
-        if config.MATERIALIZE_MODE == "lazy":
+        if config.MATERIALIZE_MODE in ("lazy", "virtual"):
             log.info(
-                "lazy_materialization_enabled",
+                "deferred_materialization_enabled",
+                mode=config.MATERIALIZE_MODE,
                 tables=[s.table.name for s in snapshots],
-                hint="splits materialize on first metadata read per table",
+                hint="splits materialize on first read per table",
             )
         else:
             for snap in snapshots:
@@ -390,7 +391,7 @@ async def lifespan(app: FastAPI):
     # on first read (after that table's splits are materialized), so skip startup sync.
     if config.TABLE_FORMAT == "delta":
         from delta import log as delta_log
-        if config.MATERIALIZE_MODE != "lazy":
+        if config.MATERIALIZE_MODE not in ("lazy", "virtual"):
             delta_log.sync_all()
         log.info("delta_format_enabled", tables=[t.name for t in config.TABLES])
 

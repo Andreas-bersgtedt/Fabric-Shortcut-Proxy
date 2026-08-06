@@ -306,10 +306,10 @@ def _snapshot_for_table_name(name: str):
 
 
 async def _ensure_lazy_materialized(key: str) -> None:
-    """In MATERIALIZE_MODE=lazy, materialize the key's table before its metadata
-    or data is served, so the Iceberg manifest declares true split sizes. Idempotent
-    and cheap once a table is materialized; no-op in eager mode."""
-    if config.MATERIALIZE_MODE != "lazy":
+    """In lazy/virtual mode, materialize the key's table before its metadata or data
+    is served, so the manifest declares true split sizes. Idempotent and cheap once
+    a table is materialized; no-op in eager mode."""
+    if config.MATERIALIZE_MODE not in ("lazy", "virtual"):
         return
     snap = _resolve_snapshot_for_key(key)
     if snap is None:

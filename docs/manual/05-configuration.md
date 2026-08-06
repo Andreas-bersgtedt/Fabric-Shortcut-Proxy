@@ -162,7 +162,23 @@ UI; the encrypted credential store (chapter 7) holds each connection's secret an
 Delta is often preferred for Fabric. See [DELTA_FORMAT.md](../DELTA_FORMAT.md) for the
 commit model and type mapping.
 
-## 5.10 Validation
+## 5.10 Materialization mode
+
+`MATERIALIZE_MODE` chooses when the proxy builds split Parquet (restart-required):
+
+- `eager` (default) — build all splits at startup; lowest read latency; best for
+  live/mutating sources.
+- `lazy` — build a table's splits on first read, then pin them; unread tables cost nothing at
+  startup. Works cluster-wide (a multi-agent fleet needs a shared artifact store) and for the
+  C++ serving agent (Manager-mediated).
+- `virtual` — build on first read to learn sizes, then keep zero bytes at rest and regenerate
+  each split deterministically on demand; for immutable / snapshot-isolated sources only, with
+  a determinism self-check that fails closed on drift.
+
+`lazy` and `virtual` are incompatible with auto-refresh. Full behavior and sizing guidance are
+in [Chapter 8, §8.7](08-operations.md).
+
+## 5.11 Validation
 
 The proxy validates configuration at startup and fails closed with a clear, redacted
 message on problems: unknown dialects, missing token keys, transformed split keys, malformed
@@ -170,7 +186,7 @@ policy schemas, duplicate table names, undefined connections, and incompatible
 refresh/tokenization combinations. Fix the reported problem and restart. A masked (`***`)
 connection string is never stored, hydrated, or treated as a credential.
 
-## 5.11 Next
+## 5.12 Next
 
 Continue to [Chapter 6: Connecting Microsoft Fabric](06-connectivity.md) to wire a shortcut
 to the tables you just registered.

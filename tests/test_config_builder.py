@@ -157,7 +157,7 @@ def test_settings_catalog_has_defaults():
     assert m["num_splits"]["default"] == 8
     assert m["pin_materialized_splits"]["default"] is True
     assert m["materialize_mode"]["default"] == "eager"
-    assert m["materialize_mode"]["choices"] == ["eager", "lazy"]
+    assert m["materialize_mode"]["choices"] == ["eager", "lazy", "virtual"]
     assert m["auto_refresh"]["default"] is False
     assert m["refresh_ttl_seconds"]["default"] == 1200
     # Secrets are flagged (so the builder never prefills their value).

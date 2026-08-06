@@ -16,6 +16,7 @@ from main import app
 
 _DB = pathlib.Path(__file__).parent / "test_lazy.db"
 _DDB = pathlib.Path(__file__).parent / "test_lazy_delta.db"
+_VDB = pathlib.Path(__file__).parent / "test_virtual.db"
 
 
 @pytest.fixture
@@ -179,6 +180,80 @@ async def test_delta_lazy_commit_size_matches_served_bytes(lazy_delta_client):
 
 
 # ---------------------------------------------------------------------------
+# Virtual (zero-persistence) — regenerate deterministically on demand
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+async def virtual_client(monkeypatch):
+    import db.executor as _executor
+    import runtime.materializer as materializer
+    import cache.lru_cache as cache
+    from iceberg.state_store import build_snapshot, _snapshots, _history
+    from demo.seed_db import seed_demo_database
+
+    monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{_VDB.as_posix()}")
+    monkeypatch.setattr(config, "NUM_SPLITS", 4)
+    monkeypatch.setattr(config, "BUCKET_NAME", "virtual-bucket")
+    monkeypatch.setattr(config, "TABLE_NAME", "sales")
+    monkeypatch.setattr(config, "DB_SOURCE_TABLE", "sales")
+    monkeypatch.setattr(config, "TABLE_FORMAT", "iceberg")
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "virtual")
+
+    await seed_demo_database()
+    _executor._engine = None
+    materializer._locks.clear()
+    cache._pinned.clear()
+
+    snap = build_snapshot(
+        table_name="sales", num_splits=4,
+        bucket="virtual-bucket", warehouse_prefix=config.WAREHOUSE_PREFIX,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        yield c, snap
+
+    if _executor._engine is not None:
+        await _executor._engine.dispose()
+        _executor._engine = None
+    _snapshots.clear()
+    _history.clear()
+    if _VDB.exists():
+        _VDB.unlink(missing_ok=True)
+
+
+async def test_virtual_materializes_without_pinning(virtual_client):
+    import cache.lru_cache as cache
+    c, snap = virtual_client
+    assert (await c.get(f"/virtual-bucket/{snap.metadata_key}")).status_code == 200
+    # Sizes are known (the manifest is correct) but NO split is pinned at rest.
+    assert all(s.file_size_in_bytes is not None for s in snap.splits)
+    assert all(s.object_key not in cache._pinned for s in snap.splits)
+
+
+async def test_virtual_manifest_size_matches_served_bytes(virtual_client):
+    c, snap = virtual_client
+    assert (await c.get(f"/virtual-bucket/{snap.metadata_key}")).status_code == 200
+    for split in snap.splits:
+        body = (await c.get(f"/virtual-bucket/{split.object_key}")).content
+        assert len(body) == split.file_size_in_bytes
+
+
+async def test_virtual_regenerates_byte_identical_after_eviction(virtual_client):
+    import cache.lru_cache as cache
+    c, snap = virtual_client
+    assert (await c.get(f"/virtual-bucket/{snap.metadata_key}")).status_code == 200
+    split = snap.splits[0]
+    first = (await c.get(f"/virtual-bucket/{split.object_key}")).content
+    # Evict so the next read regenerates the split from SQL.
+    cache._parquet_cache._evict(split.object_key)
+    cache._pinned.pop(split.object_key, None)
+    second = (await c.get(f"/virtual-bucket/{split.object_key}")).content
+    assert first == second
+    assert len(first) == split.file_size_in_bytes
+
+
+# ---------------------------------------------------------------------------
 # Fail-closed validation for unsupported lazy combinations
 # ---------------------------------------------------------------------------
 
@@ -227,6 +302,32 @@ def test_lazy_rejects_auto_refresh(monkeypatch):
 def test_invalid_materialize_mode_rejected(monkeypatch):
     monkeypatch.setattr(config, "MATERIALIZE_MODE", "sometimes")
     with pytest.raises(ValueError, match="MATERIALIZE_MODE must be"):
+        config.validate_config()
+
+
+def test_virtual_accepts_iceberg_and_delta(monkeypatch):
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "virtual")
+    for fmt in ("iceberg", "delta"):
+        monkeypatch.setattr(config, "TABLE_FORMAT", fmt)
+        assert "MATERIALIZE_MODE" not in _validation_problems()
+
+
+def test_virtual_multishard_needs_no_shared_store(monkeypatch):
+    # Virtual regenerates deterministically per agent, so multi-shard is consistent
+    # without a shared store (unlike lazy).
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "virtual")
+    monkeypatch.setattr(config, "TABLE_FORMAT", "iceberg")
+    monkeypatch.setattr(config, "AGENT_SHARD_COUNT", 2)
+    monkeypatch.setattr(config, "AGENT_SHARD_INDEX", 0)
+    monkeypatch.setattr(config, "ARTIFACT_STORE_SERVING", False)
+    assert "ARTIFACT_STORE_SERVING" not in _validation_problems()
+
+
+def test_virtual_rejects_auto_refresh(monkeypatch):
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "virtual")
+    monkeypatch.setattr(config, "TABLE_FORMAT", "iceberg")
+    monkeypatch.setattr(config, "AUTO_REFRESH", True)
+    with pytest.raises(ValueError, match="incompatible with AUTO_REFRESH"):
         config.validate_config()
 
 

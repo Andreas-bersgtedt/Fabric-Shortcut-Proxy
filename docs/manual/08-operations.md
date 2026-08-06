@@ -104,11 +104,12 @@ configuration error; it emits a clear, redacted message instead. The scale desig
 
 ## 8.7 Materialization and data size
 
-Understanding when data is read matters most for large tables. The proxy materializes each
-split eagerly at startup: it runs the split's SQL and encodes the result as Parquet before
-serving begins. This is deliberate, not lazy per-request generation, because Iceberg and
-Delta manifests must declare accurate row counts and file sizes; readers, including OneLake's
-Iceberg-to-Delta virtualization, use the declared size to locate the Parquet footer.
+Understanding when data is read matters most for large tables. By default
+(`MATERIALIZE_MODE=eager`) the proxy materializes each split at startup: it runs the split's
+SQL and encodes the result as Parquet before serving begins. Iceberg and Delta manifests must
+declare accurate row counts and file sizes; readers, including OneLake's Iceberg-to-Delta
+virtualization, use the declared size to locate the Parquet footer. The `lazy` and `virtual`
+modes (below) defer this per table instead of doing it all at startup.
 
 What this means for, say, a 1 TB source table:
 
@@ -137,11 +138,34 @@ Sizing guidance for large tables:
 - Enable `STREAMING_PARQUET=1` to bound memory during the initial materialization.
 - Keep range split planning (default) so each split scans only its key slice instead of the
   full table, and shard across agents to parallelize the seed.
-- Expect a real cold-start cost; there is no metadata-only, generate-per-request startup
-  mode. Materialization is always eager so the manifests are correct.
+- In `eager` mode expect a real cold-start cost. To avoid seeding tables no one reads, use
+  `lazy` or `virtual` (below).
 - Prefer a cheap change probe (`REFRESH_STRATEGY=auto` or `dialect_probe`) or `ttl` over
   `content_hash` for auto-refresh, because content hashing re-materializes the table to
   detect change.
+
+### Materialization modes (`MATERIALIZE_MODE`)
+
+`MATERIALIZE_MODE` chooses **when** splits are built. It is restart-required.
+
+- **`eager`** (default): build and pin every split at startup. Lowest read latency; the cold
+  start reads the whole table; best for live/mutating sources.
+- **`lazy`**: build a table's splits on the first read of that table, then pin them. Unread
+  tables cost nothing at startup, so it suits large catalogs where consumers read a subset.
+  Works for Iceberg and Delta; a multi-agent fleet needs a shared artifact store so shards
+  serve byte-identical splits. The C++ serving agent participates via the Manager: on a store
+  miss it asks the Manager (`POST /control/materialize`) to materialize the table into the
+  shared store, then serves it.
+- **`virtual`**: build a table's splits on first read to learn their sizes, then keep **zero
+  bytes at rest** — each split is regenerated deterministically on demand. It suits
+  **immutable / append-only / snapshot-isolated** sources where the rows are stable between
+  reads (Parquet output is byte-reproducible for a fixed library version). A determinism
+  self-check fails closed if a split does not regenerate byte-identically, so a mutating
+  source is caught rather than served with drift. Because regeneration is deterministic,
+  multi-agent `virtual` is consistent without a shared store.
+
+`lazy` and `virtual` are incompatible with auto-refresh and serving-image publishing. Set the
+mode in the config builder (Global Settings) or `config.performance.json`.
 
 ## 8.8 High availability
 

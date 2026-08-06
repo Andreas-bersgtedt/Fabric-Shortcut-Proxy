@@ -430,14 +430,17 @@
       <div><label>Materialization</label>
         <select id="materializeMode">
           <option value="eager">eager — build all splits at startup (default)</option>
-          <option value="lazy">lazy — build per table on first read</option>
+          <option value="lazy">lazy — build per table on first read, then pin</option>
+          <option value="virtual">virtual — regenerate on demand, never persisted</option>
         </select>
       </div>
     </div>
     <div class="hint" id="matHint" style="display:none;">
-      Lazy materialization defers split generation to the first metadata read per table,
-      so unread tables cost nothing at startup. Works with iceberg and delta; multi-agent
-      needs a shared artifact store. Not for auto-refresh. Requires <b>Download + restart</b>.</div>
+      Deferred materialization builds a table's splits on first read instead of at startup,
+      so unread tables cost nothing. <b>lazy</b> pins the bytes (works with iceberg and delta;
+      multi-agent needs a shared artifact store). <b>virtual</b> keeps zero bytes at rest and
+      regenerates each split deterministically per request — for snapshot-isolated / immutable
+      sources only. Neither is for auto-refresh. Requires <b>Download + restart</b>.</div>
     <div class="checkbox"><input type="checkbox" id="requireSigv4" /><span>require_sigv4</span></div>
     <div class="checkbox"><input type="checkbox" id="includePassword" checked />
       <span>Include password in db_url</span></div>
@@ -841,7 +844,7 @@ function applyBootstrap(builder){
   }
   $("refreshOpts").style.display = $("autoRefresh").checked ? "block" : "none";
   $("fmtHint").style.display = $("tableFormat").value === "delta" ? "block" : "none";
-  $("matHint").style.display = $("materializeMode").value === "lazy" ? "block" : "none";
+  $("matHint").style.display = $("materializeMode").value !== "eager" ? "block" : "none";
   writeFormFromConn(active);
   renderConnList();
   renderSelected();
@@ -1331,8 +1334,8 @@ function updatePreview(){
   $("preview").textContent = JSON.stringify(buildConfig(), null, 2);
 }
 ["bucket","numSplits","tableFormat","materializeMode","requireSigv4","includePassword","autoRefresh","refreshPoll","refreshStrategy","refreshTtl","refreshFullPull"].forEach(id=>{
-  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value==="lazy"?"block":"none"; updatePreview(); });
-  $(id).addEventListener("change", ()=>{ if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value==="lazy"?"block":"none"; updatePreview(); });
+  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; updatePreview(); });
+  $(id).addEventListener("change", ()=>{ if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; updatePreview(); });
 });
 
 // ---- download / copy ----

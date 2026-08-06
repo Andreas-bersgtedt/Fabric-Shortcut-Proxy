@@ -49,6 +49,7 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `REFRESH_POLL_SECONDS` | `refresh_poll_seconds` | `600` | Auto-refresh poll interval (seconds) |
 | `PARQUET_DISK_CACHE` | `parquet_disk_cache` | `0` | Persist generated Parquet to disk |
 | `PIN_MATERIALIZED_SPLITS` | `pin_materialized_splits` | `1` | Keep snapshot data files byte-identical |
+| `MATERIALIZE_MODE` | `materialize_mode` | `eager` | `eager`, `lazy` (defer + pin per table), or `virtual` (defer, regenerate on demand, zero at rest). Restart-required |
 | `AGENT_COUNT` | `agent_count` | `1` | Number of supervised agents (enterprise) |
 | `ENABLE_GATEWAY` | `enable_gateway` | `0` | Built-in round-robin S3 gateway (enterprise) |
 | `CONTROL_PORT` | `control_port` | `9200` | Manager control-plane port |

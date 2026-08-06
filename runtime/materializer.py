@@ -17,6 +17,7 @@ serves byte-identical splits (multi-shard lazy requires ``ARTIFACT_STORE_SERVING
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 
 import pyarrow.parquet as pq
@@ -57,6 +58,12 @@ def _owns_split(split) -> bool:
     return split.split_index % n == config.AGENT_SHARD_INDEX
 
 
+def _should_pin() -> bool:
+    """Virtual mode never persists: splits stay in the evictable LRU and are
+    regenerated (byte-identically) on demand, so zero bytes are pinned at rest."""
+    return config.PIN_MATERIALIZED_SPLITS and config.MATERIALIZE_MODE != "virtual"
+
+
 async def _wait_for_store(key: str) -> bytes | None:
     """Poll the shared store for a split the owning shard is generating."""
     loop = asyncio.get_event_loop()
@@ -74,7 +81,7 @@ def _apply_bytes(split, data: bytes) -> int:
     split.record_count = pq.read_metadata(io.BytesIO(data)).num_rows
     if config.ICEBERG_MANIFEST_STATS:
         split.stats = collect_split_stats(data, split.table.schema)
-    if config.PIN_MATERIALIZED_SPLITS:
+    if _should_pin():
         cache.pin_parquet(split.object_key, data)
     return split.record_count
 
@@ -115,7 +122,7 @@ async def _materialize_split(split) -> int:
                 rows, split_index=split.split_index, columns=split.table.schema
             )
             nrows = len(rows)
-        if config.PIN_MATERIALIZED_SPLITS:
+        if _should_pin():
             cache.pin_parquet(key, pq_bytes)
         else:
             cache.put_parquet(key, pq_bytes)
@@ -150,5 +157,41 @@ async def ensure_snapshot_materialized(snap: SnapshotState) -> None:
         if config.TABLE_FORMAT == "delta":
             from delta import log as delta_log
             delta_log.invalidate_table(snap.table.name)
-        log.info("lazy_materialized", table=snap.table.name,
+        if config.MATERIALIZE_MODE == "virtual" and snap.splits:
+            await _verify_determinism(snap.splits[0])
+        log.info("deferred_materialized", mode=config.MATERIALIZE_MODE, table=snap.table.name,
                  total_records=snap.total_records, splits=len(snap.splits))
+
+
+async def _verify_determinism(split) -> None:
+    """Virtual mode serves by regenerating on demand, so a split MUST reproduce
+    byte-identically. Regenerate one split and compare; fail closed on drift (a
+    non-deterministic encoder, or a source that mutated between reads)."""
+    first = cache.peek_parquet(split.object_key)
+    if first is None:
+        return
+    sql, params = build_split_query(split)
+    if config.STREAMING_PARQUET:
+        batches = stream_split_query(
+            sql, params, split_index=split.split_index,
+            batch_rows=config.STREAM_BATCH_ROWS,
+            connection=split.table.connection_id,
+        )
+        second, _ = await stream_rows_to_parquet(
+            batches, split_index=split.split_index, columns=split.table.schema
+        )
+    else:
+        rows = await execute_split_query(
+            sql, params, split_index=split.split_index,
+            connection=split.table.connection_id,
+        )
+        second = rows_to_parquet(
+            rows, split_index=split.split_index, columns=split.table.schema
+        )
+    if hashlib.sha256(first).digest() != hashlib.sha256(second).digest():
+        raise ValueError(
+            f"MATERIALIZE_MODE 'virtual' requires byte-deterministic regeneration, but "
+            f"split {split.split_index} of table {split.table.name!r} regenerated "
+            "differently. Use a snapshot-isolated / immutable source and a pinned "
+            "PyArrow version, or switch to MATERIALIZE_MODE=lazy."
+        )

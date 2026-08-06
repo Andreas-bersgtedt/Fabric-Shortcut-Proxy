@@ -474,18 +474,20 @@ def validate_config() -> None:
         problems.append(f"NUM_SPLITS must be >= 1 (got {NUM_SPLITS}).")
     if TABLE_FORMAT not in ("iceberg", "delta"):
         problems.append(f"TABLE_FORMAT must be 'iceberg' or 'delta' (got {TABLE_FORMAT!r}).")
-    if MATERIALIZE_MODE not in ("eager", "lazy"):
-        problems.append(f"MATERIALIZE_MODE must be 'eager' or 'lazy' (got {MATERIALIZE_MODE!r}).")
-    elif MATERIALIZE_MODE == "lazy":
-        # Lazy supports Iceberg and Delta. Multi-shard needs a shared artifact store
-        # so non-owner agents serve the owner's byte-identical splits (no drift).
-        # Auto-refresh and serving-image publishing require eager materialization.
-        if AGENT_SHARD_COUNT > 1 and not ARTIFACT_STORE_SERVING:
-            problems.append("MATERIALIZE_MODE 'lazy' with AGENT_SHARD_COUNT>1 requires ARTIFACT_STORE_SERVING (a shared store) so shards serve byte-identical splits.")
+    if MATERIALIZE_MODE not in ("eager", "lazy", "virtual"):
+        problems.append(f"MATERIALIZE_MODE must be 'eager', 'lazy', or 'virtual' (got {MATERIALIZE_MODE!r}).")
+    elif MATERIALIZE_MODE in ("lazy", "virtual"):
+        # lazy/virtual defer materialization to first read. Auto-refresh and
+        # serving-image publishing require eager (fully materialized) data.
         if AUTO_REFRESH:
-            problems.append("MATERIALIZE_MODE 'lazy' is incompatible with AUTO_REFRESH.")
+            problems.append(f"MATERIALIZE_MODE {MATERIALIZE_MODE!r} is incompatible with AUTO_REFRESH.")
         if PUBLISH_SERVING_IMAGE:
-            problems.append("MATERIALIZE_MODE 'lazy' is incompatible with PUBLISH_SERVING_IMAGE (a full image needs materialized data).")
+            problems.append(f"MATERIALIZE_MODE {MATERIALIZE_MODE!r} is incompatible with PUBLISH_SERVING_IMAGE (a full image needs materialized data).")
+        # Lazy multi-shard needs a shared store so non-owner agents serve the owner's
+        # byte-identical splits. Virtual regenerates deterministically per agent, so it
+        # is consistent across shards without a shared store.
+        if MATERIALIZE_MODE == "lazy" and AGENT_SHARD_COUNT > 1 and not ARTIFACT_STORE_SERVING:
+            problems.append("MATERIALIZE_MODE 'lazy' with AGENT_SHARD_COUNT>1 requires ARTIFACT_STORE_SERVING (a shared store) so shards serve byte-identical splits.")
     if SPLIT_STRATEGY not in ("modulo", "range", "date", "auto"):
         problems.append(f"SPLIT_STRATEGY must be one of 'modulo'|'range'|'date'|'auto' (got {SPLIT_STRATEGY!r}).")
     if SPLIT_TARGET_ROWS < 0:
@@ -681,7 +683,7 @@ SETTINGS_META: dict[str, dict] = {
     "stream_batch_rows": {"cat": "Splits & query", "help": "Batch/row-group size for streaming Parquet materialization."},
     "source_max_concurrency": {"cat": "Splits & query", "help": "Cap concurrent SQL queries against the source DB (backpressure). 0 = unlimited."},
     "table_format": {"cat": "Splits & query", "help": "Output format: 'iceberg' (Fabric virtualizes to Delta) or 'delta' (native, no conversion — lower lag)."},
-    "materialize_mode": {"cat": "Splits & query", "help": "When splits are generated: 'eager' (all at startup, default) or 'lazy' (per table on first metadata read). Iceberg and Delta; multi-agent lazy needs a shared artifact store; no auto-refresh. Restart to apply.", "choices": ["eager", "lazy"]},
+    "materialize_mode": {"cat": "Splits & query", "help": "When splits are generated: 'eager' (all at startup, default), 'lazy' (per table on first read, then pinned), or 'virtual' (per table on first read, never persisted — regenerated deterministically on demand; snapshot-isolated/immutable sources only). Iceberg and Delta; multi-agent lazy needs a shared artifact store; no auto-refresh. Restart to apply.", "choices": ["eager", "lazy", "virtual"]},
     # Caching
     "pin_materialized_splits": {"cat": "Caching", "help": "Serve snapshot data files byte-identical (prevents size drift). Keep on."},
     "parquet_disk_cache": {"cat": "Caching", "help": "Persist generated Parquet to disk for warm restarts."},

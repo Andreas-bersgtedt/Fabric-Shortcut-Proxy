@@ -174,7 +174,11 @@ async def _balanced_ranges(table: TableDef, key: str, key_type: str | None, n: i
         return None
     from db.executor import fetch_key_quantile_bounds
     try:
-        result = await fetch_key_quantile_bounds(table.source_table, key, n, connection=table.connection_id)
+        result = await fetch_key_quantile_bounds(
+            table.source_table, key, n, connection=table.connection_id,
+            sample_rows=table.effective_split_sample_rows,
+            key_is_integer=key_type in _INTEGER_TYPES,
+        )
     except Exception as exc:  # noqa: BLE001 - planning must not break startup
         log.warning("balanced_planning_error_fallback_span", table=table.name, key=key, error=str(exc))
         return None

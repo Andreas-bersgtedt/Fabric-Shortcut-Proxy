@@ -221,6 +221,7 @@ SPLIT_BALANCE: str = _get_str("SPLIT_BALANCE", "split_balance", "span", _PERF_CF
 SPLIT_TARGET_ROWS: int = _get_int("SPLIT_TARGET_ROWS", "split_target_rows", 100_000, _PERF_CFG)
 SPLIT_COUNT_MIN: int = _get_int("SPLIT_COUNT_MIN", "split_count_min", 1, _PERF_CFG)
 SPLIT_COUNT_MAX: int = _get_int("SPLIT_COUNT_MAX", "split_count_max", 256, _PERF_CFG)
+SPLIT_SAMPLE_ROWS: int = _get_int("SPLIT_SAMPLE_ROWS", "split_sample_rows", 0, _PERF_CFG)
 
 STREAMING_PARQUET: bool = _get_bool("STREAMING_PARQUET", "streaming_parquet", False, _PERF_CFG)
 STREAM_BATCH_ROWS: int = _get_int("STREAM_BATCH_ROWS", "stream_batch_rows", 50_000, _PERF_CFG)
@@ -380,6 +381,7 @@ class TableDef:
     split_target_rows: int | None = None
     split_strategy: str | None = None
     split_balance: str | None = None
+    split_sample_rows: int | None = None
 
     def __post_init__(self):
         if self.num_splits is None:
@@ -405,6 +407,11 @@ class TableDef:
     def effective_split_balance(self) -> str:
         """Per-table split balance (span|count), falling back to the global default."""
         return SPLIT_BALANCE if self.split_balance is None else self.split_balance
+
+    @property
+    def effective_split_sample_rows(self) -> int:
+        """Per-table quantile-planning sample cap (0 = full scan), global fallback."""
+        return SPLIT_SAMPLE_ROWS if self.split_sample_rows is None else self.split_sample_rows
 
     @property
     def effective_max_rows(self) -> int:
@@ -456,6 +463,7 @@ def _tabledef_from_json(d: dict) -> "TableDef":
         split_target_rows=(int(d["split_target_rows"]) if d.get("split_target_rows") is not None else None),
         split_strategy=(str(d["split_strategy"]) if d.get("split_strategy") else None),
         split_balance=(str(d["split_balance"]) if d.get("split_balance") else None),
+        split_sample_rows=(int(d["split_sample_rows"]) if d.get("split_sample_rows") is not None else None),
     )
 
 
@@ -530,6 +538,8 @@ def validate_config() -> None:
         problems.append(f"SPLIT_COUNT_MIN must be >= 1 (got {SPLIT_COUNT_MIN}).")
     if SPLIT_COUNT_MAX < SPLIT_COUNT_MIN:
         problems.append(f"SPLIT_COUNT_MAX must be >= SPLIT_COUNT_MIN (got {SPLIT_COUNT_MAX} < {SPLIT_COUNT_MIN}).")
+    if SPLIT_SAMPLE_ROWS < 0:
+        problems.append(f"SPLIT_SAMPLE_ROWS must be >= 0 (got {SPLIT_SAMPLE_ROWS}).")
     if STREAM_BATCH_ROWS < 1:
         problems.append(f"STREAM_BATCH_ROWS must be >= 1 (got {STREAM_BATCH_ROWS}).")
     if SOURCE_MAX_CONCURRENCY < 0:
@@ -615,6 +625,8 @@ def validate_config() -> None:
                 problems.append(f"Table {t.name!r}: split_strategy must be one of 'modulo'|'range'|'date'|'auto' (got {t.split_strategy!r}).")
             if t.split_balance is not None and t.split_balance not in ("span", "count"):
                 problems.append(f"Table {t.name!r}: split_balance must be 'span' or 'count' (got {t.split_balance!r}).")
+            if t.split_sample_rows is not None and t.split_sample_rows < 0:
+                problems.append(f"Table {t.name!r}: split_sample_rows must be >= 0 (got {t.split_sample_rows}).")
             if t.connection_id not in CONNECTIONS:
                 problems.append(
                     f"Table {t.name!r}: connection {t.connection_id!r} is not defined "
@@ -720,6 +732,7 @@ SETTINGS_META: dict[str, dict] = {
     "split_target_rows": {"cat": "Splits & query", "help": "Target rows per split for dynamic split-count planning (0 disables, keeps configured split counts)."},
     "split_count_min": {"cat": "Splits & query", "help": "Lower guardrail for dynamic split-count planning."},
     "split_count_max": {"cat": "Splits & query", "help": "Upper guardrail for dynamic split-count planning."},
+    "split_sample_rows": {"cat": "Splits & query", "help": "Cap rows fed into equal-count (NTILE) quantile planning (0 = full scan). When the table is larger, a deterministic integer-key sample bounds the planning sort/tempdb cost; approximate boundaries, still far more balanced than 'span'."},
     "streaming_parquet": {"cat": "Splits & query", "help": "Materialize each split in row batches (bounded memory) instead of loading the whole split into RAM."},
     "stream_batch_rows": {"cat": "Splits & query", "help": "Batch/row-group size for streaming Parquet materialization."},
     "source_max_concurrency": {"cat": "Splits & query", "help": "Cap concurrent SQL queries against the source DB (backpressure). 0 = unlimited."},
@@ -808,7 +821,7 @@ _SETTINGS_CAT_ORDER = [
 LIVE_SETTINGS: frozenset[str] = frozenset({
     # Performance / splits
     "num_splits", "split_strategy", "split_target_rows",
-    "split_count_min", "split_count_max", "split_balance",
+    "split_count_min", "split_count_max", "split_balance", "split_sample_rows",
     "streaming_parquet", "stream_batch_rows",
     "source_max_concurrency", "max_concurrent_generations",
     "timestamp_assume_utc", "pin_materialized_splits",
@@ -839,6 +852,7 @@ _KEY_TO_ATTR: dict[str, str] = {
     "split_target_rows": "SPLIT_TARGET_ROWS",
     "split_count_min": "SPLIT_COUNT_MIN",
     "split_count_max": "SPLIT_COUNT_MAX",
+    "split_sample_rows": "SPLIT_SAMPLE_ROWS",
     "streaming_parquet": "STREAMING_PARQUET",
     "stream_batch_rows": "STREAM_BATCH_ROWS",
     "source_max_concurrency": "SOURCE_MAX_CONCURRENCY",
@@ -987,6 +1001,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "split_target_rows": "config.performance.json",
     "split_count_min": "config.performance.json",
     "split_count_max": "config.performance.json",
+    "split_sample_rows": "config.performance.json",
     "streaming_parquet": "config.performance.json",
     "stream_batch_rows": "config.performance.json",
     "source_max_concurrency": "config.performance.json",

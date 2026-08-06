@@ -514,7 +514,8 @@ async def fetch_key_bounds(source_table: str, key_column: str, connection: str =
         return None
 
 
-async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, connection: str = "default"):
+async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, connection: str = "default",
+                                    *, sample_rows: int = 0, key_is_integer: bool = False):
     """Return ``(bucket_min_values, overall_max)`` for equal-count split planning.
 
     Uses ``NTILE(n) OVER (ORDER BY key)`` to bucket rows into ``n`` equal-count
@@ -523,6 +524,12 @@ async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, 
     roughly equal rows regardless of key skew. Returns ``None`` for empty tables,
     all-NULL keys, or ``n < 1``. Costs a single ordered scan of the key column
     (index-ordered where an index exists); best invoked once at snapshot build.
+
+    When ``sample_rows > 0`` and the integer key column is larger than that, a
+    deterministic modulo-stride sample bounds the rows fed into ``NTILE`` (caps
+    the sort/window/tempdb cost on large tables). Boundaries become approximate
+    but stay far more balanced than equal-span; the overall max is still taken
+    from the full table so the last range always covers it.
     """
     if n < 1:
         return None
@@ -530,10 +537,21 @@ async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, 
     src = d.quote_qualified(source_table)
     pk = d.quote(key_column)
     n_int = int(n)  # inlined as a validated integer (NTILE's arg is not a bind on all drivers)
+
+    ntile_src = src
+    if sample_rows and sample_rows > 0 and key_is_integer:
+        total = await fetch_table_row_count(source_table, connection)
+        if total and total > sample_rows:
+            stride = (total + sample_rows - 1) // sample_rows  # ceil so the sample <= sample_rows
+            if stride >= 2:
+                # Value-uniform stride sample keeps the planning scan's sort/window bounded.
+                ntile_src = (f"(SELECT {pk} FROM {src} "
+                             f"WHERE {pk} IS NOT NULL AND (ABS({pk}) % {int(stride)}) = 0) __s")
+
     sql = (
         f"SELECT MIN({pk}) AS lo, MAX({pk}) AS hi "
         f"FROM (SELECT {pk}, NTILE({n_int}) OVER (ORDER BY {pk}) AS __b "
-        f"FROM {src} WHERE {pk} IS NOT NULL) q "
+        f"FROM {ntile_src} WHERE {pk} IS NOT NULL) q "
         f"GROUP BY __b ORDER BY __b"
     )
     async with asyncio.timeout(_query_timeout_for(connection)):
@@ -551,6 +569,17 @@ async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, 
         return None
     mins = [r[0] for r in rows]
     overall_max = rows[-1][1]
+    if sample_rows and sample_rows > 0 and key_is_integer and ntile_src is not src:
+        # A sample can miss the true min/max, so anchor the outer ranges to the
+        # full-table bounds — the first range must start at the real minimum and
+        # the last must cover the real maximum, else edge rows go unserved.
+        full = await fetch_column_bounds(source_table, key_column, connection)
+        if full is not None:
+            true_min, true_max = full
+            if true_min is not None and mins:
+                mins[0] = true_min
+            if true_max is not None:
+                overall_max = true_max
     if overall_max is None or any(m is None for m in mins):
         return None
     return mins, overall_max

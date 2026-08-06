@@ -222,9 +222,17 @@ planning time (cheapest when the key is indexed) and falls back to `span` when
 the source can't compute quantiles; it does not change the number of splits or
 the serving queries. Omit to inherit the global `split_balance`.
 
+For large tables, `split_sample_rows` (global, or per-table) caps the rows fed
+into `count` planning: when the integer key column is larger, a deterministic
+stride sample bounds the planning sort/window/tempdb cost. Boundaries become
+approximate but stay far more balanced than `span`; the overall max is still read
+from the full table so the last range always covers it. `0` (default) scans the
+full key column.
+
 ```json
 { "name": "clickstream", "source_table": "dbo.clickstream", "key_column": "event_id",
-  "split_strategy": "range", "split_balance": "count", "split_target_rows": 1000000 }
+  "split_strategy": "range", "split_balance": "count", "split_target_rows": 1000000,
+  "split_sample_rows": 500000 }
 ```
 
 ---

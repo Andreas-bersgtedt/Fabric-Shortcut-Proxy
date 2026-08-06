@@ -77,6 +77,17 @@ def test_tabledef_from_json_absent_balance_is_none():
     assert t.split_balance is None
 
 
+def test_effective_split_sample_rows_falls_back_to_global(monkeypatch):
+    monkeypatch.setattr(config, "SPLIT_SAMPLE_ROWS", 0, raising=False)
+    assert _table().effective_split_sample_rows == 0
+    assert _table(split_sample_rows=500).effective_split_sample_rows == 500
+
+
+def test_tabledef_from_json_parses_sample_rows():
+    t = _tabledef_from_json({"name": "e", "source_table": "e", "split_sample_rows": 500000})
+    assert t.split_sample_rows == 500000
+
+
 # ---------------------------------------------------------------------------
 # End-to-end over SQLite: skewed integer key.
 # 300 rows in [1..100] (dense) + 6 rows in [1000..6000] (sparse). Equal-span
@@ -169,3 +180,33 @@ async def test_balance_span_default_uses_equal_span(skew_db):
     assert await plan_ranges_for_snapshot(snap) is True
     # Span slices the key axis evenly; the first split spans ids [1, ~1500).
     assert snap.splits[0].key_lo == 1
+
+
+async def test_sampled_quantiles_still_cover_all_rows(skew_db):
+    from db.executor import fetch_key_quantile_bounds
+
+    # Sample far below the row count so a stride sample is used. The result must
+    # still anchor to the true min (1) and max (6000) so no edge rows are lost.
+    result = await fetch_key_quantile_bounds("events", "id", 4, sample_rows=40, key_is_integer=True)
+    assert result is not None
+    mins, overall_max = result
+    assert mins[0] == 1                          # anchored to the true minimum
+    assert overall_max == 6000                   # anchored to the true maximum
+
+
+async def test_balanced_planning_with_sampling_covers_all_rows(skew_db):
+    from db.executor import execute_split_query
+    from planner.split_planner import build_split_query
+
+    n = 4
+    table = _table(split_strategy="range", split_balance="count", split_sample_rows=40)
+    snap = _snapshot(table, n)
+    assert await plan_ranges_for_snapshot(snap) is True
+    seen: list[int] = []
+    for i, split in enumerate(snap.splits):
+        sql, params = build_split_query(split)
+        rows = await execute_split_query(sql, params, split_index=i)
+        seen += [r["id"] for r in rows]
+    assert len(seen) == 306                       # every row served exactly once
+    assert min(seen) == 1 and max(seen) == 6000   # edge rows preserved despite sampling
+

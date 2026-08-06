@@ -146,3 +146,25 @@ async def test_logs_suppress_self_poll(client):
     assert d["lines"] == ["request served table=Widget"]
     buf.clear()
 
+
+def test_self_poll_suppressed_through_real_logging_handler():
+    # End-to-end: an httpx request log emitted through the configured stdlib
+    # logging path must not reach the buffer (proves the wiring, not just append).
+    import logging
+
+    from observability.logbuffer import get_buffer
+    from observability.logging import configure_logging
+
+    configure_logging()
+    buf = get_buffer()
+    buf.clear()
+    logging.getLogger().setLevel(logging.INFO)  # pytest may leave root at WARNING
+    logging.getLogger("httpx").info(
+        'HTTP Request: GET http://127.0.0.1:9000/_monitor/api/logs?limit=1000&q=zzz "HTTP/1.1 200 OK"'
+    )
+    logging.getLogger("app").info("real work q=zzz table=Orders")
+    lines = buf.tail()
+    assert any("real work" in ln for ln in lines)                 # sanity: buffering works
+    assert not any("/_monitor/api/logs" in ln for ln in lines)    # self-poll suppressed
+    buf.clear()
+

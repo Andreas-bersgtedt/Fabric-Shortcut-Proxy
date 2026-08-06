@@ -2,12 +2,17 @@
 
 Extracts the per-table generate + pin logic so a snapshot's split Parquet bytes
 (and their declared sizes) are produced on the first metadata read instead of
-eagerly at startup. This is the single-agent path: this agent owns every split.
+eagerly at startup.
 
-Correctness: the Iceberg manifest declares each split's ``file_size_in_bytes``.
-A browse (ListObjectsV2/HEAD) before materialization can build a manifest with
-placeholder sizes and memoize it on the snapshot. After materializing we clear
-those memoized bytes so the authoritative manifest is rebuilt with true sizes.
+Correctness: the Iceberg manifest (and the Delta ``add`` action) declares each
+split's ``file_size_in_bytes``. A browse (ListObjectsV2/HEAD) before materialization
+can build metadata with placeholder sizes and memoize it. After materializing we
+clear those memoized bytes so the authoritative metadata is rebuilt with true sizes.
+
+Cluster: with more than one shard a split is owned by exactly one agent
+(``split_index % shard_count``). A non-owner waits for the owning shard to publish
+the split to the shared artifact store rather than regenerating it, so every agent
+serves byte-identical splits (multi-shard lazy requires ``ARTIFACT_STORE_SERVING``).
 """
 from __future__ import annotations
 
@@ -43,6 +48,27 @@ def _is_materialized(snap: SnapshotState) -> bool:
     return bool(snap.splits) and all(s.file_size_in_bytes is not None for s in snap.splits)
 
 
+def _owns_split(split) -> bool:
+    """Which agent generates a split. Single shard owns everything; otherwise a
+    stable modulo assignment so exactly one shard generates each split."""
+    n = config.AGENT_SHARD_COUNT
+    if n <= 1:
+        return True
+    return split.split_index % n == config.AGENT_SHARD_INDEX
+
+
+async def _wait_for_store(key: str) -> bytes | None:
+    """Poll the shared store for a split the owning shard is generating."""
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + config.MATERIALIZE_WAIT_SECONDS
+    while loop.time() < deadline:
+        await asyncio.sleep(0.25)
+        got = cache.warm_parquet(key)
+        if got is not None:
+            return got
+    return None
+
+
 def _apply_bytes(split, data: bytes) -> int:
     split.file_size_in_bytes = len(data)
     split.record_count = pq.read_metadata(io.BytesIO(data)).num_rows
@@ -58,6 +84,14 @@ async def _materialize_split(split) -> int:
     warm = cache.warm_parquet(key)
     if warm is not None:
         return _apply_bytes(split, warm)
+    # Cluster: a non-owner waits for the owning shard to publish this split to the
+    # shared store rather than regenerating it (avoids cross-agent byte drift).
+    if not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
+        warm = await _wait_for_store(key)
+        if warm is not None:
+            return _apply_bytes(split, warm)
+        log.warning("lazy_materialize_wait_timeout_fallback_generate",
+                    table=split.table.name, split_index=split.split_index)
     async with _sem:
         warm = cache.warm_parquet(key)   # another waiter may have won the race
         if warm is not None:
@@ -108,10 +142,13 @@ async def ensure_snapshot_materialized(snap: SnapshotState) -> None:
         else:
             counts = [await _materialize_split(s) for s in snap.splits]
         snap.total_records = sum(counts)
-        # Discard any placeholder-sized metadata/manifest bytes a pre-materialization
-        # browse may have memoized, so they rebuild with the true sizes.
+        # Discard any placeholder-sized metadata a pre-materialization browse may
+        # have memoized, so it rebuilds with the true sizes.
         snap.metadata_bytes = None
         snap.manifest_list_bytes = None
         snap.manifest_file_bytes = None
+        if config.TABLE_FORMAT == "delta":
+            from delta import log as delta_log
+            delta_log.invalidate_table(snap.table.name)
         log.info("lazy_materialized", table=snap.table.name,
                  total_records=snap.total_records, splits=len(snap.splits))

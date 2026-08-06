@@ -316,6 +316,11 @@ async def _ensure_lazy_materialized(key: str) -> None:
         split = get_split_by_key(key)
         if split is not None:
             snap = _snapshot_for_table_name(split.table.name)
+    if snap is None and "/_delta_log/" in key:
+        for s in get_all_snapshots():
+            if key.startswith(s.table_path + "/_delta_log/"):
+                snap = s
+                break
     if snap is not None:
         from runtime.materializer import ensure_snapshot_materialized
         await ensure_snapshot_materialized(snap)

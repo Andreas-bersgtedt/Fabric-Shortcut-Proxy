@@ -477,11 +477,11 @@ def validate_config() -> None:
     if MATERIALIZE_MODE not in ("eager", "lazy"):
         problems.append(f"MATERIALIZE_MODE must be 'eager' or 'lazy' (got {MATERIALIZE_MODE!r}).")
     elif MATERIALIZE_MODE == "lazy":
-        # Lazy is a scoped first slice: Iceberg, single-agent, non-refresh, no serving image.
-        if TABLE_FORMAT != "iceberg":
-            problems.append("MATERIALIZE_MODE 'lazy' requires TABLE_FORMAT 'iceberg' (Delta lazy is not yet supported).")
-        if AGENT_SHARD_COUNT > 1:
-            problems.append("MATERIALIZE_MODE 'lazy' requires a single shard (AGENT_SHARD_COUNT=1).")
+        # Lazy supports Iceberg and Delta. Multi-shard needs a shared artifact store
+        # so non-owner agents serve the owner's byte-identical splits (no drift).
+        # Auto-refresh and serving-image publishing require eager materialization.
+        if AGENT_SHARD_COUNT > 1 and not ARTIFACT_STORE_SERVING:
+            problems.append("MATERIALIZE_MODE 'lazy' with AGENT_SHARD_COUNT>1 requires ARTIFACT_STORE_SERVING (a shared store) so shards serve byte-identical splits.")
         if AUTO_REFRESH:
             problems.append("MATERIALIZE_MODE 'lazy' is incompatible with AUTO_REFRESH.")
         if PUBLISH_SERVING_IMAGE:
@@ -681,7 +681,7 @@ SETTINGS_META: dict[str, dict] = {
     "stream_batch_rows": {"cat": "Splits & query", "help": "Batch/row-group size for streaming Parquet materialization."},
     "source_max_concurrency": {"cat": "Splits & query", "help": "Cap concurrent SQL queries against the source DB (backpressure). 0 = unlimited."},
     "table_format": {"cat": "Splits & query", "help": "Output format: 'iceberg' (Fabric virtualizes to Delta) or 'delta' (native, no conversion — lower lag)."},
-    "materialize_mode": {"cat": "Splits & query", "help": "When splits are generated: 'eager' (all at startup, default) or 'lazy' (per table on first metadata read; Iceberg + single-agent, no auto-refresh). Restart to apply.", "choices": ["eager", "lazy"]},
+    "materialize_mode": {"cat": "Splits & query", "help": "When splits are generated: 'eager' (all at startup, default) or 'lazy' (per table on first metadata read). Iceberg and Delta; multi-agent lazy needs a shared artifact store; no auto-refresh. Restart to apply.", "choices": ["eager", "lazy"]},
     # Caching
     "pin_materialized_splits": {"cat": "Caching", "help": "Serve snapshot data files byte-identical (prevents size drift). Keep on."},
     "parquet_disk_cache": {"cat": "Caching", "help": "Persist generated Parquet to disk for warm restarts."},

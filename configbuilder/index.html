@@ -436,8 +436,8 @@
     </div>
     <div class="hint" id="matHint" style="display:none;">
       Lazy materialization defers split generation to the first metadata read per table,
-      so unread tables cost nothing at startup. Requires <b>iceberg</b> format on a
-      single agent (no auto-refresh). Requires <b>Download + restart</b>.</div>
+      so unread tables cost nothing at startup. Works with iceberg and delta; multi-agent
+      needs a shared artifact store. Not for auto-refresh. Requires <b>Download + restart</b>.</div>
     <div class="checkbox"><input type="checkbox" id="requireSigv4" /><span>require_sigv4</span></div>
     <div class="checkbox"><input type="checkbox" id="includePassword" checked />
       <span>Include password in db_url</span></div>

@@ -201,6 +201,17 @@ def reset() -> None:
         _committed_version.clear()
 
 
+def invalidate_table(name: str) -> None:
+    """Drop memoized commits for one table so they rebuild from the current split
+    sizes. Used by lazy materialization: a browse before materialization can
+    memoize a commit with placeholder (0) sizes; after materializing we clear it
+    so the next read re-registers the version with true ``add`` sizes."""
+    with _lock:
+        _commits.pop(name, None)
+        _prev_files.pop(name, None)
+        _committed_version.pop(name, None)
+
+
 # ---------------------------------------------------------------------------
 # Object serving (used by the S3 router when TABLE_FORMAT=delta)
 # ---------------------------------------------------------------------------

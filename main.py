@@ -386,10 +386,12 @@ async def lifespan(app: FastAPI):
 
     # Native Delta output: build the initial _delta_log commits now (before any
     # freshness pruning could drop version 1). Fabric reads this directly — no
-    # Iceberg->Delta conversion layer.
+    # Iceberg->Delta conversion layer. In lazy mode the commits are built per table
+    # on first read (after that table's splits are materialized), so skip startup sync.
     if config.TABLE_FORMAT == "delta":
         from delta import log as delta_log
-        delta_log.sync_all()
+        if config.MATERIALIZE_MODE != "lazy":
+            delta_log.sync_all()
         log.info("delta_format_enabled", tables=[t.name for t in config.TABLES])
 
     # Phase 6: publish a complete servable image (data + metadata) to the store so

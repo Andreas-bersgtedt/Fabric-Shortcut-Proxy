@@ -19,6 +19,11 @@ import threading
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _MAX_LINES = 1000
 
+# The monitor polls the log-tail endpoint (with the operator's ?q= search term),
+# and the HTTP client/access loggers emit a line per poll. Buffering those makes a
+# search echo itself as a false positive, so drop them at capture.
+_SELF_POLL_RE = re.compile(r"/_monitor/api/logs\b")
+
 
 class LogRingBuffer:
     """Bounded, thread-safe ring buffer of the last ``maxlen`` log lines."""
@@ -32,6 +37,8 @@ class LogRingBuffer:
         clean = _ANSI_RE.sub("", text)
         with self._lock:
             for line in clean.splitlines():
+                if _SELF_POLL_RE.search(line):
+                    continue
                 self._buf.append(line)
 
     def tail(self, limit: int | None = None, query: str | None = None) -> list[str]:

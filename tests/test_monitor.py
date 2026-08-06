@@ -129,3 +129,20 @@ async def test_logs_tail_and_search(client):
     assert d["lines"] == ["request served table=Product"]
     buf.clear()
 
+
+async def test_logs_suppress_self_poll(client):
+    from observability.logbuffer import get_buffer
+
+    buf = get_buffer()
+    buf.clear()
+    # The monitor's own log-tail polls must not enter the buffer (else a search
+    # echoes itself as a false positive).
+    buf.append('httpx HTTP Request: GET http://127.0.0.1:9001/_monitor/api/logs?limit=1000&q=Widget "HTTP/1.1 200 OK"')
+    buf.append("request served table=Widget")
+
+    r = await client.get("/_monitor/api/logs", params={"q": "Widget"})
+    d = r.json()
+    assert d["returned"] == 1
+    assert d["lines"] == ["request served table=Widget"]
+    buf.clear()
+

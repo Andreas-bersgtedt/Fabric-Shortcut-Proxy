@@ -269,6 +269,11 @@ CONCURRENT_STARTUP_MATERIALIZATION: bool = _get_bool(
     "CONCURRENT_STARTUP_MATERIALIZATION", "concurrent_startup_materialization", True, _PERF_CFG
 )
 
+# When splits are generated. 'eager' (default) materializes every split at startup;
+# 'lazy' defers materialization to the first metadata read per table (Iceberg +
+# single-agent only). Restart-required (structural).
+MATERIALIZE_MODE: str = _get_str("MATERIALIZE_MODE", "materialize_mode", "eager", _PERF_CFG).strip().lower()
+
 # ---------------------------------------------------------------------------
 # Data freshness (Freshness section)
 # ---------------------------------------------------------------------------
@@ -469,6 +474,18 @@ def validate_config() -> None:
         problems.append(f"NUM_SPLITS must be >= 1 (got {NUM_SPLITS}).")
     if TABLE_FORMAT not in ("iceberg", "delta"):
         problems.append(f"TABLE_FORMAT must be 'iceberg' or 'delta' (got {TABLE_FORMAT!r}).")
+    if MATERIALIZE_MODE not in ("eager", "lazy"):
+        problems.append(f"MATERIALIZE_MODE must be 'eager' or 'lazy' (got {MATERIALIZE_MODE!r}).")
+    elif MATERIALIZE_MODE == "lazy":
+        # Lazy is a scoped first slice: Iceberg, single-agent, non-refresh, no serving image.
+        if TABLE_FORMAT != "iceberg":
+            problems.append("MATERIALIZE_MODE 'lazy' requires TABLE_FORMAT 'iceberg' (Delta lazy is not yet supported).")
+        if AGENT_SHARD_COUNT > 1:
+            problems.append("MATERIALIZE_MODE 'lazy' requires a single shard (AGENT_SHARD_COUNT=1).")
+        if AUTO_REFRESH:
+            problems.append("MATERIALIZE_MODE 'lazy' is incompatible with AUTO_REFRESH.")
+        if PUBLISH_SERVING_IMAGE:
+            problems.append("MATERIALIZE_MODE 'lazy' is incompatible with PUBLISH_SERVING_IMAGE (a full image needs materialized data).")
     if SPLIT_STRATEGY not in ("modulo", "range", "date", "auto"):
         problems.append(f"SPLIT_STRATEGY must be one of 'modulo'|'range'|'date'|'auto' (got {SPLIT_STRATEGY!r}).")
     if SPLIT_TARGET_ROWS < 0:
@@ -664,6 +681,7 @@ SETTINGS_META: dict[str, dict] = {
     "stream_batch_rows": {"cat": "Splits & query", "help": "Batch/row-group size for streaming Parquet materialization."},
     "source_max_concurrency": {"cat": "Splits & query", "help": "Cap concurrent SQL queries against the source DB (backpressure). 0 = unlimited."},
     "table_format": {"cat": "Splits & query", "help": "Output format: 'iceberg' (Fabric virtualizes to Delta) or 'delta' (native, no conversion — lower lag)."},
+    "materialize_mode": {"cat": "Splits & query", "help": "When splits are generated: 'eager' (all at startup, default) or 'lazy' (per table on first metadata read; Iceberg + single-agent, no auto-refresh). Restart to apply.", "choices": ["eager", "lazy"]},
     # Caching
     "pin_materialized_splits": {"cat": "Caching", "help": "Serve snapshot data files byte-identical (prevents size drift). Keep on."},
     "parquet_disk_cache": {"cat": "Caching", "help": "Persist generated Parquet to disk for warm restarts."},
@@ -945,6 +963,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "iceberg_snapshot_history": "config.performance.json",
     "snapshot_history_limit": "config.performance.json",
     "concurrent_startup_materialization": "config.performance.json",
+    "materialize_mode": "config.performance.json",
     # Freshness settings → config.freshness.json
     "auto_refresh": "config.freshness.json",
     "refresh_poll_seconds": "config.freshness.json",

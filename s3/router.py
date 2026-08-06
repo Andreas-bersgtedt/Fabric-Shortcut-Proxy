@@ -298,6 +298,29 @@ def _resolve_snapshot_for_key(key: str):
     return None
 
 
+def _snapshot_for_table_name(name: str):
+    for snap in get_all_snapshots():
+        if snap.table.name == name:
+            return snap
+    return None
+
+
+async def _ensure_lazy_materialized(key: str) -> None:
+    """In MATERIALIZE_MODE=lazy, materialize the key's table before its metadata
+    or data is served, so the Iceberg manifest declares true split sizes. Idempotent
+    and cheap once a table is materialized; no-op in eager mode."""
+    if config.MATERIALIZE_MODE != "lazy":
+        return
+    snap = _resolve_snapshot_for_key(key)
+    if snap is None:
+        split = get_split_by_key(key)
+        if split is not None:
+            snap = _snapshot_for_table_name(split.table.name)
+    if snap is not None:
+        from runtime.materializer import ensure_snapshot_materialized
+        await ensure_snapshot_materialized(snap)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -420,6 +443,7 @@ async def head_object(
 
     metrics.record_s3_request("head", metrics.classify_key(key))
     key = _normalize_incoming_key(key)
+    await _ensure_lazy_materialized(key)
     all_objects = _snapshot_objects()
     obj = all_objects.get(key)
     if obj is not None:
@@ -478,6 +502,7 @@ async def get_object(
     key = _normalize_incoming_key(key)
     range_header = request.headers.get("range")
     log.info("get_object", bucket=bucket, key=key, range=range_header)
+    await _ensure_lazy_materialized(key)
 
     # ---- Delta transaction log (TABLE_FORMAT=delta) ------------------------
     if config.TABLE_FORMAT == "delta" and "/_delta_log/" in key:

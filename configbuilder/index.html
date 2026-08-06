@@ -53,11 +53,12 @@
   .trow { display:flex; align-items:center; gap:8px; padding:6px 10px; border-top:1px solid var(--line); }
   .trow .name { flex:1; }
   .trow .kind { font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
-  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto; gap:8px; align-items:center;
+  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto auto auto; gap:8px; align-items:center;
             padding:8px 10px; border-top:1px solid var(--line); }
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
   .cfgrow .rows { font-size:11px; color:var(--muted); }
+  .splitinfo { color:var(--accent); }
   .cfgtable { border-top:1px solid var(--line); }
   .cfgtable .cfgrow { border-top:0; }
   .policy-toggle { margin:0 10px 9px; color:var(--accent); border-color:var(--line); }
@@ -99,7 +100,7 @@
   .tgcount { color:var(--muted); font-weight:400; font-size:12px; margin-left:auto; }
   .tgbody { display:none; }
   .tgroup.open .tgbody { display:block; }
-  .mini { width:90px; } .keysel { width:150px; }
+  .mini { width:90px; } .keysel { width:150px; } .stratsel { width:100px; }
   .invalid { color:var(--err); font-size:11px; }
   pre { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:12px;
         overflow:auto; max-height:420px; font-size:12px; }
@@ -221,7 +222,7 @@
 
   <div class="card" id="selectedCard" style="margin-top:16px; display:none;">
     <h2>Per-Table Configuration</h2>
-    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Adjust the key column and split count, or remove a table with ✕.</div>
+    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Set the key column, split <b>strategy</b> (how each split is sliced), <b>splits</b> (count) and <b>target rows</b> (rows per split), or remove a table with ✕. Precedence: when <b>target rows</b> &gt; 0 (global default 100000) the split count is derived from the row count and overrides <b>splits</b> — which then applies only as a fallback; set target rows to 0 to fix the count at <b>splits</b>. <b>Strategy</b> never changes the count. The badge under each table shows the effective split count. <b>Balance</b> (range/date only): <b>span</b> = equal key/time width; <b>count</b> = equal rows per split (NTILE, balances skew, adds a planning scan).</div>
     <div id="selectedList"></div>
     <div class="actions">
       <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
@@ -426,6 +427,21 @@
     <div class="hint" id="fmtHint" style="display:none;">
       Native Delta output — Fabric reads <code>_delta_log/</code> directly with no
       Iceberg→Delta conversion layer. Lower lag &amp; fewer conversion bugs.</div>
+    <div class="row">
+      <div><label>Materialization</label>
+        <select id="materializeMode">
+          <option value="eager">eager — build all splits at startup (default)</option>
+          <option value="lazy">lazy — build per table on first read, then pin</option>
+          <option value="virtual">virtual — regenerate on demand, never persisted</option>
+        </select>
+      </div>
+    </div>
+    <div class="hint" id="matHint" style="display:none;">
+      Deferred materialization builds a table's splits on first read instead of at startup,
+      so unread tables cost nothing. <b>lazy</b> pins the bytes (works with iceberg and delta;
+      multi-agent needs a shared artifact store). <b>virtual</b> keeps zero bytes at rest and
+      regenerates each split deterministically per request — for snapshot-isolated / immutable
+      sources only. Neither is for auto-refresh. Requires <b>Download + restart</b>.</div>
     <div class="checkbox"><input type="checkbox" id="requireSigv4" /><span>require_sigv4</span></div>
     <div class="checkbox"><input type="checkbox" id="includePassword" checked />
       <span>Include password in db_url</span></div>
@@ -556,7 +572,7 @@ const $ = (id) => document.getElementById(id);
 const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443" };
 // Connection fields live in the per-connection manager; only global builder
 // settings are persisted through the generic form store.
-const PERSIST = ["bucket","numSplits","tableFormat","refreshPoll","refreshStrategy","refreshTtl"];
+const PERSIST = ["bucket","numSplits","tableFormat","materializeMode","refreshPoll","refreshStrategy","refreshTtl"];
 // Editable connection form fields (password is in-memory only, never persisted).
 const CONN_FIELDS = ["dialect","host","port","database","username","password","driver","token","http_path","catalog","schema"];
 
@@ -571,7 +587,8 @@ const state = {
   storedCreds: new Set(),    // connection ids with an encrypted credential in the Manager store
   credBackend: "",           // encryption backend the Manager store is using
   credAvailable: false,      // whether the Manager can encrypt/persist credentials
-  showHiddenPrimary: false   // reveal the empty default card even when auto-hidden
+  showHiddenPrimary: false,  // reveal the empty default card even when auto-hidden
+  globals: { num_splits: 8, split_target_rows: 100000, split_count_min: 1, split_count_max: 256, split_strategy: "modulo" }
 };
 
 // Composite key so same-named tables from different sources never collide.
@@ -765,10 +782,17 @@ function renderConnList(){
 
 function applyBootstrap(builder){
   if(!builder) return;
+  // Global split-planning defaults drive the per-table "effective splits" badge.
+  if(builder.num_splits!=null) state.globals.num_splits = parseInt(builder.num_splits);
+  if(builder.split_target_rows!=null) state.globals.split_target_rows = parseInt(builder.split_target_rows);
+  if(builder.split_count_min!=null) state.globals.split_count_min = parseInt(builder.split_count_min);
+  if(builder.split_count_max!=null) state.globals.split_count_max = parseInt(builder.split_count_max);
+  if(builder.split_strategy) state.globals.split_strategy = String(builder.split_strategy);
   // Prime the main builder form from runtime config.
   if(builder.bucket) $("bucket").value = String(builder.bucket);
   if(builder.num_splits!=null) $("numSplits").value = String(builder.num_splits);
   if(builder.table_format) $("tableFormat").value = String(builder.table_format);
+  if(builder.materialize_mode) $("materializeMode").value = String(builder.materialize_mode);
   $("requireSigv4").checked = !!builder.require_sigv4;
   $("autoRefresh").checked = !!builder.auto_refresh;
   if(builder.refresh_poll_seconds!=null) $("refreshPoll").value = String(builder.refresh_poll_seconds);
@@ -810,6 +834,9 @@ function applyBootstrap(builder){
       connection: connId,
       key_column: t.key_column || null,
       num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
+      split_target_rows: (t.split_target_rows==null ? null : parseInt(t.split_target_rows)),
+      split_strategy: t.split_strategy || null,
+      split_balance: t.split_balance || null,
       integer_keys: t.key_column ? [t.key_column] : [],
       columns: configuredSchema.map((column, index)=>policyColumn(column, index)),
       schema_explicit: configuredSchema.length>0,
@@ -828,6 +855,7 @@ function applyBootstrap(builder){
   }
   $("refreshOpts").style.display = $("autoRefresh").checked ? "block" : "none";
   $("fmtHint").style.display = $("tableFormat").value === "delta" ? "block" : "none";
+  $("matHint").style.display = $("materializeMode").value !== "eager" ? "block" : "none";
   writeFormFromConn(active);
   renderConnList();
   renderSelected();
@@ -1026,7 +1054,7 @@ function bulk(on){
 }
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
-  key_column:null, num_splits:null,
+  key_column:null, num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
   integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false }; }
 
 function policyColumn(column, index){
@@ -1159,6 +1187,47 @@ function renderPolicyEditor(entry){
   return editor;
 }
 
+// Resolve the split count the runtime will actually use, mirroring
+// choose_table_num_splits: a per-table/global split_target_rows > 0 derives the
+// count from the row estimate (clamped by split_count_min/max) and overrides the
+// configured 'splits'; otherwise the configured/global 'splits' is authoritative.
+function effectiveSplitCount(s){
+  const g = state.globals;
+  const target = (s.split_target_rows!=null ? s.split_target_rows : g.split_target_rows);
+  const configured = (s.num_splits!=null ? s.num_splits : g.num_splits);
+  if(!target || target<=0){
+    return { text:`= ${configured} splits (fixed)`,
+             title:`target rows = 0, so the configured splits count (${configured}) is authoritative.` };
+  }
+  if(s.approx_rows==null){
+    return { text:`≈ dynamic splits`,
+             title:`Split count is derived from the row count / target (${Intl.NumberFormat().format(target)}). Inspect the table to preview the number; 'splits' (${configured}) is only the fallback if the estimate is unavailable.` };
+  }
+  const proposed = Math.ceil(s.approx_rows / target);
+  const count = Math.max(g.split_count_min, Math.min(g.split_count_max, proposed));
+  return { text:`≈ ${count} splits`,
+           title:`ceil(${Intl.NumberFormat().format(s.approx_rows)} rows / ${Intl.NumberFormat().format(target)} target) clamped to ${g.split_count_min}..${g.split_count_max}. Overrides the 'splits' input (${configured}).` };
+}
+
+const KEY_INT_TYPES = new Set(["int","integer","long","bigint","smallint","tinyint"]);
+const KEY_TEMPORAL_TYPES = new Set(["date","timestamp","timestamptz","timestamp_ntz","datetime"]);
+
+// Candidate split-key columns from the known schema, filtered by the chosen
+// strategy (integer for range/modulo, temporal for date, both for auto). Falls
+// back to all columns so a known schema is never left unselectable, and always
+// includes any inspected integer keys and the current selection.
+function keyCandidates(s){
+  const cols = (s.columns||[]).map(c=>({name:c.source||c.name, type:(c.type||"").toLowerCase()})).filter(c=>c.name);
+  const strat = s.split_strategy || state.globals.split_strategy || "modulo";
+  const byType = strat==="date" ? cols.filter(c=>KEY_TEMPORAL_TYPES.has(c.type))
+    : strat==="auto" ? cols.filter(c=>KEY_INT_TYPES.has(c.type) || KEY_TEMPORAL_TYPES.has(c.type))
+    : cols.filter(c=>KEY_INT_TYPES.has(c.type));
+  const names = (byType.length ? byType : cols).map(c=>c.name);
+  for(const k of (s.integer_keys||[])) if(!names.includes(k)) names.push(k);
+  if(s.key_column && !names.includes(s.key_column)) names.unshift(s.key_column);
+  return names;
+}
+
 function renderSelected(){
   const wrap = $("selectedList"); const card = $("selectedCard");
   const items = [...state.selected.values()];
@@ -1198,22 +1267,61 @@ function renderSelected(){
       src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
         s.approx_rows!=null? " · ~"+Intl.NumberFormat().format(s.approx_rows)+" rows":""}</span>`;
       if(s.pending){ src.innerHTML += `<br><span class="rows">reflecting…</span>`; }
-      if(s.invalid){ src.innerHTML += `<br><span class="invalid">no integer key — cannot split</span>`; }
+      const cands = keyCandidates(s);
+      if(cands.length===0){ src.innerHTML += `<br><span class="invalid">no columns known — reflect the table to pick a key</span>`; }
+      else if(!s.key_column){ src.innerHTML += `<br><span class="invalid">choose a key column to split</span>`; }
 
       const keysel = document.createElement("select"); keysel.className="keysel";
-      const keys = s.integer_keys.length? s.integer_keys : (s.key_column? [s.key_column]: []);
-      for(const k of keys){ const o=document.createElement("option"); o.value=k; o.textContent=k;
-        if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
-      if(keys.length===0){ const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true; }
+      keysel.title="Split key column (candidates come from the schema, filtered by the chosen strategy).";
+      if(cands.length===0){
+        const o=document.createElement("option"); o.textContent="(none)"; keysel.appendChild(o); keysel.disabled=true;
+      } else {
+        if(!s.key_column){ const o=document.createElement("option"); o.value=""; o.textContent="(choose key)"; o.selected=true; keysel.appendChild(o); }
+        for(const k of cands){ const o=document.createElement("option"); o.value=k; o.textContent=k;
+          if(k===s.key_column) o.selected=true; keysel.appendChild(o); }
+      }
       keysel.onchange = ()=>{
-        s.key_column=keysel.value;
+        s.key_column = keysel.value || null;
+        s.invalid = !s.key_column;
         const splitColumn=s.columns.find(column=>column.source===s.key_column);
         if(splitColumn){ splitColumn.policy="keep"; splitColumn.name=splitColumn.source; }
         renderSelected(); persistConns();
       };
 
+      const strat = document.createElement("select"); strat.className="stratsel";
+      strat.title="How each split is SLICED (does not change the split count): modulo (full scan), range (integer key ranges), date (temporal ranges) or auto. Blank = global default.";
+      for(const [val,label] of [["","strategy"],["modulo","modulo"],["range","range"],["date","date"],["auto","auto"]]){
+        const o=document.createElement("option"); o.value=val; o.textContent=label;
+        if(val===(s.split_strategy||"")) o.selected=true; strat.appendChild(o);
+      }
+
+      const bal = document.createElement("select"); bal.className="stratsel";
+      bal.title="Split sizing (range/date only): span = equal key/time width (default); count = equal rows per split via NTILE quantiles (balances skew, adds a one-time planning scan on the source). Blank = global default.";
+      for(const [val,label] of [["","balance"],["span","span"],["count","count"]]){
+        const o=document.createElement("option"); o.value=val; o.textContent=label;
+        if(val===(s.split_balance||"")) o.selected=true; bal.appendChild(o);
+      }
+      bal.onchange = ()=>{ s.split_balance = bal.value||null; updatePreview(); };
+
       const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
-      splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
+      splits.title="Requested split count. Used only as a FALLBACK when 'target rows' > 0 (the row-target planner then derives the count and this value applies only if the row estimate is unavailable). Authoritative when 'target rows' = 0. Blank = global default.";
+      splits.value = s.num_splits||"";
+
+      const target = document.createElement("input"); target.className="mini"; target.placeholder="target rows";
+      target.title="Target rows per split. When > 0 (global default 100000) the split count is derived from the table's row count and OVERRIDES 'splits'. Set to 0 to use the fixed 'splits' count. Blank = global default.";
+      target.value = s.split_target_rows||"";
+
+      const splitInfo = document.createElement("span"); splitInfo.className="rows splitinfo";
+      const refreshBadge = ()=>{
+        const info = effectiveSplitCount(s);
+        splitInfo.textContent = info.text;
+        splitInfo.title = info.title;
+      };
+      strat.onchange = ()=>{ s.split_strategy = strat.value||null; renderSelected(); persistConns(); };
+      splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; refreshBadge(); updatePreview(); };
+      target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; refreshBadge(); updatePreview(); };
+      refreshBadge();
+      src.appendChild(document.createElement("br")); src.appendChild(splitInfo);
 
       const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
       rm.onclick = ()=>{
@@ -1221,7 +1329,7 @@ function renderSelected(){
         renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
       };
 
-      row.append(src, keysel, splits, rm); table.appendChild(row);
+      row.append(src, keysel, strat, bal, splits, target, rm); table.appendChild(row);
       if(s.columns.length){
         const toggle=document.createElement("button"); toggle.className="iconbtn policy-toggle";
         toggle.textContent=(s.policies_open ? "Hide" : "Edit")+" column policies";
@@ -1243,6 +1351,9 @@ function renderSelected(){
 function tableConfig(entry){
   const table = {name:entry.name, source_table:entry.source_table, key_column:entry.key_column};
   if(entry.num_splits) table.num_splits=parseInt(entry.num_splits);
+  if(entry.split_strategy) table.split_strategy=entry.split_strategy;
+  if(entry.split_balance) table.split_balance=entry.split_balance;
+  if(entry.split_target_rows) table.split_target_rows=parseInt(entry.split_target_rows);
   if(entry.connection && entry.connection!=="default") table.connection=entry.connection;
   const policyChanged = entry.columns.some(column=>column.policy!=="keep" || column.name!==column.source);
   if(entry.columns.length && (entry.schema_explicit || policyChanged)){
@@ -1283,6 +1394,8 @@ function buildConfig(){
   if(bucket && bucket!=="fabric-iceberg-poc") cfg.bucket = bucket;
   const fmt = $("tableFormat").value;
   if(fmt && fmt!=="iceberg") cfg.table_format = fmt;
+  const mm = $("materializeMode").value;
+  if(mm && mm!=="eager") cfg.materialize_mode = mm;
   if($("requireSigv4").checked) cfg.require_sigv4 = true;
   if($("autoRefresh").checked){
     cfg.auto_refresh = true;
@@ -1314,9 +1427,9 @@ function updatePreview(){
   if(!state.db_url){ $("preview").textContent = "{}"; return; }
   $("preview").textContent = JSON.stringify(buildConfig(), null, 2);
 }
-["bucket","numSplits","tableFormat","requireSigv4","includePassword","autoRefresh","refreshPoll","refreshStrategy","refreshTtl","refreshFullPull"].forEach(id=>{
-  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; updatePreview(); });
-  $(id).addEventListener("change", ()=>{ if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; updatePreview(); });
+["bucket","numSplits","tableFormat","materializeMode","requireSigv4","includePassword","autoRefresh","refreshPoll","refreshStrategy","refreshTtl","refreshFullPull"].forEach(id=>{
+  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; updatePreview(); });
+  $(id).addEventListener("change", ()=>{ if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; updatePreview(); });
 });
 
 // ---- download / copy ----
@@ -1375,6 +1488,7 @@ async function saveSettings(){
   if(bucket && bucket !== "fabric-iceberg-poc") settings.bucket = bucket;
   const ns = parseInt($("numSplits").value); if(ns) settings.num_splits = ns;
   const fmt = $("tableFormat").value; if(fmt && fmt !== "iceberg") settings.table_format = fmt;
+  const mm = $("materializeMode").value; if(mm && mm !== "eager") settings.materialize_mode = mm;
   if($("requireSigv4").checked) settings.require_sigv4 = true;
   settings.auto_refresh = $("autoRefresh").checked;
   if($("autoRefresh").checked){
@@ -1507,7 +1621,7 @@ $("connId").addEventListener("change", ()=> renameActive($("connId").value));
 // Keys already configured by the curated controls above are hidden here to
 // avoid duplicate/conflicting entries in the generated config.json.
 const SETTINGS_EXCLUDE = new Set([
-  "db_url","source_table","key_column","table_name","bucket","num_splits","table_format","require_sigv4",
+  "db_url","source_table","key_column","table_name","bucket","num_splits","table_format","materialize_mode","require_sigv4",
   "auto_refresh","refresh_poll_seconds","refresh_strategy","refresh_allow_full_pull","refresh_ttl_seconds",
 ]);
 async function loadSettings(){

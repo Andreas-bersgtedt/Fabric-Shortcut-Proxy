@@ -121,7 +121,9 @@ mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&
 
 By default, split count is dynamic (`split_target_rows=100000`) and planning uses
 contiguous key ranges for index-pruned reads when possible. The legacy modulo
-predicate remains as deterministic fallback.
+predicate remains as deterministic fallback. Range/date splits are sized by equal
+key width by default (`split_balance=span`) or by equal rows (`split_balance=count`);
+see §3.5.
 
 Range form (preferred):
 
@@ -184,6 +186,62 @@ generated SQL both handle it:
 Each split returns up to `QUERY_MAX_ROWS` (default 500,000) rows. Ensure
 `total_rows ≤ num_splits × QUERY_MAX_ROWS`; otherwise raise `NUM_SPLITS` (or the
 table's `num_splits`) or `QUERY_MAX_ROWS`.
+
+Per-table `split_target_rows` overrides the global default for a single table —
+useful when a narrow, high-volume table should pack far more rows per split than
+the 100,000 default:
+
+```json
+{ "name": "clickstream", "source_table": "dbo.clickstream",
+  "key_column": "event_id", "split_target_rows": 1000000 }
+```
+
+A per-table `split_target_rows` also raises that table's per-split row cap: the
+effective cap is `max(query_max_rows, split_target_rows)`, so a larger target is
+never truncated by the smaller default. Omit the field to inherit the global
+`split_target_rows`.
+
+Per-table `split_strategy` overrides the global strategy for a single table, so a
+small dimension and a large fact table can plan differently — `modulo` (full
+scan), `range` (integer key ranges), `date` (temporal ranges) or `auto`:
+
+```json
+{ "name": "customers", "source_table": "dbo.customers", "key_column": "customer_id",
+  "num_splits": 4, "split_strategy": "modulo" },
+{ "name": "clickstream", "source_table": "dbo.clickstream", "key_column": "event_id",
+  "split_strategy": "range", "split_target_rows": 1000000 }
+```
+
+Omit `split_strategy` to inherit the global `split_strategy`. Both fields are also
+editable per table in the config-builder **Tables** tab.
+
+Per-table `split_balance` controls how `range`/`date` splits are **sized**:
+`span` (default) cuts the key/time axis into equal widths; `count` cuts at row
+quantiles (`NTILE`) so each split holds roughly equal rows — which keeps splits
+near `split_target_rows` even when the key is skewed (gappy identity columns,
+time-clustered facts). `count` costs a one-time ordered scan of the key column at
+planning time (cheapest when the key is indexed) and falls back to `span` when
+the source can't compute quantiles; it does not change the number of splits or
+the serving queries. Omit to inherit the global `split_balance`.
+
+For large tables, `split_sample_rows` (global, or per-table) caps the rows fed
+into `count` planning: when the integer key column is larger, a deterministic
+stride sample bounds the planning sort/window/tempdb cost. Boundaries become
+approximate but stay far more balanced than `span`; the overall max is still read
+from the full table so the last range always covers it. `0` (default) scans the
+full key column.
+
+On SQL Server and PostgreSQL, `count` planning for an **integer** key first tries
+the optimizer's existing statistics histogram (`sys.dm_db_stats_histogram` /
+`pg_stats.histogram_bounds`) — a metadata read with **zero data scan** — and only
+falls back to `NTILE` (then equal-span) when no stats exist. Set
+`split_use_stats_histogram=false` to force `NTILE` if the stats may be stale.
+
+```json
+{ "name": "clickstream", "source_table": "dbo.clickstream", "key_column": "event_id",
+  "split_strategy": "range", "split_balance": "count", "split_target_rows": 1000000,
+  "split_sample_rows": 500000 }
+```
 
 ---
 

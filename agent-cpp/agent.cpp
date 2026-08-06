@@ -49,7 +49,7 @@ static const SocketHandle kInvalidSocket = -1;
 
 namespace fs = std::filesystem;
 
-static const char* APP_VERSION = "cpp-0.2.0";
+static const char* APP_VERSION = "cpp-0.3.0";
 
 // ---------------------------------------------------------------------------
 // platform shim
@@ -222,6 +222,12 @@ struct Config {
     int heartbeat_ms = parse_int_or(getenv_str("HEARTBEAT_MS", "2000"), 2000, 200, 600000);
     int socket_timeout_ms = parse_int_or(getenv_str("SOCKET_TIMEOUT_MS", "10000"), 10000, 1000, 60000);
     int max_inflight = parse_int_or(getenv_str("MAX_INFLIGHT", "256"), 256, 1, 100000);
+    // Lazy materialization: on a store miss, ask the Manager to materialize the
+    // object's table into the shared store, then serve it. Only when MATERIALIZE_MODE
+    // is "lazy" and a MANAGER_URL is set. The request blocks up to this timeout while
+    // the Manager generates the splits.
+    std::string materialize_mode = getenv_str("MATERIALIZE_MODE", "eager");
+    int materialize_timeout_ms = parse_int_or(getenv_str("MATERIALIZE_TIMEOUT_MS", "120000"), 120000, 1000, 600000);
     // On drain: serve /readyz 503, then exit after this window so the LB can
     // deregister and in-flight requests finish.
     int drain_grace_ms = parse_int_or(getenv_str("AGENT_DRAIN_GRACE_SECONDS", "15"), 15, 0, 3600) * 1000;
@@ -231,6 +237,10 @@ static Config CFG;
 
 // Set true when the Manager asks us to drain; /readyz then reports 503.
 static std::atomic<bool> g_draining{false};
+
+// Forward decl: lazy on-miss materialization request to the Manager. Defined with
+// the HTTP client further below (register/heartbeat share the same transport).
+static bool try_manager_materialize(const std::string& key);
 
 // ---------------------------------------------------------------------------
 // store/path safety
@@ -488,9 +498,18 @@ static void handle_get(SocketHandle s, const std::string& key, const std::string
 
     std::error_code ec;
     if (!fs::exists(p, ec) || !fs::is_regular_file(p, ec)) {
-        std::string body = s3_error_xml("NoSuchKey", "The specified key does not exist.", "/" + key);
-        send_fixed_response(s, 404, "Not Found", "application/xml", body, head_only);
-        return;
+        // Lazy: ask the Manager to materialize this object's table into the shared
+        // store, then retry once. Mirrors the Python Agent's on-demand gate.
+        bool served = false;
+        if (CFG.materialize_mode == "lazy" && !CFG.manager_url.empty()
+            && try_manager_materialize(key)) {
+            served = fs::exists(p, ec) && fs::is_regular_file(p, ec);
+        }
+        if (!served) {
+            std::string body = s3_error_xml("NoSuchKey", "The specified key does not exist.", "/" + key);
+            send_fixed_response(s, 404, "Not Found", "application/xml", body, head_only);
+            return;
+        }
     }
 
     long long total = (long long)fs::file_size(p, ec);
@@ -663,7 +682,7 @@ static bool parse_url(const std::string& url, std::string& host, int& port, std:
 }
 
 static int http_post(const std::string& host, int port, const std::string& path,
-                     const std::string& body, std::string& resp_body) {
+                     const std::string& body, std::string& resp_body, int timeout_ms = 0) {
     struct addrinfo hints;
     std::memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -678,7 +697,7 @@ static int http_post(const std::string& host, int port, const std::string& path,
         freeaddrinfo(res);
         return -1;
     }
-    set_socket_timeouts(s, CFG.socket_timeout_ms);
+    set_socket_timeouts(s, timeout_ms > 0 ? timeout_ms : CFG.socket_timeout_ms);
 
     if (connect(s, res->ai_addr, (int)res->ai_addrlen) != 0) {
         close_socket(s);
@@ -733,6 +752,37 @@ static std::string json_str(const std::string& body, const std::string& name) {
     size_t q2 = body.find('"', q1 + 1);
     if (q2 == std::string::npos) return "";
     return body.substr(q1 + 1, q2 - q1 - 1);
+}
+
+// Minimal JSON string escape (object keys only contain / - . _ alnum, but be safe).
+static std::string json_escape(const std::string& s) {
+    std::string o;
+    o.reserve(s.size() + 8);
+    for (char c : s) {
+        if (c == '"' || c == '\\') { o.push_back('\\'); o.push_back(c); }
+        else if (c == '\n') { o += "\\n"; }
+        else if (c == '\r') { o += "\\r"; }
+        else { o.push_back(c); }
+    }
+    return o;
+}
+
+// Ask the Manager to materialize the table owning ``key`` into the shared store.
+// Blocks up to CFG.materialize_timeout_ms while the Manager generates the splits.
+// Returns true only on a 200 with ok:true.
+static bool try_manager_materialize(const std::string& key) {
+    std::string host, base;
+    int port = 80;
+    if (!parse_url(CFG.manager_url, host, port, base)) return false;
+    std::string body = "{\"key\":\"" + json_escape(key) + "\"}";
+    std::string rb;
+    int st = http_post(host, port, "/control/materialize", body, rb, CFG.materialize_timeout_ms);
+    bool ok = (st == 200) && (rb.find("\"ok\":true") != std::string::npos
+                              || rb.find("\"ok\": true") != std::string::npos);
+    if (!ok) {
+        log_line("materialize request key=" + key + " status=" + std::to_string(st));
+    }
+    return ok;
 }
 
 static std::atomic<bool> g_running{true};
@@ -803,6 +853,11 @@ static void control_loop() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(CFG.drain_grace_ms));
                 g_running = false;
             }).detach();
+        } else if (rb.find("\"reload\"") != std::string::npos) {
+            // Stateless serving agent reads the store live per request, so a reload
+            // has no cached config/state to refresh. Acknowledge for observability;
+            // confirms Manager->Agent push-down control is flowing.
+            log_line("reload requested (no-op: serving agent reads the store live)");
         }
     }
 }
@@ -811,7 +866,56 @@ static void control_loop() {
 // main
 // ---------------------------------------------------------------------------
 
-int main() {
+static void print_usage(const char* prog) {
+    std::printf(
+        "Fabric Shortcut Proxy - C++ serving Agent (%s)\n\n"
+        "A stateless S3 data-plane Agent that serves objects from a shared artifact\n"
+        "store. It performs no SQL/Parquet/Iceberg work of its own. Under lazy mode it\n"
+        "asks the Manager to materialize an object's table on a store miss, then serves it.\n\n"
+        "Usage:\n"
+        "  %s [--help|-h] [--version|-V]\n\n"
+        "Configuration is read from environment variables (defaults in parentheses):\n\n"
+        "  HOST (0.0.0.0)                 Bind address for the S3 port.\n"
+        "  PORT (9400)                    S3 data-plane listen port.\n"
+        "  STORE_DIR / ARTIFACT_STORE_DIR (./.artifacts)\n"
+        "                                 Artifact store directory to serve from (shared with\n"
+        "                                 the Manager under lazy mode).\n"
+        "  S3_BUCKET (fabric-iceberg-poc) Advertised bucket name.\n"
+        "  AGENT_ID (cpp-agent-1)         Identity used for Manager registration.\n"
+        "  AGENT_ADVERTISE_HOST ()        Routable host advertised to the Manager/gateway.\n"
+        "  MANAGER_URL ()                 Manager control plane URL; empty = standalone (no\n"
+        "                                 register/heartbeat, no lazy materialize requests).\n"
+        "  HEARTBEAT_MS (2000)            Heartbeat cadence to the Manager (ms).\n"
+        "  SOCKET_TIMEOUT_MS (10000)      Socket send/recv timeout (ms).\n"
+        "  MAX_INFLIGHT (256)             Max concurrent connections.\n"
+        "  MATERIALIZE_MODE (eager)       eager | lazy. lazy: on a store miss, ask the Manager\n"
+        "                                 (POST /control/materialize) to materialize the object's\n"
+        "                                 table into the shared store, then serve it.\n"
+        "  MATERIALIZE_TIMEOUT_MS (120000) Max wait for a lazy materialize request (ms).\n"
+        "  AGENT_DRAIN_GRACE_SECONDS (15) Drain grace window before exit (s).\n\n"
+        "Endpoints: GET/HEAD /{bucket}/{key} (range-aware), GET /{bucket}?list-type=2,\n"
+        "           GET /healthz, GET /readyz (503 while draining).\n\n"
+        "Effective configuration (from the current environment):\n"
+        "  host=%s port=%d store_dir=%s bucket=%s\n"
+        "  agent_id=%s manager_url=%s\n"
+        "  materialize_mode=%s materialize_timeout_ms=%d\n"
+        "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d drain_grace_ms=%d\n",
+        APP_VERSION, prog,
+        CFG.host.c_str(), CFG.port, CFG.store_dir.c_str(), CFG.bucket.c_str(),
+        CFG.agent_id.c_str(), CFG.manager_url.empty() ? "(standalone)" : CFG.manager_url.c_str(),
+        CFG.materialize_mode.c_str(), CFG.materialize_timeout_ms,
+        CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.drain_grace_ms);
+}
+
+int main(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--help" || a == "-h") { print_usage(argv[0]); return 0; }
+        if (a == "--version" || a == "-V") { std::printf("%s\n", APP_VERSION); return 0; }
+        std::fprintf(stderr, "unknown argument: %s (try --help)\n", a.c_str());
+        return 2;
+    }
+
     if (!net_init()) {
         log_line("network init failed");
         return 1;

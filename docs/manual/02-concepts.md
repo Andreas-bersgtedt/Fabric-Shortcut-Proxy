@@ -39,10 +39,13 @@ same split do not re-query the source.
 A table is served as several virtual Parquet files called **splits**. Splits let Fabric
 read a table in parallel and let the proxy bound the rows returned per query.
 
-The planner assigns rows to splits in one of three ways, in order of preference:
+The planner assigns rows to splits according to the table's **split strategy**
+(`split_strategy`: `range` for integer keys, `date` for temporal keys, `auto` to pick
+either, or `modulo`), in order of preference:
 
 - **Range split (preferred).** Contiguous key ranges are read straight off the key
   index. The predicate is `WHERE <key> >= :key_lo AND <key> < :key_hi ORDER BY <key>`.
+- **Date split.** The same contiguous-range approach over a temporal key.
 - **Modulo split (fallback).** Rows are sharded by `(<key> % num_splits) = split_index`.
   This is the deterministic fallback when range bounds are unavailable.
 - **Row-number split.** For non-integer keys, rows are sharded by
@@ -52,9 +55,16 @@ Split count is dynamic by default. The planner targets roughly `split_target_row
 (100,000) rows per split and clamps the count between `split_count_min` and
 `split_count_max`. You can also pin a fixed `num_splits` per table.
 
+By default range/date splits cut the key axis into equal widths (`split_balance=span`).
+For a skewed key, `split_balance=count` cuts at row quantiles instead, so each split holds
+roughly equal rows — derived from the source's statistics histogram on SQL Server and
+PostgreSQL (a zero-scan metadata read) or `NTILE` elsewhere.
+
 Each split returns at most `QUERY_MAX_ROWS` rows (default 500,000). A table must satisfy
 `total_rows ≤ num_splits × QUERY_MAX_ROWS`; if it does not, raise the split count or the
-row cap.
+row cap. A per-table `split_target_rows` above the cap raises it for that table.
+
+Strategy, balance, target rows, and split count are all overridable per table.
 
 ### The key column
 

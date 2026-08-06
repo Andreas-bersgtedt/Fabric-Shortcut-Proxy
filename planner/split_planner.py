@@ -147,6 +147,117 @@ def compute_temporal_ranges(lo, hi, n: int, kind: str) -> list[tuple[object, obj
     return [(_from_tick(a, kind), _from_tick(b, kind)) for a, b in int_ranges]
 
 
+def _range_upper(hi, key_type: str):
+    """Exclusive upper bound one tick past the inclusive max, so ``key < upper`` keeps max."""
+    if key_type in _INTEGER_TYPES:
+        return int(hi) + 1
+    kind = "date" if key_type == "date" else "timestamp"
+    v = _coerce_temporal(hi, kind)
+    return _from_tick(_to_tick(v, kind) + 1, kind)
+
+
+def _coerce_key(value, key_type: str):
+    if key_type in _INTEGER_TYPES:
+        return int(value)
+    kind = "date" if key_type == "date" else "timestamp"
+    return _coerce_temporal(value, kind)
+
+
+def mins_from_histogram_steps(steps, n: int):
+    """SQL Server-style histogram → ``n`` bucket-minimum keys.
+
+    ``steps`` is ascending ``[(range_high_key, step_rows)]`` where ``step_rows``
+    is the rows at/below this step's high key and above the previous. Picks the
+    high key at each ``1/n`` cumulative-row quantile; the first min is the
+    overall minimum. Fewer distinct steps than ``n`` pad with the max.
+    """
+    if n < 1 or not steps:
+        return None
+    total = sum(max(0, r) for _, r in steps)
+    if total <= 0:
+        return None
+    mins = [steps[0][0]]
+    cum_before = 0.0  # rows strictly below the current step's high key
+    k = 1
+    for high, rows in steps:
+        while k < n and cum_before >= (k * total) / n:
+            mins.append(high)
+            k += 1
+        cum_before += max(0, rows)
+    while len(mins) < n:
+        mins.append(steps[-1][0])
+    return mins[:n]
+
+
+def mins_from_equidepth(bounds, n: int):
+    """PostgreSQL-style equi-depth ``histogram_bounds`` → ``n`` bucket-min keys.
+
+    ``bounds`` is an ascending list of equal-frequency boundaries; subsampled to
+    ``n`` evenly-spaced picks (each already holds ~equal rows).
+    """
+    if n < 1 or not bounds or len(bounds) < 2:
+        return None
+    b = len(bounds)
+    return [bounds[(i * (b - 1)) // n] for i in range(n)]
+
+
+async def _balanced_ranges(table: TableDef, key: str, key_type: str | None, n: int):
+    """Equal-count ranges from a stats histogram (zero-scan, capability-gated) or
+    NTILE quantiles, or None to fall back to equal-span.
+
+    Turns per-bucket key minimums into contiguous half-open ranges so each split
+    holds ~equal rows. Best-effort: any failure returns None so the caller uses
+    the known-good equal-span path.
+    """
+    if key_type is None or n < 1:
+        return None
+    from db.executor import fetch_key_histogram_bounds, fetch_key_quantile_bounds
+
+    result = None
+    caps = capabilities_for_db_url(config.effective_db_url(table.connection_id))
+    # Histogram-first: derive boundaries from optimizer stats with no data scan.
+    if (config.SPLIT_USE_STATS_HISTOGRAM and caps.supports_stats_histogram
+            and key_type in _INTEGER_TYPES):
+        try:
+            result = await fetch_key_histogram_bounds(table.source_table, key, n, connection=table.connection_id)
+        except Exception as exc:  # noqa: BLE001 - stats read must not break planning
+            log.warning("histogram_planning_error_fallback_ntile", table=table.name, key=key, error=str(exc))
+            result = None
+        if result is not None:
+            log.info("balanced_planning_source", table=table.name, key=key, source="stats_histogram")
+
+    if result is None:
+        try:
+            result = await fetch_key_quantile_bounds(
+                table.source_table, key, n, connection=table.connection_id,
+                sample_rows=table.effective_split_sample_rows,
+                key_is_integer=key_type in _INTEGER_TYPES,
+            )
+        except Exception as exc:  # noqa: BLE001 - planning must not break startup
+            log.warning("balanced_planning_error_fallback_span", table=table.name, key=key, error=str(exc))
+            return None
+        if result is not None:
+            log.info("balanced_planning_source", table=table.name, key=key, source="ntile")
+    if not result:
+        return None
+    raw_mins, raw_max = result
+    try:
+        mins = [_coerce_key(m, key_type) for m in raw_mins]
+        upper = _range_upper(raw_max, key_type)
+    except (TypeError, ValueError) as exc:
+        log.warning("balanced_planning_coerce_failed_fallback_span", table=table.name, key=key, error=str(exc))
+        return None
+    if not mins:
+        return None
+    ranges: list[tuple] = []
+    for i, lo in enumerate(mins):
+        hi = mins[i + 1] if i + 1 < len(mins) else upper
+        ranges.append((lo, hi))
+    while len(ranges) < n:  # fewer buckets than splits -> empty tail splits (correct)
+        ranges.append((upper, upper))
+    return ranges[:n]
+
+
 def compute_split_count(
     *,
     estimated_rows: int | None,
@@ -168,7 +279,8 @@ async def choose_table_num_splits(table: TableDef) -> int:
     Returns the existing ``table.num_splits`` when dynamic planning is disabled
     or when row estimation fails.
     """
-    if config.SPLIT_TARGET_ROWS <= 0:
+    target_rows = table.effective_split_target_rows
+    if target_rows <= 0:
         return table.num_splits
 
     from db.executor import fetch_table_row_count
@@ -186,7 +298,7 @@ async def choose_table_num_splits(table: TableDef) -> int:
 
     chosen = compute_split_count(
         estimated_rows=est,
-        target_rows=config.SPLIT_TARGET_ROWS,
+        target_rows=target_rows,
         min_splits=config.SPLIT_COUNT_MIN,
         max_splits=config.SPLIT_COUNT_MAX,
         default_splits=table.num_splits,
@@ -195,7 +307,7 @@ async def choose_table_num_splits(table: TableDef) -> int:
         "split_count_planned",
         table=table.name,
         estimated_rows=est,
-        target_rows=config.SPLIT_TARGET_ROWS,
+        target_rows=target_rows,
         min_splits=config.SPLIT_COUNT_MIN,
         max_splits=config.SPLIT_COUNT_MAX,
         chosen_splits=chosen,
@@ -245,7 +357,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
         for key, value in item[2].items()
     }
     source = dialect.quote_qualified(table.source_table)
-    max_rows = config.effective_query_max_rows(table.connection_id)
+    max_rows = table.effective_max_rows
 
     if split.key_lo is not None and split.key_hi is not None:
         sql = dialect.build_select_range(
@@ -312,10 +424,10 @@ async def plan_ranges_for_snapshot(snap) -> bool:
     from db.executor import fetch_column_bounds, fetch_key_bounds
 
     table = snap.table
-    strategy = config.SPLIT_STRATEGY
+    strategy = table.effective_split_strategy
     # Dynamic split planning targets bounded rows/split; when enabled, treat the
     # legacy modulo default as range planning so each split reads only its slice.
-    if strategy == "modulo" and config.SPLIT_TARGET_ROWS > 0:
+    if strategy == "modulo" and table.effective_split_target_rows > 0:
         strategy = "range"
 
     if strategy == "modulo":
@@ -332,6 +444,22 @@ async def plan_ranges_for_snapshot(snap) -> bool:
         log.warning("range_planning_fallback_modulo", table=table.name,
                     key=key, reason="flavor_capability")
         return False
+
+    # Equal-count planning (opt-in via split_balance="count"): size ranges by row
+    # quantiles so skewed keys yield balanced splits. Falls through to equal-span
+    # when unsupported or the quantile query yields nothing.
+    if (table.effective_split_balance == "count"
+            and (caps.supports_ntile or caps.supports_stats_histogram)
+            and key_type in (_INTEGER_TYPES | _TEMPORAL_TYPES)):
+        qranges = await _balanced_ranges(table, key, key_type, len(snap.splits))
+        if qranges is not None:
+            for split, (rlo, rhi) in zip(snap.splits, qranges):
+                split.key_lo, split.key_hi = rlo, rhi
+            log.info("balanced_range_planning_ok", table=table.name, key=key,
+                     splits=len(snap.splits), strategy=strategy, key_type=key_type)
+            return True
+        log.warning("balanced_planning_fallback_span", table=table.name, key=key,
+                    reason="no_quantile_bounds")
 
     if strategy in ("range", "auto") and key_type in _INTEGER_TYPES:
         try:

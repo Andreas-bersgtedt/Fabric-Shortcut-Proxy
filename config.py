@@ -217,9 +217,12 @@ TABLE_FORMAT: str = _get_str("TABLE_FORMAT", "table_format", "iceberg", _PERF_CF
 
 NUM_SPLITS: int = _get_int("NUM_SPLITS", "num_splits", 8, _PERF_CFG)
 SPLIT_STRATEGY: str = _get_str("SPLIT_STRATEGY", "split_strategy", "modulo", _PERF_CFG).strip().lower()
+SPLIT_BALANCE: str = _get_str("SPLIT_BALANCE", "split_balance", "span", _PERF_CFG).strip().lower()
 SPLIT_TARGET_ROWS: int = _get_int("SPLIT_TARGET_ROWS", "split_target_rows", 100_000, _PERF_CFG)
 SPLIT_COUNT_MIN: int = _get_int("SPLIT_COUNT_MIN", "split_count_min", 1, _PERF_CFG)
 SPLIT_COUNT_MAX: int = _get_int("SPLIT_COUNT_MAX", "split_count_max", 256, _PERF_CFG)
+SPLIT_SAMPLE_ROWS: int = _get_int("SPLIT_SAMPLE_ROWS", "split_sample_rows", 0, _PERF_CFG)
+SPLIT_USE_STATS_HISTOGRAM: bool = _get_bool("SPLIT_USE_STATS_HISTOGRAM", "split_use_stats_histogram", True, _PERF_CFG)
 
 STREAMING_PARQUET: bool = _get_bool("STREAMING_PARQUET", "streaming_parquet", False, _PERF_CFG)
 STREAM_BATCH_ROWS: int = _get_int("STREAM_BATCH_ROWS", "stream_batch_rows", 50_000, _PERF_CFG)
@@ -268,6 +271,11 @@ SNAPSHOT_HISTORY_LIMIT: int = _get_int("SNAPSHOT_HISTORY_LIMIT", "snapshot_histo
 CONCURRENT_STARTUP_MATERIALIZATION: bool = _get_bool(
     "CONCURRENT_STARTUP_MATERIALIZATION", "concurrent_startup_materialization", True, _PERF_CFG
 )
+
+# When splits are generated. 'eager' (default) materializes every split at startup;
+# 'lazy' defers materialization to the first metadata read per table (Iceberg +
+# single-agent only). Restart-required (structural).
+MATERIALIZE_MODE: str = _get_str("MATERIALIZE_MODE", "materialize_mode", "eager", _PERF_CFG).strip().lower()
 
 # ---------------------------------------------------------------------------
 # Data freshness (Freshness section)
@@ -371,12 +379,46 @@ class TableDef:
     num_splits: int | None = None
     key_column: str | None = None
     connection_id: str = "default"
+    split_target_rows: int | None = None
+    split_strategy: str | None = None
+    split_balance: str | None = None
+    split_sample_rows: int | None = None
 
     def __post_init__(self):
         if self.num_splits is None:
             self.num_splits = NUM_SPLITS
         if not self.connection_id:
             self.connection_id = "default"
+        if self.split_strategy is not None:
+            self.split_strategy = self.split_strategy.strip().lower() or None
+        if self.split_balance is not None:
+            self.split_balance = self.split_balance.strip().lower() or None
+
+    @property
+    def effective_split_target_rows(self) -> int:
+        """Per-table target rows/split, falling back to the global default."""
+        return SPLIT_TARGET_ROWS if self.split_target_rows is None else self.split_target_rows
+
+    @property
+    def effective_split_strategy(self) -> str:
+        """Per-table split strategy, falling back to the global default."""
+        return SPLIT_STRATEGY if self.split_strategy is None else self.split_strategy
+
+    @property
+    def effective_split_balance(self) -> str:
+        """Per-table split balance (span|count), falling back to the global default."""
+        return SPLIT_BALANCE if self.split_balance is None else self.split_balance
+
+    @property
+    def effective_split_sample_rows(self) -> int:
+        """Per-table quantile-planning sample cap (0 = full scan), global fallback."""
+        return SPLIT_SAMPLE_ROWS if self.split_sample_rows is None else self.split_sample_rows
+
+    @property
+    def effective_max_rows(self) -> int:
+        """Per-split row cap. A per-table split_target_rows above the connection
+        cap raises this so a larger target is never truncated by the default."""
+        return max(effective_query_max_rows(self.connection_id), self.effective_split_target_rows)
 
 
 def _tabledef_from_json(d: dict) -> "TableDef":
@@ -419,6 +461,10 @@ def _tabledef_from_json(d: dict) -> "TableDef":
         num_splits=int(d.get("num_splits", NUM_SPLITS)),
         key_column=d.get("key_column") or None,
         connection_id=str(d.get("connection") or d.get("connection_id") or "default"),
+        split_target_rows=(int(d["split_target_rows"]) if d.get("split_target_rows") is not None else None),
+        split_strategy=(str(d["split_strategy"]) if d.get("split_strategy") else None),
+        split_balance=(str(d["split_balance"]) if d.get("split_balance") else None),
+        split_sample_rows=(int(d["split_sample_rows"]) if d.get("split_sample_rows") is not None else None),
     )
 
 
@@ -469,14 +515,32 @@ def validate_config() -> None:
         problems.append(f"NUM_SPLITS must be >= 1 (got {NUM_SPLITS}).")
     if TABLE_FORMAT not in ("iceberg", "delta"):
         problems.append(f"TABLE_FORMAT must be 'iceberg' or 'delta' (got {TABLE_FORMAT!r}).")
+    if MATERIALIZE_MODE not in ("eager", "lazy", "virtual"):
+        problems.append(f"MATERIALIZE_MODE must be 'eager', 'lazy', or 'virtual' (got {MATERIALIZE_MODE!r}).")
+    elif MATERIALIZE_MODE in ("lazy", "virtual"):
+        # lazy/virtual defer materialization to first read. Auto-refresh and
+        # serving-image publishing require eager (fully materialized) data.
+        if AUTO_REFRESH:
+            problems.append(f"MATERIALIZE_MODE {MATERIALIZE_MODE!r} is incompatible with AUTO_REFRESH.")
+        if PUBLISH_SERVING_IMAGE:
+            problems.append(f"MATERIALIZE_MODE {MATERIALIZE_MODE!r} is incompatible with PUBLISH_SERVING_IMAGE (a full image needs materialized data).")
+        # Lazy multi-shard needs a shared store so non-owner agents serve the owner's
+        # byte-identical splits. Virtual regenerates deterministically per agent, so it
+        # is consistent across shards without a shared store.
+        if MATERIALIZE_MODE == "lazy" and AGENT_SHARD_COUNT > 1 and not ARTIFACT_STORE_SERVING:
+            problems.append("MATERIALIZE_MODE 'lazy' with AGENT_SHARD_COUNT>1 requires ARTIFACT_STORE_SERVING (a shared store) so shards serve byte-identical splits.")
     if SPLIT_STRATEGY not in ("modulo", "range", "date", "auto"):
         problems.append(f"SPLIT_STRATEGY must be one of 'modulo'|'range'|'date'|'auto' (got {SPLIT_STRATEGY!r}).")
+    if SPLIT_BALANCE not in ("span", "count"):
+        problems.append(f"SPLIT_BALANCE must be 'span' or 'count' (got {SPLIT_BALANCE!r}).")
     if SPLIT_TARGET_ROWS < 0:
         problems.append(f"SPLIT_TARGET_ROWS must be >= 0 (got {SPLIT_TARGET_ROWS}).")
     if SPLIT_COUNT_MIN < 1:
         problems.append(f"SPLIT_COUNT_MIN must be >= 1 (got {SPLIT_COUNT_MIN}).")
     if SPLIT_COUNT_MAX < SPLIT_COUNT_MIN:
         problems.append(f"SPLIT_COUNT_MAX must be >= SPLIT_COUNT_MIN (got {SPLIT_COUNT_MAX} < {SPLIT_COUNT_MIN}).")
+    if SPLIT_SAMPLE_ROWS < 0:
+        problems.append(f"SPLIT_SAMPLE_ROWS must be >= 0 (got {SPLIT_SAMPLE_ROWS}).")
     if STREAM_BATCH_ROWS < 1:
         problems.append(f"STREAM_BATCH_ROWS must be >= 1 (got {STREAM_BATCH_ROWS}).")
     if SOURCE_MAX_CONCURRENCY < 0:
@@ -556,6 +620,14 @@ def validate_config() -> None:
                 problems.append(f"Table {t.name!r}: source_table must be non-empty.")
             if t.num_splits < 1:
                 problems.append(f"Table {t.name!r}: num_splits must be >= 1.")
+            if t.split_target_rows is not None and t.split_target_rows < 0:
+                problems.append(f"Table {t.name!r}: split_target_rows must be >= 0 (got {t.split_target_rows}).")
+            if t.split_strategy is not None and t.split_strategy not in ("modulo", "range", "date", "auto"):
+                problems.append(f"Table {t.name!r}: split_strategy must be one of 'modulo'|'range'|'date'|'auto' (got {t.split_strategy!r}).")
+            if t.split_balance is not None and t.split_balance not in ("span", "count"):
+                problems.append(f"Table {t.name!r}: split_balance must be 'span' or 'count' (got {t.split_balance!r}).")
+            if t.split_sample_rows is not None and t.split_sample_rows < 0:
+                problems.append(f"Table {t.name!r}: split_sample_rows must be >= 0 (got {t.split_sample_rows}).")
             if t.connection_id not in CONNECTIONS:
                 problems.append(
                     f"Table {t.name!r}: connection {t.connection_id!r} is not defined "
@@ -657,13 +729,17 @@ SETTINGS_META: dict[str, dict] = {
     # Splits & query
     "num_splits": {"cat": "Splits & query", "help": "Virtual Parquet files per table."},
     "split_strategy": {"cat": "Splits & query", "help": "'modulo' (full-scan), 'range' (integer ranges), 'date' (temporal ranges), or 'auto' (range/date then deterministic fallback)."},
+    "split_balance": {"cat": "Splits & query", "help": "How range/date splits are sized: 'span' (equal key/time width, default) or 'count' (equal rows per split via NTILE quantiles \u2014 balances skewed keys; adds a one-time planning scan on the source).", "choices": ["span", "count"]},
     "split_target_rows": {"cat": "Splits & query", "help": "Target rows per split for dynamic split-count planning (0 disables, keeps configured split counts)."},
     "split_count_min": {"cat": "Splits & query", "help": "Lower guardrail for dynamic split-count planning."},
     "split_count_max": {"cat": "Splits & query", "help": "Upper guardrail for dynamic split-count planning."},
+    "split_sample_rows": {"cat": "Splits & query", "help": "Cap rows fed into equal-count (NTILE) quantile planning (0 = full scan). When the table is larger, a deterministic integer-key sample bounds the planning sort/tempdb cost; approximate boundaries, still far more balanced than 'span'."},
+    "split_use_stats_histogram": {"cat": "Splits & query", "help": "For equal-count planning on flavors that expose optimizer statistics (SQL Server, PostgreSQL), derive integer-key split boundaries from the existing histogram \u2014 zero data scan \u2014 before falling back to NTILE. Disable to force NTILE when stats may be stale."},
     "streaming_parquet": {"cat": "Splits & query", "help": "Materialize each split in row batches (bounded memory) instead of loading the whole split into RAM."},
     "stream_batch_rows": {"cat": "Splits & query", "help": "Batch/row-group size for streaming Parquet materialization."},
     "source_max_concurrency": {"cat": "Splits & query", "help": "Cap concurrent SQL queries against the source DB (backpressure). 0 = unlimited."},
     "table_format": {"cat": "Splits & query", "help": "Output format: 'iceberg' (Fabric virtualizes to Delta) or 'delta' (native, no conversion — lower lag)."},
+    "materialize_mode": {"cat": "Splits & query", "help": "When splits are generated: 'eager' (all at startup, default), 'lazy' (per table on first read, then pinned), or 'virtual' (per table on first read, never persisted — regenerated deterministically on demand; snapshot-isolated/immutable sources only). Iceberg and Delta; multi-agent lazy needs a shared artifact store; no auto-refresh. Restart to apply.", "choices": ["eager", "lazy", "virtual"]},
     # Caching
     "pin_materialized_splits": {"cat": "Caching", "help": "Serve snapshot data files byte-identical (prevents size drift). Keep on."},
     "parquet_disk_cache": {"cat": "Caching", "help": "Persist generated Parquet to disk for warm restarts."},
@@ -747,7 +823,8 @@ _SETTINGS_CAT_ORDER = [
 LIVE_SETTINGS: frozenset[str] = frozenset({
     # Performance / splits
     "num_splits", "split_strategy", "split_target_rows",
-    "split_count_min", "split_count_max",
+    "split_count_min", "split_count_max", "split_balance", "split_sample_rows",
+    "split_use_stats_histogram",
     "streaming_parquet", "stream_batch_rows",
     "source_max_concurrency", "max_concurrent_generations",
     "timestamp_assume_utc", "pin_materialized_splits",
@@ -774,9 +851,12 @@ LIVE_SETTINGS: frozenset[str] = frozenset({
 _KEY_TO_ATTR: dict[str, str] = {
     "num_splits": "NUM_SPLITS",
     "split_strategy": "SPLIT_STRATEGY",
+    "split_balance": "SPLIT_BALANCE",
     "split_target_rows": "SPLIT_TARGET_ROWS",
     "split_count_min": "SPLIT_COUNT_MIN",
     "split_count_max": "SPLIT_COUNT_MAX",
+    "split_sample_rows": "SPLIT_SAMPLE_ROWS",
+    "split_use_stats_histogram": "SPLIT_USE_STATS_HISTOGRAM",
     "streaming_parquet": "STREAMING_PARQUET",
     "stream_batch_rows": "STREAM_BATCH_ROWS",
     "source_max_concurrency": "SOURCE_MAX_CONCURRENCY",
@@ -921,9 +1001,12 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     # Performance settings → config.performance.json
     "num_splits": "config.performance.json",
     "split_strategy": "config.performance.json",
+    "split_balance": "config.performance.json",
     "split_target_rows": "config.performance.json",
     "split_count_min": "config.performance.json",
     "split_count_max": "config.performance.json",
+    "split_sample_rows": "config.performance.json",
+    "split_use_stats_histogram": "config.performance.json",
     "streaming_parquet": "config.performance.json",
     "stream_batch_rows": "config.performance.json",
     "source_max_concurrency": "config.performance.json",
@@ -945,6 +1028,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "iceberg_snapshot_history": "config.performance.json",
     "snapshot_history_limit": "config.performance.json",
     "concurrent_startup_materialization": "config.performance.json",
+    "materialize_mode": "config.performance.json",
     # Freshness settings → config.freshness.json
     "auto_refresh": "config.freshness.json",
     "refresh_poll_seconds": "config.freshness.json",

@@ -7,10 +7,21 @@
       "key_column": "order_id"
     },
     {
+      "_comment": "Small dimension: force full-scan modulo splits with a low count; the range planner adds no value at this size.",
       "name": "customers",
       "source_table": "dbo.customers",
       "key_column": "customer_id",
-      "num_splits": 4
+      "num_splits": 4,
+      "split_strategy": "modulo"
+    },
+    {
+      "_comment": "Narrow, high-volume fact table: use index-pruned range splits sized by row quantiles (split_balance 'count' balances skewed keys) and override the global split_target_rows (100000) with 1000000 so the planner packs ~1M rows per split. The larger target also raises the per-split row cap (query_max_rows) for this table so it is not truncated.",
+      "name": "clickstream",
+      "source_table": "dbo.clickstream",
+      "key_column": "event_id",
+      "split_strategy": "range",
+      "split_balance": "count",
+      "split_target_rows": 1000000
     },
     {
       "_comment": "Served from a DIFFERENT source (id 'warehouse_pg' in config.connection.json).",

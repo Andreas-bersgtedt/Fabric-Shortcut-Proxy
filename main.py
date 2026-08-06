@@ -166,7 +166,7 @@ async def lifespan(app: FastAPI):
 
         # Phase 2 split planner v2 (opt-in): dynamic split-count selection from
         # row-target planning with min/max guardrails.
-        if config.SPLIT_TARGET_ROWS > 0:
+        if any(t.effective_split_target_rows > 0 for t in runtime_tables):
             from planner.split_planner import choose_table_num_splits
             for t in runtime_tables:
                 t.num_splits = await choose_table_num_splits(t)
@@ -187,7 +187,9 @@ async def lifespan(app: FastAPI):
         # contiguous key range (from the source MIN/MAX) so materialization reads
         # only its slice off the PK index instead of a full-table modulo scan.
         # Best-effort: falls back to modulo per table on empty/non-integer keys.
-        if config.SPLIT_STRATEGY in ("range", "date", "auto") or config.SPLIT_TARGET_ROWS > 0:
+        if any(t.effective_split_strategy in ("range", "date", "auto") for t in runtime_tables) or any(
+            t.effective_split_target_rows > 0 for t in runtime_tables
+        ):
             from planner.split_planner import plan_ranges_for_snapshot
             for snap in snapshots:
                 await plan_ranges_for_snapshot(snap)
@@ -318,71 +320,81 @@ async def lifespan(app: FastAPI):
                     split.stats = collect_split_stats(pq_bytes, split.table.schema)
                 return nrows
 
-        for snap in snapshots:
-            if config.CONCURRENT_STARTUP_MATERIALIZATION:
-                counts = await asyncio.gather(*(_materialize(s) for s in snap.splits))
-            else:
-                counts = [await _materialize(s) for s in snap.splits]
-            snap.total_records = sum(counts)
-            log.info("splits_materialized", table=snap.table.name,
-                     total_records=snap.total_records, splits=len(snap.splits))
-
-        # Persist this run's observed split sizes so the next run can balance by
-        # bytes (weighted strategy). Shard 0 writes the full map — after the loop
-        # every Agent knows all sizes (owned=generated, non-owned=fetched). Idempotent.
-        if (config.SHARD_STRATEGY == "weighted" and _weight_store is not None
-                and config.AGENT_SHARD_INDEX == 0):
-            from planner.shard_weight import stable_key, save_weights
-            sizes = {
-                stable_key(snap.table.name, s.split_index): int(s.file_size_in_bytes)
-                for snap in snapshots for s in snap.splits
-                if s.file_size_in_bytes
-            }
-            if save_weights(_weight_store, sizes):
-                log.info("shard_weights_saved", entries=len(sizes))
-
-        # Correctness guard for multi-table: Fabric's Iceberg->Delta conversion +
-        # SQL-endpoint sync can run for MINUTES. If the in-memory Parquet cache
-        # can't hold every materialized split for that whole window (LRU eviction
-        # or TTL expiry), an evicted split is regenerated on demand — and Parquet
-        # output is NOT byte-identical, so its size no longer matches the size
-        # already declared in the manifest. Fabric's ranged reads then fail with
-        # 404 BlobNotFound / footer-parse errors. PIN_MATERIALIZED_SPLITS (default)
-        # keeps the authoritative bytes pinned so this can't happen; only warn when
-        # it's disabled and there's no disk cache to give identical regeneration.
-        total_data_bytes = sum(
-            s.file_size_in_bytes or 0 for snap in snapshots for s in snap.splits
-        )
-        if config.PIN_MATERIALIZED_SPLITS:
+        if config.MATERIALIZE_MODE in ("lazy", "virtual"):
             log.info(
-                "splits_pinned",
-                pinned_bytes=total_data_bytes,
-                tables=len(snapshots),
+                "deferred_materialization_enabled",
+                mode=config.MATERIALIZE_MODE,
+                tables=[s.table.name for s in snapshots],
+                hint="splits materialize on first read per table",
             )
-        if config.ARTIFACT_STORE_SERVING:
-            log.info(
-                "artifact_store_serving",
-                backend=config.ARTIFACT_STORE_BACKEND,
-                dir=config.ARTIFACT_STORE_DIR if config.ARTIFACT_STORE_BACKEND == "local" else None,
-                hint="materialized splits are durable in the artifact store; a restart serves from it with zero regeneration",
+        else:
+            for snap in snapshots:
+                if config.CONCURRENT_STARTUP_MATERIALIZATION:
+                    counts = await asyncio.gather(*(_materialize(s) for s in snap.splits))
+                else:
+                    counts = [await _materialize(s) for s in snap.splits]
+                snap.total_records = sum(counts)
+                log.info("splits_materialized", table=snap.table.name,
+                         total_records=snap.total_records, splits=len(snap.splits))
+
+            # Persist this run's observed split sizes so the next run can balance by
+            # bytes (weighted strategy). Shard 0 writes the full map — after the loop
+            # every Agent knows all sizes (owned=generated, non-owned=fetched). Idempotent.
+            if (config.SHARD_STRATEGY == "weighted" and _weight_store is not None
+                    and config.AGENT_SHARD_INDEX == 0):
+                from planner.shard_weight import stable_key, save_weights
+                sizes = {
+                    stable_key(snap.table.name, s.split_index): int(s.file_size_in_bytes)
+                    for snap in snapshots for s in snap.splits
+                    if s.file_size_in_bytes
+                }
+                if save_weights(_weight_store, sizes):
+                    log.info("shard_weights_saved", entries=len(sizes))
+
+            # Correctness guard for multi-table: Fabric's Iceberg->Delta conversion +
+            # SQL-endpoint sync can run for MINUTES. If the in-memory Parquet cache
+            # can't hold every materialized split for that whole window (LRU eviction
+            # or TTL expiry), an evicted split is regenerated on demand — and Parquet
+            # output is NOT byte-identical, so its size no longer matches the size
+            # already declared in the manifest. Fabric's ranged reads then fail with
+            # 404 BlobNotFound / footer-parse errors. PIN_MATERIALIZED_SPLITS (default)
+            # keeps the authoritative bytes pinned so this can't happen; only warn when
+            # it's disabled and there's no disk cache to give identical regeneration.
+            total_data_bytes = sum(
+                s.file_size_in_bytes or 0 for snap in snapshots for s in snap.splits
             )
-        elif not config.PARQUET_DISK_CACHE and total_data_bytes > config.PARQUET_CACHE_MAX_BYTES:
-            log.warning(
-                "parquet_cache_undersized",
-                materialized_bytes=total_data_bytes,
-                parquet_cache_max_bytes=config.PARQUET_CACHE_MAX_BYTES,
-                parquet_cache_ttl_seconds=config.PARQUET_CACHE_TTL_SECONDS,
-                hint="Fabric conversion may outlive the cache and regenerate splits "
-                     "(size drift -> 404 BlobNotFound). Keep PIN_MATERIALIZED_SPLITS=1, "
-                     "enable PARQUET_DISK_CACHE=1, or raise PARQUET_CACHE_MAX_BYTES / TTL.",
-            )
+            if config.PIN_MATERIALIZED_SPLITS:
+                log.info(
+                    "splits_pinned",
+                    pinned_bytes=total_data_bytes,
+                    tables=len(snapshots),
+                )
+            if config.ARTIFACT_STORE_SERVING:
+                log.info(
+                    "artifact_store_serving",
+                    backend=config.ARTIFACT_STORE_BACKEND,
+                    dir=config.ARTIFACT_STORE_DIR if config.ARTIFACT_STORE_BACKEND == "local" else None,
+                    hint="materialized splits are durable in the artifact store; a restart serves from it with zero regeneration",
+                )
+            elif not config.PARQUET_DISK_CACHE and total_data_bytes > config.PARQUET_CACHE_MAX_BYTES:
+                log.warning(
+                    "parquet_cache_undersized",
+                    materialized_bytes=total_data_bytes,
+                    parquet_cache_max_bytes=config.PARQUET_CACHE_MAX_BYTES,
+                    parquet_cache_ttl_seconds=config.PARQUET_CACHE_TTL_SECONDS,
+                    hint="Fabric conversion may outlive the cache and regenerate splits "
+                         "(size drift -> 404 BlobNotFound). Keep PIN_MATERIALIZED_SPLITS=1, "
+                         "enable PARQUET_DISK_CACHE=1, or raise PARQUET_CACHE_MAX_BYTES / TTL.",
+                )
 
     # Native Delta output: build the initial _delta_log commits now (before any
     # freshness pruning could drop version 1). Fabric reads this directly — no
-    # Iceberg->Delta conversion layer.
+    # Iceberg->Delta conversion layer. In lazy mode the commits are built per table
+    # on first read (after that table's splits are materialized), so skip startup sync.
     if config.TABLE_FORMAT == "delta":
         from delta import log as delta_log
-        delta_log.sync_all()
+        if config.MATERIALIZE_MODE not in ("lazy", "virtual"):
+            delta_log.sync_all()
         log.info("delta_format_enabled", tables=[t.name for t in config.TABLES])
 
     # Phase 6: publish a complete servable image (data + metadata) to the store so

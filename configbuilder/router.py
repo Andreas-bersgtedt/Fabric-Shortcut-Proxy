@@ -171,6 +171,9 @@ async def bootstrap_builder() -> JSONResponse:
             "connection": t.connection_id,
             "key_column": t.key_column,
             "num_splits": int(t.num_splits),
+            "split_target_rows": (int(t.split_target_rows) if t.split_target_rows is not None else None),
+            "split_strategy": t.split_strategy,
+            "split_balance": t.split_balance,
             "schema": schema or None,
         })
 
@@ -193,7 +196,12 @@ async def bootstrap_builder() -> JSONResponse:
             "flavor": _flavor_from_url(config.DB_URL),
             "bucket": config.BUCKET_NAME,
             "num_splits": int(config.NUM_SPLITS),
+            "split_target_rows": int(config.SPLIT_TARGET_ROWS),
+            "split_count_min": int(config.SPLIT_COUNT_MIN),
+            "split_count_max": int(config.SPLIT_COUNT_MAX),
+            "split_strategy": config.SPLIT_STRATEGY,
             "table_format": config.TABLE_FORMAT,
+            "materialize_mode": config.MATERIALIZE_MODE,
             "require_sigv4": bool(config.REQUIRE_SIGV4),
             "auto_refresh": bool(config.AUTO_REFRESH),
             "refresh_poll_seconds": int(config.REFRESH_POLL_SECONDS),

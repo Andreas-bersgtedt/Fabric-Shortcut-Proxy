@@ -146,6 +146,7 @@ async def test_index_serves_html(app):
     assert 'kind:"random_token"' in r.text
     assert 'column.policy!=="remove"' in r.text
     assert '["mssql", "postgresql", "postgres", "oracle", "databricks"]' in r.text
+    assert 'id="materializeMode"' in r.text
 
 
 def test_settings_catalog_has_defaults():
@@ -155,6 +156,8 @@ def test_settings_catalog_has_defaults():
     # A representative spread of settings with their built-in defaults.
     assert m["num_splits"]["default"] == 8
     assert m["pin_materialized_splits"]["default"] is True
+    assert m["materialize_mode"]["default"] == "eager"
+    assert m["materialize_mode"]["choices"] == ["eager", "lazy", "virtual"]
     assert m["auto_refresh"]["default"] is False
     assert m["refresh_ttl_seconds"]["default"] == 1200
     # Secrets are flagged (so the builder never prefills their value).
@@ -180,6 +183,7 @@ async def test_bootstrap_api_prefills_running_builder_config(app):
     assert isinstance(b.get("bucket"), str)
     assert isinstance(b.get("num_splits"), int)
     assert b.get("table_format") in ("iceberg", "delta")
+    assert b.get("materialize_mode") in ("eager", "lazy")
     assert isinstance(b.get("tables"), list)
     assert isinstance(b.get("flavor"), str)
 

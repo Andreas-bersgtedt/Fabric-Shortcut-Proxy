@@ -514,6 +514,168 @@ async def fetch_key_bounds(source_table: str, key_column: str, connection: str =
         return None
 
 
+async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, connection: str = "default",
+                                    *, sample_rows: int = 0, key_is_integer: bool = False):
+    """Return ``(bucket_min_values, overall_max)`` for equal-count split planning.
+
+    Uses ``NTILE(n) OVER (ORDER BY key)`` to bucket rows into ``n`` equal-count
+    groups, then returns each bucket's minimum key plus the overall maximum. The
+    planner turns these into contiguous half-open ranges so each split holds
+    roughly equal rows regardless of key skew. Returns ``None`` for empty tables,
+    all-NULL keys, or ``n < 1``. Costs a single ordered scan of the key column
+    (index-ordered where an index exists); best invoked once at snapshot build.
+
+    When ``sample_rows > 0`` and the integer key column is larger than that, a
+    deterministic modulo-stride sample bounds the rows fed into ``NTILE`` (caps
+    the sort/window/tempdb cost on large tables). Boundaries become approximate
+    but stay far more balanced than equal-span; the overall max is still taken
+    from the full table so the last range always covers it.
+    """
+    if n < 1:
+        return None
+    d = _dialect_for(connection)
+    src = d.quote_qualified(source_table)
+    pk = d.quote(key_column)
+    n_int = int(n)  # inlined as a validated integer (NTILE's arg is not a bind on all drivers)
+
+    ntile_src = src
+    if sample_rows and sample_rows > 0 and key_is_integer:
+        total = await fetch_table_row_count(source_table, connection)
+        if total and total > sample_rows:
+            stride = (total + sample_rows - 1) // sample_rows  # ceil so the sample <= sample_rows
+            if stride >= 2:
+                # Value-uniform stride sample keeps the planning scan's sort/window bounded.
+                ntile_src = (f"(SELECT {pk} FROM {src} "
+                             f"WHERE {pk} IS NOT NULL AND (ABS({pk}) % {int(stride)}) = 0) __s")
+
+    sql = (
+        f"SELECT MIN({pk}) AS lo, MAX({pk}) AS hi "
+        f"FROM (SELECT {pk}, NTILE({n_int}) OVER (ORDER BY {pk}) AS __b "
+        f"FROM {ntile_src} WHERE {pk} IS NOT NULL) q "
+        f"GROUP BY __b ORDER BY __b"
+    )
+    async with asyncio.timeout(_query_timeout_for(connection)):
+        if _async_mode_for(connection):
+            engine = _engine_for(connection)
+            async with engine.connect() as conn:
+                rows = (await conn.execute(text(sql))).all()
+        else:
+            def _sync_quantiles():
+                with _sync_engine_for(connection).connect() as conn:
+                    return conn.execute(text(sql)).all()
+
+            rows = await asyncio.to_thread(_sync_quantiles)
+    if not rows:
+        return None
+    mins = [r[0] for r in rows]
+    overall_max = rows[-1][1]
+    if sample_rows and sample_rows > 0 and key_is_integer and ntile_src is not src:
+        # A sample can miss the true min/max, so anchor the outer ranges to the
+        # full-table bounds — the first range must start at the real minimum and
+        # the last must cover the real maximum, else edge rows go unserved.
+        full = await fetch_column_bounds(source_table, key_column, connection)
+        if full is not None:
+            true_min, true_max = full
+            if true_min is not None and mins:
+                mins[0] = true_min
+            if true_max is not None:
+                overall_max = true_max
+    if overall_max is None or any(m is None for m in mins):
+        return None
+    return mins, overall_max
+
+
+async def _run_select_all(sql: str, params: dict, connection: str):
+    """Run a read-only SELECT and return all rows (async-native or sync fallback)."""
+    async with asyncio.timeout(_query_timeout_for(connection)):
+        if _async_mode_for(connection):
+            engine = _engine_for(connection)
+            async with engine.connect() as conn:
+                return (await conn.execute(text(sql), params)).all()
+
+        def _sync():
+            with _sync_engine_for(connection).connect() as conn:
+                return conn.execute(text(sql), params).all()
+
+        return await asyncio.to_thread(_sync)
+
+
+async def _mssql_histogram_steps(source_table: str, key_column: str, connection: str):
+    """SQL Server histogram steps ``[(range_high_key, step_rows)]`` for an integer
+    key, from the first statistics object leading with that column. [] if none."""
+    sql = (
+        "WITH pick AS ("
+        " SELECT TOP 1 s.object_id AS oid, s.stats_id AS sid"
+        " FROM sys.stats s"
+        " JOIN sys.stats_columns sc ON sc.object_id=s.object_id AND sc.stats_id=s.stats_id AND sc.stats_column_id=1"
+        " JOIN sys.columns c ON c.object_id=s.object_id AND c.column_id=sc.column_id"
+        " WHERE s.object_id = OBJECT_ID(:tbl) AND c.name = :col"
+        " ORDER BY s.stats_id)"
+        " SELECT CAST(h.range_high_key AS BIGINT) AS hi, (h.range_rows + h.equal_rows) AS rows_"
+        " FROM pick CROSS APPLY sys.dm_db_stats_histogram(pick.oid, pick.sid) h"
+        " ORDER BY h.step_number"
+    )
+    rows = await _run_select_all(sql, {"tbl": source_table, "col": key_column}, connection)
+    return [(int(r[0]), float(r[1] or 0)) for r in rows if r[0] is not None]
+
+
+async def _pg_histogram_bounds(source_table: str, key_column: str, connection: str):
+    """PostgreSQL equi-depth ``histogram_bounds`` (ascending ints) for a column,
+    or [] when no stats exist. Parsed from the text form of the anyarray."""
+    schema, table = _split_qualified(source_table)
+    if schema:
+        sql = ("SELECT histogram_bounds::text FROM pg_stats "
+               "WHERE schemaname=:sch AND tablename=:tbl AND attname=:col")
+        params = {"sch": schema, "tbl": table, "col": key_column}
+    else:
+        sql = ("SELECT histogram_bounds::text FROM pg_stats "
+               "WHERE tablename=:tbl AND attname=:col ORDER BY schemaname LIMIT 1")
+        params = {"tbl": table, "col": key_column}
+    rows = await _run_select_all(sql, params, connection)
+    if not rows or rows[0][0] is None:
+        return []
+    inner = str(rows[0][0]).strip().lstrip("{").rstrip("}")
+    if not inner:
+        return []
+    return [int(float(x)) for x in inner.split(",") if x.strip()]
+
+
+async def fetch_key_histogram_bounds(source_table: str, key_column: str, n: int, connection: str = "default"):
+    """Return ``(bucket_min_values, overall_max)`` from the source optimizer's
+    statistics histogram for an INTEGER key — a metadata read with **zero data
+    scan** — or ``None``.
+
+    Capability-gated to SQL Server (``sys.dm_db_stats_histogram``) and PostgreSQL
+    (``pg_stats.histogram_bounds``). Best-effort: missing stats, an unsupported
+    flavor, a non-integer histogram, or any error returns ``None`` so the caller
+    falls back to NTILE planning.
+    """
+    if n < 1:
+        return None
+    from db.capabilities import flavor_from_db_url
+    from planner.split_planner import mins_from_equidepth, mins_from_histogram_steps
+
+    flavor = flavor_from_db_url(_db_url_for(connection))
+    try:
+        if flavor == "mssql":
+            steps = await _mssql_histogram_steps(source_table, key_column, connection)
+            mins = mins_from_histogram_steps(steps, n)
+            if not mins:
+                return None
+            return [int(m) for m in mins], int(steps[-1][0])
+        if flavor == "postgresql":
+            bounds = await _pg_histogram_bounds(source_table, key_column, connection)
+            mins = mins_from_equidepth(bounds, n)
+            if not mins:
+                return None
+            return [int(m) for m in mins], int(bounds[-1])
+    except Exception as exc:  # noqa: BLE001 - a stats read must never break planning
+        log.warning("histogram_bounds_error", table=source_table, key=key_column,
+                    flavor=flavor, error=str(exc))
+        return None
+    return None
+
+
 async def introspect_columns(table: str, connection: str = "default") -> list[str]:
     """Return the source table's column names, or [] if it can't be inspected."""
     schema, name = _split_qualified(table)

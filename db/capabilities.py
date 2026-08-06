@@ -25,6 +25,7 @@ class FlavorCapabilities:
     supports_deterministic_tokenization: bool = False
     supports_random_tokenization: bool = False
     supports_ntile: bool = True
+    supports_stats_histogram: bool = False
     required_connection_fields: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
@@ -42,6 +43,7 @@ class FlavorCapabilities:
             "supports_deterministic_tokenization": self.supports_deterministic_tokenization,
             "supports_random_tokenization": self.supports_random_tokenization,
             "supports_ntile": self.supports_ntile,
+            "supports_stats_histogram": self.supports_stats_histogram,
             "required_connection_fields": list(self.required_connection_fields),
         }
 
@@ -68,6 +70,7 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_fast_row_estimate=True,
         supports_deterministic_tokenization=True,
         supports_random_tokenization=True,
+        supports_stats_histogram=True,
     ),
     "mssql": FlavorCapabilities(
         flavor="mssql",
@@ -80,6 +83,7 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_fast_row_estimate=True,
         supports_deterministic_tokenization=True,
         supports_random_tokenization=True,
+        supports_stats_histogram=True,
     ),
     "oracle": FlavorCapabilities(
         flavor="oracle",

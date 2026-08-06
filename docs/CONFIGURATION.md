@@ -229,6 +229,12 @@ approximate but stay far more balanced than `span`; the overall max is still rea
 from the full table so the last range always covers it. `0` (default) scans the
 full key column.
 
+On SQL Server and PostgreSQL, `count` planning for an **integer** key first tries
+the optimizer's existing statistics histogram (`sys.dm_db_stats_histogram` /
+`pg_stats.histogram_bounds`) — a metadata read with **zero data scan** — and only
+falls back to `NTILE` (then equal-span) when no stats exist. Set
+`split_use_stats_histogram=false` to force `NTILE` if the stats may be stale.
+
 ```json
 { "name": "clickstream", "source_table": "dbo.clickstream", "key_column": "event_id",
   "split_strategy": "range", "split_balance": "count", "split_target_rows": 1000000,

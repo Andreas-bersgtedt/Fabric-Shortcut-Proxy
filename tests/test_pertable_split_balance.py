@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 import config
 from config import ColumnDef, TableDef, _tabledef_from_json
 from iceberg.state_store import SnapshotState, SplitDescriptor
-from planner.split_planner import plan_ranges_for_snapshot
+from planner.split_planner import (
+    mins_from_equidepth,
+    mins_from_histogram_steps,
+    plan_ranges_for_snapshot,
+)
 
 
 def _table(**overrides) -> TableDef:
@@ -209,4 +213,80 @@ async def test_balanced_planning_with_sampling_covers_all_rows(skew_db):
         seen += [r["id"] for r in rows]
     assert len(seen) == 306                       # every row served exactly once
     assert min(seen) == 1 and max(seen) == 6000   # edge rows preserved despite sampling
+
+
+# ---------------------------------------------------------------------------
+# Stats-histogram boundary source (capability-gated) — pure math + precedence.
+# ---------------------------------------------------------------------------
+
+def test_capability_stats_histogram_flags():
+    from db.capabilities import capabilities_for_db_url
+    assert capabilities_for_db_url("mssql+aioodbc://h/db").supports_stats_histogram is True
+    assert capabilities_for_db_url("postgresql+asyncpg://h/db").supports_stats_histogram is True
+    assert capabilities_for_db_url("sqlite+aiosqlite:///x.db").supports_stats_histogram is False
+
+
+def test_mins_from_histogram_steps_even():
+    steps = [(10, 100), (20, 100), (30, 100), (40, 100)]   # 4 equal steps, total 400
+    assert mins_from_histogram_steps(steps, 4) == [10, 20, 30, 40]
+
+
+def test_mins_from_histogram_steps_skew_keeps_heavy_key_whole():
+    steps = [(10, 300), (20, 10), (30, 10), (40, 10)]      # key 10 dominates
+    mins = mins_from_histogram_steps(steps, 3)
+    assert mins[0] == 10 and len(mins) == 3               # heavy key can't be split further
+
+
+def test_mins_from_histogram_steps_degenerate():
+    assert mins_from_histogram_steps([], 4) is None
+    assert mins_from_histogram_steps([(1, 0)], 4) is None  # zero rows
+
+
+def test_mins_from_equidepth_subsamples():
+    bounds = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]  # 11 equi-depth bounds
+    assert mins_from_equidepth(bounds, 4) == [1, 20, 50, 70]
+    assert mins_from_equidepth([5], 4) is None
+
+
+async def test_balanced_planning_prefers_histogram(skew_db, monkeypatch):
+    # When the histogram source returns bounds, the planner uses them and does
+    # NOT fall back to the NTILE quantile query.
+    called = {"hist": False, "ntile": False}
+
+    async def _fake_hist(source, key, n, connection="default"):
+        called["hist"] = True
+        return [1, 100, 3000, 5000][:n], 6000
+
+    async def _no_ntile(*a, **k):
+        called["ntile"] = True
+        raise AssertionError("NTILE must not run when the histogram provides bounds")
+
+    monkeypatch.setattr("db.executor.fetch_key_histogram_bounds", _fake_hist)
+    monkeypatch.setattr("db.executor.fetch_key_quantile_bounds", _no_ntile)
+    monkeypatch.setattr(config, "SPLIT_USE_STATS_HISTOGRAM", True, raising=False)
+    monkeypatch.setattr("planner.split_planner.capabilities_for_db_url",
+                        lambda _u: type("C", (), {"supports_range_key_bounds": True,
+                                                  "supports_ntile": True,
+                                                  "supports_stats_histogram": True})())
+
+    table = _table(split_strategy="range", split_balance="count")
+    snap = _snapshot(table, 4)
+    assert await plan_ranges_for_snapshot(snap) is True
+    assert called["hist"] is True and called["ntile"] is False
+    assert snap.splits[0].key_lo == 1
+    assert snap.splits[-1].key_hi == 6001                 # last range covers the max
+
+
+async def test_balanced_planning_falls_back_to_ntile_when_no_histogram(skew_db, monkeypatch):
+    async def _no_hist(source, key, n, connection="default"):
+        return None                                       # no stats available
+
+    monkeypatch.setattr("db.executor.fetch_key_histogram_bounds", _no_hist)
+    monkeypatch.setattr(config, "SPLIT_USE_STATS_HISTOGRAM", True, raising=False)
+
+    table = _table(split_strategy="range", split_balance="count")
+    snap = _snapshot(table, 4)
+    assert await plan_ranges_for_snapshot(snap) is True   # NTILE path still balances
+    assert snap.splits[0].key_lo == 1
+
 

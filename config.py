@@ -222,6 +222,7 @@ SPLIT_TARGET_ROWS: int = _get_int("SPLIT_TARGET_ROWS", "split_target_rows", 100_
 SPLIT_COUNT_MIN: int = _get_int("SPLIT_COUNT_MIN", "split_count_min", 1, _PERF_CFG)
 SPLIT_COUNT_MAX: int = _get_int("SPLIT_COUNT_MAX", "split_count_max", 256, _PERF_CFG)
 SPLIT_SAMPLE_ROWS: int = _get_int("SPLIT_SAMPLE_ROWS", "split_sample_rows", 0, _PERF_CFG)
+SPLIT_USE_STATS_HISTOGRAM: bool = _get_bool("SPLIT_USE_STATS_HISTOGRAM", "split_use_stats_histogram", True, _PERF_CFG)
 
 STREAMING_PARQUET: bool = _get_bool("STREAMING_PARQUET", "streaming_parquet", False, _PERF_CFG)
 STREAM_BATCH_ROWS: int = _get_int("STREAM_BATCH_ROWS", "stream_batch_rows", 50_000, _PERF_CFG)
@@ -733,6 +734,7 @@ SETTINGS_META: dict[str, dict] = {
     "split_count_min": {"cat": "Splits & query", "help": "Lower guardrail for dynamic split-count planning."},
     "split_count_max": {"cat": "Splits & query", "help": "Upper guardrail for dynamic split-count planning."},
     "split_sample_rows": {"cat": "Splits & query", "help": "Cap rows fed into equal-count (NTILE) quantile planning (0 = full scan). When the table is larger, a deterministic integer-key sample bounds the planning sort/tempdb cost; approximate boundaries, still far more balanced than 'span'."},
+    "split_use_stats_histogram": {"cat": "Splits & query", "help": "For equal-count planning on flavors that expose optimizer statistics (SQL Server, PostgreSQL), derive integer-key split boundaries from the existing histogram \u2014 zero data scan \u2014 before falling back to NTILE. Disable to force NTILE when stats may be stale."},
     "streaming_parquet": {"cat": "Splits & query", "help": "Materialize each split in row batches (bounded memory) instead of loading the whole split into RAM."},
     "stream_batch_rows": {"cat": "Splits & query", "help": "Batch/row-group size for streaming Parquet materialization."},
     "source_max_concurrency": {"cat": "Splits & query", "help": "Cap concurrent SQL queries against the source DB (backpressure). 0 = unlimited."},
@@ -822,6 +824,7 @@ LIVE_SETTINGS: frozenset[str] = frozenset({
     # Performance / splits
     "num_splits", "split_strategy", "split_target_rows",
     "split_count_min", "split_count_max", "split_balance", "split_sample_rows",
+    "split_use_stats_histogram",
     "streaming_parquet", "stream_batch_rows",
     "source_max_concurrency", "max_concurrent_generations",
     "timestamp_assume_utc", "pin_materialized_splits",
@@ -853,6 +856,7 @@ _KEY_TO_ATTR: dict[str, str] = {
     "split_count_min": "SPLIT_COUNT_MIN",
     "split_count_max": "SPLIT_COUNT_MAX",
     "split_sample_rows": "SPLIT_SAMPLE_ROWS",
+    "split_use_stats_histogram": "SPLIT_USE_STATS_HISTOGRAM",
     "streaming_parquet": "STREAMING_PARQUET",
     "stream_batch_rows": "STREAM_BATCH_ROWS",
     "source_max_concurrency": "SOURCE_MAX_CONCURRENCY",
@@ -1002,6 +1006,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "split_count_min": "config.performance.json",
     "split_count_max": "config.performance.json",
     "split_sample_rows": "config.performance.json",
+    "split_use_stats_histogram": "config.performance.json",
     "streaming_parquet": "config.performance.json",
     "stream_batch_rows": "config.performance.json",
     "source_max_concurrency": "config.performance.json",

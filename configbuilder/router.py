@@ -173,6 +173,7 @@ async def bootstrap_builder() -> JSONResponse:
             "num_splits": int(t.num_splits),
             "split_target_rows": (int(t.split_target_rows) if t.split_target_rows is not None else None),
             "split_strategy": t.split_strategy,
+            "split_balance": t.split_balance,
             "schema": schema or None,
         })
 

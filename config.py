@@ -217,6 +217,7 @@ TABLE_FORMAT: str = _get_str("TABLE_FORMAT", "table_format", "iceberg", _PERF_CF
 
 NUM_SPLITS: int = _get_int("NUM_SPLITS", "num_splits", 8, _PERF_CFG)
 SPLIT_STRATEGY: str = _get_str("SPLIT_STRATEGY", "split_strategy", "modulo", _PERF_CFG).strip().lower()
+SPLIT_BALANCE: str = _get_str("SPLIT_BALANCE", "split_balance", "span", _PERF_CFG).strip().lower()
 SPLIT_TARGET_ROWS: int = _get_int("SPLIT_TARGET_ROWS", "split_target_rows", 100_000, _PERF_CFG)
 SPLIT_COUNT_MIN: int = _get_int("SPLIT_COUNT_MIN", "split_count_min", 1, _PERF_CFG)
 SPLIT_COUNT_MAX: int = _get_int("SPLIT_COUNT_MAX", "split_count_max", 256, _PERF_CFG)
@@ -378,6 +379,7 @@ class TableDef:
     connection_id: str = "default"
     split_target_rows: int | None = None
     split_strategy: str | None = None
+    split_balance: str | None = None
 
     def __post_init__(self):
         if self.num_splits is None:
@@ -386,6 +388,8 @@ class TableDef:
             self.connection_id = "default"
         if self.split_strategy is not None:
             self.split_strategy = self.split_strategy.strip().lower() or None
+        if self.split_balance is not None:
+            self.split_balance = self.split_balance.strip().lower() or None
 
     @property
     def effective_split_target_rows(self) -> int:
@@ -396,6 +400,11 @@ class TableDef:
     def effective_split_strategy(self) -> str:
         """Per-table split strategy, falling back to the global default."""
         return SPLIT_STRATEGY if self.split_strategy is None else self.split_strategy
+
+    @property
+    def effective_split_balance(self) -> str:
+        """Per-table split balance (span|count), falling back to the global default."""
+        return SPLIT_BALANCE if self.split_balance is None else self.split_balance
 
     @property
     def effective_max_rows(self) -> int:
@@ -446,6 +455,7 @@ def _tabledef_from_json(d: dict) -> "TableDef":
         connection_id=str(d.get("connection") or d.get("connection_id") or "default"),
         split_target_rows=(int(d["split_target_rows"]) if d.get("split_target_rows") is not None else None),
         split_strategy=(str(d["split_strategy"]) if d.get("split_strategy") else None),
+        split_balance=(str(d["split_balance"]) if d.get("split_balance") else None),
     )
 
 
@@ -512,6 +522,8 @@ def validate_config() -> None:
             problems.append("MATERIALIZE_MODE 'lazy' with AGENT_SHARD_COUNT>1 requires ARTIFACT_STORE_SERVING (a shared store) so shards serve byte-identical splits.")
     if SPLIT_STRATEGY not in ("modulo", "range", "date", "auto"):
         problems.append(f"SPLIT_STRATEGY must be one of 'modulo'|'range'|'date'|'auto' (got {SPLIT_STRATEGY!r}).")
+    if SPLIT_BALANCE not in ("span", "count"):
+        problems.append(f"SPLIT_BALANCE must be 'span' or 'count' (got {SPLIT_BALANCE!r}).")
     if SPLIT_TARGET_ROWS < 0:
         problems.append(f"SPLIT_TARGET_ROWS must be >= 0 (got {SPLIT_TARGET_ROWS}).")
     if SPLIT_COUNT_MIN < 1:
@@ -601,6 +613,8 @@ def validate_config() -> None:
                 problems.append(f"Table {t.name!r}: split_target_rows must be >= 0 (got {t.split_target_rows}).")
             if t.split_strategy is not None and t.split_strategy not in ("modulo", "range", "date", "auto"):
                 problems.append(f"Table {t.name!r}: split_strategy must be one of 'modulo'|'range'|'date'|'auto' (got {t.split_strategy!r}).")
+            if t.split_balance is not None and t.split_balance not in ("span", "count"):
+                problems.append(f"Table {t.name!r}: split_balance must be 'span' or 'count' (got {t.split_balance!r}).")
             if t.connection_id not in CONNECTIONS:
                 problems.append(
                     f"Table {t.name!r}: connection {t.connection_id!r} is not defined "
@@ -702,6 +716,7 @@ SETTINGS_META: dict[str, dict] = {
     # Splits & query
     "num_splits": {"cat": "Splits & query", "help": "Virtual Parquet files per table."},
     "split_strategy": {"cat": "Splits & query", "help": "'modulo' (full-scan), 'range' (integer ranges), 'date' (temporal ranges), or 'auto' (range/date then deterministic fallback)."},
+    "split_balance": {"cat": "Splits & query", "help": "How range/date splits are sized: 'span' (equal key/time width, default) or 'count' (equal rows per split via NTILE quantiles \u2014 balances skewed keys; adds a one-time planning scan on the source).", "choices": ["span", "count"]},
     "split_target_rows": {"cat": "Splits & query", "help": "Target rows per split for dynamic split-count planning (0 disables, keeps configured split counts)."},
     "split_count_min": {"cat": "Splits & query", "help": "Lower guardrail for dynamic split-count planning."},
     "split_count_max": {"cat": "Splits & query", "help": "Upper guardrail for dynamic split-count planning."},
@@ -793,7 +808,7 @@ _SETTINGS_CAT_ORDER = [
 LIVE_SETTINGS: frozenset[str] = frozenset({
     # Performance / splits
     "num_splits", "split_strategy", "split_target_rows",
-    "split_count_min", "split_count_max",
+    "split_count_min", "split_count_max", "split_balance",
     "streaming_parquet", "stream_batch_rows",
     "source_max_concurrency", "max_concurrent_generations",
     "timestamp_assume_utc", "pin_materialized_splits",
@@ -820,6 +835,7 @@ LIVE_SETTINGS: frozenset[str] = frozenset({
 _KEY_TO_ATTR: dict[str, str] = {
     "num_splits": "NUM_SPLITS",
     "split_strategy": "SPLIT_STRATEGY",
+    "split_balance": "SPLIT_BALANCE",
     "split_target_rows": "SPLIT_TARGET_ROWS",
     "split_count_min": "SPLIT_COUNT_MIN",
     "split_count_max": "SPLIT_COUNT_MAX",
@@ -967,6 +983,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     # Performance settings → config.performance.json
     "num_splits": "config.performance.json",
     "split_strategy": "config.performance.json",
+    "split_balance": "config.performance.json",
     "split_target_rows": "config.performance.json",
     "split_count_min": "config.performance.json",
     "split_count_max": "config.performance.json",

@@ -147,6 +147,57 @@ def compute_temporal_ranges(lo, hi, n: int, kind: str) -> list[tuple[object, obj
     return [(_from_tick(a, kind), _from_tick(b, kind)) for a, b in int_ranges]
 
 
+def _range_upper(hi, key_type: str):
+    """Exclusive upper bound one tick past the inclusive max, so ``key < upper`` keeps max."""
+    if key_type in _INTEGER_TYPES:
+        return int(hi) + 1
+    kind = "date" if key_type == "date" else "timestamp"
+    v = _coerce_temporal(hi, kind)
+    return _from_tick(_to_tick(v, kind) + 1, kind)
+
+
+def _coerce_key(value, key_type: str):
+    if key_type in _INTEGER_TYPES:
+        return int(value)
+    kind = "date" if key_type == "date" else "timestamp"
+    return _coerce_temporal(value, kind)
+
+
+async def _balanced_ranges(table: TableDef, key: str, key_type: str | None, n: int):
+    """Equal-count (NTILE quantile) ranges, or None to fall back to equal-span.
+
+    Turns per-bucket key minimums into contiguous half-open ranges so each split
+    holds ~equal rows. Best-effort: any failure returns None so the caller uses
+    the known-good equal-span path.
+    """
+    if key_type is None or n < 1:
+        return None
+    from db.executor import fetch_key_quantile_bounds
+    try:
+        result = await fetch_key_quantile_bounds(table.source_table, key, n, connection=table.connection_id)
+    except Exception as exc:  # noqa: BLE001 - planning must not break startup
+        log.warning("balanced_planning_error_fallback_span", table=table.name, key=key, error=str(exc))
+        return None
+    if not result:
+        return None
+    raw_mins, raw_max = result
+    try:
+        mins = [_coerce_key(m, key_type) for m in raw_mins]
+        upper = _range_upper(raw_max, key_type)
+    except (TypeError, ValueError) as exc:
+        log.warning("balanced_planning_coerce_failed_fallback_span", table=table.name, key=key, error=str(exc))
+        return None
+    if not mins:
+        return None
+    ranges: list[tuple] = []
+    for i, lo in enumerate(mins):
+        hi = mins[i + 1] if i + 1 < len(mins) else upper
+        ranges.append((lo, hi))
+    while len(ranges) < n:  # fewer buckets than splits -> empty tail splits (correct)
+        ranges.append((upper, upper))
+    return ranges[:n]
+
+
 def compute_split_count(
     *,
     estimated_rows: int | None,
@@ -333,6 +384,21 @@ async def plan_ranges_for_snapshot(snap) -> bool:
         log.warning("range_planning_fallback_modulo", table=table.name,
                     key=key, reason="flavor_capability")
         return False
+
+    # Equal-count planning (opt-in via split_balance="count"): size ranges by row
+    # quantiles so skewed keys yield balanced splits. Falls through to equal-span
+    # when unsupported or the quantile query yields nothing.
+    if (table.effective_split_balance == "count" and caps.supports_ntile
+            and key_type in (_INTEGER_TYPES | _TEMPORAL_TYPES)):
+        qranges = await _balanced_ranges(table, key, key_type, len(snap.splits))
+        if qranges is not None:
+            for split, (rlo, rhi) in zip(snap.splits, qranges):
+                split.key_lo, split.key_hi = rlo, rhi
+            log.info("balanced_range_planning_ok", table=table.name, key=key,
+                     splits=len(snap.splits), strategy=strategy, key_type=key_type)
+            return True
+        log.warning("balanced_planning_fallback_span", table=table.name, key=key,
+                    reason="no_quantile_bounds")
 
     if strategy in ("range", "auto") and key_type in _INTEGER_TYPES:
         try:

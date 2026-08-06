@@ -53,7 +53,7 @@
   .trow { display:flex; align-items:center; gap:8px; padding:6px 10px; border-top:1px solid var(--line); }
   .trow .name { flex:1; }
   .trow .kind { font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
-  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto auto; gap:8px; align-items:center;
+  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto auto auto; gap:8px; align-items:center;
             padding:8px 10px; border-top:1px solid var(--line); }
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
@@ -222,7 +222,7 @@
 
   <div class="card" id="selectedCard" style="margin-top:16px; display:none;">
     <h2>Per-Table Configuration</h2>
-    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Set the key column, split <b>strategy</b> (how each split is sliced), <b>splits</b> (count) and <b>target rows</b> (rows per split), or remove a table with ✕. Precedence: when <b>target rows</b> &gt; 0 (global default 100000) the split count is derived from the row count and overrides <b>splits</b> — which then applies only as a fallback; set target rows to 0 to fix the count at <b>splits</b>. <b>Strategy</b> never changes the count. The badge under each table shows the effective split count.</div>
+    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Set the key column, split <b>strategy</b> (how each split is sliced), <b>splits</b> (count) and <b>target rows</b> (rows per split), or remove a table with ✕. Precedence: when <b>target rows</b> &gt; 0 (global default 100000) the split count is derived from the row count and overrides <b>splits</b> — which then applies only as a fallback; set target rows to 0 to fix the count at <b>splits</b>. <b>Strategy</b> never changes the count. The badge under each table shows the effective split count. <b>Balance</b> (range/date only): <b>span</b> = equal key/time width; <b>count</b> = equal rows per split (NTILE, balances skew, adds a planning scan).</div>
     <div id="selectedList"></div>
     <div class="actions">
       <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
@@ -836,6 +836,7 @@ function applyBootstrap(builder){
       num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
       split_target_rows: (t.split_target_rows==null ? null : parseInt(t.split_target_rows)),
       split_strategy: t.split_strategy || null,
+      split_balance: t.split_balance || null,
       integer_keys: t.key_column ? [t.key_column] : [],
       columns: configuredSchema.map((column, index)=>policyColumn(column, index)),
       schema_explicit: configuredSchema.length>0,
@@ -1053,7 +1054,7 @@ function bulk(on){
 }
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
-  key_column:null, num_splits:null, split_target_rows:null, split_strategy:null,
+  key_column:null, num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
   integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false }; }
 
 function policyColumn(column, index){
@@ -1294,6 +1295,14 @@ function renderSelected(){
         if(val===(s.split_strategy||"")) o.selected=true; strat.appendChild(o);
       }
 
+      const bal = document.createElement("select"); bal.className="stratsel";
+      bal.title="Split sizing (range/date only): span = equal key/time width (default); count = equal rows per split via NTILE quantiles (balances skew, adds a one-time planning scan on the source). Blank = global default.";
+      for(const [val,label] of [["","balance"],["span","span"],["count","count"]]){
+        const o=document.createElement("option"); o.value=val; o.textContent=label;
+        if(val===(s.split_balance||"")) o.selected=true; bal.appendChild(o);
+      }
+      bal.onchange = ()=>{ s.split_balance = bal.value||null; updatePreview(); };
+
       const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
       splits.title="Requested split count. Used only as a FALLBACK when 'target rows' > 0 (the row-target planner then derives the count and this value applies only if the row estimate is unavailable). Authoritative when 'target rows' = 0. Blank = global default.";
       splits.value = s.num_splits||"";
@@ -1320,7 +1329,7 @@ function renderSelected(){
         renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
       };
 
-      row.append(src, keysel, strat, splits, target, rm); table.appendChild(row);
+      row.append(src, keysel, strat, bal, splits, target, rm); table.appendChild(row);
       if(s.columns.length){
         const toggle=document.createElement("button"); toggle.className="iconbtn policy-toggle";
         toggle.textContent=(s.policies_open ? "Hide" : "Edit")+" column policies";
@@ -1343,6 +1352,7 @@ function tableConfig(entry){
   const table = {name:entry.name, source_table:entry.source_table, key_column:entry.key_column};
   if(entry.num_splits) table.num_splits=parseInt(entry.num_splits);
   if(entry.split_strategy) table.split_strategy=entry.split_strategy;
+  if(entry.split_balance) table.split_balance=entry.split_balance;
   if(entry.split_target_rows) table.split_target_rows=parseInt(entry.split_target_rows);
   if(entry.connection && entry.connection!=="default") table.connection=entry.connection;
   const policyChanged = entry.columns.some(column=>column.policy!=="keep" || column.name!==column.source);

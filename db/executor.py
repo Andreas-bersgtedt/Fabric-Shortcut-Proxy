@@ -514,6 +514,48 @@ async def fetch_key_bounds(source_table: str, key_column: str, connection: str =
         return None
 
 
+async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, connection: str = "default"):
+    """Return ``(bucket_min_values, overall_max)`` for equal-count split planning.
+
+    Uses ``NTILE(n) OVER (ORDER BY key)`` to bucket rows into ``n`` equal-count
+    groups, then returns each bucket's minimum key plus the overall maximum. The
+    planner turns these into contiguous half-open ranges so each split holds
+    roughly equal rows regardless of key skew. Returns ``None`` for empty tables,
+    all-NULL keys, or ``n < 1``. Costs a single ordered scan of the key column
+    (index-ordered where an index exists); best invoked once at snapshot build.
+    """
+    if n < 1:
+        return None
+    d = _dialect_for(connection)
+    src = d.quote_qualified(source_table)
+    pk = d.quote(key_column)
+    n_int = int(n)  # inlined as a validated integer (NTILE's arg is not a bind on all drivers)
+    sql = (
+        f"SELECT MIN({pk}) AS lo, MAX({pk}) AS hi "
+        f"FROM (SELECT {pk}, NTILE({n_int}) OVER (ORDER BY {pk}) AS __b "
+        f"FROM {src} WHERE {pk} IS NOT NULL) q "
+        f"GROUP BY __b ORDER BY __b"
+    )
+    async with asyncio.timeout(_query_timeout_for(connection)):
+        if _async_mode_for(connection):
+            engine = _engine_for(connection)
+            async with engine.connect() as conn:
+                rows = (await conn.execute(text(sql))).all()
+        else:
+            def _sync_quantiles():
+                with _sync_engine_for(connection).connect() as conn:
+                    return conn.execute(text(sql)).all()
+
+            rows = await asyncio.to_thread(_sync_quantiles)
+    if not rows:
+        return None
+    mins = [r[0] for r in rows]
+    overall_max = rows[-1][1]
+    if overall_max is None or any(m is None for m in mins):
+        return None
+    return mins, overall_max
+
+
 async def introspect_columns(table: str, connection: str = "default") -> list[str]:
     """Return the source table's column names, or [] if it can't be inspected."""
     schema, name = _split_qualified(table)

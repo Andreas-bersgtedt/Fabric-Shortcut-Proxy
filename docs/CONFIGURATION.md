@@ -213,6 +213,20 @@ scan), `range` (integer key ranges), `date` (temporal ranges) or `auto`:
 Omit `split_strategy` to inherit the global `split_strategy`. Both fields are also
 editable per table in the config-builder **Tables** tab.
 
+Per-table `split_balance` controls how `range`/`date` splits are **sized**:
+`span` (default) cuts the key/time axis into equal widths; `count` cuts at row
+quantiles (`NTILE`) so each split holds roughly equal rows — which keeps splits
+near `split_target_rows` even when the key is skewed (gappy identity columns,
+time-clustered facts). `count` costs a one-time ordered scan of the key column at
+planning time (cheapest when the key is indexed) and falls back to `span` when
+the source can't compute quantiles; it does not change the number of splits or
+the serving queries. Omit to inherit the global `split_balance`.
+
+```json
+{ "name": "clickstream", "source_table": "dbo.clickstream", "key_column": "event_id",
+  "split_strategy": "range", "split_balance": "count", "split_target_rows": 1000000 }
+```
+
 ---
 
 ## 4. PostgreSQL: single table (env only, no Python)

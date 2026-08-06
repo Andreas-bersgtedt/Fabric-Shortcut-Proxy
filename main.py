@@ -187,7 +187,7 @@ async def lifespan(app: FastAPI):
         # contiguous key range (from the source MIN/MAX) so materialization reads
         # only its slice off the PK index instead of a full-table modulo scan.
         # Best-effort: falls back to modulo per table on empty/non-integer keys.
-        if config.SPLIT_STRATEGY in ("range", "date", "auto") or any(
+        if any(t.effective_split_strategy in ("range", "date", "auto") for t in runtime_tables) or any(
             t.effective_split_target_rows > 0 for t in runtime_tables
         ):
             from planner.split_planner import plan_ranges_for_snapshot

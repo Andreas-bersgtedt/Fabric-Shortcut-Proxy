@@ -313,7 +313,7 @@ async def plan_ranges_for_snapshot(snap) -> bool:
     from db.executor import fetch_column_bounds, fetch_key_bounds
 
     table = snap.table
-    strategy = config.SPLIT_STRATEGY
+    strategy = table.effective_split_strategy
     # Dynamic split planning targets bounded rows/split; when enabled, treat the
     # legacy modulo default as range planning so each split reads only its slice.
     if strategy == "modulo" and table.effective_split_target_rows > 0:

@@ -53,7 +53,7 @@
   .trow { display:flex; align-items:center; gap:8px; padding:6px 10px; border-top:1px solid var(--line); }
   .trow .name { flex:1; }
   .trow .kind { font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
-  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto; gap:8px; align-items:center;
+  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto auto; gap:8px; align-items:center;
             padding:8px 10px; border-top:1px solid var(--line); }
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
@@ -99,7 +99,7 @@
   .tgcount { color:var(--muted); font-weight:400; font-size:12px; margin-left:auto; }
   .tgbody { display:none; }
   .tgroup.open .tgbody { display:block; }
-  .mini { width:90px; } .keysel { width:150px; }
+  .mini { width:90px; } .keysel { width:150px; } .stratsel { width:100px; }
   .invalid { color:var(--err); font-size:11px; }
   pre { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:12px;
         overflow:auto; max-height:420px; font-size:12px; }
@@ -221,7 +221,7 @@
 
   <div class="card" id="selectedCard" style="margin-top:16px; display:none;">
     <h2>Per-Table Configuration</h2>
-    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Adjust the key column and split count, or remove a table with ✕.</div>
+    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Adjust the key column, split strategy, split count and target rows per split, or remove a table with ✕. Blank strategy/count/target inherit the global defaults.</div>
     <div id="selectedList"></div>
     <div class="actions">
       <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
@@ -827,6 +827,7 @@ function applyBootstrap(builder){
       key_column: t.key_column || null,
       num_splits: (t.num_splits==null ? null : parseInt(t.num_splits)),
       split_target_rows: (t.split_target_rows==null ? null : parseInt(t.split_target_rows)),
+      split_strategy: t.split_strategy || null,
       integer_keys: t.key_column ? [t.key_column] : [],
       columns: configuredSchema.map((column, index)=>policyColumn(column, index)),
       schema_explicit: configuredSchema.length>0,
@@ -1044,7 +1045,7 @@ function bulk(on){
 }
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
-  key_column:null, num_splits:null, split_target_rows:null,
+  key_column:null, num_splits:null, split_target_rows:null, split_strategy:null,
   integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false }; }
 
 function policyColumn(column, index){
@@ -1230,6 +1231,14 @@ function renderSelected(){
         renderSelected(); persistConns();
       };
 
+      const strat = document.createElement("select"); strat.className="stratsel";
+      strat.title="Split strategy for this table (blank = global default): modulo, range, date or auto";
+      for(const [val,label] of [["","strategy"],["modulo","modulo"],["range","range"],["date","date"],["auto","auto"]]){
+        const o=document.createElement("option"); o.value=val; o.textContent=label;
+        if(val===(s.split_strategy||"")) o.selected=true; strat.appendChild(o);
+      }
+      strat.onchange = ()=>{ s.split_strategy = strat.value||null; updatePreview(); };
+
       const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
       splits.title="Splits (virtual Parquet files) for this table (blank = global default)";
       splits.value = s.num_splits||""; splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; updatePreview(); };
@@ -1244,7 +1253,7 @@ function renderSelected(){
         renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
       };
 
-      row.append(src, keysel, splits, target, rm); table.appendChild(row);
+      row.append(src, keysel, strat, splits, target, rm); table.appendChild(row);
       if(s.columns.length){
         const toggle=document.createElement("button"); toggle.className="iconbtn policy-toggle";
         toggle.textContent=(s.policies_open ? "Hide" : "Edit")+" column policies";
@@ -1266,6 +1275,7 @@ function renderSelected(){
 function tableConfig(entry){
   const table = {name:entry.name, source_table:entry.source_table, key_column:entry.key_column};
   if(entry.num_splits) table.num_splits=parseInt(entry.num_splits);
+  if(entry.split_strategy) table.split_strategy=entry.split_strategy;
   if(entry.split_target_rows) table.split_target_rows=parseInt(entry.split_target_rows);
   if(entry.connection && entry.connection!=="default") table.connection=entry.connection;
   const policyChanged = entry.columns.some(column=>column.policy!=="keep" || column.name!==column.source);

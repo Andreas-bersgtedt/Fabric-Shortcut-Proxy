@@ -199,6 +199,20 @@ effective cap is `max(query_max_rows, split_target_rows)`, so a larger target is
 never truncated by the smaller default. Omit the field to inherit the global
 `split_target_rows`.
 
+Per-table `split_strategy` overrides the global strategy for a single table, so a
+small dimension and a large fact table can plan differently — `modulo` (full
+scan), `range` (integer key ranges), `date` (temporal ranges) or `auto`:
+
+```json
+{ "name": "customers", "source_table": "dbo.customers", "key_column": "customer_id",
+  "num_splits": 4, "split_strategy": "modulo" },
+{ "name": "clickstream", "source_table": "dbo.clickstream", "key_column": "event_id",
+  "split_strategy": "range", "split_target_rows": 1000000 }
+```
+
+Omit `split_strategy` to inherit the global `split_strategy`. Both fields are also
+editable per table in the config-builder **Tables** tab.
+
 ---
 
 ## 4. PostgreSQL: single table (env only, no Python)

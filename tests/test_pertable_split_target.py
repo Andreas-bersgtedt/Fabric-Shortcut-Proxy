@@ -127,3 +127,67 @@ def test_tabledef_from_json_parses_override():
 def test_tabledef_from_json_absent_override_is_none():
     t = _tabledef_from_json({"name": "orders", "source_table": "dbo.orders"})
     assert t.split_target_rows is None
+
+
+def test_effective_split_strategy_falls_back_to_global(monkeypatch):
+    monkeypatch.setattr(config, "SPLIT_STRATEGY", "modulo", raising=False)
+    assert _table().effective_split_strategy == "modulo"
+
+
+def test_effective_split_strategy_uses_override(monkeypatch):
+    monkeypatch.setattr(config, "SPLIT_STRATEGY", "modulo", raising=False)
+    assert _table(split_strategy="range").effective_split_strategy == "range"
+
+
+def test_tabledef_normalizes_strategy_case():
+    assert _table(split_strategy="RANGE").split_strategy == "range"
+
+
+def test_tabledef_from_json_parses_strategy():
+    t = _tabledef_from_json({
+        "name": "clickstream",
+        "source_table": "dbo.clickstream",
+        "key_column": "event_id",
+        "split_strategy": "range",
+    })
+    assert t.split_strategy == "range"
+
+
+def test_tabledef_from_json_absent_strategy_is_none():
+    t = _tabledef_from_json({"name": "orders", "source_table": "dbo.orders"})
+    assert t.split_strategy is None
+
+
+@pytest.mark.asyncio
+async def test_plan_ranges_honors_per_table_strategy(monkeypatch):
+    from planner.split_planner import plan_ranges_for_snapshot
+
+    # Global strategy is modulo + dynamic planning disabled, but the table forces range.
+    monkeypatch.setattr(config, "SPLIT_STRATEGY", "modulo", raising=False)
+    monkeypatch.setattr(config, "SPLIT_TARGET_ROWS", 0, raising=False)
+    monkeypatch.setattr("planner.split_planner.capabilities_for_db_url", lambda _u: _Caps())
+
+    async def _fake_bounds(_table: str, _col: str, connection: str = "default"):
+        return 1, 400_000
+
+    monkeypatch.setattr("db.executor.fetch_key_bounds", _fake_bounds)
+
+    table = _table(split_strategy="range")
+    base = "db/local/default/dbo/events"
+    snap = SnapshotState(
+        snapshot_id=1, sequence_number=1, watermark_ms=1_700_000_000_000,
+        manifest_list_key=f"{base}/metadata/snap.avro",
+        manifest_file_key=f"{base}/metadata/m1.avro",
+        metadata_key=f"{base}/metadata/v1.metadata.json",
+        version_hint_key=f"{base}/metadata/version-hint.text",
+        table=table, table_path=base, legacy_table_path=base,
+    )
+    snap.splits = [
+        SplitDescriptor(split_index=i, num_splits=4,
+                        object_key=f"{base}/data/split-{i}.parquet",
+                        watermark_ms=snap.watermark_ms, table=table)
+        for i in range(4)
+    ]
+    assert await plan_ranges_for_snapshot(snap) is True
+    assert all(s.key_lo is not None and s.key_hi is not None for s in snap.splits)
+

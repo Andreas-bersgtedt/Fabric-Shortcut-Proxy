@@ -38,7 +38,7 @@ async def _ensure_snapshots() -> None:
 
         await resolve_tables(config.TABLES)
         build_all_snapshots(config.TABLES, config.BUCKET_NAME, config.WAREHOUSE_PREFIX)
-        if config.SPLIT_STRATEGY in ("range", "date", "auto") or any(
+        if any(t.effective_split_strategy in ("range", "date", "auto") for t in config.TABLES) or any(
             t.effective_split_target_rows > 0 for t in config.TABLES
         ):
             from planner.split_planner import plan_ranges_for_snapshot

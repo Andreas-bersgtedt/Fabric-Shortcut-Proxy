@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fabric Shortcut Proxy | Lite and Enterprise Workflows</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("clawpilotTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--cp-bg);
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.5;
+    }
+    button { font: inherit; }
+    code {
+      font-family: Consolas, "Courier New", Courier, monospace;
+      color: var(--cp-accent);
+    }
+    .shell { max-width: 1440px; margin: 0 auto; padding: 0 28px 64px; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 64px;
+      border-bottom: 1px solid var(--cp-border);
+      background: var(--cp-overlay);
+      backdrop-filter: blur(12px);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; }
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--cp-accent);
+      color: var(--cp-accent-fg);
+      font-size: 13px;
+    }
+    .top-actions { display: flex; gap: 8px; }
+    .icon-button {
+      width: 36px;
+      height: 36px;
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      cursor: pointer;
+    }
+    .icon-button:hover { border-color: var(--cp-accent); color: var(--cp-accent); }
+    header { padding: 48px 0 28px; border-bottom: 1px solid var(--cp-border); }
+    .eyebrow { margin: 0 0 8px; color: var(--cp-accent); font-weight: 700; font-size: 13px; text-transform: uppercase; }
+    h1 { max-width: 900px; margin: 0; font-size: clamp(34px, 5vw, 64px); line-height: 1.04; letter-spacing: 0; }
+    .lede { max-width: 820px; margin: 18px 0 0; color: var(--cp-text-muted); font-size: 18px; }
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 28px;
+      overflow: hidden;
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      background: var(--cp-border);
+    }
+    .summary-item { padding: 16px; background: var(--cp-surface); }
+    .summary-item b { display: block; font-size: 20px; }
+    .summary-item span { color: var(--cp-text-muted); font-size: 13px; }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin: 28px 0 20px;
+      padding: 4px;
+      width: fit-content;
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      background: var(--cp-surface-soft);
+    }
+    .tab {
+      border: 0;
+      border-radius: 6px;
+      padding: 8px 14px;
+      background: transparent;
+      color: var(--cp-text-muted);
+      cursor: pointer;
+    }
+    .tab[aria-selected="true"] { background: var(--cp-accent); color: var(--cp-accent-fg); }
+    .panel { display: none; }
+    .panel.active { display: block; animation: reveal 240ms ease-out both; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    section { padding: 32px 0; border-bottom: 1px solid var(--cp-border); }
+    h2 { margin: 0 0 8px; font-size: 26px; letter-spacing: 0; }
+    h3 { margin: 0 0 12px; font-size: 17px; letter-spacing: 0; }
+    .section-note { max-width: 820px; margin: 0 0 22px; color: var(--cp-text-muted); }
+    .diagram {
+      overflow-x: auto;
+      padding: 24px;
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      background: var(--cp-bg-elevated);
+    }
+    .flow { display: flex; align-items: stretch; gap: 0; min-width: 1040px; }
+    .step {
+      position: relative;
+      flex: 1;
+      min-width: 150px;
+      padding: 16px 18px;
+      border: 1px solid var(--cp-border);
+      background: var(--cp-surface);
+    }
+    .step:first-child { border-radius: 8px 0 0 8px; }
+    .step:last-child { border-radius: 0 8px 8px 0; }
+    .step + .step { border-left: 0; }
+    .step + .step::before {
+      content: "›";
+      position: absolute;
+      left: -8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      background: var(--cp-accent);
+      color: var(--cp-accent-fg);
+      z-index: 2;
+    }
+    .step .num { color: var(--cp-accent); font-weight: 800; font-size: 12px; }
+    .step b { display: block; margin: 5px 0; }
+    .step small { display: block; color: var(--cp-text-muted); line-height: 1.35; }
+    .handover { box-shadow: inset 0 3px 0 var(--cp-accent); }
+    .branches { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 12px; min-width: 760px; }
+    .branch { border: 1px solid var(--cp-border); border-radius: 8px; background: var(--cp-surface); }
+    .branch h3 { padding: 14px 16px; border-bottom: 1px solid var(--cp-border); background: var(--cp-surface-soft); }
+    .branch ol { margin: 0; padding: 4px 16px 16px 40px; }
+    .branch li { padding: 7px 0; color: var(--cp-text-muted); }
+    .branch li::marker { color: var(--cp-accent); font-weight: 700; }
+    .sequence { min-width: 880px; }
+    .seq-row { display: grid; grid-template-columns: 180px 1fr 180px; align-items: center; min-height: 58px; }
+    .actor { padding: 10px 12px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface); font-weight: 600; }
+    .actor.right { text-align: right; }
+    .message { position: relative; margin: 0 14px; border-top: 2px solid var(--cp-border-strong); text-align: center; color: var(--cp-text-muted); font-size: 13px; }
+    .message::after { content: "›"; position: absolute; right: -2px; top: -15px; color: var(--cp-accent); font-size: 20px; }
+    .message.back::after { right: auto; left: -2px; transform: rotate(180deg); }
+    .lane-grid { display: grid; grid-template-columns: repeat(4, minmax(210px, 1fr)); gap: 12px; min-width: 920px; }
+    .lane { border-top: 4px solid var(--cp-accent); background: var(--cp-surface); border-radius: 4px 4px 8px 8px; border-right: 1px solid var(--cp-border); border-bottom: 1px solid var(--cp-border); border-left: 1px solid var(--cp-border); }
+    .lane h3 { padding: 14px 16px 0; }
+    .lane ul { margin: 0; padding: 0 16px 16px 34px; color: var(--cp-text-muted); }
+    .lane li { margin: 8px 0; }
+    .matrix-wrap { overflow-x: auto; border: 1px solid var(--cp-border); border-radius: 8px; }
+    table { width: 100%; min-width: 820px; border-collapse: collapse; background: var(--cp-surface); }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--cp-border); text-align: left; vertical-align: top; }
+    th { background: var(--cp-surface-soft); font-size: 13px; }
+    td { color: var(--cp-text-muted); }
+    td:first-child { color: var(--cp-text); font-weight: 600; }
+    .badge { display: inline-block; border-radius: 999px; padding: 3px 8px; background: var(--cp-accent-soft); color: var(--cp-accent); font-size: 12px; font-weight: 700; }
+    .callout { margin-top: 16px; padding: 14px 16px; border-left: 4px solid var(--cp-warning); background: var(--cp-surface); color: var(--cp-text-muted); }
+    footer { padding-top: 28px; color: var(--cp-text-muted); font-size: 13px; }
+    @media (max-width: 760px) {
+      .shell { padding: 0 16px 44px; }
+      .topbar { min-height: 56px; }
+      .brand span:last-child { display: none; }
+      header { padding-top: 32px; }
+      .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tabs { width: 100%; }
+      .tab { flex: 1; padding: 8px; }
+      .diagram { padding: 14px; }
+    }
+    @media print {
+      .topbar, .tabs { display: none; }
+      .shell { max-width: none; padding: 0; }
+      .panel { display: block; }
+      .diagram { overflow: visible; break-inside: avoid; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="topbar" aria-label="Page tools">
+      <div class="brand"><span class="mark">FSP</span><span>Workflow reference</span></div>
+      <div class="top-actions">
+        <button class="icon-button" id="themeButton" title="Toggle theme" aria-label="Toggle theme">◐</button>
+        <button class="icon-button" id="printButton" title="Print workflow" aria-label="Print workflow">⎙</button>
+      </div>
+    </nav>
+
+    <header>
+      <p class="eyebrow">Fabric Shortcut Proxy</p>
+      <h1>Lite and Enterprise runtime handover</h1>
+      <p class="lede">Process maps from configuration and startup to S3 serving, operational control, failure recovery, scaling, and shutdown. Handover-marked steps show where ownership changes.</p>
+      <div class="summary-strip" aria-label="Workflow summary">
+        <div class="summary-item"><b>1</b><span>Agent in Lite</span></div>
+        <div class="summary-item"><b>N</b><span>Supervised Agents in Enterprise</span></div>
+        <div class="summary-item"><b>9000+</b><span>Data-plane ports</span></div>
+        <div class="summary-item"><b>9200</b><span>Manager control port</span></div>
+      </div>
+    </header>
+
+    <div class="tabs" role="tablist" aria-label="Edition workflow">
+      <button class="tab" role="tab" aria-selected="true" aria-controls="shared">Shared path</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="lite">Lite</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="enterprise">Enterprise</button>
+    </div>
+
+    <main>
+      <div class="panel active" id="shared" role="tabpanel">
+        <section>
+          <h2>Shared S3 request path</h2>
+          <p class="section-note">Both editions run the same Agent. Enterprise adds routing and lifecycle control around it.</p>
+          <div class="diagram">
+            <div class="flow">
+              <div class="step"><span class="num">01</span><b>Fabric request</b><small>GET, HEAD, list, and byte ranges</small></div>
+              <div class="step"><span class="num">02</span><b>Authenticate</b><small>SigV4 verification and per-key ACL</small></div>
+              <div class="step"><span class="num">03</span><b>Route bucket</b><small>Warehouse table or mounted backend</small></div>
+              <div class="step"><span class="num">04</span><b>Resolve object</b><small>Metadata, manifest, Delta log, or split</small></div>
+              <div class="step"><span class="num">05</span><b>Read or generate</b><small>Cache/store hit, SQL pushdown, or passthrough</small></div>
+              <div class="step"><span class="num">06</span><b>Return bytes</b><small>Stable 200/206 response with audit and trace</small></div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Request branches</h2>
+          <p class="section-note">The bucket and object key determine which branch owns the read.</p>
+          <div class="diagram">
+            <div class="branches">
+              <article class="branch"><h3>Metadata</h3><ol><li>Resolve table snapshot</li><li>Read or build metadata bytes</li><li>Declare exact split paths and sizes</li><li>Return Iceberg or Delta object</li></ol></article>
+              <article class="branch"><h3>Parquet split</h3><ol><li>Check pinned cache or artifact store</li><li>Build parameterized split SQL on miss</li><li>Encode rows as Parquet</li><li>Serve complete or ranged bytes</li></ol></article>
+              <article class="branch"><h3>Mounted bucket</h3><ol><li>Resolve mount and confine prefix</li><li>Select local, S3, or Azure backend</li><li>Stream requested byte range</li><li>Write access or denial audit event</li></ol></article>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="panel" id="lite" role="tabpanel">
+        <section>
+          <h2>Lite end-to-end lifecycle</h2>
+          <p class="section-note">The operator or external service manager owns the single Agent process. Accent-topped steps are ownership handovers.</p>
+          <div class="diagram">
+            <div class="flow">
+              <div class="step handover"><span class="num">01 · HANDOVER</span><b>Operator to process</b><small>Install core package; provide JSON and environment</small></div>
+              <div class="step"><span class="num">02</span><b>Agent startup</b><small>Validate config, reflect schemas, choose split keys</small></div>
+              <div class="step"><span class="num">03</span><b>Prepare tables</b><small>Build snapshots; eager, lazy, virtual, or refresh path</small></div>
+              <div class="step handover"><span class="num">04 · HANDOVER</span><b>Runtime to Fabric</b><small>Readiness succeeds; shortcut targets port 9000</small></div>
+              <div class="step"><span class="num">05</span><b>Serve and observe</b><small>S3 reads, metrics, monitor, logs, refresh</small></div>
+              <div class="step handover"><span class="num">06 · HANDOVER</span><b>Exit to operator</b><small>External owner handles restart or config correction</small></div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Lite startup decisions</h2>
+          <div class="diagram">
+            <div class="branches">
+              <article class="branch"><h3>Auto refresh</h3><ol><li>Materialize content-addressed table</li><li>Publish current snapshot</li><li>Prime source change probe</li><li>Start freshness poller</li></ol></article>
+              <article class="branch"><h3>Eager</h3><ol><li>Build split descriptors and ranges</li><li>Generate every split</li><li>Pin authoritative bytes</li><li>Publish Delta log when selected</li></ol></article>
+              <article class="branch"><h3>Lazy or virtual</h3><ol><li>Build descriptors without full reads</li><li>Wait for metadata or data access</li><li>Generate before declaring exact size</li><li>Pin in lazy; evict in virtual</li></ol></article>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Lite recovery ownership</h2>
+          <div class="diagram">
+            <div class="sequence">
+              <div class="seq-row"><span class="actor">Agent</span><span class="message">health or process failure</span><span class="actor right">External monitor</span></div>
+              <div class="seq-row"><span class="actor">Logs / exit code</span><span class="message back">inspect cause</span><span class="actor right">Operator</span></div>
+              <div class="seq-row"><span class="actor">Exit 78</span><span class="message">correct DB or configuration</span><span class="actor right">Config owner</span></div>
+              <div class="seq-row"><span class="actor">Service command</span><span class="message back">restart main.py</span><span class="actor right">OS / container</span></div>
+              <div class="seq-row"><span class="actor">/readyz 200</span><span class="message">restore traffic</span><span class="actor right">Fabric</span></div>
+            </div>
+          </div>
+          <div class="callout">Lite has no internal restart loop. Run it under a Windows service, systemd, container orchestrator, or another process owner when automatic recovery is required.</div>
+        </section>
+      </div>
+
+      <div class="panel" id="enterprise" role="tabpanel">
+        <section>
+          <h2>Enterprise control handover</h2>
+          <p class="section-note">The operator starts one Manager. The Manager becomes the process owner and passes a fleet contract to each Agent.</p>
+          <div class="diagram">
+            <div class="flow">
+              <div class="step handover"><span class="num">01 · HANDOVER</span><b>Operator to Manager</b><small>Launcher prepares packages, ports, count, gateway, and HA</small></div>
+              <div class="step"><span class="num">02</span><b>Manager startup</b><small>Hydrate credentials, validate config, acquire HA lease</small></div>
+              <div class="step handover"><span class="num">03 · HANDOVER</span><b>Manager to supervisor</b><small>Create one child owner per Agent index</small></div>
+              <div class="step"><span class="num">04</span><b>Spawn contract</b><small>ID, port, shard, mode, Manager URL, shared store</small></div>
+              <div class="step handover"><span class="num">05 · HANDOVER</span><b>Agent to registry</b><small>Register, receive lease, report epochs by heartbeat</small></div>
+              <div class="step"><span class="num">06</span><b>Fleet ready</b><small>Gateway or external LB sends S3 reads to live Agents</small></div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Fleet ownership lanes</h2>
+          <div class="diagram">
+            <div class="lane-grid">
+              <article class="lane"><h3>Operator</h3><ul><li>Starts and stops Manager</li><li>Sets desired fleet count</li><li>Corrects permanent config faults</li><li>Keeps control port private</li></ul></article>
+              <article class="lane"><h3>Manager</h3><ul><li>Owns control and admin APIs</li><li>Maintains registry and HA role</li><li>Creates supervisors</li><li>Optionally proxies S3 traffic</li></ul></article>
+              <article class="lane"><h3>Supervisor</h3><ul><li>Spawns one child process</li><li>Samples process memory</li><li>Restarts with backoff</li><li>Stops on exit 78 or crash loop</li></ul></article>
+              <article class="lane"><h3>Agent</h3><ul><li>Owns S3 auth and serving</li><li>Builds assigned splits</li><li>Publishes to shared store</li><li>Registers and heartbeats</li></ul></article>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Drain and replacement sequence</h2>
+          <div class="diagram">
+            <div class="sequence">
+              <div class="seq-row"><span class="actor">Admin console</span><span class="message">queue drain</span><span class="actor right">Registry</span></div>
+              <div class="seq-row"><span class="actor">Agent heartbeat</span><span class="message back">deliver command</span><span class="actor right">Registry</span></div>
+              <div class="seq-row"><span class="actor">Agent</span><span class="message">/readyz becomes 503</span><span class="actor right">Gateway / LB</span></div>
+              <div class="seq-row"><span class="actor">Agent</span><span class="message">graceful exit after drain window</span><span class="actor right">Supervisor</span></div>
+              <div class="seq-row"><span class="actor">Supervisor</span><span class="message">spawn replacement</span><span class="actor right">New Agent</span></div>
+              <div class="seq-row"><span class="actor">New Agent</span><span class="message">new lease and warm store reads</span><span class="actor right">Registry</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>Failure and HA decisions</h2>
+          <div class="diagram">
+            <div class="branches">
+              <article class="branch"><h3>Transient Agent crash</h3><ol><li>Supervisor sees child exit</li><li>Record restart in rapid window</li><li>Wait configured backoff</li><li>Spawn and register replacement</li></ol></article>
+              <article class="branch"><h3>Permanent Agent fault</h3><ol><li>Agent exits with code 78</li><li>Supervisor does not restart</li><li>Manager control UI stays available</li><li>Operator fixes config, then restarts</li></ol></article>
+              <article class="branch"><h3>Manager leadership loss</h3><ol><li>Lease renew fails</li><li>Former primary stops Agents</li><li>Standby acquires shared lease</li><li>New primary starts supervised fleet</li></ol></article>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section>
+        <h2>Responsibility matrix</h2>
+        <p class="section-note">The completion signal is the point at which the next owner can act.</p>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>Stage</th><th>Lite owner</th><th>Enterprise owner</th><th>Completion signal</th></tr></thead>
+            <tbody>
+              <tr><td>Process creation</td><td>Operator / OS service</td><td>Manager supervisor</td><td>Agent PID exists</td></tr>
+              <tr><td>Source validation</td><td>Agent</td><td>Each Agent</td><td>Startup continues or exits <code>78</code></td></tr>
+              <tr><td>Split generation</td><td>Single Agent</td><td>Owning shard</td><td>Exact size and rows stored</td></tr>
+              <tr><td>Client routing</td><td>Direct endpoint</td><td>Gateway, external LB, or direct</td><td>Live Agent receives request</td></tr>
+              <tr><td>Health observation</td><td>External monitor</td><td>Registry + supervisor</td><td>Readiness and heartbeat age known</td></tr>
+              <tr><td>Drain</td><td>External traffic owner</td><td>Manager command + Agent</td><td>Readiness fails before exit</td></tr>
+              <tr><td>Crash recovery</td><td>External process owner</td><td>Supervisor</td><td>Replacement has a new lease</td></tr>
+              <tr><td>Shutdown</td><td>Operator stops Agent</td><td>Manager stops all supervisors</td><td>Tasks stop; DB engines dispose</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span class="badge">Current implementation</span>
+      <p>Grounded in <code>main.py</code>, <code>enterprise/manager.py</code>, <code>enterprise/agent_link.py</code>, and <code>enterprise/control/</code>.</p>
+    </footer>
+  </div>
+
+  <script>
+    const tabs = Array.from(document.querySelectorAll(".tab"));
+    const panels = Array.from(document.querySelectorAll(".panel"));
+
+    function activateTab(tab) {
+      tabs.forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+      panels.forEach((panel) => panel.classList.toggle("active", panel.id === tab.getAttribute("aria-controls")));
+    }
+
+    tabs.forEach((tab) => tab.addEventListener("click", () => activateTab(tab)));
+    document.getElementById("printButton").addEventListener("click", () => window.print());
+    document.getElementById("themeButton").addEventListener("click", () => {
+      const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+    });
+  </script>
+</body>
+</html>

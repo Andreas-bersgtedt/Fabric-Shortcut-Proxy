@@ -34,10 +34,58 @@ systemctl status fabric-shortcut-proxy.service
 ```
 
 Two recurring root causes tie most of this together:
+
 1. **Wrong venv** — you installed a package into a dev venv, but the service runs
    from a different venv/user. Always confirm with `pgrep -af enterprise.manager`.
 2. **Stale code** — the box only runs what's on `origin/main`; a local commit
    that isn't pushed (and a service that isn't restarted) changes nothing.
+
+---
+
+## Startup rejects `MATERIALIZE_MODE 'virtual'` with `AUTO_REFRESH`
+
+**Cause:** virtual mode regenerates unpersisted bytes for a fixed snapshot, while
+auto-refresh publishes new content-addressed snapshots. The modes have different
+snapshot ownership and cannot run together.
+
+Check every possible source. Environment variables have higher precedence than
+the section-specific JSON files:
+
+```bash
+sudo grep -E '^(MATERIALIZE_MODE|AUTO_REFRESH)=' /etc/fabric-shortcut-proxy.env || true
+grep -nE 'materialize_mode|auto_refresh' \
+  /opt/fabric-shortcut-proxy/config.performance.json \
+  /opt/fabric-shortcut-proxy/config.freshness.json 2>/dev/null || true
+
+# Print the two effective values as the service user without printing secrets.
+sudo -u fsp bash -c '
+  set -a
+  source /etc/fabric-shortcut-proxy.env
+  set +a
+  cd /opt/fabric-shortcut-proxy
+  .venv/bin/python -c "import config; print(\"MATERIALIZE_MODE=\" + config.MATERIALIZE_MODE); print(\"AUTO_REFRESH=\" + str(config.AUTO_REFRESH))"
+'
+```
+
+Choose one behavior:
+
+- Keep live snapshot refresh: set `MATERIALIZE_MODE=eager` and leave
+  `AUTO_REFRESH=1`.
+- Keep zero-at-rest virtual reads: leave `MATERIALIZE_MODE=virtual` and set
+  `AUTO_REFRESH=0`.
+
+Edit the source that currently wins, normally
+`/etc/fabric-shortcut-proxy.env`. Do not only edit JSON when the same setting is
+present in the environment file.
+
+```bash
+sudoedit /etc/fabric-shortcut-proxy.env
+sudo systemctl restart fabric-shortcut-proxy.service
+sudo journalctl -u fabric-shortcut-proxy.service --no-pager -o cat -n 60
+```
+
+The Manager validates this combination before spawning Agents. A startup exit
+is expected until the two effective values form a supported pair.
 
 ---
 
@@ -253,6 +301,7 @@ drain), config builder at `/_config/`. Mutating `/_manager` actions need the
 token via `X-Admin-Token` header or `?token=`.
 
 Notes:
+
 - `Manager.sh` `exec`s the Manager in the foreground → `Type=simple`.
 - `ADMIN_TOKEN` is read straight from the env (no CLI flag), keeping it out of
   `systemctl cat`.
@@ -305,6 +354,7 @@ git -C /opt/fabric-shortcut-proxy log --oneline -1     # should match the pushed
 ```
 
 If the deployed commit doesn't advance:
+
 - the unit uses `--no-pull`, or
 - local changes block the fast-forward → `cd /opt/fabric-shortcut-proxy &&
   sudo -u fsp git pull origin main` (add `--auto-stash` behavior as needed),

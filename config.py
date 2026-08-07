@@ -521,7 +521,13 @@ def validate_config() -> None:
         # lazy/virtual defer materialization to first read. Auto-refresh and
         # serving-image publishing require eager (fully materialized) data.
         if AUTO_REFRESH:
-            problems.append(f"MATERIALIZE_MODE {MATERIALIZE_MODE!r} is incompatible with AUTO_REFRESH.")
+            problems.append(
+                f"MATERIALIZE_MODE {MATERIALIZE_MODE!r} is incompatible with AUTO_REFRESH. "
+                "Choose one: set MATERIALIZE_MODE=eager to keep automatic snapshot "
+                "refresh, or set AUTO_REFRESH=0 to keep deferred materialization. "
+                "Environment variables override config.performance.json and "
+                "config.freshness.json."
+            )
         if PUBLISH_SERVING_IMAGE:
             problems.append(f"MATERIALIZE_MODE {MATERIALIZE_MODE!r} is incompatible with PUBLISH_SERVING_IMAGE (a full image needs materialized data).")
         # Lazy multi-shard needs a shared store so non-owner agents serve the owner's

@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Targeted S3 access diagnostics for Direct Lake (issue #11).** New
+  `S3_ACCESS_LOG` flag (default on) emits structured `s3_object_response` logs for
+  ranged reads and `_delta_log` commits (key, kind, status, requested/resolved
+  range, bytes served, ETag), `s3_list_delta_log` for the commits a reader
+  discovers, and `delta_log_commit_missing` when an expected `NN.json` commit is
+  absent. See [DIRECTLAKE_UPN_INVESTIGATION.md](DIRECTLAKE_UPN_INVESTIGATION.md);
+  the `upn claim is not present` trace line is a benign app-only-token log, not the
+  root cause.
 - **Preinstalled source-driver bundle.** The standard Windows and Linux Manager
   bootstraps now install PostgreSQL, Oracle, Redshift, Teradata, and Impala Python
   drivers through the aggregate `[drivers]` extra. Individual extras remain available

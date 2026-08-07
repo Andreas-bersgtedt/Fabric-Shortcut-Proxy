@@ -31,6 +31,8 @@ from system_config import (
     FORWARDED_ALLOW_IPS,
     # Admin UIs
     ENABLE_CONFIG_BUILDER, ENABLE_MONITOR,
+    # Diagnostics
+    S3_ACCESS_LOG,
     # Storage proxy
     ENABLE_STORAGE_PROXY, ENFORCE_MOUNT_AUTH, ENABLE_AUDIT_LOG, AUDIT_LOG_FILE,
     # Credential store

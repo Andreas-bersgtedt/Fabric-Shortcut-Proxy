@@ -124,6 +124,11 @@ ENABLE_CONFIG_BUILDER: bool = _get_bool("ENABLE_CONFIG_BUILDER", "enable_config_
 # Optional monitoring dashboard SPA at /_monitor
 ENABLE_MONITOR: bool = _get_bool("ENABLE_MONITOR", "enable_monitor", False)
 
+# Verbose S3 access diagnostics: structured per-response logs for _delta_log
+# commits and ranged reads, so a Direct Lake reproduction captures the exact
+# request/range/status chain. On by default; set to false to quiet the logs.
+S3_ACCESS_LOG: bool = _get_bool("S3_ACCESS_LOG", "s3_access_log", True)
+
 # Storage proxy: serve mounted buckets (config.mounts.json) as byte passthrough
 # from S3/NFS/SMB backends, alongside the relational->Iceberg path. Off by default.
 ENABLE_STORAGE_PROXY: bool = _get_bool("ENABLE_STORAGE_PROXY", "enable_storage_proxy", False)

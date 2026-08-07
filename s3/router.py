@@ -171,12 +171,19 @@ def _make_object_response(
     content_type: str,
     range_header: str | None,
     extra_headers: dict | None = None,
+    *,
+    key: str | None = None,
+    kind: str | None = None,
 ) -> FastAPIResponse:
-    if _range_is_unsatisfiable(range_header, len(data)):
+    total = len(data)
+    if _range_is_unsatisfiable(range_header, total):
+        if config.S3_ACCESS_LOG:
+            log.warning("s3_range_unsatisfiable", key=key, kind=kind,
+                        range=range_header, total=total)
         return FastAPIResponse(
             status_code=416,
             headers={
-                "Content-Range": f"bytes */{len(data)}",
+                "Content-Range": f"bytes */{total}",
                 "Accept-Ranges": "bytes",
             },
         )
@@ -191,7 +198,13 @@ def _make_object_response(
         **(extra_headers or {}),
     }
     if is_partial:
-        headers["Content-Range"] = f"bytes {start}-{end}/{len(data)}"
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+    # Capture the exact request/range/status chain for ranged reads and every
+    # _delta_log commit so a Direct Lake reproduction can be localized precisely.
+    if config.S3_ACCESS_LOG and (range_header is not None or kind == "delta_log"):
+        log.info("s3_object_response", key=key, kind=kind, status=status,
+                 range=range_header, start=start, end=end, total=total,
+                 served_bytes=len(sliced), etag=headers["ETag"])
     return FastAPIResponse(content=sliced, status_code=status, headers=headers)
 
 
@@ -400,6 +413,12 @@ async def list_objects_v2(
     # descent is exactly what the folder browser expects.
     matched_keys = [k for k in all_objects if k.startswith(prefix)]
 
+    # Direct Lake discovers commits by listing `_delta_log/`; record exactly which
+    # commit files the reader can see so a failed framing can be localized.
+    if config.S3_ACCESS_LOG and "_delta_log" in prefix:
+        log.info("s3_list_delta_log", prefix=prefix_in, delimiter=delimiter,
+                 matched=sorted(matched_keys))
+
     if delimiter:
         flat_objects: list[dict] = []
         common_prefix_set: set[str] = set()
@@ -514,9 +533,19 @@ async def get_object(
         from delta import log as delta_log
         commit = delta_log.get_commit_bytes(key)
         if commit is not None:
-            return _make_object_response(commit, "application/json", range_header)
-        # A _last_checkpoint probe or unknown log file -> 404 (expected).
-        log.debug("delta_log_not_found", key=key)
+            return _make_object_response(commit, "application/json", range_header,
+                                         key=key, kind="delta_log")
+        # A _last_checkpoint probe or unknown log file -> 404 (expected). A missing
+        # NN.json commit, however, is significant for a Direct Lake read: surface
+        # it with the commits we actually have so the gap is visible.
+        if config.S3_ACCESS_LOG and key.endswith(".json"):
+            available = sorted(
+                k for k in delta_log.delta_log_objects()
+                if "/_delta_log/" in k and k.endswith(".json")
+            )
+            log.warning("delta_log_commit_missing", key=key, available=available)
+        else:
+            log.debug("delta_log_not_found", key=key)
         return FastAPIResponse(
             content=error_response("NoSuchKey", f"Key {key!r} does not exist.", f"/{bucket}/{key}"),
             status_code=404,
@@ -531,24 +560,28 @@ async def get_object(
             if cached is None:
                 cached = build_metadata_json(snap)
                 cache.put_metadata(key, cached)
-            return _make_object_response(cached, "application/json", range_header)
+            return _make_object_response(cached, "application/json", range_header,
+                                         key=key, kind="metadata")
 
         if key == snap.version_hint_key:
-            return _make_object_response(_version_hint_bytes(key), "text/plain", range_header)
+            return _make_object_response(_version_hint_bytes(key), "text/plain", range_header,
+                                         key=key, kind="version_hint")
 
         if key == snap.manifest_list_key:
             cached = cache.get_metadata(key)
             if cached is None:
                 cached = build_manifest_list(snap)
                 cache.put_metadata(key, cached)
-            return _make_object_response(cached, "application/octet-stream", range_header)
+            return _make_object_response(cached, "application/octet-stream", range_header,
+                                         key=key, kind="manifest_list")
 
         if key == snap.manifest_file_key:
             cached = cache.get_metadata(key)
             if cached is None:
                 cached = build_manifest_file(snap)
                 cache.put_metadata(key, cached)
-            return _make_object_response(cached, "application/octet-stream", range_header)
+            return _make_object_response(cached, "application/octet-stream", range_header,
+                                         key=key, kind="manifest_file")
 
     # ---- Data objects (Parquet on demand) ----------------------------------
     split = get_split_by_key(key)
@@ -575,7 +608,8 @@ async def get_object(
             sql_ms=0.0, gen_ms=0.0, total_ms=(time.perf_counter() - _t_data0) * 1000.0,
             rows=split.record_count, resp_bytes=len(cached_parquet), cache_hit=True,
         )
-        return _make_object_response(cached_parquet, "application/octet-stream", range_header)
+        return _make_object_response(cached_parquet, "application/octet-stream", range_header,
+                                     key=key, kind="data")
 
     # SQL pushdown → Parquet (bounded concurrency to protect CPU/memory).
     try:
@@ -611,4 +645,5 @@ async def get_object(
         sql_ms=_sql_ms, gen_ms=_gen_ms, total_ms=(time.perf_counter() - _t_data0) * 1000.0,
         rows=len(rows), resp_bytes=len(parquet_bytes), cache_hit=False,
     )
-    return _make_object_response(parquet_bytes, "application/octet-stream", range_header)
+    return _make_object_response(parquet_bytes, "application/octet-stream", range_header,
+                                 key=key, kind="data")

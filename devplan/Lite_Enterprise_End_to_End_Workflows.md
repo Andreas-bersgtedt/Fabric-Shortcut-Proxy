@@ -304,7 +304,7 @@ sequenceDiagram
   S->>S: Record restart and apply backoff
   alt Below crash-loop limit
     S->>N: Spawn replacement with same fleet contract
-    N->>R: Register; receive a new lease
+    N->>R: Register and receive a new lease
     N->>N: Warm from shared artifact store
     G->>N: Resume routing when live
   else Rapid restart limit reached

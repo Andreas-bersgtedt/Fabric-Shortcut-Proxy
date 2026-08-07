@@ -102,6 +102,9 @@ def _get_float(env: str | None, key: str, default: float) -> float:
 #   SQL Server : mssql+aioodbc://user:pass@host/db?driver=ODBC+Driver+18+for+SQL+Server
 #   Oracle     : oracle+oracledb://user:pass@host:1521/ORCL
 #   Databricks : databricks://token:dapi...@<server-hostname>/<catalog>/<schema>
+#   Redshift   : redshift+redshift_connector://user:pass@host:5439/db
+#   Teradata   : teradatasql://user:pass@host/?database=db&dbs_port=1025
+#   Impala     : impala://host:21050/db
 #   SQLite     : sqlite+aiosqlite:///./poc_source.db
 DB_URL: str = _get_str("DB_URL", "db_url", "sqlite+aiosqlite:///./poc_source.db")
 

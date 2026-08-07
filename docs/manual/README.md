@@ -13,8 +13,9 @@ duplicating it.
 
 ## Who this is for
 
-- Operators standing up the proxy next to a SQL Server, PostgreSQL, Oracle, or
-  Databricks source, or in front of an existing file share or object store.
+- Operators standing up the proxy next to a SQL Server, PostgreSQL, Oracle,
+  Databricks, Amazon Redshift, Teradata, or Apache Impala source, or in front of
+  an existing file share or object store.
 - Administrators wiring Microsoft Fabric shortcuts to on-premises or private-network
   data without copying it into OneLake.
 - Engineers who need to understand the request path, the split model, and the

@@ -129,6 +129,12 @@ throwaway run, or just let the first real launch do it. To pre‑build cleanly:
 .\.venv\Scripts\python.exe -m pip install -e '.[postgres]'
 # Oracle source:
 .\.venv\Scripts\python.exe -m pip install -e '.[oracle]'
+# Amazon Redshift source (preview):
+.\.venv\Scripts\python.exe -m pip install -e '.[redshift]'
+# Teradata source (preview):
+.\.venv\Scripts\python.exe -m pip install -e '.[teradata]'
+# Apache Impala source (preview):
+.\.venv\Scripts\python.exe -m pip install -e '.[impala]'
 # Storage-proxy backends (only if serving files instead of a DB):
 #   .\.venv\Scripts\python.exe -m pip install -e '.[s3proxy]'      # S3 / MinIO
 #   .\.venv\Scripts\python.exe -m pip install -e '.[azureblob]'    # Azure Blob / ADLS

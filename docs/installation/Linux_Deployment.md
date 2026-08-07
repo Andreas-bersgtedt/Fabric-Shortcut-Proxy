@@ -151,6 +151,12 @@ cd /opt/fabric-shortcut-proxy
 sudo -u fsp ./.venv/bin/pip install -e '.[postgres]'
 # Oracle source:
 sudo -u fsp ./.venv/bin/pip install -e '.[oracle]'
+# Amazon Redshift source (preview):
+sudo -u fsp ./.venv/bin/pip install -e '.[redshift]'
+# Teradata source (preview):
+sudo -u fsp ./.venv/bin/pip install -e '.[teradata]'
+# Apache Impala source (preview):
+sudo -u fsp ./.venv/bin/pip install -e '.[impala]'
 # Encrypted credential store on Linux (recommended — see section 8):
 sudo -u fsp ./.venv/bin/pip install -e '.[credentials]'
 # Storage-proxy backends (only if you serve NAS/S3/Azure files instead of a DB):

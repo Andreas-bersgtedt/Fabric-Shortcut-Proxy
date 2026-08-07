@@ -95,6 +95,9 @@ run it locally only. `asyncpg` is required for PostgreSQL (`pip install asyncpg`
 | SQLite (demo) | `aiosqlite` | included | ✅ |
 | **SQL Server** | `aioodbc` **+** OS *ODBC Driver 18 for SQL Server* | driver bundled; install the ODBC driver from Microsoft | ⚠️ driver only |
 | **PostgreSQL** | `asyncpg` | `pip install asyncpg` | ❌ install it |
+| **Amazon Redshift** (preview) | `sqlalchemy-redshift` + `redshift-connector` | `pip install -e '.[redshift]'` | ❌ install it |
+| **Teradata** (preview) | `teradatasqlalchemy` | `pip install -e '.[teradata]'` | ❌ install it |
+| **Apache Impala** (preview) | `impyla` | `pip install -e '.[impala]'` | ❌ install it |
 
 ```powershell
 # PostgreSQL driver (NOT bundled)
@@ -115,6 +118,9 @@ The scheme prefix auto-selects the dialect:
 ```
 postgresql+asyncpg://user:pass@host:5432/dbname
 mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+redshift+redshift_connector://user:pass@host:5439/dbname
+teradatasql://user:pass@host/?database=dbname&dbs_port=1025
+impala://host:21050/dbname
 ```
 
 ### 3.2 The key column (`KEY_COLUMN`): the only thing you must choose

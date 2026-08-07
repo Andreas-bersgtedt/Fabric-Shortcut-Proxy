@@ -88,6 +88,16 @@ def _clean_error(exc: Exception) -> str:
             "`databricks-sqlalchemy`."
         )
         msg = f"{msg}\n{hint}"
+    for needle, extra, packages in (
+        ("sqlalchemy.dialects:redshift", "redshift", "sqlalchemy-redshift + redshift-connector"),
+        ("sqlalchemy.dialects:teradatasql", "teradata", "teradatasqlalchemy"),
+        ("sqlalchemy.dialects:impala", "impala", "impyla"),
+    ):
+        if f"can't load plugin: {needle}" in low:
+            msg = (
+                f"{msg}\nHint: the {extra} source driver is not installed in this "
+                f"environment. Install it with `pip install -e '.[{extra}]'` ({packages})."
+            )
     if "im002" in low and "sqldriverconnect" in low:
         drivers = _installed_sql_server_odbc_drivers()
         if drivers:

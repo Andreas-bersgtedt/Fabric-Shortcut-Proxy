@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse
 
 import config
 import cache.lru_cache as cache
+from db.capabilities import capabilities_for_db_url
 from iceberg.state_store import get_all_snapshots
 from observability import metrics, trace, querystats
 from observability.logbuffer import get_buffer
@@ -74,17 +75,31 @@ async def summary() -> dict:
     # at the db root, etc.) and shouldn't appear as a table row.
     names &= set(snap_by_table)
 
+    source_meta: dict[str, dict] = {}
+
+    def _source_for(connection_id: str) -> dict:
+        meta = source_meta.get(connection_id)
+        if meta is None:
+            caps = capabilities_for_db_url(config.effective_db_url(connection_id))
+            meta = {"flavor": caps.flavor, "execution_mode": caps.to_dict()["execution_mode"]}
+            source_meta[connection_id] = meta
+        return meta
+
     tables = []
     for name in sorted(names):
         t = tl.get(name, {})
         bk = t.get("by_kind", {}) if t else {}
         q = qtables.get(name, {})
         s = snap_by_table.get(name, {})
+        conn_id = s.get("connection", "default")
+        src = _source_for(conn_id)
         tables.append({
             "table": name,
             "version": s.get("version"),
             "snapshot_id": s.get("snapshot_id"),
-            "connection": s.get("connection", "default"),
+            "connection": conn_id,
+            "flavor": src["flavor"],
+            "execution_mode": src["execution_mode"],
             "splits": s.get("splits"),
             "total_records": s.get("total_records"),
             # request mix (from the trace)
@@ -135,6 +150,7 @@ async def summary() -> dict:
         "cache": cache.stats(),
         "sql_latency": m.get("sql_latency"),
         "tables": tables,
+        "sources": [{"connection": cid, **meta} for cid, meta in sorted(source_meta.items())],
         "recent_queries": qs["recent"],
     }
 

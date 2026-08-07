@@ -79,6 +79,7 @@ async def test_readyz(client):
     body = r.json()
     assert body["status"] == "ready"
     assert body["checks"] == {"snapshot": True, "database": True}
+    assert body["source"] == {"flavor": "sqlite", "execution_mode": "async-native"}
 
 
 async def test_metrics_prometheus_format(client):

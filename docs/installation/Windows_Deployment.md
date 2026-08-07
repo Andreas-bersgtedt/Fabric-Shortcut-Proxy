@@ -122,13 +122,12 @@ throwaway run, or just let the first real launch do it. To pre‑build cleanly:
 
 ---
 
-## 6. Install the source database driver
+## 6. Source database drivers
+
+The Manager bootstrap installs all supported Python database drivers through the `[drivers]`
+extra. No additional pip install is needed when using `Manager.ps1`.
 
 ```powershell
-# PostgreSQL source:
-.\.venv\Scripts\python.exe -m pip install -e '.[postgres]'
-# Oracle source:
-.\.venv\Scripts\python.exe -m pip install -e '.[oracle]'
 # Storage-proxy backends (only if serving files instead of a DB):
 #   .\.venv\Scripts\python.exe -m pip install -e '.[s3proxy]'      # S3 / MinIO
 #   .\.venv\Scripts\python.exe -m pip install -e '.[azureblob]'    # Azure Blob / ADLS

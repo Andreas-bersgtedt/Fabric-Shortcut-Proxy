@@ -1,5 +1,5 @@
 {
-  "_comment": "Connection configuration — database URL(s), query limits, resilience. Place as config.connection.json. Update db_url with your SQL Server, PostgreSQL, or Oracle credentials. The 'connection' section defines the DEFAULT source. Add a 'connections' array to serve tables from ADDITIONAL sources of different dialects; each table binds to one by id via its 'connection' field in config.tables.json (default: 'default').",
+  "_comment": "Connection configuration — database URL(s), query limits, resilience. Place as config.connection.json. Update db_url with your SQL Server, PostgreSQL, Oracle, Databricks, Amazon Redshift, Teradata, or Apache Impala credentials. The 'connection' section defines the DEFAULT source. Add a 'connections' array to serve tables from ADDITIONAL sources of different dialects; each table binds to one by id via its 'connection' field in config.tables.json (default: 'default').",
   "connection": {
     "_comment": "The DEFAULT source connection (id 'default'). Reserved id derived from db_url/DB_URL.",
     "db_url": "mssql+aioodbc://sa:YourPassword@localhost/source_db?driver=ODBC+Driver+18+for+SQL+Server",

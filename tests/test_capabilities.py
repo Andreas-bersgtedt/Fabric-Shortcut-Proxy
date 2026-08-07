@@ -43,3 +43,23 @@ def test_async_driver_detection():
     assert capabilities_for_dialect("mssql").async_driver is True
     assert capabilities_for_dialect("oracle").async_driver is False
     assert capabilities_for_db_url("databricks://token:pat@dbc").async_driver is False
+
+
+def test_flavor_from_db_url_expanded_sources():
+    assert flavor_from_db_url("redshift+redshift_connector://h:5439/db") == "redshift"
+    assert flavor_from_db_url("teradatasql://h/?database=dbc") == "teradata"
+    assert flavor_from_db_url("impala://h:21050/db") == "impala"
+    # Redshift must not be misread as PostgreSQL.
+    assert flavor_from_db_url("postgresql+asyncpg://h/db") == "postgresql"
+
+
+def test_expanded_sources_capabilities_are_conservative():
+    matrix = capability_matrix()
+    for flavor in ("redshift", "teradata", "impala"):
+        assert flavor in matrix
+        assert matrix[flavor]["execution_mode"] == "sync-threadpool-fallback"
+        assert matrix[flavor]["supports_deterministic_tokenization"] is False
+        assert matrix[flavor]["supports_random_tokenization"] is False
+        assert matrix[flavor]["supports_stats_histogram"] is False
+        assert matrix[flavor]["supports_fast_row_estimate"] is False
+        assert matrix[flavor]["required_connection_fields"] == []

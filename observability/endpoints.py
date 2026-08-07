@@ -16,6 +16,8 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 import cache.lru_cache as cache
+import config
+from db.capabilities import capabilities_for_db_url
 from db.executor import ping as db_ping
 from iceberg.state_store import get_all_snapshots
 from observability import metrics
@@ -55,10 +57,15 @@ async def readyz() -> JSONResponse:
 
     checks["database"] = await db_ping()
 
+    caps = capabilities_for_db_url(config.DB_URL)
     ready = all(checks.values())
     return JSONResponse(
         status_code=200 if ready else 503,
-        content={"status": "ready" if ready else "not_ready", "checks": checks},
+        content={
+            "status": "ready" if ready else "not_ready",
+            "checks": checks,
+            "source": {"flavor": caps.flavor, "execution_mode": caps.to_dict()["execution_mode"]},
+        },
     )
 
 

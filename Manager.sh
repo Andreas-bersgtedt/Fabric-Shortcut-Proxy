@@ -371,8 +371,8 @@ elif [[ $ARG_REINSTALL -eq 1 || ! -f "$STAMP_FILE" ]]; then
   step "Upgrading pip"
   "$VENV_PYTHON" -m pip install --upgrade pip --quiet
 
-  step "Installing project dependencies from pyproject.toml"
-  "$VENV_PYTHON" -m pip install -e . -e ./enterprise --quiet
+  step "Installing project dependencies and supported database drivers from pyproject.toml"
+  "$VENV_PYTHON" -m pip install -e '.[drivers]' -e ./enterprise --quiet
 
   : > "$STAMP_FILE"
   step "Dependencies installed"

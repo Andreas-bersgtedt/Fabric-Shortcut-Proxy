@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Preinstalled source-driver bundle.** The standard Windows and Linux Manager
+  bootstraps now install PostgreSQL, Oracle, Redshift, Teradata, and Impala Python
+  drivers through the aggregate `[drivers]` extra. Individual extras remain available
+  for minimal installs. Redshift, Teradata, and Impala live workload validation is complete.
+- **Expanded source platforms (preview): Amazon Redshift, Teradata, and Apache Impala
+  (issue #9).** Optional extras `[redshift]`, `[teradata]`, and `[impala]`; SQLAlchemy
+  URL and default-port registration (5439 / 1025 / 21050); per-flavor split-query
+  dialects (Redshift `%`/`LIMIT`, Teradata `MOD` with `QUALIFY` row caps, Impala
+  backtick/`LIMIT`); conservative capability flags (sync-threadpool execution; no
+  tokenization, statistics histogram, fast row estimate, or freshness probe); Config
+  Builder source entries with capability-driven token controls; and source flavor plus
+  execution mode in `/readyz` and the monitor summary. Nested or composite reflected
+  types (SUPER, VARIANT, ARRAY/MAP/STRUCT, PERIOD) fail closed instead of stringifying.
+  Live source-driver validation is complete for Redshift, Teradata, and Impala.
+
 ## [2.1.1]: 2026-08-05
 
 ### Added

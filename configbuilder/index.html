@@ -173,6 +173,9 @@
       <option value="mssql">SQL Server</option>
       <option value="oracle">Oracle</option>
       <option value="databricks">Databricks SQL Warehouse</option>
+      <option value="redshift">Amazon Redshift</option>
+      <option value="teradata">Teradata</option>
+      <option value="impala">Apache Impala</option>
     </select>
     <div class="row">
       <div><label>Host</label><input id="host" placeholder="db.example.com" /></div>
@@ -569,7 +572,7 @@ function initTabs(){
 }
 
 const $ = (id) => document.getElementById(id);
-const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443" };
+const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443", redshift: "5439", teradata: "1025", impala: "21050" };
 // Connection fields live in the per-connection manager; only global builder
 // settings are persisted through the generic form store.
 const PERSIST = ["bucket","numSplits","tableFormat","materializeMode","refreshPoll","refreshStrategy","refreshTtl"];
@@ -896,6 +899,7 @@ $("btnConnect").onclick = async () => {
   readFormIntoConn(c);
   c.db_url = data.db_url; c.db_url_masked = data.db_url_masked;
   c.flavor = (data.capabilities && data.capabilities.flavor) || conn.dialect; c.tested = true;
+  c.capabilities = data.capabilities || null;
   state.connections.set(connId, c);
   state.connection = conn; state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
   state.tables = data.tables || [];
@@ -1107,6 +1111,12 @@ async function runInspect(){
 // ---- selected config rows ----
 function connectionSupportsTokens(entry){
   const conn = state.connections.get(entry.connection || "default");
+  // Prefer the source's advertised capabilities (from the connection test); fall
+  // back to the known-tokenizable flavors for sources not yet re-tested.
+  const caps = conn?.capabilities;
+  if(caps){
+    return !!(caps.supports_deterministic_tokenization || caps.supports_random_tokenization);
+  }
   const flavor = String(conn?.flavor || conn?.dialect || "").toLowerCase();
   return ["mssql", "postgresql", "postgres", "oracle", "databricks"].includes(flavor);
 }

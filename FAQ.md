@@ -97,6 +97,8 @@ never the source password or cloud credential. See [docs/SECURITY.md](docs/SECUR
 
 **Which sources are supported?**
 SQLite (demo), **PostgreSQL**, **SQL Server**, **Oracle**, and **Databricks SQL Warehouse**.
+**Amazon Redshift**, **Teradata**, and **Apache Impala** are available in preview with
+sync-fallback execution. All three have completed live source workload validation.
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 [docs/ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](docs/ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
@@ -106,19 +108,28 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 |---|---|---|---|
 | SQLite | `aiosqlite` | in core | demo/dev only |
 | SQL Server | `aioodbc` (in core) **+ OS ODBC Driver 18** | driver from Microsoft (no Python extra) | Windows Integrated auth supported |
-| PostgreSQL | `asyncpg` | `pip install -e '.[postgres]'` | async‑native |
-| Oracle | `oracledb` | `pip install -e '.[oracle]'` | sync fallback, capability‑gated |
+| PostgreSQL | `asyncpg` | Manager bootstrap or `pip install -e '.[postgres]'` | async‑native |
+| Oracle | `oracledb` | Manager bootstrap or `pip install -e '.[oracle]'` | sync fallback, capability‑gated |
 | Databricks SQL | `databricks-sqlalchemy` (in core) | in core | needs `http_path` in the URL |
+| Amazon Redshift | `sqlalchemy-redshift` + `redshift-connector` | Manager bootstrap or `pip install -e '.[redshift]'` | preview; sync fallback |
+| Teradata | `teradatasqlalchemy` | Manager bootstrap or `pip install -e '.[teradata]'` | preview; sync fallback |
+| Apache Impala | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | preview; live validated |
 
 > The SQL Server ODBC driver is an **OS** package, not a pip extra. On Linux/macOS the
 > encrypted credential store additionally needs `pip install -e '.[credentials]'` (Windows uses
 > DPAPI, no extra).
+
+The standard Manager launchers install the aggregate `[drivers]` extra. Individual extras
+remain available for minimal manual or library-only installations.
 
 **What connection URL do I use?**
 - SQL Server: `mssql+aioodbc://user:pass@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes`
 - PostgreSQL: `postgresql+asyncpg://user:pass@host:5432/db`
 - Oracle: `oracle+oracledb://user:pass@host:1521/ORCLPDB1`
 - Databricks: `databricks://token:<PAT>@<workspace>:443?http_path=/sql/1.0/warehouses/<id>`
+- Amazon Redshift: `redshift+redshift_connector://user:pass@host:5439/db`
+- Teradata: `teradatasql://user:pass@host/?database=db&dbs_port=1025`
+- Apache Impala: `impala://host:21050/db`
 - SQLite: `sqlite+aiosqlite:///./poc_source.db`
 
 Always use a **read‑only** login scoped to the exposed tables. See

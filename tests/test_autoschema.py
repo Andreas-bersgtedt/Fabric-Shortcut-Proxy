@@ -62,6 +62,23 @@ def test_type_mapping_uuid_and_money():
     assert sqlalchemy_type_to_iceberg(MONEY()) == "decimal(19,4)"
 
 
+def test_type_mapping_semi_structured_text_is_stringified():
+    from sqlalchemy import JSON
+    assert sqlalchemy_type_to_iceberg(JSON()) == "string"
+
+
+def test_type_mapping_rejects_nested_composite_types():
+    from sqlalchemy import ARRAY
+    with pytest.raises(ValueError, match="nested or composite"):
+        sqlalchemy_type_to_iceberg(ARRAY(satypes.Integer()))
+    # Simulate vendor nested/semi-structured types by class name (no optional
+    # source drivers imported): Redshift SUPER, VARIANT, STRUCT, MAP, Teradata PERIOD.
+    for type_name in ("SUPER", "VARIANT", "STRUCT", "MAP", "PERIOD_DATE", "ARRAY_VARCHAR"):
+        fake_type = type(type_name, (), {})()
+        with pytest.raises(ValueError, match="nested or composite"):
+            sqlalchemy_type_to_iceberg(fake_type)
+
+
 def test_pyarrow_schema_handles_uuid_fixed_binary():
     import pyarrow as pa
     from iceberg.schema import _iceberg_to_pa

@@ -762,6 +762,12 @@ def _split_qualified(name: str) -> tuple[str | None, str]:
     return None, name
 
 
+# Reflected type-name tokens that denote nested/composite source types with no
+# scalar Iceberg representation (issue #9: Redshift SUPER, Teradata ARRAY/PERIOD,
+# Impala ARRAY/MAP/STRUCT, Snowflake-style VARIANT).
+_NESTED_SOURCE_TYPE_TOKENS = ("ARRAY", "MAP", "STRUCT", "SUPER", "VARIANT", "PERIOD")
+
+
 def sqlalchemy_type_to_iceberg(sa_type) -> str:
     """Map a reflected SQLAlchemy column type to an Iceberg primitive type string."""
     name = type(sa_type).__name__.upper()
@@ -804,6 +810,21 @@ def sqlalchemy_type_to_iceberg(sa_type) -> str:
         return "binary"
     if isinstance(sa_type, (satypes.String, satypes.Text, satypes.Enum)):
         return "string"
+
+    # Semi-structured text (JSON/XML) serializes losslessly to a string column;
+    # keep that mapping explicit rather than falling through by accident.
+    if "JSON" in name or "XML" in name:
+        return "string"
+
+    # Nested/composite source types (Redshift SUPER, Snowflake VARIANT, Teradata
+    # ARRAY/PERIOD, Impala ARRAY/MAP/STRUCT) have no scalar Iceberg representation;
+    # fail closed instead of silently stringifying a nested value.
+    if any(token in name for token in _NESTED_SOURCE_TYPE_TOKENS):
+        raise ValueError(
+            f"Source column type {type(sa_type).__name__!r} is a nested or composite "
+            "type that cannot be materialized as a scalar column. Exclude the column "
+            "or declare it explicitly in config.TABLES."
+        )
 
     # Fall back to the Python type SQLAlchemy would produce.
     try:

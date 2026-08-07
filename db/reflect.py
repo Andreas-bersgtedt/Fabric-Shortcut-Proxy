@@ -26,7 +26,9 @@ log = get_logger(__name__)
 
 _INTEGER_TYPES = ("int", "long")
 
-# dialect (as the SPA sends it) -> SQLAlchemy async drivername
+# dialect (as the SPA sends it) -> SQLAlchemy drivername. Postgres/MSSQL/SQLite
+# are async-native; the rest run through the sync-threadpool fallback. The three
+# Issue #9 sources use provisional plugin names confirmed in the driver gate.
 _DRIVERS: dict[str, str] = {
     "postgresql": "postgresql+asyncpg",
     "postgres": "postgresql+asyncpg",
@@ -35,6 +37,9 @@ _DRIVERS: dict[str, str] = {
     "oracle": "oracle+oracledb",
     "oraclesql": "oracle+oracledb",
     "databricks": "databricks",
+    "redshift": "redshift+redshift_connector",
+    "teradata": "teradatasql",
+    "impala": "impala",
     "sqlite": "sqlite+aiosqlite",   # tests / local files only
 }
 
@@ -43,6 +48,9 @@ _DEFAULT_PORTS: dict[str, int] = {
     "mssql": 1433, "sqlserver": 1433,
     "oracle": 1521, "oraclesql": 1521,
     "databricks": 443,
+    "redshift": 5439,
+    "teradata": 1025,
+    "impala": 21050,
 }
 
 # Schemas that are never interesting to expose as tables.
@@ -119,6 +127,22 @@ def build_url(
         q.setdefault("driver", driver or _default_mssql_odbc_driver())
         if trust_cert:
             q.setdefault("TrustServerCertificate", "yes")
+
+    # Teradata's driver takes the database and listener port as connection
+    # parameters (``database`` / ``dbs_port``), not as URL path/port components.
+    if drivername.startswith("teradatasql"):
+        if database:
+            q.setdefault("database", database)
+        eff_port = port or _DEFAULT_PORTS.get(key)
+        if eff_port:
+            q.setdefault("dbs_port", str(eff_port))
+        return URL.create(
+            drivername,
+            username=username or None,
+            password=password or None,
+            host=host or None,
+            query=q,
+        )
 
     return URL.create(
         drivername,

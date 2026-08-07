@@ -98,8 +98,7 @@ never the source password or cloud credential. See [docs/SECURITY.md](docs/SECUR
 **Which sources are supported?**
 SQLite (demo), **PostgreSQL**, **SQL Server**, **Oracle**, and **Databricks SQL Warehouse**.
 **Amazon Redshift**, **Teradata**, and **Apache Impala** are available in preview with
-sync-fallback execution. Impala has completed live workload validation; Redshift and
-Teradata live validation remains pending.
+sync-fallback execution. All three have completed live source workload validation.
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 [docs/ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](docs/ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 

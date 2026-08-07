@@ -1,10 +1,14 @@
 # Issue 9: Expanded Source Platform Support Plan
 
-Status: Planned
+Status: Validation in progress
 
 Issue: [#9 Add Expanded source platform support](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/9)
 
 Branch: `feature/issue-9-expanded-source-platforms`
+
+Validation status (2026-08-07): Config Builder UAT and live source workloads pass
+for Amazon Redshift, Teradata, and Apache Impala. Automated integration artifacts
+and final regression runs remain before closure.
 
 ## 1. Goal
 

@@ -82,6 +82,7 @@ async def test_summary_shape(client):
     assert r.status_code == 200
     d = r.json()
     assert "totals" in d and "tables" in d and "recent_queries" in d
+    assert "sources" in d
     assert d["table_format"] in ("iceberg", "delta")
     assert d["totals"]["data_requests"] >= 1
     # Per-table rows are snapshot-backed only; recent_queries always reflects

@@ -110,6 +110,39 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_random_tokenization=True,
         required_connection_fields=("http_path",),
     ),
+    # Issue #9 sources: conservative Phase-1 registration. Sync execution, no
+    # tokenization / histogram / fast-estimate / freshness claim until the driver
+    # gate and integration tests confirm each capability.
+    "redshift": FlavorCapabilities(
+        flavor="redshift",
+        async_driver=False,
+        supports_streaming_query=False,
+        supports_view_listing=True,
+        supports_primary_key_reflection=True,
+        supports_range_key_bounds=True,
+        supports_modulo_split=True,
+        supports_fast_row_estimate=False,
+    ),
+    "teradata": FlavorCapabilities(
+        flavor="teradata",
+        async_driver=False,
+        supports_streaming_query=False,
+        supports_view_listing=True,
+        supports_primary_key_reflection=True,
+        supports_range_key_bounds=True,
+        supports_modulo_split=True,
+        supports_fast_row_estimate=False,
+    ),
+    "impala": FlavorCapabilities(
+        flavor="impala",
+        async_driver=False,
+        supports_streaming_query=False,
+        supports_view_listing=True,
+        supports_primary_key_reflection=False,
+        supports_range_key_bounds=True,
+        supports_modulo_split=True,
+        supports_fast_row_estimate=False,
+    ),
     "generic": FlavorCapabilities(
         flavor="generic",
         async_driver=False,
@@ -138,6 +171,10 @@ def normalize_dialect(dialect: str | None) -> str:
 
 def flavor_from_db_url(db_url: str) -> str:
     scheme = (db_url or "").lower().split("://", 1)[0]
+    # Match Redshift before PostgreSQL: it reuses Postgres query syntax but is a
+    # distinct flavor (no pgcrypto / pg_stats / freshness assumptions).
+    if "redshift" in scheme:
+        return "redshift"
     if "postgres" in scheme:
         return "postgresql"
     if "mssql" in scheme:
@@ -146,6 +183,10 @@ def flavor_from_db_url(db_url: str) -> str:
         return "oracle"
     if "databricks" in scheme:
         return "databricks"
+    if "teradata" in scheme:
+        return "teradata"
+    if "impala" in scheme:
+        return "impala"
     if "sqlite" in scheme:
         return "sqlite"
     return "generic"

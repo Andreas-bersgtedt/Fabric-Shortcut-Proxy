@@ -85,6 +85,35 @@ def test_build_url_databricks_with_http_path():
     assert "http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc" in s
 
 
+def test_build_url_redshift_defaults_port():
+    url = build_url(dialect="redshift", host="rs-host", database="analytics",
+                    username="u", password="p")
+    s = url.render_as_string(hide_password=False)
+    assert s.startswith("redshift+redshift_connector://u:")
+    assert "@rs-host:5439/analytics" in s
+
+
+def test_build_url_teradata_uses_connection_params():
+    url = build_url(dialect="teradata", host="td-host", database="dbc",
+                    username="u", password="p")
+    s = url.render_as_string(hide_password=False)
+    assert s.startswith("teradatasql://u:")
+    assert "@td-host" in s
+    # database + port travel as driver connection params, not URL path/port.
+    assert url.query["database"] == "dbc"
+    assert url.query["dbs_port"] == "1025"
+    assert url.database is None
+    assert url.port is None
+
+
+def test_build_url_impala_defaults_port():
+    url = build_url(dialect="impala", host="impala-host", database="default",
+                    username="u", password="p")
+    s = url.render_as_string(hide_password=False)
+    assert s.startswith("impala://u:")
+    assert "@impala-host:21050/default" in s
+
+
 def test_build_url_rejects_unknown_dialect():
     with pytest.raises(UnsupportedDialect):
         build_url(dialect="not-a-real-dialect", host="h", database="db")

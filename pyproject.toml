@@ -41,6 +41,16 @@ oracle = ["oracledb>=2.0"]          # oracle+oracledb://
 redshift = ["sqlalchemy-redshift>=1.0", "redshift-connector>=2.1"]  # redshift+redshift_connector://
 teradata = ["teradatasqlalchemy>=20.0"]  # teradatasql://
 impala = ["impyla>=0.24"]               # impala://
+# Complete source-driver set used by the Manager bootstrap so selecting a source
+# in the Config Builder never requires a second Python package installation.
+drivers = [
+    "asyncpg>=0.29",
+    "oracledb>=2.0",
+    "sqlalchemy-redshift>=1.0",
+    "redshift-connector>=2.1",
+    "teradatasqlalchemy>=20.0",
+    "impyla>=0.24",
+]
 # Encrypted credential store: Fernet backend for non-Windows hosts (Windows uses
 # DPAPI via ctypes, no extra needed).
 credentials = ["cryptography>=42.0"]

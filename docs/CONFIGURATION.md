@@ -84,7 +84,7 @@ If you run standalone `python main.py` (no Manager), use `http://localhost:9000/
 
 Enter host / user / password → pick tables (key column auto-detected, overridable)
 → **Download config.json**. It's **off by default** and accepts DB credentials, so
-run it locally only. `asyncpg` is required for PostgreSQL (`pip install asyncpg`).
+run it locally only. The Manager bootstrap installs all supported Python database drivers.
 
 ---
 
@@ -93,15 +93,16 @@ run it locally only. `asyncpg` is required for PostgreSQL (`pip install asyncpg`
 | Source | Driver | Install | Bundled? |
 |---|---|---|---|
 | SQLite (demo) | `aiosqlite` | included | ✅ |
-| **SQL Server** | `aioodbc` **+** OS *ODBC Driver 18 for SQL Server* | driver bundled; install the ODBC driver from Microsoft | ⚠️ driver only |
-| **PostgreSQL** | `asyncpg` | `pip install asyncpg` | ❌ install it |
-| **Amazon Redshift** (preview) | `sqlalchemy-redshift` + `redshift-connector` | `pip install -e '.[redshift]'` | ❌ install it |
-| **Teradata** (preview) | `teradatasqlalchemy` | `pip install -e '.[teradata]'` | ❌ install it |
-| **Apache Impala** (preview) | `impyla` | `pip install -e '.[impala]'` | ❌ install it |
+| **SQL Server** | `aioodbc` **+** OS *ODBC Driver 18 for SQL Server* | Python driver included; install the ODBC driver from Microsoft | ⚠️ OS driver required |
+| **PostgreSQL** | `asyncpg` | Manager bootstrap or `pip install -e '.[postgres]'` | ✅ Manager |
+| **Oracle** | `oracledb` | Manager bootstrap or `pip install -e '.[oracle]'` | ✅ Manager |
+| **Amazon Redshift** (preview) | `sqlalchemy-redshift` + `redshift-connector` | Manager bootstrap or `pip install -e '.[redshift]'` | ✅ Manager |
+| **Teradata** (preview) | `teradatasqlalchemy` | Manager bootstrap or `pip install -e '.[teradata]'` | ✅ Manager |
+| **Apache Impala** (preview) | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | ✅ Manager |
 
 ```powershell
-# PostgreSQL driver (NOT bundled)
-.\.venv\Scripts\python.exe -m pip install asyncpg
+# Manual install outside the Manager bootstrap: all supported Python DB drivers
+.\.venv\Scripts\python.exe -m pip install -e ".[drivers]"
 
 # SQL Server also needs the OS ODBC driver:
 #   https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server

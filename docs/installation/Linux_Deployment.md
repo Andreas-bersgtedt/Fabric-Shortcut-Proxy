@@ -141,22 +141,13 @@ host has no `python3-venv` ensurepip, install it and retry:
 
 ---
 
-## 6. Install the source database driver
+## 6. Source database drivers
 
-Core install covers SQLite (demo) and SQL Server (ODBC). Add the extra for your source:
+The Manager bootstrap installs all supported Python database drivers through the `[drivers]`
+extra. No additional pip install is needed when using `Manager.sh`.
 
 ```bash
 cd /opt/fabric-shortcut-proxy
-# PostgreSQL source:
-sudo -u fsp ./.venv/bin/pip install -e '.[postgres]'
-# Oracle source:
-sudo -u fsp ./.venv/bin/pip install -e '.[oracle]'
-# Amazon Redshift source (preview):
-sudo -u fsp ./.venv/bin/pip install -e '.[redshift]'
-# Teradata source (preview):
-sudo -u fsp ./.venv/bin/pip install -e '.[teradata]'
-# Apache Impala source (preview):
-sudo -u fsp ./.venv/bin/pip install -e '.[impala]'
 # Encrypted credential store on Linux (recommended — see section 8):
 sudo -u fsp ./.venv/bin/pip install -e '.[credentials]'
 # Storage-proxy backends (only if you serve NAS/S3/Azure files instead of a DB):

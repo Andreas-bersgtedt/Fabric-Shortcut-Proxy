@@ -295,7 +295,7 @@ sequenceDiagram
   M->>R: Queue drain command
   A->>R: Next heartbeat
   R-->>A: drain
-  A->>A: Set draining; /readyz returns 503
+  A->>A: Set draining and return 503 from /readyz
   G->>A: Read readiness / stop new routing
   A->>A: Wait AGENT_DRAIN_GRACE_SECONDS
   A->>A: Request graceful Uvicorn shutdown

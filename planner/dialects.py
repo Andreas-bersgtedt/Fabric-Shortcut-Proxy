@@ -466,11 +466,114 @@ class DatabricksDialect(Dialect):
         )
 
 
+class RedshiftDialect(Dialect):
+    """Amazon Redshift: ANSI double quotes, BIGINT cast, ``%`` modulo, LIMIT.
+
+    Subclasses the base ANSI dialect (not PostgresDialect) so pgcrypto/
+    gen_random_uuid tokenization is not inherited; Redshift tokenization is a
+    separate, capability-gated phase.
+    """
+
+    name = "redshift"
+    int_cast_type = "BIGINT"
+
+
+class TeradataDialect(Dialect):
+    """Teradata: ANSI double quotes, BIGINT cast, ``MOD`` operator, QUALIFY cap.
+
+    Teradata ``TOP`` / ``FETCH FIRST`` require literal counts, so the bounded row
+    limit is expressed with ``QUALIFY ROW_NUMBER()`` to keep it parameterizable.
+    The ``MOD`` operator and QUALIFY form await live confirmation (issue #9 gate).
+    """
+
+    name = "teradata"
+    int_cast_type = "BIGINT"
+
+    def build_select(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        predicate = (
+            f"({self.cast_int(pk)} MOD :{num_splits_param}) = :{split_index_param}"
+        )
+        return (
+            f"SELECT {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"QUALIFY ROW_NUMBER() OVER (ORDER BY {pk}) <= :{max_rows_param} "
+            f"ORDER BY {pk}"
+        )
+
+    def build_select_range(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        key_lo_param: str,
+        key_hi_param: str,
+        max_rows_param: str,
+    ) -> str:
+        predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
+        return (
+            f"SELECT {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"QUALIFY ROW_NUMBER() OVER (ORDER BY {pk}) <= :{max_rows_param} "
+            f"ORDER BY {pk}"
+        )
+
+    def build_select_row_number(
+        self,
+        *,
+        projected: str,
+        outer_projected: str | None = None,
+        source: str,
+        order_by: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        rownum = self.quote("__row_num")
+        inner = (
+            f"SELECT {projected}, "
+            f"ROW_NUMBER() OVER (ORDER BY {order_by}) AS {rownum} "
+            f"FROM {source}"
+        )
+        predicate = f"((q.{rownum} - 1) MOD :{num_splits_param}) = :{split_index_param}"
+        outer = outer_projected or projected
+        return (
+            f"SELECT {outer} "
+            f"FROM ({inner}) AS q "
+            f"WHERE {predicate} "
+            f"QUALIFY ROW_NUMBER() OVER (ORDER BY q.{rownum}) <= :{max_rows_param} "
+            f"ORDER BY q.{rownum}"
+        )
+
+
+class ImpalaDialect(Dialect):
+    """Apache Impala: backtick (Hive-style) quoting, BIGINT cast, ``%``, LIMIT."""
+
+    name = "impala"
+    int_cast_type = "BIGINT"
+    quote_open = "`"
+    quote_close = "`"
+
+
 _SQLITE = SQLiteDialect()
 _POSTGRES = PostgresDialect()
 _MSSQL = MSSQLDialect()
 _ORACLE = OracleDialect()
 _DATABRICKS = DatabricksDialect()
+_REDSHIFT = RedshiftDialect()
+_TERADATA = TeradataDialect()
+_IMPALA = ImpalaDialect()
 _GENERIC = Dialect()
 
 
@@ -479,12 +582,19 @@ def get_dialect(db_url: str) -> Dialect:
     scheme = db_url.lower().split("://", 1)[0]
     if "mssql" in scheme:
         return _MSSQL
+    # Redshift before PostgreSQL: reuses Postgres query syntax but is distinct.
+    if "redshift" in scheme:
+        return _REDSHIFT
     if "postgres" in scheme:
         return _POSTGRES
     if "oracle" in scheme:
         return _ORACLE
     if "databricks" in scheme:
         return _DATABRICKS
+    if "teradata" in scheme:
+        return _TERADATA
+    if "impala" in scheme:
+        return _IMPALA
     if "sqlite" in scheme:
         return _SQLITE
     return _GENERIC

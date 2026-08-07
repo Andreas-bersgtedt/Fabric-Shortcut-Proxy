@@ -18,6 +18,9 @@ from planner.dialects import (
     MSSQLDialect,
     OracleDialect,
     DatabricksDialect,
+    RedshiftDialect,
+    TeradataDialect,
+    ImpalaDialect,
 )
 from planner.split_planner import build_split_query
 
@@ -49,6 +52,9 @@ def test_get_dialect_by_scheme():
     assert isinstance(get_dialect("mssql+aioodbc://h/db"), MSSQLDialect)
     assert isinstance(get_dialect("oracle+oracledb://h/db"), OracleDialect)
     assert isinstance(get_dialect("databricks://token:pat@dbc.cloud"), DatabricksDialect)
+    assert isinstance(get_dialect("redshift+redshift_connector://h:5439/db"), RedshiftDialect)
+    assert isinstance(get_dialect("teradatasql://h/?database=dbc"), TeradataDialect)
+    assert isinstance(get_dialect("impala://h:21050/db"), ImpalaDialect)
 
 
 def test_dialect_quoting():
@@ -56,6 +62,9 @@ def test_dialect_quoting():
     assert PostgresDialect().quote("id") == '"id"'
     assert MSSQLDialect().quote("id") == "[id]"
     assert DatabricksDialect().quote("id") == "`id`"
+    assert RedshiftDialect().quote("id") == '"id"'
+    assert TeradataDialect().quote("id") == '"id"'
+    assert ImpalaDialect().quote("id") == "`id`"
 
 
 def test_dialect_cast_type():
@@ -63,6 +72,9 @@ def test_dialect_cast_type():
     assert PostgresDialect().cast_int("id") == "CAST(id AS BIGINT)"
     assert MSSQLDialect().cast_int("id") == "CAST(id AS BIGINT)"
     assert OracleDialect().cast_int("id") == "CAST(id AS NUMBER(19))"
+    assert RedshiftDialect().cast_int("id") == "CAST(id AS BIGINT)"
+    assert TeradataDialect().cast_int("id") == "CAST(id AS BIGINT)"
+    assert ImpalaDialect().cast_int("id") == "CAST(id AS BIGINT)"
 
 
 def test_quote_qualified_dotted():
@@ -147,6 +159,50 @@ def test_split_query_databricks_range_uses_limit(monkeypatch):
     assert "TOP" not in sql
     assert sql.rstrip().endswith("LIMIT :max_rows")
     assert params == {"key_lo": 25, "key_hi": 50, "max_rows": config.QUERY_MAX_ROWS}
+
+
+def test_split_query_redshift(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "redshift+redshift_connector://h:5439/db")
+    sql, _ = build_split_query(_split())
+    assert 'SELECT "id", "name"' in sql
+    assert 'FROM "widgets"' in sql
+    assert 'CAST("id" AS BIGINT)' in sql
+    assert "% :num_splits) = :split_index" in sql
+    assert sql.rstrip().endswith("LIMIT :max_rows")
+
+
+def test_split_query_teradata_uses_mod_and_qualify(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "teradatasql://h/?database=dbc")
+    sql, _ = build_split_query(_split())
+    assert 'FROM "widgets"' in sql
+    assert '(CAST("id" AS BIGINT) MOD :num_splits) = :split_index' in sql
+    assert 'QUALIFY ROW_NUMBER() OVER (ORDER BY "id") <= :max_rows' in sql
+    assert "LIMIT" not in sql
+    assert sql.rstrip().endswith('ORDER BY "id"')
+
+
+def test_split_query_teradata_range_uses_qualify(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "teradatasql://h/?database=dbc")
+    split = SplitDescriptor(
+        split_index=1, num_splits=4,
+        object_key="warehouse/db/widgets/data/split-1-x.parquet",
+        watermark_ms=0, table=_TABLE, key_lo=25, key_hi=50,
+    )
+    sql, params = build_split_query(split)
+    assert '"id" >= :key_lo AND "id" < :key_hi' in sql
+    assert 'QUALIFY ROW_NUMBER() OVER (ORDER BY "id") <= :max_rows' in sql
+    assert "LIMIT" not in sql
+    assert params == {"key_lo": 25, "key_hi": 50, "max_rows": config.QUERY_MAX_ROWS}
+
+
+def test_split_query_impala(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "impala://h:21050/db")
+    sql, _ = build_split_query(_split())
+    assert "SELECT `id`, `name`" in sql
+    assert "FROM `widgets`" in sql
+    assert "CAST(`id` AS BIGINT)" in sql
+    assert "% :num_splits) = :split_index" in sql
+    assert sql.rstrip().endswith("LIMIT :max_rows")
 
 
 def _tokenized_table(*, random: bool = False, string_key: bool = False) -> TableDef:
@@ -321,3 +377,17 @@ def test_multi_dialect_token_projection_uses_row_number_alias(
     sql, _ = build_split_query(_table_split(_tokenized_table(string_key=True)))
     assert sql.startswith(f"SELECT {outer_columns} FROM (SELECT ")
     assert sql.count(hash_expression) == 1
+
+
+@pytest.mark.parametrize(
+    "db_url",
+    [
+        "redshift+redshift_connector://h:5439/db",
+        "teradatasql://h/?database=dbc",
+        "impala://h:21050/db",
+    ],
+)
+def test_expanded_sources_reject_tokenization(monkeypatch, db_url):
+    monkeypatch.setattr(config, "DB_URL", db_url)
+    with pytest.raises(ValueError, match="does not support column transform"):
+        build_split_query(_table_split(_tokenized_table(random=True)))

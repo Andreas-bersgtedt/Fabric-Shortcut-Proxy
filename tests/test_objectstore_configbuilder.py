@@ -83,7 +83,7 @@ def test_plain_mount_still_validates_without_format():
 def test_object_store_capabilities_shape():
     caps = _object_store_capabilities()
     assert set(caps["formats"]) == {"delta", "iceberg"}
-    assert caps["reader_backends"]["delta"] == ["local", "s3"]
+    assert caps["reader_backends"]["delta"] == ["local", "s3", "azure"]
     assert caps["reader_backends"]["iceberg"] == ["local"]
     assert set(caps["reader_available"]) == {"delta", "iceberg"}
 

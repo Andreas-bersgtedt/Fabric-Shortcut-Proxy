@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token, random UUID token, or drop), and serves a masked Delta table over the S3
   endpoint — so PII never reaches Fabric. Contained entirely in the storage mount
   path; the SQL→Iceberg/Delta engine is untouched. Readers: Delta (delta-rs) on
-  `local`/`s3`, Iceberg (pyiceberg) on `local`, behind the optional `[objectstore]`
-  extra. Tokenized output is materialized to a byte-stable cache keyed by policy
+  `local`, `s3`, and `azure` (ADLS Gen2 / Blob — account key, SAS, connection
+  string, or service principal), Iceberg (pyiceberg) on `local`, behind the
+  optional `[objectstore]` extra. Tokenized output is materialized to a byte-stable cache keyed by policy
   hash + a one-way key fingerprint (key rotation invalidates it). Config Builder
   gains a per-mount "Tokenize this table" editor with schema inspection and the
   Keep / Deterministic / Random / Remove column controls, and the format +

@@ -191,6 +191,77 @@ def _s3_storage_options(mount: "Mount", *, store=None) -> dict:
     return options
 
 
+def _azure_table_uri(mount: "Mount", subpath: str) -> str:
+    """``az://<container>/<prefix><subpath>`` table root (no trailing slash)."""
+    prefix = (mount.prefix or "").replace("\\", "/").strip("/")
+    sub = (subpath or "").replace("\\", "/").strip("/")
+    key = "/".join(p for p in (prefix, sub) if p)
+    return f"az://{mount.root}/{key}".rstrip("/")
+
+
+def _parse_azure_connection_string(cs: str) -> dict:
+    out: dict[str, str] = {}
+    for part in cs.split(";"):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _azure_storage_options(mount: "Mount", *, store=None) -> dict:
+    """Map an ADLS Gen2 / Blob mount's credential into delta-rs storage options.
+
+    Covers the secret-based modes (account key, SAS, connection string, service
+    principal). ``managed_identity`` / ``default`` / ``anonymous`` fail closed with
+    a clear message — object_store's ambient-credential handling isn't wired here
+    yet. Secrets are read from the credential store and never logged.
+    """
+    from storage.azure_auth import options_from_mount, resolve_azure_auth
+
+    auth = resolve_azure_auth(mount, store=store)
+    opts = options_from_mount(mount)
+    options: dict[str, str] = {}
+    account = opts.account
+
+    if auth.mode == "connection_string":
+        parsed = _parse_azure_connection_string(auth.connection_string)
+        account = account or parsed.get("AccountName", "")
+        if not account:
+            raise ObjectStoreReaderUnavailable("azure connection_string is missing AccountName")
+        options["AZURE_STORAGE_ACCOUNT_NAME"] = account
+        if parsed.get("AccountKey"):
+            options["AZURE_STORAGE_ACCOUNT_KEY"] = parsed["AccountKey"]
+        elif parsed.get("SharedAccessSignature"):
+            options["AZURE_STORAGE_SAS_KEY"] = parsed["SharedAccessSignature"].lstrip("?")
+        else:
+            raise ObjectStoreReaderUnavailable(
+                "azure connection_string must carry an AccountKey or SharedAccessSignature"
+            )
+    else:
+        if not account:
+            raise ObjectStoreReaderUnavailable(
+                "azure Delta reader needs the storage account name (mount 'account')"
+            )
+        options["AZURE_STORAGE_ACCOUNT_NAME"] = account
+        if auth.mode == "account_key":
+            options["AZURE_STORAGE_ACCOUNT_KEY"] = auth.account_key
+        elif auth.mode == "sas":
+            options["AZURE_STORAGE_SAS_KEY"] = auth.sas_token
+        elif auth.mode == "aad_client_secret":
+            options["AZURE_STORAGE_CLIENT_ID"] = auth.client_id
+            options["AZURE_STORAGE_CLIENT_SECRET"] = auth.client_secret
+            options["AZURE_STORAGE_TENANT_ID"] = auth.tenant_id
+        else:
+            raise ObjectStoreReaderUnavailable(
+                f"azure Delta reader does not support {auth.mode!r} auth yet; use "
+                f"account_key, sas, connection_string, or aad_client_secret"
+            )
+    # Azurite / sovereign clouds: an explicit account URL overrides the default host.
+    if opts.account_url:
+        options["AZURE_STORAGE_ENDPOINT"] = opts.account_url.rstrip("/")
+    return options
+
+
 def reader_for_mount(mount: "Mount", *, subpath: str = "") -> ObjectStoreTableReader:
     """Build the reader for a transforming mount's declared table ``format``."""
     fmt = (getattr(mount, "format", "") or "").strip().lower()
@@ -204,8 +275,11 @@ def reader_for_mount(mount: "Mount", *, subpath: str = "") -> ObjectStoreTableRe
     if fmt == "delta":
         if mount.backend == "local":
             return DeltaTableReader(_local_table_path(mount, subpath))
-        return DeltaTableReader(_s3_table_uri(mount, subpath),
-                                storage_options=_s3_storage_options(mount))
+        if mount.backend == "s3":
+            return DeltaTableReader(_s3_table_uri(mount, subpath),
+                                    storage_options=_s3_storage_options(mount))
+        return DeltaTableReader(_azure_table_uri(mount, subpath),
+                                storage_options=_azure_storage_options(mount))
     # iceberg (local only for now)
     return IcebergTableReader(_discover_iceberg_metadata(_local_table_path(mount, subpath)))
 
@@ -213,7 +287,7 @@ def reader_for_mount(mount: "Mount", *, subpath: str = "") -> ObjectStoreTableRe
 # Backends the reader can serve per format today; drives the Config Builder's
 # "not wired yet" gating and the capability surfaced on /api/mounts.
 READER_BACKENDS: dict[str, tuple[str, ...]] = {
-    "delta": ("local", "s3"),
+    "delta": ("local", "s3", "azure"),
     "iceberg": ("local",),
 }
 

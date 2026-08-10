@@ -301,3 +301,57 @@ def test_s3_storage_options_rejects_unsupported_mode():
     mount = Mount(bucket="b", backend="s3", root="lake", format="delta", auth="sso")
     with pytest.raises(ObjectStoreReaderUnavailable):
         _s3_storage_options(mount)
+
+
+# --- azure (ADLS Gen2) delta-rs storage_options mapping (no network) ---------
+
+class _FakeSecretStore:
+    def __init__(self, blob):
+        self._blob = blob
+
+    def get_secret(self, cid):
+        return self._blob
+
+
+def test_azure_storage_options_account_key():
+    from storage.objectstore_reader import _azure_storage_options, _azure_table_uri
+
+    mount = Mount(bucket="b", backend="azure", root="lakefs", account="acct",
+                  prefix="curated/", format="delta", credential="azv")
+    options = _azure_storage_options(
+        mount, store=_FakeSecretStore({"mode": "account_key", "account_key": "KEY=="}))
+    assert options["AZURE_STORAGE_ACCOUNT_NAME"] == "acct"
+    assert options["AZURE_STORAGE_ACCOUNT_KEY"] == "KEY=="
+    assert _azure_table_uri(mount, "") == "az://lakefs/curated"
+
+
+def test_azure_storage_options_connection_string_parses_account():
+    from storage.objectstore_reader import _azure_storage_options
+
+    cs = "DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=abc==;EndpointSuffix=core.windows.net"
+    mount = Mount(bucket="b", backend="azure", root="container", format="delta", credential="azv")
+    options = _azure_storage_options(
+        mount, store=_FakeSecretStore({"mode": "connection_string", "connection_string": cs}))
+    assert options["AZURE_STORAGE_ACCOUNT_NAME"] == "acct"
+    assert options["AZURE_STORAGE_ACCOUNT_KEY"] == "abc=="
+
+
+def test_azure_storage_options_service_principal():
+    from storage.objectstore_reader import _azure_storage_options
+
+    mount = Mount(bucket="b", backend="azure", root="container", account="acct",
+                  format="delta", credential="azv")
+    options = _azure_storage_options(mount, store=_FakeSecretStore(
+        {"mode": "aad_client_secret", "tenant_id": "t", "client_id": "c", "client_secret": "s"}))
+    assert options["AZURE_STORAGE_CLIENT_ID"] == "c"
+    assert options["AZURE_STORAGE_TENANT_ID"] == "t"
+    assert options["AZURE_STORAGE_CLIENT_SECRET"] == "s"
+
+
+def test_azure_storage_options_rejects_managed_identity():
+    from storage.objectstore_reader import _azure_storage_options, ObjectStoreReaderUnavailable
+
+    mount = Mount(bucket="b", backend="azure", root="container", account="acct",
+                  format="delta", auth="managed_identity")
+    with pytest.raises(ObjectStoreReaderUnavailable):
+        _azure_storage_options(mount)

@@ -567,7 +567,9 @@ if (-not (Test-Path $VenvPython)) {
 # ---------------------------------------------------------------------------
 # 3. Install / update dependencies
 # ---------------------------------------------------------------------------
-$stampValue = if (Test-Path $StampFile) { (Get-Content -Raw -Path $StampFile).Trim() } else { "" }
+# ("" + ...) coerces a null (empty stamp file, as older Managers created) to a
+# string so .Trim() never throws on a legacy empty stamp.
+$stampValue = if (Test-Path $StampFile) { ("" + (Get-Content -Raw -Path $StampFile)).Trim() } else { "" }
 $needsInstall = $Reinstall -or ($stampValue -ne $DepsVersion)
 
 if ($SkipInstall) {

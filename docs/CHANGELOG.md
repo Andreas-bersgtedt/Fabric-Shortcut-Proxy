@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0]: 2026-08-10
+
 ### Added
 - **Resilient agent startup — table quarantine + background retry.** A warehouse
   table whose source is unreachable/misconfigured is now **quarantined** (logged,
@@ -57,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   execution mode in `/readyz` and the monitor summary. Nested or composite reflected
   types (SUPER, VARIANT, ARRAY/MAP/STRUCT, PERIOD) fail closed instead of stringifying.
   Live source-driver validation is complete for Redshift, Teradata, and Impala.
+
+### Changed
+- **Per-table `enabled` control in the Config Builder.** Each table row carries an
+  "on" checkbox and each source group an "enabled" checkbox that cascades to its
+  tables; disabling persists as `enabled: false` in `config.tables.json`.
+- Both distributions and their runtime API / agent version metadata now report
+  `2.2.0`.
 
 ## [2.1.1]: 2026-08-05
 
@@ -223,6 +232,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[2.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.0.0...main
+[2.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.1...main
+[2.1.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.0...2.1.1
+[2.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/1.0.0...2.0.0
 [1.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/releases/tag/1.0.0

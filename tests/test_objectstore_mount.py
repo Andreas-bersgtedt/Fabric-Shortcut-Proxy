@@ -258,6 +258,49 @@ def test_resolve_output_format():
 
 
 @pytest.mark.skipif(not _HAS_DELTALAKE, reason="needs the objectstore extra (deltalake)")
+def test_sample_delta_fixture_tokenizes(tmp_path, monkeypatch):
+    import pathlib
+
+    import deltalake
+
+    sample = pathlib.Path(__file__).resolve().parents[1] / "demo" / "sample_delta" / "customers"
+    if not (sample / "_delta_log").is_dir():
+        pytest.skip("run demo/seed_delta.py to generate the sample table")
+
+    monkeypatch.setenv(_KEY_ENV, "uat-secret")
+    monkeypatch.setenv("FSP_TOKENIZING_CACHE_DIR", str(tmp_path / "cache"))
+    mount = Mount(
+        bucket="customers-safe", backend="local", root=str(sample),
+        format="delta", key_column="customer_id",
+        columns=(
+            ColumnDef(field_id=1, name="customer_id", iceberg_type="long", nullable=False),
+            ColumnDef(field_id=2, name="full_name", iceberg_type="string"),
+            ColumnDef(field_id=3, name="email_token", source="email", iceberg_type="string",
+                      transform=ColumnTransform(kind="deterministic_hash", key_ref="customer-pii-v1",
+                                                domain="customer-email", normalization="trim_lower")),
+            ColumnDef(field_id=4, name="ssn_token", source="ssn", iceberg_type="string",
+                      transform=ColumnTransform(kind="random_token")),
+            ColumnDef(field_id=5, name="city", iceberg_type="string"),
+        ),
+    )
+
+    served = tokenizing_store.ensure_materialized(mount)
+    table = deltalake.DeltaTable(served).to_pyarrow_table().sort_by("customer_id")
+
+    assert set(table.column_names) == {"customer_id", "full_name", "email_token", "ssn_token", "city"}
+    emails = dict(zip(table.column("customer_id").to_pylist(),
+                      table.column("email_token").to_pylist()))
+    assert emails[1] == emails[2]          # trim_lower normalizes rows 1 & 2 to the same token
+    assert emails[1] != emails[3]
+    assert emails[5] is None               # null email -> null token
+
+    served_strings = {v for name in table.column_names
+                      for v in table.column(name).to_pylist() if isinstance(v, str)}
+    assert "Alice@Example.com" not in served_strings   # source PII never served
+    assert "111-11-1111" not in served_strings
+
+
+@pytest.mark.skipif(not _HAS_DELTALAKE, reason="needs the objectstore extra (deltalake)")
 async def test_tokenizing_mount_serves_over_http(tmp_path, monkeypatch):
     import deltalake
     import httpx

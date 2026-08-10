@@ -1,0 +1,4 @@
+# Delta sample table (issue #12): never EOL-normalize the _delta_log commit log
+# (CRLF would break delta-rs newline-delimited JSON), and treat data as binary.
+* -text
+*.parquet binary

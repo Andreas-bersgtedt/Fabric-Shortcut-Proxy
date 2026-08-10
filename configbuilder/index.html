@@ -53,8 +53,11 @@
   .trow { display:flex; align-items:center; gap:8px; padding:6px 10px; border-top:1px solid var(--line); }
   .trow .name { flex:1; }
   .trow .kind { font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
-  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto auto auto; gap:8px; align-items:center;
+  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto auto auto auto; gap:8px; align-items:center;
             padding:8px 10px; border-top:1px solid var(--line); }
+  .cfgtable.disabled { opacity:.5; }
+  .enrow, .dsenable { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--muted); white-space:nowrap; }
+  .dsenable { margin-left:10px; }
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
   .cfgrow .rows { font-size:11px; color:var(--muted); }
@@ -874,6 +877,7 @@ function applyBootstrap(builder){
       approx_rows: null,
       invalid: !t.key_column,
       pending: false,
+      enabled: t.enabled !== false,
       policies_open: configuredSchema.some(column=>column.transform),
     });
   }
@@ -1087,7 +1091,7 @@ function bulk(on){
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
   key_column:null, num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
-  integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false }; }
+  integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false, enabled:true }; }
 
 function policyColumn(column, index){
   const transform = column.transform || null;
@@ -1293,6 +1297,16 @@ function renderSelected(){
     head.innerHTML = `<span class="tgcaret">▸</span><span>${cid}${primary}</span>`
       + `<span class="tgcount">${list.length} table${list.length!==1?"s":""}`
       + (needKey ? ` · ${needKey} need a key` : "") + `</span>`;
+    const _allOn = list.every(s=>s.enabled !== false);
+    const _anyOn = list.some(s=>s.enabled !== false);
+    const dsEnable = document.createElement("label"); dsEnable.className="dsenable";
+    dsEnable.title="Enable or disable every table in this source.";
+    const dscb = document.createElement("input"); dscb.type="checkbox";
+    dscb.checked = _allOn; dscb.indeterminate = _anyOn && !_allOn;
+    dscb.onclick = (e)=> e.stopPropagation();
+    dscb.onchange = ()=>{ for(const s of list) s.enabled = dscb.checked; renderSelected(); updatePreview(); persistConns(); };
+    dsEnable.append(dscb, document.createTextNode("enabled"));
+    head.appendChild(dsEnable);
     head.onclick = ()=>{
       if(state.expandedGroups.has(cid)) state.expandedGroups.delete(cid);
       else state.expandedGroups.add(cid);
@@ -1302,7 +1316,7 @@ function renderSelected(){
     const body = document.createElement("div"); body.className = "tgbody";
     for(const s of list){
       const key = selKey(s.connection, s.source_table);
-      const table = document.createElement("div"); table.className="cfgtable";
+      const table = document.createElement("div"); table.className="cfgtable" + (s.enabled===false ? " disabled" : "");
       const row = document.createElement("div"); row.className="cfgrow";
       const src = document.createElement("div"); src.className="src";
       src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
@@ -1364,13 +1378,19 @@ function renderSelected(){
       refreshBadge();
       src.appendChild(document.createElement("br")); src.appendChild(splitInfo);
 
+      const enable = document.createElement("label"); enable.className="enrow";
+      enable.title="Serve this table. Unchecked = disabled (enabled:false): the agent skips it and won't fail if its source is unreachable.";
+      const encb = document.createElement("input"); encb.type="checkbox"; encb.checked = s.enabled !== false;
+      encb.onchange = ()=>{ s.enabled = encb.checked; renderSelected(); updatePreview(); persistConns(); };
+      enable.append(encb, document.createTextNode("on"));
+
       const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
       rm.onclick = ()=>{
         state.selected.delete(key);
         renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
       };
 
-      row.append(src, keysel, strat, bal, splits, target, rm); table.appendChild(row);
+      row.append(src, keysel, strat, bal, splits, target, enable, rm); table.appendChild(row);
       if(s.columns.length){
         const toggle=document.createElement("button"); toggle.className="iconbtn policy-toggle";
         toggle.textContent=(s.policies_open ? "Hide" : "Edit")+" column policies";
@@ -1396,6 +1416,7 @@ function tableConfig(entry){
   if(entry.split_balance) table.split_balance=entry.split_balance;
   if(entry.split_target_rows) table.split_target_rows=parseInt(entry.split_target_rows);
   if(entry.connection && entry.connection!=="default") table.connection=entry.connection;
+  if(entry.enabled===false) table.enabled=false;
   const policyChanged = entry.columns.some(column=>column.policy!=="keep" || column.name!==column.source);
   if(entry.columns.length && (entry.schema_explicit || policyChanged)){
     table.schema=entry.columns.filter(column=>column.policy!=="remove").map(column=>{

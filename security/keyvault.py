@@ -164,3 +164,145 @@ def read_through_for(source: KeyVaultSecretSource, cfg: KeyVaultConfig | None = 
         return source.get_by_name(name)
 
     return _rt
+
+
+# ---------------------------------------------------------------------------
+# Startup hydration + background refresh (Phase 2)
+# ---------------------------------------------------------------------------
+
+# Local key -> environment variable it hydrates (single-string secrets). ``db_url``
+# is handled separately because it also persists into the connections bucket.
+_ENV_SECRETS = {
+    "s3_secret_access_key": "S3_SECRET_ACCESS_KEY",
+    "admin_token": "ADMIN_TOKEN",
+    "manager_auth_password": "MANAGER_AUTH_PASSWORD",
+}
+
+
+def _hydrate_db_url(source, store, hydrated, *, require) -> None:
+    import os
+    import sys
+    from security.credential_store import looks_masked
+    if os.environ.get("DB_URL"):
+        return  # an explicit env value always wins
+    try:
+        val = source.get_secret_value("db_url")
+    except KeyVaultUnavailable as exc:
+        # Fall back to the local cache (read-through is attached later, so this
+        # read is local-only and cannot re-trigger Key Vault).
+        val = store.get_url("default") if store is not None else None
+        if not val:
+            if require:
+                raise
+            print(f"[keyvault] db_url unavailable and no local cache: {exc}", file=sys.stderr)
+            return
+    if val and not looks_masked(val):
+        if store is not None and store.available:
+            try:
+                store.set_url("default", val)
+            except Exception:  # noqa: BLE001
+                pass
+        os.environ["DB_URL"] = val
+        hydrated.append("DB_URL")
+
+
+def _hydrate_env_secret(source, store, local_key, env_var, hydrated, *, require) -> None:
+    import os
+    import sys
+    if os.environ.get(env_var):
+        return  # an explicit env value always wins
+    cache_id = f"env:{local_key}"
+    try:
+        val = source.get_secret_value(local_key)
+    except KeyVaultUnavailable as exc:
+        cached = store.get_secret(cache_id) if store is not None else None
+        val = cached.get("value") if isinstance(cached, dict) else None
+        if not val:
+            if require:
+                raise
+            print(f"[keyvault] {local_key} unavailable and no local cache: {exc}", file=sys.stderr)
+            return
+    if val:
+        if store is not None and store.available:
+            try:
+                store.set_secret(cache_id, {"value": val})
+            except Exception:  # noqa: BLE001
+                pass
+        os.environ[env_var] = val
+        hydrated.append(env_var)
+
+
+def hydrate_from_keyvault(store=None, *, source=None) -> list[str]:
+    """Resolve Key Vault-backed secrets into the environment + local cache.
+
+    Runs BEFORE config binds env values (Manager import / ``main.py`` top). It is
+    best-effort and never-fail unless ``require_keyvault`` is set (owner directive):
+    a Key Vault outage falls back to the local encrypted cache. Also attaches the
+    store's cache-first read-through so mount credentials resolve lazily on demand.
+    Returns the hydrated environment-variable names.
+    """
+    import sys
+    import system_config as sc
+    if source is None:
+        cfg = config_from_settings(sc)
+        if not cfg.enabled:
+            return []
+        source = KeyVaultSecretSource(cfg)
+    else:
+        cfg = source.config
+        if not cfg.enabled:
+            return []
+    require = bool(getattr(sc, "REQUIRE_KEYVAULT", False))
+    if store is None:
+        from security.credential_store import CredentialStore
+        store = CredentialStore()
+    hydrated: list[str] = []
+    try:
+        _hydrate_db_url(source, store, hydrated, require=require)
+        for local_key, env_var in _ENV_SECRETS.items():
+            _hydrate_env_secret(source, store, local_key, env_var, hydrated, require=require)
+    except KeyVaultUnavailable:
+        raise  # require_keyvault + cold start with no cache => fail-fast (AC6)
+    except Exception as exc:  # noqa: BLE001 - never fail on an unexpected error
+        print(f"[keyvault] hydration skipped: {exc}", file=sys.stderr)
+    # On-demand cache-first read-through for mount credentials (resolved per mount).
+    try:
+        if store is not None and store.available:
+            store.read_through = read_through_for(source, cfg)
+    except Exception:  # noqa: BLE001
+        pass
+    return hydrated
+
+
+def refresh_secrets_once(source, store) -> list[str]:
+    """Re-pull the documented secrets from Key Vault, writing through to cache + env.
+
+    Used by the background refresh loop. A Key Vault error for any single secret is
+    skipped so the last-known-good cache is retained. Returns refreshed env names.
+    """
+    import os
+    from security.credential_store import looks_masked
+    refreshed: list[str] = []
+    try:
+        val = source.get_secret_value("db_url")
+        if val and not looks_masked(val):
+            if store is not None and store.available:
+                store.set_url("default", val)
+            os.environ["DB_URL"] = val
+            refreshed.append("DB_URL")
+    except KeyVaultUnavailable:
+        pass
+    for local_key, env_var in _ENV_SECRETS.items():
+        try:
+            val = source.get_secret_value(local_key)
+        except KeyVaultUnavailable:
+            continue
+        if val:
+            if store is not None and store.available:
+                try:
+                    store.set_secret(f"env:{local_key}", {"value": val})
+                except Exception:  # noqa: BLE001
+                    pass
+            os.environ[env_var] = val
+            refreshed.append(env_var)
+    return refreshed

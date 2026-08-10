@@ -16,8 +16,12 @@ from __future__ import annotations
 # process environment BEFORE config is imported, so both the Manager and the
 # Agents it spawns see the full (password-bearing) DB URLs. An env var already
 # set (e.g. via -DbUrl) always wins; the store only fills what is missing.
+# Key Vault (issue #16) is resolved first (into the cache + env), then the store
+# fills any remaining DB_URL_<ID>. No-op unless a Key Vault URI is configured.
+from security.keyvault import hydrate_from_keyvault
 from security.credential_store import hydrate_environment
 
+hydrate_from_keyvault()
 hydrate_environment()
 
 import config

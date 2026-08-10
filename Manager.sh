@@ -9,6 +9,8 @@ cd "$SCRIPT_DIR"
 VENV_DIR="$SCRIPT_DIR/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 STAMP_FILE="$VENV_DIR/.deps-installed"
+# Bump when the required dependency SET changes so existing venvs auto-reinstall.
+DEPS_VERSION="drivers+objectstore-v1"
 
 ARG_CONTROL_PORT=""
 ARG_CONTROL_HOST=""
@@ -367,14 +369,14 @@ fi
 
 if [[ $ARG_SKIP_INSTALL -eq 1 ]]; then
   step "Skipping dependency installation (--skip-install)"
-elif [[ $ARG_REINSTALL -eq 1 || ! -f "$STAMP_FILE" ]]; then
+elif [[ $ARG_REINSTALL -eq 1 || ! -f "$STAMP_FILE" || "$(cat "$STAMP_FILE" 2>/dev/null)" != "$DEPS_VERSION" ]]; then
   step "Upgrading pip"
   "$VENV_PYTHON" -m pip install --upgrade pip --quiet
 
   step "Installing project dependencies, database drivers, and object-store readers from pyproject.toml"
   "$VENV_PYTHON" -m pip install -e '.[drivers,objectstore]' -e ./enterprise --quiet
 
-  : > "$STAMP_FILE"
+  printf '%s' "$DEPS_VERSION" > "$STAMP_FILE"
   step "Dependencies installed"
 else
   step "Dependencies already installed (use --reinstall to refresh)"

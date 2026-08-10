@@ -194,21 +194,29 @@ def _s3_storage_options(mount: "Mount", *, store=None) -> dict:
 def reader_for_mount(mount: "Mount", *, subpath: str = "") -> ObjectStoreTableReader:
     """Build the reader for a transforming mount's declared table ``format``."""
     fmt = (getattr(mount, "format", "") or "").strip().lower()
+    if fmt not in READER_BACKENDS:
+        raise ValueError(f"mount {mount.bucket!r} has no tokenizing table format")
+    if mount.backend not in READER_BACKENDS[fmt]:
+        raise ObjectStoreReaderUnavailable(
+            f"{fmt} reading for backend {mount.backend!r} is not wired yet; "
+            f"supported backends: {list(READER_BACKENDS[fmt])}"
+        )
     if fmt == "delta":
         if mount.backend == "local":
             return DeltaTableReader(_local_table_path(mount, subpath))
-        if mount.backend == "s3":
-            return DeltaTableReader(_s3_table_uri(mount, subpath),
-                                    storage_options=_s3_storage_options(mount))
-        raise ObjectStoreReaderUnavailable(
-            f"Delta reading for backend {mount.backend!r} is not wired yet; "
-            f"local and s3 mounts are supported"
-        )
-    if fmt == "iceberg":
-        if mount.backend == "local":
-            return IcebergTableReader(_discover_iceberg_metadata(_local_table_path(mount, subpath)))
-        raise ObjectStoreReaderUnavailable(
-            f"Iceberg reading for backend {mount.backend!r} is not wired yet; "
-            f"local mounts are supported in Phase 2"
-        )
-    raise ValueError(f"mount {mount.bucket!r} has no tokenizing table format")
+        return DeltaTableReader(_s3_table_uri(mount, subpath),
+                                storage_options=_s3_storage_options(mount))
+    # iceberg (local only for now)
+    return IcebergTableReader(_discover_iceberg_metadata(_local_table_path(mount, subpath)))
+
+
+# Backends the reader can serve per format today; drives the Config Builder's
+# "not wired yet" gating and the capability surfaced on /api/mounts.
+READER_BACKENDS: dict[str, tuple[str, ...]] = {
+    "delta": ("local", "s3"),
+    "iceberg": ("local",),
+}
+
+
+def reader_backend_support() -> dict[str, list[str]]:
+    return {fmt: list(backends) for fmt, backends in READER_BACKENDS.items()}

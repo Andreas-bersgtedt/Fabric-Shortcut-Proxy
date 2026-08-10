@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Object Store Tokenizer (issue #12).** Mounts that point at an existing Delta
+  Lake or Apache Iceberg table can now serve a **tokenized copy**: the proxy reads
+  the source, applies per-column policies in memory (deterministic keyed SHA-256
+  token, random UUID token, or drop), and serves a masked Delta table over the S3
+  endpoint — so PII never reaches Fabric. Contained entirely in the storage mount
+  path; the SQL→Iceberg/Delta engine is untouched. Readers: Delta (delta-rs) on
+  `local`/`s3`, Iceberg (pyiceberg) on `local`, behind the optional `[objectstore]`
+  extra. Tokenized output is materialized to a byte-stable cache keyed by policy
+  hash + a one-way key fingerprint (key rotation invalidates it). Config Builder
+  gains a per-mount "Tokenize this table" editor with schema inspection and the
+  Keep / Deterministic / Random / Remove column controls, and the format +
+  tokenizer capability is surfaced in `/readyz` and the monitor summary.
+  **Note:** unlike SQL pushdown, this path reads source plaintext into the proxy to
+  mask it (object stores have no engine to push down to); it is never written to
+  config or served.
 - **Targeted S3 access diagnostics for Direct Lake (issue #11).** New
   `S3_ACCESS_LOG` flag (default on) emits structured `s3_object_response` logs for
   ranged reads and `_delta_log` commits (key, kind, status, requested/resolved

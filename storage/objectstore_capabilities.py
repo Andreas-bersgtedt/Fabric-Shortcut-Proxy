@@ -44,6 +44,11 @@ def get_format_capabilities(fmt: str) -> ObjectStoreFormatCapabilities | None:
     return _CAPABILITIES.get((fmt or "").strip().lower())
 
 
+def capabilities_summary() -> dict:
+    """Format -> capability dict, for surfacing in /readyz and the monitor."""
+    return {fmt: caps.to_dict() for fmt, caps in _CAPABILITIES.items()}
+
+
 def validate_object_store_policy(
     *, format: str, key_column: str | None, columns: "list[ColumnDef]"
 ) -> None:

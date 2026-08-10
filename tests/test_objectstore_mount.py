@@ -20,6 +20,7 @@ from storage.objectstore_reader import ObjectStoreReaderUnavailable
 
 _KEY_ENV = "FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1"
 _HAS_DELTALAKE = importlib.util.find_spec("deltalake") is not None
+_HAS_PYICEBERG = importlib.util.find_spec("pyiceberg") is not None
 
 
 def _delta_mount(root: str) -> Mount:
@@ -147,3 +148,156 @@ def test_tokenizing_store_materializes_tokenized_delta(tmp_path, monkeypatch):
 
     # Second call is a cache hit (marker present) — no re-materialization needed.
     assert tokenizing_store.ensure_materialized(mount) == cache_dir
+
+
+def _iceberg_mount(root: str) -> Mount:
+    return Mount(
+        bucket="customers-iceberg", backend="local", root=root,
+        format="iceberg", key_column="customer_id",
+        columns=(
+            ColumnDef(field_id=1, name="customer_id", iceberg_type="long", nullable=False),
+            ColumnDef(
+                field_id=2, name="email_token", source="email", iceberg_type="string",
+                transform=ColumnTransform(
+                    kind="deterministic_hash", key_ref="customer-pii-v1",
+                    domain="customer-email", normalization="trim_lower",
+                ),
+            ),
+        ),
+    )
+
+
+@pytest.mark.skipif(not (_HAS_DELTALAKE and _HAS_PYICEBERG),
+                    reason="needs the objectstore extra (deltalake + pyiceberg)")
+def test_tokenizing_store_materializes_iceberg_source(tmp_path, monkeypatch):
+    import pathlib
+    import deltalake
+    from pyiceberg.catalog.sql import SqlCatalog
+
+    impl = {"py-io-impl": "pyiceberg.io.fsspec.FsspecFileIO"}
+    warehouse = tmp_path / "iceberg_wh"
+    warehouse.mkdir()
+    catalog = SqlCatalog("t", uri=f"sqlite:///{(tmp_path / 'cat.db').as_posix()}",
+                         warehouse=pathlib.Path(warehouse).as_uri(), **impl)
+    catalog.create_namespace("db")
+    source = pa.table({
+        "customer_id": pa.array([1, 2], type=pa.int64()),
+        "email": pa.array(["Alice@Example.com", None]),
+    })
+    table = catalog.create_table("db.customers", schema=source.schema)
+    table.append(source)
+    location = table.location()
+    root = location[len("file://"):] if location.startswith("file://") else location
+    root = root.lstrip("/") if os.name == "nt" else root
+
+    monkeypatch.setenv(_KEY_ENV, "uat-secret")
+    monkeypatch.setenv("FSP_TOKENIZING_CACHE_DIR", str(tmp_path / "cache"))
+
+    cache_dir = tokenizing_store.ensure_materialized(_iceberg_mount(root))
+
+    served = deltalake.DeltaTable(cache_dir).to_pyarrow_table().sort_by("customer_id")
+    assert served.column_names == ["customer_id", "email_token"]
+    tokens = served.column("email_token").to_pylist()
+    assert len(tokens[0]) == 64 and tokens[1] is None
+    assert "Alice@Example.com" not in tokens              # Iceberg source read + tokenized
+
+
+@pytest.mark.skipif(not _HAS_DELTALAKE, reason="needs the objectstore extra (deltalake)")
+async def test_tokenizing_mount_serves_over_http(tmp_path, monkeypatch):
+    import deltalake
+    import httpx
+    from fastapi import FastAPI
+
+    import storage.mounts as mounts
+    from s3.router import router as s3_router
+
+    src = tmp_path / "src"
+    deltalake.write_deltalake(str(src), pa.table({
+        "customer_id": pa.array([1, 2], type=pa.int64()),
+        "email": pa.array(["Alice@Example.com", "bob@example.com"]),
+    }))
+
+    monkeypatch.setenv(_KEY_ENV, "uat-secret")
+    monkeypatch.setenv("FSP_TOKENIZING_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("ENABLE_STORAGE_PROXY", "1")
+    monkeypatch.setattr(mounts, "MOUNTS", {"customers-safe": _delta_mount(str(src))})
+    monkeypatch.setattr(mounts, "_backends", {})
+
+    app = FastAPI()
+    app.include_router(s3_router)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        listing = await client.get("/customers-safe?list-type=2")
+        assert listing.status_code == 200
+        assert "_delta_log/" in listing.text                # served as a real Delta table
+
+        import re as _re
+        parquet_keys = _re.findall(r"<Key>([^<]+\.parquet)</Key>", listing.text)
+        assert parquet_keys, listing.text
+
+        got = await client.get(f"/customers-safe/{parquet_keys[0]}")
+        assert got.status_code == 200
+        assert b"Alice@Example.com" not in got.content       # no plaintext over the wire
+        assert b"bob@example.com" not in got.content
+
+        head = await client.head(f"/customers-safe/{parquet_keys[0]}")
+        assert head.status_code == 200
+        assert head.headers["Content-Length"] == str(len(got.content))
+
+
+async def test_readyz_surfaces_tokenizing_mounts(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    import storage.mounts as mounts
+    from observability.endpoints import router as obs_router
+
+    monkeypatch.setenv("ENABLE_STORAGE_PROXY", "1")
+    monkeypatch.setattr(mounts, "MOUNTS", {"customers-safe": _delta_mount("/src")})
+
+    app = FastAPI()
+    app.include_router(obs_router)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        body = (await client.get("/readyz")).json()
+
+    tokenizer = body["object_store_tokenizer"]
+    assert tokenizer["mounts"][0]["bucket"] == "customers-safe"
+    assert tokenizer["mounts"][0]["format"] == "delta"
+    assert tokenizer["mounts"][0]["transforms"] == 1
+    assert set(tokenizer["formats"]) == {"delta", "iceberg"}
+
+
+# --- s3 delta-rs storage_options mapping (no network) ------------------------
+
+def test_s3_storage_options_anonymous_custom_endpoint():
+    from storage.objectstore_reader import _s3_storage_options, _s3_table_uri
+
+    mount = Mount(bucket="b", backend="s3", root="lake", prefix="curated/",
+                  format="delta", auth="anonymous",
+                  endpoint="http://minio:9000", region="us-west-1")
+    options = _s3_storage_options(mount)
+    assert options["AWS_REGION"] == "us-west-1"
+    assert options["AWS_ENDPOINT_URL"] == "http://minio:9000"
+    assert options["AWS_ALLOW_HTTP"] == "true"
+    assert options["AWS_SKIP_SIGNATURE"] == "true"
+    assert options["AWS_VIRTUAL_HOSTED_STYLE_REQUEST"] == "false"   # custom endpoint => path-style
+    assert _s3_table_uri(mount, "") == "s3://lake/curated"
+
+
+def test_s3_storage_options_instance_default_region_and_uri():
+    from storage.objectstore_reader import _s3_storage_options, _s3_table_uri
+
+    mount = Mount(bucket="b", backend="s3", root="lake", format="delta", auth="instance")
+    options = _s3_storage_options(mount)
+    assert options["AWS_REGION"] == "us-east-1"                     # default when unset
+    assert "AWS_ACCESS_KEY_ID" not in options and "AWS_SKIP_SIGNATURE" not in options
+    assert _s3_table_uri(mount, "customers") == "s3://lake/customers"
+
+
+def test_s3_storage_options_rejects_unsupported_mode():
+    from storage.objectstore_reader import _s3_storage_options, ObjectStoreReaderUnavailable
+
+    mount = Mount(bucket="b", backend="s3", root="lake", format="delta", auth="sso")
+    with pytest.raises(ObjectStoreReaderUnavailable):
+        _s3_storage_options(mount)

@@ -45,6 +45,19 @@ def _counter_total(snapshot: dict, name: str) -> float:
     return sum(s["value"] for s in snapshot.get("counters", {}).get(name, []))
 
 
+def _object_store_tokenizer_summary() -> dict:
+    """Tokenizing mounts + per-format capabilities (issue #12); {} if none."""
+    try:
+        from storage.mounts import tokenizing_mounts
+        tok = tokenizing_mounts()
+        if not tok:
+            return {}
+        from storage.objectstore_capabilities import capabilities_summary
+        return {"mounts": tok, "formats": capabilities_summary()}
+    except Exception:  # noqa: BLE001 - the dashboard must never break on this
+        return {}
+
+
 @router.get("/api/summary")
 async def summary() -> dict:
     """Consolidated live snapshot for the dashboard."""
@@ -152,6 +165,7 @@ async def summary() -> dict:
         "tables": tables,
         "sources": [{"connection": cid, **meta} for cid, meta in sorted(source_meta.items())],
         "recent_queries": qs["recent"],
+        "object_store_tokenizer": _object_store_tokenizer_summary(),
     }
 
 

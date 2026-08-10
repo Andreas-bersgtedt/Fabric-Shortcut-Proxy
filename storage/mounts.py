@@ -223,6 +223,18 @@ def mount_ids() -> list[str]:
     return sorted(MOUNTS.keys())
 
 
+def tokenizing_mounts() -> list[dict]:
+    """Buckets served as tokenized object-store copies (issue #12); [] if disabled."""
+    if not _enabled():
+        return []
+    return [
+        {"bucket": m.bucket, "format": m.format, "backend": m.backend,
+         "columns": len(m.columns),
+         "transforms": sum(1 for c in m.columns if c.transform)}
+        for m in MOUNTS.values() if getattr(m, "format", "")
+    ]
+
+
 def backend_for(mount: Mount) -> ArtifactStore:
     """Return (lazily building + caching) the backend store for a mount."""
     with _backends_lock:

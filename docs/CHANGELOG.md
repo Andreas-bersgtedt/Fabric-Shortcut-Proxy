@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Resilient agent startup — table quarantine + background retry.** A warehouse
+  table whose source is unreachable/misconfigured is now **quarantined** (logged,
+  excluded from the served set) instead of exiting `EX_CONFIG (78)` and taking every
+  healthy table **and every storage-proxy mount** down with it. The agent comes up
+  serving all healthy tables + mounts, and a background loop retries quarantined
+  tables (default every 60s, `TABLE_RETRY_SECONDS`) so they self-heal when the source
+  recovers. Per-table `enabled` flag in `config.tables.json` to disable a table
+  manually. New `QUARANTINE_FAILED_TABLES` (default on; set false for the legacy
+  fail-fast). Quarantined tables surface in `/readyz` and `GET /_admin/quarantine`.
 - **Object Store Tokenizer (issue #12).** Mounts that point at an existing Delta
   Lake or Apache Iceberg table can now serve a **tokenized copy**: the proxy reads
   the source, applies per-column policies in memory (deterministic keyed SHA-256

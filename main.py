@@ -111,41 +111,67 @@ async def lifespan(app: FastAPI):
     # Resolve each table's schema (reflected from source metadata unless declared
     # explicitly) and split key column, in place, before snapshots are built.
     from db.executor import resolve_tables
-    try:
-        await resolve_tables(config.TABLES)
-        # Fail fast (H6) if any source table doesn't expose every declared column.
-        if config.VALIDATE_SOURCE_SCHEMA:
-            from db.executor import validate_source_schema
-            for table in config.TABLES:
-                await validate_source_schema(table)
-    except Exception as exc:  # noqa: BLE001 - turn a raw driver stack trace into a clear message
-        hint = _source_connect_hint(exc)
-        log.error("source_connect_failed", detail=hint)
-        # A bad credential / unreachable source is a PERMANENT config error, not a
-        # transient crash. Exit with EX_CONFIG (78) and no traceback so the
-        # supervisor stops restarting (see control/supervisor.py) instead of
-        # crash-looping the whole fleet. The Manager UI (/_config) stays up to fix it.
-        print("\n[startup] " + hint + "\n", file=sys.stderr, flush=True)
-        sys.stderr.flush()
-        os._exit(78)
+    # Skip manually-disabled tables (config.tables.json "enabled": false).
+    _active_tables = [t for t in config.TABLES if getattr(t, "enabled", True)]
+    if config.QUARANTINE_FAILED_TABLES:
+        # Resilient startup: resolve each table independently. A source that is
+        # unreachable / misconfigured is QUARANTINED and retried in the background
+        # instead of exiting EX_CONFIG (78) and taking every healthy table AND every
+        # storage-proxy mount down with it.
+        from runtime import quarantine, table_health
+        healthy_tables = await table_health.resolve_resiliently(_active_tables)
+        if quarantine.names():
+            log.warning("tables_quarantined_at_startup", quarantined=quarantine.names(),
+                        healthy=[t.name for t in healthy_tables],
+                        retry_seconds=config.TABLE_RETRY_SECONDS)
+    else:
+        try:
+            await resolve_tables(_active_tables)
+            # Fail fast (H6) if any source table doesn't expose every declared column.
+            if config.VALIDATE_SOURCE_SCHEMA:
+                from db.executor import validate_source_schema
+                for table in _active_tables:
+                    await validate_source_schema(table)
+            healthy_tables = _active_tables
+        except Exception as exc:  # noqa: BLE001 - turn a raw driver stack trace into a clear message
+            hint = _source_connect_hint(exc)
+            log.error("source_connect_failed", detail=hint)
+            # A bad credential / unreachable source is a PERMANENT config error, not a
+            # transient crash. Exit with EX_CONFIG (78) and no traceback so the
+            # supervisor stops restarting (see control/supervisor.py) instead of
+            # crash-looping the whole fleet. The Manager UI (/_config) stays up to fix it.
+            print("\n[startup] " + hint + "\n", file=sys.stderr, flush=True)
+            sys.stderr.flush()
+            os._exit(78)
 
     if config.AUTO_REFRESH:
         # Data-freshness path (content-addressed snapshots + background poller).
         # Each chunk is named by the hash of its rows, so a new snapshot (and new
         # data-file paths) is published only when content actually changes.
         from iceberg import freshness
-        for t in config.TABLES:
-            candidate = await freshness.materialize_table(
-                t, config.BUCKET_NAME, config.WAREHOUSE_PREFIX
-            )
-            await freshness.publish(candidate)
-            await freshness.prime_probe(t)
+        from runtime import quarantine
+        _served: list = []
+        for t in healthy_tables:
+            try:
+                candidate = await freshness.materialize_table(
+                    t, config.BUCKET_NAME, config.WAREHOUSE_PREFIX
+                )
+                await freshness.publish(candidate)
+                await freshness.prime_probe(t)
+            except Exception as exc:  # noqa: BLE001 - isolate a mid-materialize failure
+                if not config.QUARANTINE_FAILED_TABLES:
+                    raise
+                reason = str(exc).splitlines()[0][:300] if str(exc).strip() else exc.__class__.__name__
+                quarantine.quarantine(t.name, reason)
+                log.error("table_quarantined", table=t.name, reason=reason)
+                continue
+            _served.append(t)
         freshness.start_poller(
-            config.TABLES, config.BUCKET_NAME, config.WAREHOUSE_PREFIX
+            _served, config.BUCKET_NAME, config.WAREHOUSE_PREFIX
         )
         log.info(
             "auto_refresh_enabled",
-            tables=[t.name for t in config.TABLES],
+            tables=[t.name for t in _served],
             poll_seconds=config.REFRESH_POLL_SECONDS,
             strategy=config.REFRESH_STRATEGY,
         )
@@ -162,7 +188,7 @@ async def lifespan(app: FastAPI):
                      "or the SQL endpoint may never converge on the latest version.",
             )
     else:
-        runtime_tables = list(config.TABLES)
+        runtime_tables = list(healthy_tables)
 
         # Phase 2 split planner v2 (opt-in): dynamic split-count selection from
         # row-target planning with min/max guardrails.
@@ -328,14 +354,29 @@ async def lifespan(app: FastAPI):
                 hint="splits materialize on first read per table",
             )
         else:
+            _failed_snaps: list = []
             for snap in snapshots:
-                if config.CONCURRENT_STARTUP_MATERIALIZATION:
-                    counts = await asyncio.gather(*(_materialize(s) for s in snap.splits))
-                else:
-                    counts = [await _materialize(s) for s in snap.splits]
+                try:
+                    if config.CONCURRENT_STARTUP_MATERIALIZATION:
+                        counts = await asyncio.gather(*(_materialize(s) for s in snap.splits))
+                    else:
+                        counts = [await _materialize(s) for s in snap.splits]
+                except Exception as exc:  # noqa: BLE001 - isolate a table whose splits fail to materialize
+                    if not config.QUARANTINE_FAILED_TABLES:
+                        raise
+                    from runtime import quarantine
+                    from iceberg import state_store as _ss
+                    reason = str(exc).splitlines()[0][:300] if str(exc).strip() else exc.__class__.__name__
+                    quarantine.quarantine(snap.table.name, reason)
+                    _ss.unregister_snapshot(snap.table.name)
+                    log.error("table_quarantined", table=snap.table.name, reason=reason)
+                    _failed_snaps.append(snap)
+                    continue
                 snap.total_records = sum(counts)
                 log.info("splits_materialized", table=snap.table.name,
                          total_records=snap.total_records, splits=len(snap.splits))
+            for snap in _failed_snaps:
+                snapshots.remove(snap)
 
             # Persist this run's observed split sizes so the next run can balance by
             # bytes (weighted strategy). Shard 0 writes the full map — after the loop
@@ -453,6 +494,18 @@ async def lifespan(app: FastAPI):
         app.state.gc_task = asyncio.create_task(_retention_gc_loop(), name="retention-gc")
         log.info("retention_gc_enabled", interval_seconds=config.RETENTION_GC_INTERVAL_SECONDS)
 
+    # Resilient startup: retry quarantined tables in the background so they
+    # self-heal when the source recovers (default 60s; 0 disables).
+    app.state.table_retry_task = None
+    if config.QUARANTINE_FAILED_TABLES and config.TABLE_RETRY_SECONDS > 0:
+        from runtime import table_health
+        app.state.table_retry_task = asyncio.create_task(
+            table_health.retry_loop(_active_tables, config.BUCKET_NAME,
+                                    config.WAREHOUSE_PREFIX, config.TABLE_RETRY_SECONDS),
+            name="table-retry",
+        )
+        log.info("table_retry_enabled", interval_seconds=config.TABLE_RETRY_SECONDS)
+
     yield  # Application runs here
 
     log.info("shutdown")
@@ -464,6 +517,11 @@ async def lifespan(app: FastAPI):
         app.state.gc_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.gc_task
+    # Stop the table-retry loop (if running).
+    if getattr(app.state, "table_retry_task", None) is not None:
+        app.state.table_retry_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.table_retry_task
     # Stop the freshness poller (if running) before disposing the engine.
     if config.AUTO_REFRESH:
         from iceberg import freshness

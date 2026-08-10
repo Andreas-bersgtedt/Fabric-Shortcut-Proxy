@@ -129,6 +129,14 @@ ENABLE_MONITOR: bool = _get_bool("ENABLE_MONITOR", "enable_monitor", False)
 # request/range/status chain. On by default; set to false to quiet the logs.
 S3_ACCESS_LOG: bool = _get_bool("S3_ACCESS_LOG", "s3_access_log", True)
 
+# Resilient startup: quarantine a table that can't be brought online (unreachable
+# source, bad credential, missing column) instead of exiting EX_CONFIG (78). The
+# agent serves every healthy table + mount and a background loop retries the
+# quarantined ones. Set false for the legacy fail-fast behavior.
+QUARANTINE_FAILED_TABLES: bool = _get_bool("QUARANTINE_FAILED_TABLES", "quarantine_failed_tables", True)
+# Seconds between background retries of quarantined tables (0 disables retrying).
+TABLE_RETRY_SECONDS: int = _get_int("TABLE_RETRY_SECONDS", "table_retry_seconds", 60)
+
 # Storage proxy: serve mounted buckets (config.mounts.json) as byte passthrough
 # from S3/NFS/SMB backends, alongside the relational->Iceberg path. Off by default.
 ENABLE_STORAGE_PROXY: bool = _get_bool("ENABLE_STORAGE_PROXY", "enable_storage_proxy", False)

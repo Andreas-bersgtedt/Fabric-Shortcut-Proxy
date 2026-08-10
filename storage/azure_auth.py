@@ -170,15 +170,6 @@ def _require_blob():
             "pip install 'fabric-shortcut-proxy[azureblob]'") from exc
 
 
-def _require_identity():
-    try:
-        import azure.identity  # noqa: F401
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "this Azure auth mode needs azure-identity; install it with "
-            "pip install 'fabric-shortcut-proxy[azureblob]'") from exc
-
-
 def build_container_client(auth: AzureAuthConfig, opts: AzureClientOptions, container: str):
     """Build an authenticated Azure ``ContainerClient`` for the given auth + options."""
     _require_blob()
@@ -204,16 +195,12 @@ def _credential_for(auth: AzureAuthConfig):
         return auth.sas_token
     if auth.mode == "anonymous":
         return None
-    if auth.mode == "aad_client_secret":
-        _require_identity()
-        from azure.identity import ClientSecretCredential
-        return ClientSecretCredential(auth.tenant_id, auth.client_id, auth.client_secret)
-    if auth.mode == "managed_identity":
-        _require_identity()
-        from azure.identity import ManagedIdentityCredential
-        return ManagedIdentityCredential(client_id=auth.client_id or None)
-    if auth.mode == "default":
-        _require_identity()
-        from azure.identity import DefaultAzureCredential
-        return DefaultAzureCredential()
+    if auth.mode in ("aad_client_secret", "managed_identity", "default"):
+        from security.azure_credential import get_credential
+        return get_credential(
+            auth.mode,
+            tenant_id=auth.tenant_id,
+            client_id=auth.client_id,
+            client_secret=auth.client_secret,
+        )
     raise ValueError(f"unsupported azure auth mode: {auth.mode!r}")

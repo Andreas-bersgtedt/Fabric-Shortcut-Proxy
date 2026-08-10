@@ -277,12 +277,15 @@ def hydrate_from_keyvault(store=None, *, source=None) -> list[str]:
 def refresh_secrets_once(source, store) -> list[str]:
     """Re-pull the documented secrets from Key Vault, writing through to cache + env.
 
-    Used by the background refresh loop. A Key Vault error for any single secret is
-    skipped so the last-known-good cache is retained. Returns refreshed env names.
+    Used by the background refresh loop. A not-found secret is skipped; a Key Vault
+    connectivity/auth error aborts the pass (the last-known-good cache is retained)
+    and marks the advisory status ``degraded``. Never raises. Returns refreshed env
+    names and records the outcome for :func:`status_snapshot`.
     """
     import os
     from security.credential_store import looks_masked
     refreshed: list[str] = []
+    error: Exception | None = None
     try:
         val = source.get_secret_value("db_url")
         if val and not looks_masked(val):
@@ -290,19 +293,87 @@ def refresh_secrets_once(source, store) -> list[str]:
                 store.set_url("default", val)
             os.environ["DB_URL"] = val
             refreshed.append("DB_URL")
-    except KeyVaultUnavailable:
-        pass
-    for local_key, env_var in _ENV_SECRETS.items():
-        try:
+        for local_key, env_var in _ENV_SECRETS.items():
             val = source.get_secret_value(local_key)
-        except KeyVaultUnavailable:
-            continue
-        if val:
-            if store is not None and store.available:
-                try:
-                    store.set_secret(f"env:{local_key}", {"value": val})
-                except Exception:  # noqa: BLE001
-                    pass
-            os.environ[env_var] = val
-            refreshed.append(env_var)
+            if val:
+                if store is not None and store.available:
+                    try:
+                        store.set_secret(f"env:{local_key}", {"value": val})
+                    except Exception:  # noqa: BLE001
+                        pass
+                os.environ[env_var] = val
+                refreshed.append(env_var)
+    except KeyVaultUnavailable as exc:
+        error = exc
+    if error is not None:
+        note_refresh_error(error)
+    else:
+        note_refresh_ok(refreshed)
     return refreshed
+
+
+# ---------------------------------------------------------------------------
+# Advisory status for /readyz + the monitor dashboard (non-secret, no live call)
+# ---------------------------------------------------------------------------
+
+_STATUS: dict = {"ok": None, "at": "", "secrets": [], "error": ""}
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def note_refresh_ok(names) -> None:
+    _STATUS.update(ok=True, at=_now_iso(), secrets=list(names or []), error="")
+
+
+def note_refresh_error(err) -> None:
+    _STATUS.update(ok=False, at=_now_iso(), error=str(err)[:200])
+
+
+def _vault_host(uri: str) -> str:
+    from urllib.parse import urlparse
+    try:
+        return urlparse(uri or "").hostname or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def status_snapshot(cfg: KeyVaultConfig | None = None, store=None) -> dict:
+    """Non-secret Key Vault / Entra ID status for health + monitoring.
+
+    Reports the configured vault (host only), auth mode, refresh/TTL knobs, whether
+    a local cache exists, and the last refresh outcome. It never contains secret
+    values and never performs a live network call (it reflects the last refresh),
+    so it is safe to call on every ``/readyz`` hit.
+    """
+    import system_config as sc
+    if cfg is None:
+        cfg = config_from_settings(sc)
+    out = {
+        "enabled": bool(cfg.enabled),
+        "vault": _vault_host(cfg.vault_uri),
+        "auth_mode": cfg.auth_mode,
+        "require_keyvault": bool(getattr(sc, "REQUIRE_KEYVAULT", False)),
+        "refresh_seconds": int(getattr(sc, "KEYVAULT_REFRESH_SECONDS", 0)),
+        "cache_ttl": int(getattr(sc, "KEYVAULT_CACHE_TTL", 0)),
+        "last_refresh": dict(_STATUS),
+    }
+    cached = False
+    try:
+        if store is None:
+            from security.credential_store import CredentialStore
+            store = CredentialStore()
+        if store.available:
+            cached = bool(store.list_ids() or store.list_secret_ids())
+    except Exception:  # noqa: BLE001
+        cached = False
+    out["cached"] = cached
+    if not out["enabled"]:
+        out["status"] = "disabled"
+    elif _STATUS.get("ok") is False:
+        out["status"] = "degraded"
+    else:
+        out["status"] = "ok"
+    return out

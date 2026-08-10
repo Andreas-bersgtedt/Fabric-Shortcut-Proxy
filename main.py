@@ -524,13 +524,13 @@ async def lifespan(app: FastAPI):
 
         async def _keyvault_refresh_loop():
             while True:
-                await asyncio.sleep(_kv_interval)
                 try:
                     names = await asyncio.to_thread(_kv.refresh_secrets_once, _kv_source, _kv_store)
                     if names:
                         log.info("keyvault_refreshed", secrets=names)
                 except Exception as exc:  # noqa: BLE001 - never let the loop die
                     log.warning("keyvault_refresh_failed", error=str(exc))
+                await asyncio.sleep(_kv_interval)
 
         app.state.keyvault_refresh_task = asyncio.create_task(
             _keyvault_refresh_loop(), name="keyvault-refresh")

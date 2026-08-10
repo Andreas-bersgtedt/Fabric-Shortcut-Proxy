@@ -199,6 +199,10 @@ class CredentialStore:
         self.path = path or _default_store_path()
         # ``cipher`` injection is for tests only; production auto-selects.
         self._cipher = cipher if cipher is not None else _select_cipher(self.path)
+        # Optional read-through source (issue #16): fn(kind, key) -> str | None,
+        # consulted only on a local miss; the value is written through to the
+        # encrypted cache so subsequent reads are local (cache-first).
+        self.read_through = None
 
     # -- capability -------------------------------------------------------
     @property
@@ -245,6 +249,39 @@ class CredentialStore:
         stored = str(data.get("backend") or self.backend_name)
         return stored == self.backend_name
 
+    def _resolve_via_source(self, kind: str, key: str):
+        """On a local miss, pull from the read-through source and write through.
+
+        ``kind`` is ``"url"`` (returns a str) or ``"secret"`` (returns a dict).
+        Best-effort: any source error is swallowed so a lookup never raises — an
+        unreachable Key Vault must never fail the caller (owner directive).
+        """
+        fn = getattr(self, "read_through", None)
+        if fn is None or not self.available:
+            return None
+        try:
+            raw = fn(kind, key)
+        except Exception as exc:  # noqa: BLE001 - read-through is best-effort
+            print(f"[credential_store] read-through failed for {kind} {key!r}: {exc}", file=sys.stderr)
+            return None
+        if raw is None:
+            return None
+        if kind == "url":
+            if isinstance(raw, str) and raw.strip() and not looks_masked(raw):
+                self.set_url(key, raw)
+                return raw
+            return None
+        obj = raw
+        if isinstance(raw, str):
+            try:
+                obj = json.loads(raw)
+            except ValueError:
+                return None
+        if isinstance(obj, dict):
+            self.set_secret(key, obj)
+            return obj
+        return None
+
     # -- public api -------------------------------------------------------
     def set_url(self, connection_id: str, db_url: str) -> None:
         """Encrypt and persist a connection's full database URL."""
@@ -275,20 +312,25 @@ class CredentialStore:
         self._save(data)
 
     def get_url(self, connection_id: str) -> str | None:
-        """Decrypt and return a connection's URL, or ``None`` if absent/unreadable."""
+        """Decrypt and return a connection's URL, or ``None`` if absent/unreadable.
+
+        On a local miss an optional read-through source (issue #16) is consulted
+        and its value written through to the encrypted cache.
+        """
+        cid = (connection_id or "").strip() or "default"
         if not self.available:
             return None
         data = self._load()
         if not self._backend_matches(data):
             return None
-        entry = data.get("connections", {}).get((connection_id or "").strip() or "default")
-        if not isinstance(entry, dict) or not entry.get("enc"):
-            return None
-        try:
-            return self._cipher.decrypt(base64.b64decode(entry["enc"])).decode("utf-8")
-        except Exception as exc:  # noqa: BLE001
-            print(f"[credential_store] could not decrypt {connection_id!r}: {exc}", file=sys.stderr)
-            return None
+        entry = data.get("connections", {}).get(cid)
+        if isinstance(entry, dict) and entry.get("enc"):
+            try:
+                return self._cipher.decrypt(base64.b64decode(entry["enc"])).decode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[credential_store] could not decrypt {connection_id!r}: {exc}", file=sys.stderr)
+                return None
+        return self._resolve_via_source("url", cid)
 
     def delete(self, connection_id: str) -> bool:
         cid = (connection_id or "").strip() or "default"
@@ -325,21 +367,26 @@ class CredentialStore:
         self._save(data)
 
     def get_secret(self, secret_id: str) -> dict | None:
-        """Decrypt and return a JSON secret, or ``None`` if absent/unreadable."""
+        """Decrypt and return a JSON secret, or ``None`` if absent/unreadable.
+
+        On a local miss an optional read-through source (issue #16) is consulted
+        and its value written through to the encrypted cache.
+        """
+        sid = (secret_id or "").strip()
         if not self.available:
             return None
         data = self._load()
         if not self._backend_matches(data):
             return None
-        entry = data.get("secrets", {}).get((secret_id or "").strip())
-        if not isinstance(entry, dict) or not entry.get("enc"):
-            return None
-        try:
-            raw = self._cipher.decrypt(base64.b64decode(entry["enc"])).decode("utf-8")
-            return json.loads(raw)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[credential_store] could not decrypt secret {secret_id!r}: {exc}", file=sys.stderr)
-            return None
+        entry = data.get("secrets", {}).get(sid)
+        if isinstance(entry, dict) and entry.get("enc"):
+            try:
+                raw = self._cipher.decrypt(base64.b64decode(entry["enc"])).decode("utf-8")
+                return json.loads(raw)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[credential_store] could not decrypt secret {secret_id!r}: {exc}", file=sys.stderr)
+                return None
+        return self._resolve_via_source("secret", sid)
 
     def delete_secret(self, secret_id: str) -> bool:
         sid = (secret_id or "").strip()

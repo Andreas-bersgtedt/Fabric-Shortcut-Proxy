@@ -39,6 +39,9 @@ from system_config import (
     ENABLE_STORAGE_PROXY, ENFORCE_MOUNT_AUTH, ENABLE_AUDIT_LOG, AUDIT_LOG_FILE,
     # Credential store
     ENABLE_CREDENTIAL_STORE, CREDENTIAL_STORE_PATH,
+    # Entra ID auth & Key Vault (issue #16)
+    AUTH_MODE, KEYVAULT_URI, AZURE_TENANT_ID, AZURE_CLIENT_ID,
+    REQUIRE_KEYVAULT, KEYVAULT_REFRESH_SECONDS, KEYVAULT_CACHE_TTL,
     # Artifact Store
     ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_SERVING, PUBLISH_SERVING_IMAGE,
     # Fleet
@@ -175,6 +178,15 @@ _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 _register("MANAGER_AUTH_ENABLED", "manager_auth_enabled", "bool", MANAGER_AUTH_ENABLED)
 _register("MANAGER_AUTH_USERNAME", "manager_auth_username", "str", MANAGER_AUTH_USERNAME)
 _register("MANAGER_AUTH_PASSWORD", "manager_auth_password", "str", MANAGER_AUTH_PASSWORD)
+
+# Entra ID auth & Azure Key Vault (issue #16)
+_register("FSP_AUTH_MODE", "auth_mode", "str", AUTH_MODE)
+_register("FSP_KEYVAULT_URI", "keyvault_uri", "str", KEYVAULT_URI)
+_register("AZURE_TENANT_ID", "azure_tenant_id", "str", AZURE_TENANT_ID)
+_register("AZURE_CLIENT_ID", "azure_client_id", "str", AZURE_CLIENT_ID)
+_register("FSP_REQUIRE_KEYVAULT", "require_keyvault", "bool", REQUIRE_KEYVAULT)
+_register("FSP_KEYVAULT_REFRESH_SECONDS", "keyvault_refresh_seconds", "int", KEYVAULT_REFRESH_SECONDS)
+_register("FSP_KEYVAULT_CACHE_TTL", "keyvault_cache_ttl", "int", KEYVAULT_CACHE_TTL)
 
 # Register memory monitoring settings
 _register("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", "int", 800)

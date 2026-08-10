@@ -159,6 +159,34 @@ ENABLE_CREDENTIAL_STORE: bool = _get_bool("ENABLE_CREDENTIAL_STORE", "enable_cre
 CREDENTIAL_STORE_PATH: str = _get_str("CREDENTIAL_STORE_PATH", "credential_store_path", "")
 
 # ---------------------------------------------------------------------------
+# Entra ID auth & Azure Key Vault (issue #16)
+# ---------------------------------------------------------------------------
+
+# Outbound identity mode for Key Vault / Azure access:
+#   "default" (DefaultAzureCredential: MI/env/CLI), "managed_identity", "service_principal".
+AUTH_MODE: str = _get_str("FSP_AUTH_MODE", "auth_mode", "default").strip().lower()
+
+# Azure Key Vault URI, e.g. https://my-vault.vault.azure.net . Empty = KV disabled.
+KEYVAULT_URI: str = _get_str("FSP_KEYVAULT_URI", "keyvault_uri", "").strip()
+
+# Entra tenant / client for a service principal or user-assigned managed identity.
+# A client secret, when needed, comes from AZURE_CLIENT_SECRET env — never config.
+AZURE_TENANT_ID: str = _get_str("AZURE_TENANT_ID", "azure_tenant_id", "").strip()
+AZURE_CLIENT_ID: str = _get_str("AZURE_CLIENT_ID", "azure_client_id", "").strip()
+
+# Key Vault is NEVER a hard runtime dependency: an outage falls back to the local
+# encrypted cache. Default off so the agent/heartbeat/manager never die on a KV
+# outage (owner directive); when true, a cold start with no cache may fail-fast.
+REQUIRE_KEYVAULT: bool = _get_bool("FSP_REQUIRE_KEYVAULT", "require_keyvault", False)
+
+# Background KV refresh interval (seconds); positive = re-pull on this cadence.
+KEYVAULT_REFRESH_SECONDS: int = _get_int("FSP_KEYVAULT_REFRESH_SECONDS", "keyvault_refresh_seconds", 300)
+
+# Local-cache freshness TTL (seconds); <= 0 means NEVER expire so a fully offline /
+# air-gapped deployment runs entirely from a pre-seeded local store.
+KEYVAULT_CACHE_TTL: int = _get_int("FSP_KEYVAULT_CACHE_TTL", "keyvault_cache_ttl", 0)
+
+# ---------------------------------------------------------------------------
 # Artifact Store (cluster seam — Phase 0)
 # ---------------------------------------------------------------------------
 

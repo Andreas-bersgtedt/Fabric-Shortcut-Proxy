@@ -379,6 +379,13 @@
         <label>Source table format</label>
         <select id="mountTokFormat"></select>
         <div class="hint" id="mountTokFormatHint" style="margin:4px 0 8px;"></div>
+        <label>Served output format</label>
+        <select id="mountTokOutput">
+          <option value="">Delta (default — most compatible)</option>
+          <option value="auto">Auto — mirror source format</option>
+          <option value="iceberg">Iceberg (experimental)</option>
+        </select>
+        <div class="hint" style="margin:4px 0 8px;">Iceberg output is validated by pyiceberg; live Fabric serving of Iceberg output over S3 is pending path handling — Delta output is recommended.</div>
         <div class="actions" style="margin:6px 0;">
           <button class="btn ghost" id="btnInspectMount">Inspect schema</button>
         </div>
@@ -1838,6 +1845,7 @@ function editMount(bucket){
   $("mountTokOn").checked = tokOn;
   $("tokBody").style.display = tokOn ? "" : "none";
   $("mountTokFormat").value = m.format || "";
+  $("mountTokOutput").value = m.output_format || "";
   updateTokFormatHint();
   tokState.columns = tokOn ? reflectedPolicyColumns(m.columns||[]) : [];
   populateTokKey();
@@ -1881,6 +1889,7 @@ function readMountForm(){
     m.format = $("mountTokFormat").value;
     m.key_column = $("mountTokKey").value || "";
     m.columns = mountColumnsFromPolicy(tokState.columns);
+    m.output_format = $("mountTokOutput").value || "";
   }
   return m;
 }
@@ -2029,7 +2038,7 @@ $("btnAddMount").onclick = () => {
   applyBackendVisibility();
   $("mountTokOn").checked = false; $("tokBody").style.display = "none";
   tokState.columns = []; $("mountTokPolicy").innerHTML = ""; $("mountTokStatus").textContent = "";
-  $("mountTokFormat").value = ""; updateTokFormatHint(); $("tokKeyBox").style.display = "none";
+  $("mountTokFormat").value = ""; $("mountTokOutput").value = ""; updateTokFormatHint(); $("tokKeyBox").style.display = "none";
   $("mountEditTitle").textContent = "Add mount";
   $("mountEditStatus").textContent = ""; $("mountBucket").focus();
 };

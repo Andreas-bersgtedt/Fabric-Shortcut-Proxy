@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hash + a one-way key fingerprint (key rotation invalidates it). Config Builder
   gains a per-mount "Tokenize this table" editor with schema inspection and the
   Keep / Deterministic / Random / Remove column controls, and the format +
-  tokenizer capability is surfaced in `/readyz` and the monitor summary.
+  tokenizer capability is surfaced in `/readyz` and the monitor summary. An
+  `output_format` mount option (`delta` default, `auto` = mirror source, or
+  experimental `iceberg`) selects the served table format.
   **Note:** unlike SQL pushdown, this path reads source plaintext into the proxy to
   mask it (object stores have no engine to push down to); it is never written to
   config or served.

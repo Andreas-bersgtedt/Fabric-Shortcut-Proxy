@@ -754,6 +754,7 @@ def _object_store_capabilities() -> dict:
     return {
         "formats": capabilities_summary(),
         "reader_backends": reader_backend_support(),
+        "output_formats": ["auto", "delta", "iceberg"],
         "reader_available": {
             "delta": importlib.util.find_spec("deltalake") is not None,
             "iceberg": importlib.util.find_spec("pyiceberg") is not None,
@@ -890,9 +891,16 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
             except ValueError as exc:
                 errors.append(f"mounts[{i}]: {exc}")
                 continue
+            out_fmt = str(e.get("output_format") or "").strip().lower()
+            if out_fmt and out_fmt not in ("auto", "delta", "iceberg"):
+                errors.append(f"mounts[{i}]: output_format {out_fmt!r} must be "
+                              f"'auto', 'delta', or 'iceberg'")
+                continue
             entry["format"] = fmt
             entry["key_column"] = key_column
             entry["columns"] = _serialize_object_store_columns(parsed)
+            if out_fmt:
+                entry["output_format"] = out_fmt
         seen.add(bucket)
         clean.append(entry)
     return clean, errors
@@ -921,6 +929,8 @@ async def list_mounts() -> JSONResponse:
             entry["format"] = m.format
             entry["key_column"] = m.key_column
             entry["columns"] = _serialize_object_store_columns(m.columns)
+            if getattr(m, "output_format", ""):
+                entry["output_format"] = m.output_format
         mounts.append(entry)
     return JSONResponse({
         "ok": True,

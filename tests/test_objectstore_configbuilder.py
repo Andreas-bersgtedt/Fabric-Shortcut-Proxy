@@ -72,6 +72,17 @@ def test_validate_requires_columns_for_format_mount():
     assert any("needs a 'columns' policy" in e for e in errors)
 
 
+def test_validate_persists_output_format():
+    clean, errors = _validate_mounts_payload([_delta_mount_payload(output_format="iceberg")])
+    assert errors == []
+    assert clean[0]["output_format"] == "iceberg"
+
+
+def test_validate_rejects_bad_output_format():
+    _, errors = _validate_mounts_payload([_delta_mount_payload(output_format="parquet")])
+    assert any("output_format" in e for e in errors)
+
+
 def test_plain_mount_still_validates_without_format():
     clean, errors = _validate_mounts_payload(
         [{"bucket": "share", "backend": "local", "root": "/mnt/share"}])
@@ -85,6 +96,7 @@ def test_object_store_capabilities_shape():
     assert set(caps["formats"]) == {"delta", "iceberg"}
     assert caps["reader_backends"]["delta"] == ["local", "s3", "azure"]
     assert caps["reader_backends"]["iceberg"] == ["local"]
+    assert caps["output_formats"] == ["auto", "delta", "iceberg"]
     assert set(caps["reader_available"]) == {"delta", "iceberg"}
 
 

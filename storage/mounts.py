@@ -68,6 +68,7 @@ class Mount:
     format: str = ""             # "" = plain passthrough | "delta" | "iceberg"
     key_column: str = ""         # ordering/key column; may not carry a transform
     columns: tuple = ()          # tuple[config.ColumnDef]; output schema + column policy
+    output_format: str = ""      # ""/"delta" = Delta out | "iceberg" = Iceberg out | "auto" = mirror source
 
 
 def _norm_prefix(p: str) -> str:
@@ -129,6 +130,7 @@ def _mount_from_json(d: dict) -> Mount:
         format=str(d.get("format") or "").strip().lower(),
         key_column=str(d.get("key_column") or "").strip(),
         columns=_parse_columns(d.get("columns")),
+        output_format=str(d.get("output_format") or "").strip().lower(),
     )
 
 
@@ -191,6 +193,10 @@ def _build_mounts() -> dict[str, Mount]:
                                              columns=list(m.columns))
             except ValueError as exc:
                 print(f"[mounts] mount {m.bucket!r}: {exc}; skipped.", file=sys.stderr)
+                continue
+            if m.output_format and m.output_format not in ("auto", "delta", "iceberg"):
+                print(f"[mounts] mount {m.bucket!r}: output_format {m.output_format!r} "
+                      f"must be 'auto', 'delta', or 'iceberg'; skipped.", file=sys.stderr)
                 continue
             if not m.columns:
                 print(f"[mounts] tokenizing mount {m.bucket!r} needs a 'columns' policy; skipped.",

@@ -202,6 +202,61 @@ def test_tokenizing_store_materializes_iceberg_source(tmp_path, monkeypatch):
     assert "Alice@Example.com" not in tokens              # Iceberg source read + tokenized
 
 
+@pytest.mark.skipif(not (_HAS_DELTALAKE and _HAS_PYICEBERG),
+                    reason="needs the objectstore extra (deltalake + pyiceberg)")
+def test_tokenizing_store_iceberg_output(tmp_path, monkeypatch):
+    import deltalake
+    from storage.objectstore_reader import IcebergTableReader, _discover_iceberg_metadata
+
+    src = tmp_path / "src"
+    deltalake.write_deltalake(str(src), pa.table({
+        "customer_id": pa.array([1, 2], type=pa.int64()),
+        "email": pa.array(["Alice@Example.com", None]),
+    }))
+
+    monkeypatch.setenv(_KEY_ENV, "uat-secret")
+    monkeypatch.setenv("FSP_TOKENIZING_CACHE_DIR", str(tmp_path / "cache"))
+    mount = Mount(
+        bucket="customers-iceberg-out", backend="local", root=str(src),
+        format="delta", key_column="customer_id", output_format="iceberg",
+        columns=(
+            ColumnDef(field_id=1, name="customer_id", iceberg_type="long", nullable=False),
+            ColumnDef(field_id=2, name="email_token", source="email", iceberg_type="string",
+                      transform=ColumnTransform(kind="deterministic_hash", key_ref="customer-pii-v1",
+                                                domain="customer-email", normalization="trim_lower")),
+        ),
+    )
+
+    served = tokenizing_store.ensure_materialized(mount)
+    assert os.path.isdir(os.path.join(served, "metadata"))          # a real Iceberg table
+
+    reader = IcebergTableReader(_discover_iceberg_metadata(served))
+    rows: list[dict] = []
+    for batch in reader.read_batches(batch_rows=1024):
+        rows.extend(batch.to_pylist())
+    rows.sort(key=lambda r: r["customer_id"])
+    assert [r["customer_id"] for r in rows] == [1, 2]
+    assert set(rows[0].keys()) == {"customer_id", "email_token"}    # Delta source served as Iceberg
+    assert len(rows[0]["email_token"]) == 64 and rows[1]["email_token"] is None
+    assert "Alice@Example.com" not in {rows[0]["email_token"], rows[1]["email_token"]}
+
+    # Cache hit returns the same served root (stable output, no re-materialization).
+    assert tokenizing_store.ensure_materialized(mount) == served
+
+
+def test_resolve_output_format():
+    from storage.tokenizing_store import _resolve_output_format
+
+    def _m(fmt, out):
+        return Mount(bucket="b", backend="local", root="/x", format=fmt, output_format=out)
+
+    assert _resolve_output_format(_m("delta", "")) == "delta"       # unset -> safe Delta default
+    assert _resolve_output_format(_m("iceberg", "")) == "delta"     # unset stays Delta even for iceberg src
+    assert _resolve_output_format(_m("iceberg", "auto")) == "iceberg"   # auto mirrors source
+    assert _resolve_output_format(_m("delta", "auto")) == "delta"
+    assert _resolve_output_format(_m("delta", "iceberg")) == "iceberg"  # explicit override
+
+
 @pytest.mark.skipif(not _HAS_DELTALAKE, reason="needs the objectstore extra (deltalake)")
 async def test_tokenizing_mount_serves_over_http(tmp_path, monkeypatch):
     import deltalake

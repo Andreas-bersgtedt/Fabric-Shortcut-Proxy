@@ -17,9 +17,11 @@ import glob
 import os
 import pathlib
 import re
-from typing import TYPE_CHECKING, Iterator, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from typing import Iterator
+
     import pyarrow as pa
     from storage.mounts import Mount
 
@@ -30,7 +32,7 @@ class ObjectStoreReaderUnavailable(RuntimeError):
 
 class ObjectStoreTableReader(Protocol):
     def schema(self) -> "pa.Schema": ...
-    def read_batches(self, *, batch_rows: int) -> "Iterator[pa.RecordBatch]": ...
+    def read_batches(self, *, batch_rows: int) -> Iterator[pa.RecordBatch]: ...
 
 
 class DeltaTableReader:
@@ -64,7 +66,7 @@ class DeltaTableReader:
     def schema(self) -> "pa.Schema":
         return self._pyarrow_dataset().schema
 
-    def read_batches(self, *, batch_rows: int) -> "Iterator[pa.RecordBatch]":
+    def read_batches(self, *, batch_rows: int) -> Iterator[pa.RecordBatch]:
         yield from self._pyarrow_dataset().to_batches(batch_size=batch_rows)
 
 
@@ -126,7 +128,7 @@ class IcebergTableReader:
     def schema(self) -> "pa.Schema":
         return self._open().scan().to_arrow_batch_reader().schema
 
-    def read_batches(self, *, batch_rows: int) -> "Iterator[pa.RecordBatch]":
+    def read_batches(self, *, batch_rows: int) -> Iterator[pa.RecordBatch]:
         yield from self._open().scan().to_arrow_batch_reader()
 
 

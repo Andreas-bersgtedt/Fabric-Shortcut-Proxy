@@ -124,8 +124,9 @@ throwaway run, or just let the first real launch do it. To pre‑build cleanly:
 
 ## 6. Source database drivers
 
-The Manager bootstrap installs all supported Python database drivers through the `[drivers]`
-extra. No additional pip install is needed when using `Manager.ps1`.
+The Manager bootstrap installs all supported Python database drivers plus the object-store
+tokenizer readers (delta-rs + pyiceberg) through the `[drivers,objectstore]` extras. No
+additional pip install is needed when using `Manager.ps1`.
 
 ```powershell
 # Storage-proxy backends (only if serving files instead of a DB):

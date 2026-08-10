@@ -119,8 +119,9 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 > encrypted credential store additionally needs `pip install -e '.[credentials]'` (Windows uses
 > DPAPI, no extra).
 
-The standard Manager launchers install the aggregate `[drivers]` extra. Individual extras
-remain available for minimal manual or library-only installations.
+The standard Manager launchers install the aggregate `[drivers]` extra plus the `[objectstore]`
+readers (delta-rs + pyiceberg). Individual extras remain available for minimal manual or
+library-only installations.
 
 **What connection URL do I use?**
 - SQL Server: `mssql+aioodbc://user:pass@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes`

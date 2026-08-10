@@ -49,7 +49,7 @@ The repository builds two distributions. Install the one that matches your deplo
 | **Enterprise (cluster)** | `fabric-shortcut-proxy-enterprise` | `python -m enterprise.manager` | `pip install -e . -e ./enterprise` |
 
 The enterprise wheel is pinned to the exact core version it was built against
-(`fabric-shortcut-proxy==2.1.1`). A Lite-only install runs the standalone proxy unchanged;
+(`fabric-shortcut-proxy==2.2.0`). A Lite-only install runs the standalone proxy unchanged;
 the cluster hooks in `main.py` import the enterprise package lazily and print a clear hint
 if it is not installed.
 

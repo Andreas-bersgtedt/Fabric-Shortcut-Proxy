@@ -33,6 +33,8 @@ from system_config import (
     ENABLE_CONFIG_BUILDER, ENABLE_MONITOR,
     # Diagnostics
     S3_ACCESS_LOG,
+    # Resilient startup
+    QUARANTINE_FAILED_TABLES, TABLE_RETRY_SECONDS,
     # Storage proxy
     ENABLE_STORAGE_PROXY, ENFORCE_MOUNT_AUTH, ENABLE_AUDIT_LOG, AUDIT_LOG_FILE,
     # Credential store
@@ -150,6 +152,8 @@ _register("QUERY_MAX_ROWS", "query_max_rows", "int", QUERY_MAX_ROWS)
 _register("DB_MAX_RETRIES", "db_max_retries", "int", DB_MAX_RETRIES)
 _register("DB_RETRY_BACKOFF_SECONDS", "db_retry_backoff_seconds", "float", DB_RETRY_BACKOFF_SECONDS)
 _register("VALIDATE_SOURCE_SCHEMA", "validate_source_schema", "bool", VALIDATE_SOURCE_SCHEMA)
+_register("QUARANTINE_FAILED_TABLES", "quarantine_failed_tables", "bool", QUARANTINE_FAILED_TABLES)
+_register("TABLE_RETRY_SECONDS", "table_retry_seconds", "int", TABLE_RETRY_SECONDS)
 
 # Register system settings so they're recognized by the config builder UI
 # (these are imported from system_config, so we register them manually)
@@ -385,6 +389,7 @@ class TableDef:
     split_strategy: str | None = None
     split_balance: str | None = None
     split_sample_rows: int | None = None
+    enabled: bool = True
 
     def __post_init__(self):
         if self.num_splits is None:
@@ -467,6 +472,7 @@ def _tabledef_from_json(d: dict) -> "TableDef":
         split_strategy=(str(d["split_strategy"]) if d.get("split_strategy") else None),
         split_balance=(str(d["split_balance"]) if d.get("split_balance") else None),
         split_sample_rows=(int(d["split_sample_rows"]) if d.get("split_sample_rows") is not None else None),
+        enabled=bool(d.get("enabled", True)),
     )
 
 
@@ -715,6 +721,8 @@ SETTINGS_META: dict[str, dict] = {
     "source_table":  {"cat": "Connection", "help": "Source SQL table/view to expose."},
     "key_column":    {"cat": "Connection", "help": "Integer split/partition key column (blank = auto-detect PK)."},
     "table_name":    {"cat": "Connection", "help": "Virtual Iceberg table name (single-table mode)."},
+    "quarantine_failed_tables": {"cat": "Connection", "help": "Serve healthy tables + mounts even if a source is unreachable (quarantine + background retry) instead of exiting on the first bad table."},
+    "table_retry_seconds": {"cat": "Connection", "help": "Seconds between background retries of quarantined tables (0 disables)."},
     "query_timeout": {"cat": "Connection", "help": "Per-query timeout (seconds)."},
     "query_max_rows": {"cat": "Connection", "help": "Max rows per split query."},
     "db_max_retries": {"cat": "Connection", "help": "Retries on transient source-DB errors."},

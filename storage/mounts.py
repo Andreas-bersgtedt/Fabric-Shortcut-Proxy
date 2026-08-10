@@ -63,11 +63,50 @@ class Mount:
     # azure backend (non-secret connection knobs)
     account: str = ""            # storage account name
     endpoint_suffix: str = ""    # blob endpoint suffix (sovereign clouds); "" = blob.core.windows.net
+    # object-store tokenizer (issue #12): a mount tagged with a table format is
+    # served as a virtual, tokenized copy of the source Delta/Iceberg table.
+    format: str = ""             # "" = plain passthrough | "delta" | "iceberg"
+    key_column: str = ""         # ordering/key column; may not carry a transform
+    columns: tuple = ()          # tuple[config.ColumnDef]; output schema + column policy
+    output_format: str = ""      # ""/"delta" = Delta out | "iceberg" = Iceberg out | "auto" = mirror source
 
 
 def _norm_prefix(p: str) -> str:
     p = (p or "").replace("\\", "/").strip("/")
     return f"{p}/" if p else ""
+
+
+def _parse_columns(raw) -> tuple:
+    """Parse a mount's column policy into ``config.ColumnDef`` objects.
+
+    Reuses the same allowlisted transform model as the SQL pushdown path; the
+    ColumnDef/ColumnTransform constructors validate kind, key_ref, normalization,
+    and the string-output rule, raising ``ValueError`` on a bad entry.
+    """
+    from config import ColumnDef, ColumnTransform  # lazy: avoid an import cycle
+
+    out = []
+    for c in raw or []:
+        if not isinstance(c, dict):
+            continue
+        tr = c.get("transform")
+        transform = None
+        if isinstance(tr, dict):
+            transform = ColumnTransform(
+                kind=str(tr.get("kind") or ""),
+                key_ref=(tr.get("key_ref") or None),
+                domain=(tr.get("domain") or None),
+                normalization=str(tr.get("normalization") or "none"),
+            )
+        out.append(ColumnDef(
+            field_id=int(c.get("field_id") or 0),
+            name=str(c.get("name") or ""),
+            iceberg_type=str(c.get("type") or "string"),
+            nullable=bool(c.get("nullable", True)),
+            source=(c.get("source") or None),
+            transform=transform,
+        ))
+    return tuple(out)
 
 
 def _mount_from_json(d: dict) -> Mount:
@@ -88,6 +127,10 @@ def _mount_from_json(d: dict) -> Mount:
         auth=str(d.get("auth") or "").strip().lower(),
         account=str(d.get("account") or "").strip(),
         endpoint_suffix=str(d.get("endpoint_suffix") or "").strip(),
+        format=str(d.get("format") or "").strip().lower(),
+        key_column=str(d.get("key_column") or "").strip(),
+        columns=_parse_columns(d.get("columns")),
+        output_format=str(d.get("output_format") or "").strip().lower(),
     )
 
 
@@ -113,7 +156,11 @@ def _build_mounts() -> dict[str, Mount]:
     for entry in _load_file():
         if not isinstance(entry, dict):
             continue
-        m = _mount_from_json(entry)
+        try:
+            m = _mount_from_json(entry)
+        except ValueError as exc:  # bad column policy (kind/key_ref/type) — never a secret
+            print(f"[mounts] entry {entry.get('bucket')!r}: {exc}; skipped.", file=sys.stderr)
+            continue
         if not m.bucket:
             print("[mounts] entry missing 'bucket'; skipped.", file=sys.stderr)
             continue
@@ -139,6 +186,22 @@ def _build_mounts() -> dict[str, Mount]:
         if not m.read_only:
             print(f"[mounts] mount {m.bucket!r}: read-write not supported yet; serving read-only.", file=sys.stderr)
             m = replace(m, read_only=True)
+        if m.format:
+            try:
+                from storage.objectstore_capabilities import validate_object_store_policy
+                validate_object_store_policy(format=m.format, key_column=m.key_column,
+                                             columns=list(m.columns))
+            except ValueError as exc:
+                print(f"[mounts] mount {m.bucket!r}: {exc}; skipped.", file=sys.stderr)
+                continue
+            if m.output_format and m.output_format not in ("auto", "delta", "iceberg"):
+                print(f"[mounts] mount {m.bucket!r}: output_format {m.output_format!r} "
+                      f"must be 'auto', 'delta', or 'iceberg'; skipped.", file=sys.stderr)
+                continue
+            if not m.columns:
+                print(f"[mounts] tokenizing mount {m.bucket!r} needs a 'columns' policy; skipped.",
+                      file=sys.stderr)
+                continue
         if m.bucket in out:
             print(f"[mounts] duplicate mount bucket {m.bucket!r}; last wins.", file=sys.stderr)
         out[m.bucket] = m
@@ -164,6 +227,18 @@ def get_mount(bucket: str) -> Mount | None:
 
 def mount_ids() -> list[str]:
     return sorted(MOUNTS.keys())
+
+
+def tokenizing_mounts() -> list[dict]:
+    """Buckets served as tokenized object-store copies (issue #12); [] if disabled."""
+    if not _enabled():
+        return []
+    return [
+        {"bucket": m.bucket, "format": m.format, "backend": m.backend,
+         "columns": len(m.columns),
+         "transforms": sum(1 for c in m.columns if c.transform)}
+        for m in MOUNTS.values() if getattr(m, "format", "")
+    ]
 
 
 def backend_for(mount: Mount) -> ArtifactStore:

@@ -143,8 +143,9 @@ host has no `python3-venv` ensurepip, install it and retry:
 
 ## 6. Source database drivers
 
-The Manager bootstrap installs all supported Python database drivers through the `[drivers]`
-extra. No additional pip install is needed when using `Manager.sh`.
+The Manager bootstrap installs all supported Python database drivers plus the object-store
+tokenizer readers (delta-rs + pyiceberg) through the `[drivers,objectstore]` extras. No
+additional pip install is needed when using `Manager.sh`.
 
 ```bash
 cd /opt/fabric-shortcut-proxy

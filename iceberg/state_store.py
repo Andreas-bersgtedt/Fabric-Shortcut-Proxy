@@ -322,6 +322,13 @@ def register_snapshot(snap: SnapshotState) -> list[SnapshotState]:
     return pruned
 
 
+def unregister_snapshot(table_name: str) -> None:
+    """Remove a table's snapshot(s) from the served registry (used to quarantine a
+    table whose materialization failed after its snapshot was built)."""
+    _snapshots.pop(table_name, None)
+    _history.pop(table_name, None)
+
+
 def get_split_by_key(object_key: str) -> SplitDescriptor | None:
     """Return the SplitDescriptor for a data file object key across all tables.
 

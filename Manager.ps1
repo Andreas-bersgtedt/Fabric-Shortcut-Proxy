@@ -267,6 +267,8 @@ Set-Location $ProjectRoot
 $VenvDir = Join-Path $ProjectRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $StampFile = Join-Path $VenvDir ".deps-installed"
+# Bump when the required dependency SET changes so existing venvs auto-reinstall.
+$DepsVersion = "drivers+objectstore-v1"
 
 function Write-Step {
     param([string]$Message)
@@ -565,7 +567,10 @@ if (-not (Test-Path $VenvPython)) {
 # ---------------------------------------------------------------------------
 # 3. Install / update dependencies
 # ---------------------------------------------------------------------------
-$needsInstall = $Reinstall -or (-not (Test-Path $StampFile))
+# ("" + ...) coerces a null (empty stamp file, as older Managers created) to a
+# string so .Trim() never throws on a legacy empty stamp.
+$stampValue = if (Test-Path $StampFile) { ("" + (Get-Content -Raw -Path $StampFile)).Trim() } else { "" }
+$needsInstall = $Reinstall -or ($stampValue -ne $DepsVersion)
 
 if ($SkipInstall) {
     Write-Step "Skipping dependency installation (-SkipInstall)"
@@ -574,11 +579,11 @@ if ($SkipInstall) {
     & $VenvPython -m pip install --upgrade pip --quiet
     if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
 
-    Write-Step "Installing project dependencies and supported database drivers from pyproject.toml"
-    & $VenvPython -m pip install -e ".[drivers]" -e ./enterprise --quiet
+    Write-Step "Installing project dependencies, database drivers, and object-store readers from pyproject.toml"
+    & $VenvPython -m pip install -e ".[drivers,objectstore]" -e ./enterprise --quiet
     if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
 
-    New-Item -ItemType File -Path $StampFile -Force | Out-Null
+    Set-Content -Path $StampFile -Value $DepsVersion -NoNewline
     Write-Step "Dependencies installed"
 } else {
     Write-Step "Dependencies already installed (use -Reinstall to refresh)"

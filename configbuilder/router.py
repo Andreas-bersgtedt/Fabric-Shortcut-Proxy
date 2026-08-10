@@ -184,6 +184,7 @@ async def bootstrap_builder() -> JSONResponse:
             "split_target_rows": (int(t.split_target_rows) if t.split_target_rows is not None else None),
             "split_strategy": t.split_strategy,
             "split_balance": t.split_balance,
+            "enabled": t.enabled,
             "schema": schema or None,
         })
 
@@ -725,6 +726,69 @@ def _write_mounts_file(mounts: list) -> str:
     return path
 
 
+def _serialize_object_store_columns(cols) -> list[dict]:
+    """Serialize parsed ColumnDefs back to the persisted config.mounts.json shape."""
+    out: list[dict] = []
+    for c in cols:
+        item: dict = {"field_id": c.field_id, "name": c.name,
+                      "type": c.iceberg_type, "nullable": c.nullable}
+        if c.source and c.source != c.name:
+            item["source"] = c.source
+        if c.transform:
+            t: dict = {"kind": c.transform.kind}
+            if c.transform.key_ref:
+                t["key_ref"] = c.transform.key_ref
+            if c.transform.domain is not None:
+                t["domain"] = c.transform.domain
+            if c.transform.normalization and c.transform.normalization != "none":
+                t["normalization"] = c.transform.normalization
+            item["transform"] = t
+        out.append(item)
+    return out
+
+
+def _object_store_capabilities() -> dict:
+    """Format capability matrix + reader backend support + extra availability."""
+    import importlib.util
+    from storage.objectstore_capabilities import capabilities_summary
+    from storage.objectstore_reader import reader_backend_support
+    return {
+        "formats": capabilities_summary(),
+        "reader_backends": reader_backend_support(),
+        "output_formats": ["auto", "delta", "iceberg"],
+        "reader_available": {
+            "delta": importlib.util.find_spec("deltalake") is not None,
+            "iceberg": importlib.util.find_spec("pyiceberg") is not None,
+        },
+    }
+
+
+def _arrow_to_iceberg_type(pa_type) -> str:
+    """Best-effort pyarrow -> Iceberg type label for the policy editor."""
+    s = str(pa_type).lower()
+    if s.startswith("bool"):
+        return "boolean"
+    if s.startswith(("int8", "int16", "int32", "uint8", "uint16")):
+        return "int"
+    if s.startswith(("int64", "uint32", "uint64")):
+        return "long"
+    if s.startswith("double") or "float64" in s:
+        return "double"
+    if s.startswith(("float", "halffloat")):
+        return "float"
+    if s.startswith("decimal"):
+        return "decimal"
+    if s.startswith("date"):
+        return "date"
+    if s.startswith("timestamp"):
+        return "timestamp"
+    if s.startswith("time"):
+        return "time"
+    if s.startswith(("binary", "large_binary")):
+        return "binary"
+    return "string"
+
+
 def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
     import storage.mounts as sm
     errors: list[str] = []
@@ -807,6 +871,37 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
                 "endpoint": endpoint,
                 "endpoint_suffix": str(e.get("endpoint_suffix") or "").strip(),
             })
+        fmt = str(e.get("format") or "").strip().lower()
+        if fmt:
+            from storage.objectstore_capabilities import (
+                SUPPORTED_FORMATS, validate_object_store_policy,
+            )
+            if fmt not in SUPPORTED_FORMATS:
+                errors.append(f"mounts[{i}]: unsupported table format {fmt!r} "
+                              f"(use one of {list(SUPPORTED_FORMATS)})")
+                continue
+            key_column = str(e.get("key_column") or "").strip()
+            raw_columns = e.get("columns") or []
+            if not raw_columns:
+                errors.append(f"mounts[{i}]: tokenizing mount {bucket!r} needs a 'columns' policy")
+                continue
+            try:
+                parsed = sm._parse_columns(raw_columns)
+                validate_object_store_policy(format=fmt, key_column=key_column,
+                                             columns=list(parsed))
+            except ValueError as exc:
+                errors.append(f"mounts[{i}]: {exc}")
+                continue
+            out_fmt = str(e.get("output_format") or "").strip().lower()
+            if out_fmt and out_fmt not in ("auto", "delta", "iceberg"):
+                errors.append(f"mounts[{i}]: output_format {out_fmt!r} must be "
+                              f"'auto', 'delta', or 'iceberg'")
+                continue
+            entry["format"] = fmt
+            entry["key_column"] = key_column
+            entry["columns"] = _serialize_object_store_columns(parsed)
+            if out_fmt:
+                entry["output_format"] = out_fmt
         seen.add(bucket)
         clean.append(entry)
     return clean, errors
@@ -831,12 +926,19 @@ async def list_mounts() -> JSONResponse:
             entry.update({"credential": m.credential, "auth": m.auth,
                           "account": m.account, "endpoint": m.endpoint,
                           "endpoint_suffix": m.endpoint_suffix})
+        if getattr(m, "format", ""):
+            entry["format"] = m.format
+            entry["key_column"] = m.key_column
+            entry["columns"] = _serialize_object_store_columns(m.columns)
+            if getattr(m, "output_format", ""):
+                entry["output_format"] = m.output_format
         mounts.append(entry)
     return JSONResponse({
         "ok": True,
         "enabled": bool(config.ENABLE_STORAGE_PROXY),
         "supported_backends": list(sm._SUPPORTED_BACKENDS),
         "reserved_bucket": config.BUCKET_NAME,
+        "object_store": _object_store_capabilities(),
         "mounts": mounts,
     })
 
@@ -873,6 +975,34 @@ async def save_mounts(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "path": path, "count": len(clean),
                          "enabled": enable_result, "restart_required": True,
                          "note": "Saved to config.mounts.json. Restart the Manager/Agents to apply."})
+
+
+@router.post("/api/mounts/inspect")
+async def inspect_mount(request: Request) -> JSONResponse:
+    """Reflect a tokenizing mount's source columns through the object-store reader.
+
+    Builds a transient mount from the posted form and calls the Delta/Iceberg
+    reader's ``schema()`` so the Config Builder can populate the column policy
+    editor. Requires the ``objectstore`` extra and a reachable source (and, for
+    s3/azure, the credential already saved) — same trust as the mount test.
+    """
+    import storage.mounts as sm
+    body = await request.json()
+    fmt = str(body.get("format") or "").strip().lower()
+    if not fmt:
+        return JSONResponse({"ok": False, "error": "pick a table format (delta or iceberg) first"})
+    try:
+        mount = sm._mount_from_json({**body, "columns": []})
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": _clean_error(exc)})
+    try:
+        from storage.objectstore_reader import reader_for_mount
+        schema = reader_for_mount(mount).schema()
+    except Exception as exc:  # noqa: BLE001 - surface a clean, secret-free message
+        return JSONResponse({"ok": False, "error": _clean_error(exc)})
+    columns = [{"name": f.name, "type": _arrow_to_iceberg_type(f.type),
+                "nullable": bool(f.nullable)} for f in schema]
+    return JSONResponse({"ok": True, "columns": columns, "count": len(columns)})
 
 
 @router.post("/api/mounts/test")

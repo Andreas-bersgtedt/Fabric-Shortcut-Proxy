@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0]: 2026-08-10
+
 ### Added
+- **Resilient agent startup — table quarantine + background retry.** A warehouse
+  table whose source is unreachable/misconfigured is now **quarantined** (logged,
+  excluded from the served set) instead of exiting `EX_CONFIG (78)` and taking every
+  healthy table **and every storage-proxy mount** down with it. The agent comes up
+  serving all healthy tables + mounts, and a background loop retries quarantined
+  tables (default every 60s, `TABLE_RETRY_SECONDS`) so they self-heal when the source
+  recovers. Per-table `enabled` flag in `config.tables.json` to disable a table
+  manually. New `QUARANTINE_FAILED_TABLES` (default on; set false for the legacy
+  fail-fast). Quarantined tables surface in `/readyz` and `GET /_admin/quarantine`.
+- **Object Store Tokenizer (issue #12).** Mounts that point at an existing Delta
+  Lake or Apache Iceberg table can now serve a **tokenized copy**: the proxy reads
+  the source, applies per-column policies in memory (deterministic keyed SHA-256
+  token, random UUID token, or drop), and serves a masked Delta table over the S3
+  endpoint — so PII never reaches Fabric. Contained entirely in the storage mount
+  path; the SQL→Iceberg/Delta engine is untouched. Readers: Delta (delta-rs) on
+  `local`, `s3`, and `azure` (ADLS Gen2 / Blob — account key, SAS, connection
+  string, or service principal), Iceberg (pyiceberg) on `local`, behind the
+  optional `[objectstore]` extra. Tokenized output is materialized to a byte-stable cache keyed by policy
+  hash + a one-way key fingerprint (key rotation invalidates it). Config Builder
+  gains a per-mount "Tokenize this table" editor with schema inspection and the
+  Keep / Deterministic / Random / Remove column controls, and the format +
+  tokenizer capability is surfaced in `/readyz` and the monitor summary. An
+  `output_format` mount option (`delta` default, `auto` = mirror source, or
+  experimental `iceberg`) selects the served table format.
+  **Note:** unlike SQL pushdown, this path reads source plaintext into the proxy to
+  mask it (object stores have no engine to push down to); it is never written to
+  config or served.
 - **Targeted S3 access diagnostics for Direct Lake (issue #11).** New
   `S3_ACCESS_LOG` flag (default on) emits structured `s3_object_response` logs for
   ranged reads and `_delta_log` commits (key, kind, status, requested/resolved
@@ -17,8 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not the root cause.
 - **Preinstalled source-driver bundle.** The standard Windows and Linux Manager
   bootstraps now install PostgreSQL, Oracle, Redshift, Teradata, and Impala Python
-  drivers through the aggregate `[drivers]` extra. Individual extras remain available
-  for minimal installs. Redshift, Teradata, and Impala live workload validation is complete.
+  drivers through the aggregate `[drivers]` extra, plus the object-store tokenizer
+  readers (delta-rs + pyiceberg) through `[objectstore]`. Individual extras remain
+  available for minimal installs. Redshift, Teradata, and Impala live workload validation is complete.
 - **Expanded source platforms (preview): Amazon Redshift, Teradata, and Apache Impala
   (issue #9).** Optional extras `[redshift]`, `[teradata]`, and `[impala]`; SQLAlchemy
   URL and default-port registration (5439 / 1025 / 21050); per-flavor split-query
@@ -29,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   execution mode in `/readyz` and the monitor summary. Nested or composite reflected
   types (SUPER, VARIANT, ARRAY/MAP/STRUCT, PERIOD) fail closed instead of stringifying.
   Live source-driver validation is complete for Redshift, Teradata, and Impala.
+
+### Changed
+- **Per-table `enabled` control in the Config Builder.** Each table row carries an
+  "on" checkbox and each source group an "enabled" checkbox that cascades to its
+  tables; disabling persists as `enabled: false` in `config.tables.json`.
+- Both distributions and their runtime API / agent version metadata now report
+  `2.2.0`.
 
 ## [2.1.1]: 2026-08-05
 
@@ -195,6 +232,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[2.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.0.0...main
+[2.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.1...main
+[2.1.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.0...2.1.1
+[2.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/1.0.0...2.0.0
 [1.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/releases/tag/1.0.0

@@ -59,14 +59,36 @@ async def readyz() -> JSONResponse:
 
     caps = capabilities_for_db_url(config.DB_URL)
     ready = all(checks.values())
-    return JSONResponse(
-        status_code=200 if ready else 503,
-        content={
-            "status": "ready" if ready else "not_ready",
-            "checks": checks,
-            "source": {"flavor": caps.flavor, "execution_mode": caps.to_dict()["execution_mode"]},
-        },
-    )
+    content = {
+        "status": "ready" if ready else "not_ready",
+        "checks": checks,
+        "source": {"flavor": caps.flavor, "execution_mode": caps.to_dict()["execution_mode"]},
+    }
+    # Object-store tokenizer (issue #12): advertise tokenizing mounts + the
+    # per-format capability matrix. Best-effort; never affects readiness.
+    try:
+        from storage.mounts import tokenizing_mounts
+        tok_mounts = tokenizing_mounts()
+        if tok_mounts:
+            from storage.objectstore_capabilities import capabilities_summary
+            content["object_store_tokenizer"] = {
+                "mounts": tok_mounts,
+                "formats": capabilities_summary(),
+            }
+    except Exception:  # noqa: BLE001 - observability must never break readiness
+        pass
+    # Resilient startup: surface any quarantined tables (served set excludes them).
+    try:
+        from runtime import quarantine
+        q = quarantine.snapshot()
+        if q:
+            content["quarantined_tables"] = {
+                name: {"reason": entry["reason"], "attempts": entry["attempts"]}
+                for name, entry in q.items()
+            }
+    except Exception:  # noqa: BLE001 - observability must never break readiness
+        pass
+    return JSONResponse(status_code=200 if ready else 503, content=content)
 
 
 @router.get("/metrics")
@@ -84,6 +106,15 @@ async def admin_stats() -> dict:
     data = metrics.snapshot()
     data["cache"] = cache.stats()
     return data
+
+
+@router.get("/_admin/quarantine")
+async def admin_quarantine() -> dict:
+    """Tables quarantined at startup (unreachable/misconfigured source), with the
+    reason and retry attempts. The agent serves every healthy table + mount and
+    retries these in the background."""
+    from runtime import quarantine
+    return {"quarantined": quarantine.snapshot()}
 
 
 @router.get("/_admin/trace")

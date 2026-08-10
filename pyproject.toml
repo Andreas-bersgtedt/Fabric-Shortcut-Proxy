@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fabric-shortcut-proxy"
-version = "2.1.1"
+version = "2.2.0"
 description = "Fabric Shortcut Proxy for Microsoft Fabric (POC)"
 requires-python = ">=3.11"
 dependencies = [
@@ -60,6 +60,10 @@ s3proxy = ["boto3>=1.34"]
 # Native Azure Blob / ADLS Gen2 mount backend (storage proxy, Phase 3). azure-identity
 # powers the AAD auth modes (service principal, managed identity, default chain).
 azureblob = ["azure-storage-blob>=12.19", "azure-identity>=1.15"]
+# Object-store tokenizer readers (issue #12): read an existing Delta/Iceberg table
+# from a mount and tokenize it proxy-side. Kept out of core so mounts without a
+# tokenizing format install without delta-rs / pyiceberg.
+objectstore = ["deltalake>=0.18", "pyiceberg[pyarrow]>=0.6"]
 
 [tool.setuptools]
 # Lite (fabric-shortcut-proxy) ships the single-node core only. The scale-out

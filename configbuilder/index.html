@@ -53,8 +53,11 @@
   .trow { display:flex; align-items:center; gap:8px; padding:6px 10px; border-top:1px solid var(--line); }
   .trow .name { flex:1; }
   .trow .kind { font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
-  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto auto auto; gap:8px; align-items:center;
+  .cfgrow { display:grid; grid-template-columns: 1fr auto auto auto auto auto auto auto; gap:8px; align-items:center;
             padding:8px 10px; border-top:1px solid var(--line); }
+  .cfgtable.disabled { opacity:.5; }
+  .enrow, .dsenable { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--muted); white-space:nowrap; }
+  .dsenable { margin-left:10px; }
   .cfgrow .src { font-size:12px; }
   .cfgrow select, .cfgrow input { padding:5px 8px; }
   .cfgrow .rows { font-size:11px; color:var(--muted); }
@@ -368,6 +371,34 @@
         <div class="azf" data-modes="managed_identity"><label>Client id <span class="hint">(optional — user-assigned MI)</span></label><input id="azMiClientId" placeholder="leave blank for system-assigned" /></div>
         <div class="actions"><button class="btn ghost" id="btnSaveAzCred">🔒 Save Azure credential</button></div>
         <div class="status" id="azCredStatus"></div>
+      </div>
+    </div>
+
+    <div id="tokConn" style="border-top:1px solid var(--line); margin-top:12px; padding-top:10px;">
+      <div class="checkbox" style="margin:0 0 8px;"><input type="checkbox" id="mountTokOn" />
+        <span><b>Tokenize this table</b> — serve a masked Delta/Iceberg copy (mask PII before it reaches Fabric)</span></div>
+      <div id="tokBody" style="display:none;">
+        <div class="hint" style="margin-bottom:8px;">The proxy reads the source table, applies per-column token policies in memory, and serves a tokenized copy. Source plaintext enters the proxy to be masked; it is never written to <code>config.mounts.json</code>.</div>
+        <label>Source table format</label>
+        <select id="mountTokFormat"></select>
+        <div class="hint" id="mountTokFormatHint" style="margin:4px 0 8px;"></div>
+        <label>Served output format</label>
+        <select id="mountTokOutput">
+          <option value="">Delta (default — most compatible)</option>
+          <option value="auto">Auto — mirror source format</option>
+          <option value="iceberg">Iceberg (experimental)</option>
+        </select>
+        <div class="hint" style="margin:4px 0 8px;">Iceberg output is validated by pyiceberg; live Fabric serving of Iceberg output over S3 is pending path handling — Delta output is recommended.</div>
+        <div class="actions" style="margin:6px 0;">
+          <button class="btn ghost" id="btnInspectMount">Inspect schema</button>
+        </div>
+        <div class="status" id="mountTokStatus"></div>
+        <div id="tokKeyBox" style="display:none;">
+          <label>Key / ordering column <span class="hint">(cannot be tokenized)</span></label>
+          <select id="mountTokKey"></select>
+        </div>
+        <div id="mountTokPolicy"></div>
+        <div class="hint" style="margin-top:6px;">Random tokens change on every read and can't be combined with content-hash freshness.</div>
       </div>
     </div>
 
@@ -846,6 +877,7 @@ function applyBootstrap(builder){
       approx_rows: null,
       invalid: !t.key_column,
       pending: false,
+      enabled: t.enabled !== false,
       policies_open: configuredSchema.some(column=>column.transform),
     });
   }
@@ -1059,7 +1091,7 @@ function bulk(on){
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
   key_column:null, num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
-  integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false }; }
+  integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false, enabled:true }; }
 
 function policyColumn(column, index){
   const transform = column.transform || null;
@@ -1144,18 +1176,21 @@ function policyErrors(entry){
   return errors;
 }
 
-function renderPolicyEditor(entry){
+function renderPolicyEditor(entry, opts){
+  opts = opts || {};
+  const onEdit = opts.onEdit || updatePreview;
+  const rerender = opts.rerender || renderSelected;
   const editor = document.createElement("div"); editor.className="policy-editor";
   const head = document.createElement("div"); head.className="policy-head";
   head.innerHTML="<span>Source column</span><span>Output name</span><span>Policy</span><span>Type</span>";
   editor.appendChild(head);
-  const tokenCapable = connectionSupportsTokens(entry);
+  const tokenCapable = opts.tokenCapable !== undefined ? opts.tokenCapable : connectionSupportsTokens(entry);
   for(const column of entry.columns){
     const row = document.createElement("div"); row.className="policy-row";
     const source = document.createElement("div"); source.className="policy-source"; source.textContent=column.source;
     const output = document.createElement("input"); output.value=column.name; output.placeholder="Output column";
     output.disabled = column.policy==="remove" || column.source===entry.key_column;
-    output.oninput=()=>{ column.name=output.value; updatePreview(); };
+    output.oninput=()=>{ column.name=output.value; onEdit(); };
     const policy = document.createElement("select");
     for(const kind of ["keep","deterministic_hash","random_token","remove"]){
       const option=document.createElement("option"); option.value=kind; option.textContent=policyLabel(kind);
@@ -1169,7 +1204,7 @@ function renderPolicyEditor(entry){
       column.policy=policy.value;
       if(column.policy!=="keep" && column.policy!=="remove" && column.name===column.source) column.name=column.source+"_token";
       if(column.policy==="deterministic_hash" && !column.domain) column.domain=entry.name+"."+column.source;
-      renderSelected();
+      rerender();
     };
     const type = document.createElement("span"); type.className="rows";
     type.textContent=(column.policy==="deterministic_hash" || column.policy==="random_token") ? "string" : column.type;
@@ -1178,15 +1213,15 @@ function renderPolicyEditor(entry){
       const detail=document.createElement("div"); detail.className="policy-detail";
       const keyRef=document.createElement("input"); keyRef.placeholder="Key reference"; keyRef.value=column.key_ref;
       keyRef.title="Resolves from FSP_TOKENIZATION_KEY_<KEY_REF>; the secret is never stored here";
-      keyRef.oninput=()=>{ column.key_ref=keyRef.value; updatePreview(); };
+      keyRef.oninput=()=>{ column.key_ref=keyRef.value; onEdit(); };
       const domain=document.createElement("input"); domain.placeholder="Domain"; domain.value=column.domain;
-      domain.oninput=()=>{ column.domain=domain.value; updatePreview(); };
+      domain.oninput=()=>{ column.domain=domain.value; onEdit(); };
       const normalization=document.createElement("select");
       for(const value of ["none","trim","trim_lower"]){
         const option=document.createElement("option"); option.value=value; option.textContent=value; option.selected=column.normalization===value;
         normalization.appendChild(option);
       }
-      normalization.onchange=()=>{ column.normalization=normalization.value; updatePreview(); };
+      normalization.onchange=()=>{ column.normalization=normalization.value; onEdit(); };
       detail.append(keyRef, domain, normalization); row.appendChild(detail);
       const note=document.createElement("div"); note.className="policy-note";
       note.textContent="Secret environment variable: "+("FSP_TOKENIZATION_KEY_"+column.key_ref.replace(/[^A-Za-z0-9]+/g,"_").toUpperCase());
@@ -1262,6 +1297,16 @@ function renderSelected(){
     head.innerHTML = `<span class="tgcaret">▸</span><span>${cid}${primary}</span>`
       + `<span class="tgcount">${list.length} table${list.length!==1?"s":""}`
       + (needKey ? ` · ${needKey} need a key` : "") + `</span>`;
+    const _allOn = list.every(s=>s.enabled !== false);
+    const _anyOn = list.some(s=>s.enabled !== false);
+    const dsEnable = document.createElement("label"); dsEnable.className="dsenable";
+    dsEnable.title="Enable or disable every table in this source.";
+    const dscb = document.createElement("input"); dscb.type="checkbox";
+    dscb.checked = _allOn; dscb.indeterminate = _anyOn && !_allOn;
+    dscb.onclick = (e)=> e.stopPropagation();
+    dscb.onchange = ()=>{ for(const s of list) s.enabled = dscb.checked; renderSelected(); updatePreview(); persistConns(); };
+    dsEnable.append(dscb, document.createTextNode("enabled"));
+    head.appendChild(dsEnable);
     head.onclick = ()=>{
       if(state.expandedGroups.has(cid)) state.expandedGroups.delete(cid);
       else state.expandedGroups.add(cid);
@@ -1271,7 +1316,7 @@ function renderSelected(){
     const body = document.createElement("div"); body.className = "tgbody";
     for(const s of list){
       const key = selKey(s.connection, s.source_table);
-      const table = document.createElement("div"); table.className="cfgtable";
+      const table = document.createElement("div"); table.className="cfgtable" + (s.enabled===false ? " disabled" : "");
       const row = document.createElement("div"); row.className="cfgrow";
       const src = document.createElement("div"); src.className="src";
       src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
@@ -1333,13 +1378,19 @@ function renderSelected(){
       refreshBadge();
       src.appendChild(document.createElement("br")); src.appendChild(splitInfo);
 
+      const enable = document.createElement("label"); enable.className="enrow";
+      enable.title="Serve this table. Unchecked = disabled (enabled:false): the agent skips it and won't fail if its source is unreachable.";
+      const encb = document.createElement("input"); encb.type="checkbox"; encb.checked = s.enabled !== false;
+      encb.onchange = ()=>{ s.enabled = encb.checked; renderSelected(); updatePreview(); persistConns(); };
+      enable.append(encb, document.createTextNode("on"));
+
       const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
       rm.onclick = ()=>{
         state.selected.delete(key);
         renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
       };
 
-      row.append(src, keysel, strat, bal, splits, target, rm); table.appendChild(row);
+      row.append(src, keysel, strat, bal, splits, target, enable, rm); table.appendChild(row);
       if(s.columns.length){
         const toggle=document.createElement("button"); toggle.className="iconbtn policy-toggle";
         toggle.textContent=(s.policies_open ? "Hide" : "Edit")+" column policies";
@@ -1365,6 +1416,7 @@ function tableConfig(entry){
   if(entry.split_balance) table.split_balance=entry.split_balance;
   if(entry.split_target_rows) table.split_target_rows=parseInt(entry.split_target_rows);
   if(entry.connection && entry.connection!=="default") table.connection=entry.connection;
+  if(entry.enabled===false) table.enabled=false;
   const policyChanged = entry.columns.some(column=>column.policy!=="keep" || column.name!==column.source);
   if(entry.columns.length && (entry.schema_explicit || policyChanged)){
     table.schema=entry.columns.filter(column=>column.policy!=="remove").map(column=>{
@@ -1692,6 +1744,7 @@ async function loadMounts(){
       mountState.enabled = !!r.enabled;
       mountState.reserved = r.reserved_bucket || "";
       mountState.supported = r.supported_backends || ["local"];
+      mountState.object_store = r.object_store || {formats:{}, reader_backends:{}, reader_available:{}};
       $("storageEnabled").checked = mountState.enabled;
     }
   }catch(e){ /* keep empty on failure */ }
@@ -1754,6 +1807,7 @@ function applyBackendVisibility(){
   $("btnTestMount").textContent = (isS3 || isAz) ? "Test connection" : "Test path";
   if(isS3) applyAuthSourceVisibility();
   if(isAz) applyAzAuthSourceVisibility();
+  populateTokFormats();
 }
 
 function applyAuthSourceVisibility(){
@@ -1808,6 +1862,17 @@ function editMount(bucket){
   $("mountAzAuthSource").value = m.credential ? "credential" : (m.auth || "credential");
   $("mountAzCredential").value = (m.backend === "azure") ? (m.credential || "") : $("mountAzCredential").value;
   applyBackendVisibility();
+  const tokOn = !!m.format;
+  $("mountTokOn").checked = tokOn;
+  $("tokBody").style.display = tokOn ? "" : "none";
+  $("mountTokFormat").value = m.format || "";
+  $("mountTokOutput").value = m.output_format || "";
+  updateTokFormatHint();
+  tokState.columns = tokOn ? reflectedPolicyColumns(m.columns||[]) : [];
+  populateTokKey();
+  if(tokOn && m.key_column) $("mountTokKey").value = m.key_column;
+  renderTokPolicy();
+  $("mountTokStatus").textContent = "";
   $("mountEditTitle").textContent = "Edit mount — " + m.bucket;
   $("mountEditStatus").textContent = "";
 }
@@ -1840,6 +1905,12 @@ function readMountForm(){
     const src = $("mountAzAuthSource").value;
     if(src === "credential"){ m.credential = $("mountAzCredential").value.trim(); m.auth = ""; }
     else { m.credential = ""; m.auth = src; }
+  }
+  if($("mountTokOn").checked && $("mountTokFormat").value){
+    m.format = $("mountTokFormat").value;
+    m.key_column = $("mountTokKey").value || "";
+    m.columns = mountColumnsFromPolicy(tokState.columns);
+    m.output_format = $("mountTokOutput").value || "";
   }
   return m;
 }
@@ -1889,6 +1960,93 @@ $("s3AuthMode").onchange = applyS3AuthModeVisibility;
 $("mountAzAuthSource").onchange = applyAzAuthSourceVisibility;
 $("azAuthMode").onchange = applyAzAuthModeVisibility;
 
+// ---- object-store tokenizer (mount editor) ----
+const tokState = { columns: [] };
+
+function populateTokFormats(){
+  const sel = $("mountTokFormat"); if(!sel) return;
+  const backend = $("mountBackend").value;
+  const os = mountState.object_store || {formats:{}, reader_backends:{}, reader_available:{}};
+  const cur = sel.value;
+  sel.innerHTML = "";
+  const blank = document.createElement("option"); blank.value=""; blank.textContent="— none (plain passthrough) —"; sel.appendChild(blank);
+  for(const fmt of Object.keys(os.formats||{})){
+    const backends = (os.reader_backends||{})[fmt] || [];
+    const wired = backends.includes(backend);
+    const available = (os.reader_available||{})[fmt] !== false;
+    const o = document.createElement("option"); o.value = fmt;
+    let label = fmt.charAt(0).toUpperCase()+fmt.slice(1);
+    if(!wired) label += " — not wired for "+backend+" yet";
+    else if(!available) label += " — install objectstore extra";
+    o.textContent = label; o.disabled = !wired;
+    sel.appendChild(o);
+  }
+  if(cur) sel.value = cur;
+  updateTokFormatHint();
+}
+
+function updateTokFormatHint(){
+  const fmt = $("mountTokFormat").value;
+  const os = mountState.object_store || {};
+  const hint = $("mountTokFormatHint");
+  if(!fmt){ hint.textContent = ""; return; }
+  const available = (os.reader_available||{})[fmt];
+  hint.textContent = (available===false)
+    ? "The reader library for "+fmt+" isn't installed on the Manager — install the 'objectstore' extra to inspect and serve."
+    : "The proxy will read this "+fmt+" table and serve a tokenized Delta copy.";
+}
+
+function tokEntry(){
+  return { columns: tokState.columns, key_column: $("mountTokKey").value || "", name: ($("mountBucket").value.trim() || "table") };
+}
+
+function renderTokPolicy(){
+  const box = $("mountTokPolicy"); box.innerHTML = "";
+  if(!tokState.columns.length) return;
+  box.appendChild(renderPolicyEditor(tokEntry(), { tokenCapable:true, rerender:renderTokPolicy, onEdit:()=>{} }));
+}
+
+function populateTokKey(){
+  const sel = $("mountTokKey"); sel.innerHTML = "";
+  const names = tokState.columns.map(c=>c.source);
+  for(const name of names){ const o=document.createElement("option"); o.value=name; o.textContent=name; sel.appendChild(o); }
+  $("tokKeyBox").style.display = names.length ? "" : "none";
+}
+
+function mountColumnsFromPolicy(columns){
+  return (columns||[]).filter(c=>c.policy!=="remove").map(c=>{
+    const transformed = c.policy==="deterministic_hash" || c.policy==="random_token";
+    const item = { field_id:c.field_id, name:(c.name||"").trim(), type: transformed?"string":c.type, nullable:c.nullable!==false };
+    if(c.name!==c.source || transformed) item.source = c.source;
+    if(c.policy==="deterministic_hash") item.transform = {kind:"deterministic_hash", key_ref:(c.key_ref||"").trim(), domain:c.domain, normalization:c.normalization};
+    else if(c.policy==="random_token") item.transform = {kind:"random_token"};
+    return item;
+  });
+}
+
+$("mountTokOn").onchange = ()=>{ $("tokBody").style.display = $("mountTokOn").checked ? "" : "none"; };
+$("mountTokFormat").onchange = updateTokFormatHint;
+$("mountTokKey").onchange = ()=>{
+  const k = $("mountTokKey").value;
+  for(const c of tokState.columns){ if(c.source===k){ c.policy="keep"; c.name=c.source; } }
+  renderTokPolicy();
+};
+
+$("btnInspectMount").onclick = async ()=>{
+  const s = $("mountTokStatus"); s.className = "status";
+  const fmt = $("mountTokFormat").value;
+  if(!fmt){ s.className="status err"; s.textContent="Pick a source table format first."; return; }
+  const m = readMountForm(); m.format = fmt;
+  s.textContent = "Inspecting source schema…";
+  const r = await api("/_config/api/mounts/inspect", m);
+  if(!r.ok){ s.className="status err"; s.textContent = "✗ " + (r.error || "could not read the source schema"); return; }
+  tokState.columns = reflectedPolicyColumns(r.columns);
+  populateTokKey();
+  if(tokState.columns.length) $("mountTokKey").value = tokState.columns[0].source;
+  renderTokPolicy();
+  s.className="status ok"; s.textContent = `✓ ${r.count} column(s) reflected — set a policy per column below.`;
+};
+
 $("btnAddMount").onclick = () => {
   $("mountBucket").value = ""; $("mountRoot").value = ""; $("mountPrefix").value = "";
   $("mountBackend").value = mountState.supported[0] || "local";
@@ -1899,6 +2057,9 @@ $("btnAddMount").onclick = () => {
   $("mountAzAccount").value = ""; $("mountAzEndpoint").value = ""; $("mountAzSuffix").value = "";
   $("mountAzAuthSource").value = "credential"; $("mountAzCredential").value = "";
   applyBackendVisibility();
+  $("mountTokOn").checked = false; $("tokBody").style.display = "none";
+  tokState.columns = []; $("mountTokPolicy").innerHTML = ""; $("mountTokStatus").textContent = "";
+  $("mountTokFormat").value = ""; $("mountTokOutput").value = ""; updateTokFormatHint(); $("tokKeyBox").style.display = "none";
   $("mountEditTitle").textContent = "Add mount";
   $("mountEditStatus").textContent = ""; $("mountBucket").focus();
 };

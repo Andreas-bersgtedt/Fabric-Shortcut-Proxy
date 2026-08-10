@@ -56,12 +56,18 @@ def _backend_key(mount: Mount, key: str) -> str:
 # ---------------------------------------------------------------------------
 
 def head_bucket(mount: Mount) -> Response:
+    if getattr(mount, "format", ""):
+        from storage import tokenizing_mount
+        return tokenizing_mount.head_bucket(mount)
     return Response(status_code=200)
 
 
-def list_objects(mount: Mount, request: Request) -> Response:
+def list_objects(mount: Mount, request: Request, store=None) -> Response:
+    if getattr(mount, "format", ""):
+        from storage import tokenizing_mount
+        return tokenizing_mount.list_objects(mount, request)
     metrics.record_s3_request("list")
-    store = backend_for(mount)
+    store = store or backend_for(mount)
     s3_prefix = request.query_params.get("prefix", "")
     delimiter = request.query_params.get("delimiter", "")
     plen = len(mount.prefix)
@@ -109,9 +115,12 @@ def list_objects(mount: Mount, request: Request) -> Response:
     return Response(content=body, media_type="application/xml")
 
 
-def head_object(mount: Mount, key: str, request: Request) -> Response:
+def head_object(mount: Mount, key: str, request: Request, store=None) -> Response:
+    if getattr(mount, "format", ""):
+        from storage import tokenizing_mount
+        return tokenizing_mount.head_object(mount, key, request)
     metrics.record_s3_request("head", metrics.classify_key(key))
-    store = backend_for(mount)
+    store = store or backend_for(mount)
     ident, client = _identity(request)
     try:
         stat = store.head(_backend_key(mount, key))
@@ -171,11 +180,14 @@ def _parse_range(range_header: str | None, total: int):
         return 0, None, 0, total - 1, False
 
 
-def get_object(mount: Mount, key: str, request: Request) -> Response:
+def get_object(mount: Mount, key: str, request: Request, store=None) -> Response:
+    if getattr(mount, "format", ""):
+        from storage import tokenizing_mount
+        return tokenizing_mount.get_object(mount, key, request)
     if key == "":
-        return list_objects(mount, request)
+        return list_objects(mount, request, store=store)
     metrics.record_s3_request("get", metrics.classify_key(key))
-    store = backend_for(mount)
+    store = store or backend_for(mount)
     ident, client = _identity(request)
     bkey = _backend_key(mount, key)
     try:

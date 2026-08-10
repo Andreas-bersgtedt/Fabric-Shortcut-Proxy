@@ -35,8 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not the root cause.
 - **Preinstalled source-driver bundle.** The standard Windows and Linux Manager
   bootstraps now install PostgreSQL, Oracle, Redshift, Teradata, and Impala Python
-  drivers through the aggregate `[drivers]` extra. Individual extras remain available
-  for minimal installs. Redshift, Teradata, and Impala live workload validation is complete.
+  drivers through the aggregate `[drivers]` extra, plus the object-store tokenizer
+  readers (delta-rs + pyiceberg) through `[objectstore]`. Individual extras remain
+  available for minimal installs. Redshift, Teradata, and Impala live workload validation is complete.
 - **Expanded source platforms (preview): Amazon Redshift, Teradata, and Apache Impala
   (issue #9).** Optional extras `[redshift]`, `[teradata]`, and `[impala]`; SQLAlchemy
   URL and default-port registration (5439 / 1025 / 21050); per-flavor split-query

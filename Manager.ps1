@@ -574,8 +574,8 @@ if ($SkipInstall) {
     & $VenvPython -m pip install --upgrade pip --quiet
     if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
 
-    Write-Step "Installing project dependencies and supported database drivers from pyproject.toml"
-    & $VenvPython -m pip install -e ".[drivers]" -e ./enterprise --quiet
+    Write-Step "Installing project dependencies, database drivers, and object-store readers from pyproject.toml"
+    & $VenvPython -m pip install -e ".[drivers,objectstore]" -e ./enterprise --quiet
     if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
 
     New-Item -ItemType File -Path $StampFile -Force | Out-Null

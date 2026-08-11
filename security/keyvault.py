@@ -90,6 +90,15 @@ def _require_sdk() -> None:
         raise KeyVaultUnavailable(_INSTALL_HINT) from exc
 
 
+def sdk_available() -> bool:
+    """True if azure-keyvault-secrets is importable (the optional 'keyvault' extra)."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("azure.keyvault.secrets") is not None
+    except ModuleNotFoundError:
+        return False
+
+
 class KeyVaultSecretSource:
     """Resolve secrets from Azure Key Vault.
 
@@ -140,10 +149,17 @@ class KeyVaultSecretSource:
         return self.get_by_name(secret_name_for(local_key, self._cfg))
 
     def probe(self) -> tuple[bool, str]:
-        """Best-effort connectivity check for ``/readyz``. Returns ``(ok, detail)``."""
+        """Live connectivity + auth check (used by the 'Test Key Vault' button).
+
+        Attempts to read the conventional ``db-url`` secret; a *not found* still
+        proves connectivity + read permission. Any transport/auth error fails.
+        Returns ``(ok, detail)``.
+        """
         try:
-            self._get_client()
+            self.get_by_name(secret_name_for("db_url", self._cfg))
             return True, "ok"
+        except KeyVaultUnavailable as exc:
+            return False, str(exc)
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 

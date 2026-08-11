@@ -833,11 +833,20 @@ SETTINGS_META: dict[str, dict] = {
     "retention_gc": {"cat": "Cluster (scale)", "help": "Agent (shard 0): periodically prune orphaned Parquet splits from the shared store."},
     "retention_gc_interval_seconds": {"cat": "Cluster (scale)", "help": "Retention GC sweep interval (seconds)."},
     "rolling_restart_health_timeout": {"cat": "Cluster (scale)", "help": "Rolling restart: max seconds to wait for each Agent to become healthy before the next."},
+    # Entra ID & Key Vault (issue #16)
+    "auth_mode": {"cat": "Entra ID & Key Vault", "help": "Outbound Azure identity for Key Vault access: 'default' (DefaultAzureCredential: managed identity → env → CLI), 'managed_identity', or 'service_principal'.", "choices": ["default", "managed_identity", "service_principal"]},
+    "keyvault_uri": {"cat": "Entra ID & Key Vault", "help": "Azure Key Vault URI (e.g. https://my-vault.vault.azure.net). Blank = Key Vault disabled; the proxy uses local config/env only."},
+    "azure_tenant_id": {"cat": "Entra ID & Key Vault", "help": "Entra tenant id for a service principal or user-assigned managed identity (blank for the default credential chain)."},
+    "azure_client_id": {"cat": "Entra ID & Key Vault", "help": "Client (application) id for a service principal or user-assigned managed identity. The client secret, when needed, comes from the AZURE_CLIENT_SECRET env var — never stored here."},
+    "require_keyvault": {"cat": "Entra ID & Key Vault", "help": "Fail startup only on a COLD start with no local cache when Key Vault is unreachable. Default off: an outage always falls back to the last-known-good local cache and never stops the agent/heartbeat/manager."},
+    "keyvault_refresh_seconds": {"cat": "Entra ID & Key Vault", "help": "Background interval (seconds) to re-pull secrets from Key Vault into the local cache. 0 disables the refresh loop (offline/static)."},
+    "keyvault_cache_ttl": {"cat": "Entra ID & Key Vault", "help": "Local-cache freshness TTL (seconds); 0 or negative = never expire, so an offline/air-gapped deployment runs entirely from a pre-seeded local store."},
 }
 
 _SETTINGS_CAT_ORDER = [
     "Connection", "S3 endpoint", "Server", "Splits & query", "Caching",
-    "Robustness", "Admin & observability", "Iceberg (advanced)", "Data freshness",
+    "Robustness", "Admin & observability", "Entra ID & Key Vault",
+    "Iceberg (advanced)", "Data freshness",
     "Cluster (scale)", "Other",
 ]
 

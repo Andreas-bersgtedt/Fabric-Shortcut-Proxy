@@ -118,6 +118,13 @@ def test_probe_disabled_when_no_uri():
     assert ok is False and "URI" in detail
 
 
+def test_probe_reports_outage():
+    cfg = keyvault.KeyVaultConfig(vault_uri="https://v")
+    src = keyvault.KeyVaultSecretSource(cfg, client=_BoomClient())
+    ok, detail = src.probe()
+    assert ok is False and "network down" in detail
+
+
 def test_probe_ok_with_injected_client():
     src, _ = _source({})
     assert src.probe() == (True, "ok")

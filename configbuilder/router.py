@@ -134,6 +134,48 @@ async def settings() -> JSONResponse:
     return JSONResponse({"settings": config.settings_catalog()})
 
 
+@router.get("/api/keyvault")
+async def keyvault_status() -> JSONResponse:
+    """Non-secret Key Vault / Entra ID config + live status for the builder panel."""
+    from security import keyvault as kv
+    st = kv.status_snapshot()
+    st["sdk_installed"] = kv.sdk_available()
+    return JSONResponse(st)
+
+
+@router.post("/api/keyvault/test")
+async def keyvault_test(request: Request) -> JSONResponse:
+    """Live Key Vault connectivity test for the 'Test Key Vault' button.
+
+    An optional body ``{vault_uri, auth_mode, tenant_id, client_id}`` tests
+    unsaved values; otherwise the saved config is used. The service-principal
+    client secret is read from ``AZURE_CLIENT_SECRET`` — never sent from the UI.
+    """
+    import asyncio
+    from security import keyvault as kv
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - empty/invalid body => test the saved config
+        body = {}
+    if isinstance(body, dict) and str(body.get("vault_uri") or "").strip():
+        cfg = kv.KeyVaultConfig(
+            vault_uri=str(body.get("vault_uri")).strip(),
+            auth_mode=(str(body.get("auth_mode") or "default").strip().lower() or "default"),
+            tenant_id=str(body.get("tenant_id") or "").strip(),
+            client_id=str(body.get("client_id") or "").strip(),
+            client_secret=os.environ.get("AZURE_CLIENT_SECRET", ""),
+        )
+    else:
+        cfg = kv.config_from_settings(config)
+    if not cfg.enabled:
+        return JSONResponse({"ok": False, "error": "no Key Vault URI configured"})
+    source = kv.KeyVaultSecretSource(cfg)
+    ok, detail = await asyncio.to_thread(source.probe)
+    log.info("keyvault_test", vault=kv._vault_host(cfg.vault_uri), ok=ok)
+    return JSONResponse({"ok": ok, "detail": detail,
+                         "vault": kv._vault_host(cfg.vault_uri), "auth_mode": cfg.auth_mode})
+
+
 @router.get("/api/current")
 async def current_config() -> JSONResponse:
     """Phase 5.1: the CURRENT effective configuration — each setting's live value

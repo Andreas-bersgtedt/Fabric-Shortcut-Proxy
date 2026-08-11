@@ -1105,9 +1105,38 @@ def _coerce_setting_value(typ: str, value):
     return str(value)
 
 
+# Sentinel distinguishing "absent from the persisted file" from a stored null.
+_MISSING = object()
+
+
 def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
-    """Every registered setting with its CURRENT effective value + source."""
+    """Every registered setting with its CURRENT effective value + source.
+
+    Resolves env > persisted config file > built-in default, re-reading the config
+    files fresh so a just-saved (restart-required) setting shows its saved value
+    rather than the running process's stale in-memory one.
+    """
     out: list[dict] = []
+    _file_cache: dict[str, dict] = {}
+
+    def _persisted(key: str):
+        target = _SETTINGS_TO_FILE_MAP.get(key)
+        if not target:
+            return _MISSING
+        if target not in _file_cache:
+            try:
+                with open(target, "r", encoding="utf-8-sig") as fh:
+                    loaded = json.load(fh)
+                _file_cache[target] = loaded if isinstance(loaded, dict) else {}
+            except (OSError, ValueError):
+                _file_cache[target] = {}
+        data = _file_cache[target]
+        section = target.split("config.")[-1].split(".json")[0]
+        sect = data.get(section, data)
+        if isinstance(sect, dict) and key in sect:
+            return sect[key]
+        return _MISSING
+
     for reg in _SETTINGS_REGISTRY.values():
         key, env, typ, default = reg["key"], reg["env"], reg["type"], reg["default"]
         meta = SETTINGS_META.get(key, {})
@@ -1115,10 +1144,12 @@ def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
 
         if env and env in os.environ:
             source, raw = "env", os.environ[env]
-        elif key in _FILE_CFG:
-            source, raw = "file", _FILE_CFG[key]
         else:
-            source, raw = "default", default
+            file_value = _persisted(key)
+            if file_value is not _MISSING:
+                source, raw = "file", file_value
+            else:
+                source, raw = "default", default
 
         try:
             value = _coerce_setting_value(typ, raw)

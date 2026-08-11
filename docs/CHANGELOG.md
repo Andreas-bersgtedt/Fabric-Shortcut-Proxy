@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0]: 2026-08-11
+
 ### Added
 - **SPN + Windows authentication for the SQL Server source connector (issue #19).** The MS
   SQL connector now supports, alongside SQL logins: **Windows Authentication** (Integrated
@@ -23,7 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `auth_mode` onto the ODBC keyword: `service_principal` -> `ActiveDirectoryServicePrincipal`
   (the configured `azure_client_id` + `AZURE_CLIENT_SECRET`), `managed_identity` ->
   `ActiveDirectoryManagedIdentity`, else `ActiveDirectoryDefault`. Grant that identity a SQL
-  login + read access on the source.
+  login + read access on the source. Validated end-to-end against Azure SQL Database.
+
+### Changed
+- Both distributions and their runtime API / agent version metadata now report `2.4.0`.
 
 ## [2.3.0]: 2026-08-11
 
@@ -290,7 +295,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[2.3.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.2.0...main
+[2.4.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.3.0...main
+[2.3.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.2.0...2.3.0
 [2.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.1...2.2.0
 [2.1.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.0.0...2.1.0

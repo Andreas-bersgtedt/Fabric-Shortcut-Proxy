@@ -46,6 +46,13 @@ def test_merge_empty_returns_valid_shape():
     assert m["totals"]["tables"] == 0
     assert m["tables"] == [] and m["agents"] == 0
     assert m["totals"]["data_requests"] == 0
+    assert m["key_vault"] == {}
+
+
+def test_merge_preserves_key_vault_status():
+    kv = {"enabled": True, "vault": "myvault.vault.azure.net", "status": "ok"}
+    m = merge_summaries([{"key_vault": {}}, {"key_vault": kv}])
+    assert m["key_vault"] == kv
 
 
 def test_merge_sums_counts_across_agents():

@@ -75,7 +75,7 @@ def merge_summaries(summaries: list[dict]) -> dict:
                        "parquet_generations": 0, "bytes_served": 0,
                        "source_unavailable": 0, "data_requests": 0},
             "refresh": {}, "cache": {}, "sql_latency": None,
-            "tables": [], "recent_queries": [], "agents": 0,
+            "tables": [], "recent_queries": [], "key_vault": {}, "agents": 0,
         }
 
     # ---- per-table merge -------------------------------------------------
@@ -150,5 +150,7 @@ def merge_summaries(summaries: list[dict]) -> dict:
         "sql_latency": sql_latency,
         "tables": tables,
         "recent_queries": recent[:60],
+        # Key Vault status is identical fleet-wide; surface the first agent that reports it.
+        "key_vault": next((s.get("key_vault") for s in summaries if s.get("key_vault")), {}),
         "agents": len(summaries),
     }

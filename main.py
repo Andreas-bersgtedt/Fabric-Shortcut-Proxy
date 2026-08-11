@@ -18,6 +18,11 @@ import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+# Resolve Key Vault-backed secrets into the environment before config binds them
+# (issue #16). No-op unless a Key Vault URI is configured; never fatal on outage.
+from security.keyvault import hydrate_from_keyvault as _hydrate_from_keyvault
+_hydrate_from_keyvault()
+
 import config
 from observability.logging import configure_logging, get_logger
 from iceberg.state_store import build_all_snapshots
@@ -506,6 +511,31 @@ async def lifespan(app: FastAPI):
         )
         log.info("table_retry_enabled", interval_seconds=config.TABLE_RETRY_SECONDS)
 
+    # Key Vault background refresh (issue #16): keep the local cache warm; a KV
+    # outage is logged and the last-known-good cache retained (never fatal). The
+    # SDK call is synchronous, so it runs off the event loop.
+    app.state.keyvault_refresh_task = None
+    if config.KEYVAULT_URI and config.KEYVAULT_REFRESH_SECONDS > 0:
+        from security import keyvault as _kv
+        from security.credential_store import CredentialStore as _KVStore
+        _kv_source = _kv.KeyVaultSecretSource(_kv.config_from_settings(config))
+        _kv_store = _KVStore()
+        _kv_interval = max(1.0, float(config.KEYVAULT_REFRESH_SECONDS))
+
+        async def _keyvault_refresh_loop():
+            while True:
+                try:
+                    names = await asyncio.to_thread(_kv.refresh_secrets_once, _kv_source, _kv_store)
+                    if names:
+                        log.info("keyvault_refreshed", secrets=names)
+                except Exception as exc:  # noqa: BLE001 - never let the loop die
+                    log.warning("keyvault_refresh_failed", error=str(exc))
+                await asyncio.sleep(_kv_interval)
+
+        app.state.keyvault_refresh_task = asyncio.create_task(
+            _keyvault_refresh_loop(), name="keyvault-refresh")
+        log.info("keyvault_refresh_enabled", interval_seconds=int(_kv_interval))
+
     yield  # Application runs here
 
     log.info("shutdown")
@@ -522,6 +552,11 @@ async def lifespan(app: FastAPI):
         app.state.table_retry_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.table_retry_task
+    # Stop the Key Vault refresh loop (if running).
+    if getattr(app.state, "keyvault_refresh_task", None) is not None:
+        app.state.keyvault_refresh_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.keyvault_refresh_task
     # Stop the freshness poller (if running) before disposing the engine.
     if config.AUTO_REFRESH:
         from iceberg import freshness
@@ -534,7 +569,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fabric Shortcut Proxy (POC)",
     description="Virtual Iceberg-over-S3 proxy that serves SQL pushdown as Parquet",
-    version="2.2.0",
+    version="2.3.0",
     lifespan=lifespan,
 )
 

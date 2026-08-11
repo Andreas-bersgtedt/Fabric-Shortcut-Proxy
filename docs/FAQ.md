@@ -30,6 +30,10 @@ Three, all served read-only with ranged reads and one-level folder browsing:
 
 Upstream credentials are **mediated**: clients never see them. They are held encrypted (DPAPI on Windows, Fernet elsewhere) and resolved by id. Outbound S3 supports static keys, session tokens, assume-role, web-identity (OIDC/IRSA), profiles, SSO, instance role, credential-process, and anonymous; Azure supports connection string, account key, SAS, service principal, managed identity, DefaultAzureCredential, and anonymous.
 
+## Can credentials live in Azure Key Vault?
+
+Yes (issue #16). Give the proxy its own Entra ID identity with `AUTH_MODE` (`default`, `managed_identity`, or `service_principal`; a service-principal secret comes only from `AZURE_CLIENT_SECRET` in the environment) and set `KEYVAULT_URI`. The encrypted store then resolves secrets from Key Vault on a cache miss and caches them, so the DB URL, mount credentials, S3 secret, admin token, and Manager password can live centrally. It is cache-first and never a hard dependency — a Key Vault outage falls back to the local cache (`KEYVAULT_CACHE_TTL=0` never expires it). With `KEYVAULT_WRITE_BACK=1` the Manager also writes every saved credential — including per-key access keys **with their ACLs** — back into the vault, making it the authoritative store. Needs **Key Vault Secrets User** to read and **Key Vault Secrets Officer** on the Manager for write-back. Install the `keyvault` extra. See [SECURITY.md](SECURITY.md).
+
 ## How is access to mounted buckets secured?
 
 The front door verifies AWS SigV4 against **scoped access keys**, not just one static pair. Each key is authorized to specific buckets/prefixes and is read-only. Mounted buckets are authenticated even when global signature enforcement is off (`ENFORCE_MOUNT_AUTH`, default on), so a secured mount is never served anonymously. Keys are managed in the config-builder **Storage → Access keys** panel; the legacy single key remains a wildcard until the first scoped key is created.

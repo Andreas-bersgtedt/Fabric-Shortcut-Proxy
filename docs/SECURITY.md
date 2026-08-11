@@ -202,6 +202,55 @@ Fernet elsewhere) and resolved by the mount's `credential` id, never written to
   `anonymous`/`instance`; Azure: `default`/`managed_identity`/`anonymous`) so
   ambient host credentials are never picked up by surprise.
 
+### Entra ID identity & Azure Key Vault (issue #16)
+
+The proxy can acquire its **own** outbound Azure identity through Entra ID and use
+**Azure Key Vault** as a central, RBAC-audited credential store. This is distinct from
+the per-mount Azure auth above: it governs how the *proxy itself* authenticates to Key
+Vault, and the same identity is reused for Azure storage mounts.
+
+- **Identity mode** (`AUTH_MODE`): `default` (DefaultAzureCredential — managed identity,
+  environment, or CLI), `managed_identity`, or `service_principal`. A service-principal
+  client secret is read only from `AZURE_CLIENT_SECRET` (environment), never a config
+  file. The credential is built once in
+  [security/azure_credential.py](../security/azure_credential.py) and shared.
+- **Read-through source** (`KEYVAULT_URI`): on a local cache miss the encrypted store
+  resolves a secret from Key Vault and caches it, so the DB URL, mount credentials, S3
+  secret, admin token, and Manager password can live in the vault. A background loop
+  re-pulls on `KEYVAULT_REFRESH_SECONDS`.
+- **Cache-first, never-fail:** a Key Vault, Azure, or network outage falls back to the
+  local encrypted cache. `KEYVAULT_CACHE_TTL=0` (default) never expires it, so an offline
+  or air-gapped deployment runs entirely from the local store. `REQUIRE_KEYVAULT=1` opts
+  into failing fast on a cold start with no cache.
+- **Write-back — the vault as authoritative store** (`KEYVAULT_WRITE_BACK`, default off):
+  the Manager also persists every operator-saved credential into Key Vault — DB URLs,
+  mount credentials, the S3 secret / admin token / Manager password, and per-key S3 access
+  keys **with their full ACL scope** (allowed buckets/prefixes, permissions, enabled) — and
+  soft-deletes the vault secret when a credential is removed. A rebuilt Manager or a fresh
+  agent re-populates from the vault. Fail-soft: a Key Vault write failure never blocks the
+  local save.
+- **RBAC:** the Manager and agents need **Key Vault Secrets User** to read; write-back
+  additionally needs **Key Vault Secrets Officer** on the **Manager** identity only (agents
+  stay read-only).
+- **Secret names:** `db-url` / `db-url-<id>`, `s3-secret-access-key`, `admin-token`,
+  `manager-auth-password`, `access-key-<id>`, and mount secrets by id (override per
+  deployment).
+- **Status:** an advisory `key_vault` block in `/readyz`, a status card in the monitor and
+  admin console, and a config-builder **Entra ID & Key Vault** panel with a live **Test**
+  button (`GET /_config/api/keyvault`, `POST /_config/api/keyvault/test`). Install the
+  optional `keyvault` extra (`pip install '.[keyvault]'`).
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `AUTH_MODE` | `default` | Outbound Azure identity: `default`, `managed_identity`, `service_principal` |
+| `KEYVAULT_URI` | *(unset)* | Key Vault URI; empty disables Key Vault |
+| `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` | *(unset)* | Entra tenant / client for a service principal or user-assigned managed identity |
+| `AZURE_CLIENT_SECRET` | *(unset)* | Service-principal secret — **environment only**, never a config file |
+| `REQUIRE_KEYVAULT` | `0` | Fail-fast on a cold start with no local cache |
+| `KEYVAULT_REFRESH_SECONDS` | `300` | Background re-pull cadence (seconds) |
+| `KEYVAULT_CACHE_TTL` | `0` | Local-cache TTL; `0` = never expire (offline-friendly) |
+| `KEYVAULT_WRITE_BACK` | `0` | Manager persists saved credentials into Key Vault (needs Secrets Officer) |
+
 ### Path confinement
 
 Every mounted key is normalized and rejects `..` traversal, and is confined to the

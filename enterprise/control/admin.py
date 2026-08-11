@@ -586,7 +586,7 @@ function monitorRender(d){
   
   const t = d.totals||{}, c = d.cache||{};
   const pinned = c.parquet_pinned||{};
-  $("monitorCards").innerHTML = [
+  const cardData = [
     ["Tables", fmtNum(t.tables)],
     ["Data requests", fmtNum(t.data_requests), "cache hit "+pct(t.cache_hit_ratio)],
     ["Parquet gens", fmtNum(t.parquet_generations)],
@@ -594,7 +594,14 @@ function monitorRender(d){
     ["Pinned splits", fmtNum(pinned.entries)+" · "+fmtBytes(pinned.bytes)],
     ["SQL p (avg)", d.sql_latency? fmtMs((d.sql_latency.avg_seconds||0)*1000):"–", d.sql_latency? fmtNum(d.sql_latency.count)+" queries":""],
     ["Source errors", fmtNum(t.source_unavailable), (t.source_unavailable>0?"":"none")],
-  ].map(([k,v,sub])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`).join("");
+  ];
+  const kv = d.key_vault;
+  if(kv && kv.enabled){
+    const kvcol = kv.status==='ok'?'#4ade80':(kv.status==='degraded'?'#fcd34d':'#9ca3af');
+    cardData.push(["Key Vault", `<span style="color:${kvcol}">${kv.status||'ok'}</span>`,
+      [kv.vault, kv.auth_mode, (kv.cached?'cached':null)].filter(Boolean).join(' · ')]);
+  }
+  $("monitorCards").innerHTML = cardData.map(([k,v,sub])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`).join("");
 
   const rows = (d.tables||[]);
   $("tblBody").innerHTML = rows.length ? rows.map(x=>{

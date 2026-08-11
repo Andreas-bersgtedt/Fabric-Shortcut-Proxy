@@ -268,7 +268,7 @@ $VenvDir = Join-Path $ProjectRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $StampFile = Join-Path $VenvDir ".deps-installed"
 # Bump when the required dependency SET changes so existing venvs auto-reinstall.
-$DepsVersion = "drivers+objectstore-v1"
+$DepsVersion = "drivers+objectstore+azure-v1"
 
 function Write-Step {
     param([string]$Message)
@@ -579,8 +579,8 @@ if ($SkipInstall) {
     & $VenvPython -m pip install --upgrade pip --quiet
     if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
 
-    Write-Step "Installing project dependencies, database drivers, and object-store readers from pyproject.toml"
-    & $VenvPython -m pip install -e ".[drivers,objectstore]" -e ./enterprise --quiet
+    Write-Step "Installing project dependencies, database drivers, object-store readers, and Azure (Blob + Key Vault) from pyproject.toml"
+    & $VenvPython -m pip install -e ".[drivers,objectstore,azureblob,keyvault]" -e ./enterprise --quiet
     if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
 
     Set-Content -Path $StampFile -Value $DepsVersion -NoNewline

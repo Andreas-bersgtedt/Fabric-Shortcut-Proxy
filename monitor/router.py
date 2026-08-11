@@ -58,6 +58,16 @@ def _object_store_tokenizer_summary() -> dict:
         return {}
 
 
+def _keyvault_summary() -> dict:
+    """Key Vault / Entra ID status (issue #16); {} when disabled."""
+    try:
+        from security.keyvault import status_snapshot
+        kv = status_snapshot()
+        return kv if kv.get("enabled") else {}
+    except Exception:  # noqa: BLE001 - the dashboard must never break on this
+        return {}
+
+
 @router.get("/api/summary")
 async def summary() -> dict:
     """Consolidated live snapshot for the dashboard."""
@@ -166,6 +176,7 @@ async def summary() -> dict:
         "sources": [{"connection": cid, **meta} for cid, meta in sorted(source_meta.items())],
         "recent_queries": qs["recent"],
         "object_store_tokenizer": _object_store_tokenizer_summary(),
+        "key_vault": _keyvault_summary(),
     }
 
 

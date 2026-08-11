@@ -134,6 +134,48 @@ async def settings() -> JSONResponse:
     return JSONResponse({"settings": config.settings_catalog()})
 
 
+@router.get("/api/keyvault")
+async def keyvault_status() -> JSONResponse:
+    """Non-secret Key Vault / Entra ID config + live status for the builder panel."""
+    from security import keyvault as kv
+    st = kv.status_snapshot()
+    st["sdk_installed"] = kv.sdk_available()
+    return JSONResponse(st)
+
+
+@router.post("/api/keyvault/test")
+async def keyvault_test(request: Request) -> JSONResponse:
+    """Live Key Vault connectivity test for the 'Test Key Vault' button.
+
+    An optional body ``{vault_uri, auth_mode, tenant_id, client_id}`` tests
+    unsaved values; otherwise the saved config is used. The service-principal
+    client secret is read from ``AZURE_CLIENT_SECRET`` — never sent from the UI.
+    """
+    import asyncio
+    from security import keyvault as kv
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - empty/invalid body => test the saved config
+        body = {}
+    if isinstance(body, dict) and str(body.get("vault_uri") or "").strip():
+        cfg = kv.KeyVaultConfig(
+            vault_uri=str(body.get("vault_uri")).strip(),
+            auth_mode=(str(body.get("auth_mode") or "default").strip().lower() or "default"),
+            tenant_id=str(body.get("tenant_id") or "").strip(),
+            client_id=str(body.get("client_id") or "").strip(),
+            client_secret=os.environ.get("AZURE_CLIENT_SECRET", ""),
+        )
+    else:
+        cfg = kv.config_from_settings(config)
+    if not cfg.enabled:
+        return JSONResponse({"ok": False, "error": "no Key Vault URI configured"})
+    source = kv.KeyVaultSecretSource(cfg)
+    ok, detail = await asyncio.to_thread(source.probe)
+    log.info("keyvault_test", vault=kv._vault_host(cfg.vault_uri), ok=ok)
+    return JSONResponse({"ok": ok, "detail": detail,
+                         "vault": kv._vault_host(cfg.vault_uri), "auth_mode": cfg.auth_mode})
+
+
 @router.get("/api/current")
 async def current_config() -> JSONResponse:
     """Phase 5.1: the CURRENT effective configuration — each setting's live value
@@ -247,6 +289,13 @@ async def save_config(request: Request) -> JSONResponse:
     except (OSError, ValueError) as exc:
         log.warning("config_builder_save_failed", error=str(exc))
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    # Phase 4 (issue #16): mirror config-file secrets (S3 secret / admin token /
+    # manager password) to Key Vault when write-back is on (fail-soft).
+    try:
+        from security.keyvault import write_back_config_secrets
+        write_back_config_secrets(clean)
+    except Exception:  # noqa: BLE001 - write-back must never break the save
+        pass
     log.info("config_saved", path=result["path"], changed=result["changed"])
     return JSONResponse({
         "ok": True,
@@ -290,6 +339,12 @@ async def apply_config(request: Request) -> JSONResponse:
     except (OSError, ValueError) as exc:
         log.warning("config_builder_save_failed", error=str(exc))
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    # Phase 4 (issue #16): mirror config-file secrets to Key Vault (fail-soft).
+    try:
+        from security.keyvault import write_back_config_secrets
+        write_back_config_secrets(clean)
+    except Exception:  # noqa: BLE001 - write-back must never break the apply
+        pass
 
     log.info("config_applied",
              applied_live=live_result["applied"],
@@ -317,7 +372,15 @@ async def apply_config(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 def _store() -> CredentialStore:
-    return CredentialStore(config.CREDENTIAL_STORE_PATH or None)
+    st = CredentialStore(config.CREDENTIAL_STORE_PATH or None)
+    # Phase 4 (issue #16): when keyvault_write_back is on, also persist saved
+    # credentials into Key Vault (fail-soft — never breaks the local save).
+    try:
+        from security.keyvault import attach_write_back
+        attach_write_back(st)
+    except Exception:  # noqa: BLE001 - write-back must never break the save path
+        pass
+    return st
 
 
 async def _restart_agents(request: Request) -> int:

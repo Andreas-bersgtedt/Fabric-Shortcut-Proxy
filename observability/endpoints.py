@@ -88,6 +88,15 @@ async def readyz() -> JSONResponse:
             }
     except Exception:  # noqa: BLE001 - observability must never break readiness
         pass
+    # Key Vault / Entra ID (issue #16): advisory connectivity + cache status. Only
+    # shown when configured; never affects readiness (owner directive: never-fail).
+    try:
+        from security.keyvault import status_snapshot as _kv_status
+        kv = _kv_status()
+        if kv.get("enabled"):
+            content["key_vault"] = kv
+    except Exception:  # noqa: BLE001 - observability must never break readiness
+        pass
     return JSONResponse(status_code=200 if ready else 503, content=content)
 
 

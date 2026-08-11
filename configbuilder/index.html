@@ -1701,7 +1701,8 @@ function renderSettings(){
   for(const s of (state.settings||[])){
     if(q && !(s.key.includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
     if(s.category !== cat){ cat = s.category;
-      const h=document.createElement("div"); h.className="setcat"; h.textContent=cat; wrap.appendChild(h); }
+      const h=document.createElement("div"); h.className="setcat"; h.textContent=cat; wrap.appendChild(h);
+      if(cat === "Entra ID & Key Vault"){ wrap.appendChild(buildKeyVaultPanel()); } }
     const row=document.createElement("div"); row.className="setrow";
     const lab=document.createElement("label"); lab.textContent=s.key;
     lab.title=(s.env? ("env "+s.env+"  ·  ") : "")+(s.help||"");
@@ -1727,6 +1728,57 @@ function renderSettings(){
   if(!wrap.children.length) wrap.innerHTML='<div class="hint">No settings match.</div>';
 }
 $("settingsSearch").addEventListener("input", renderSettings);
+
+// ---- Key Vault status + test panel (issue #16) ----
+function buildKeyVaultPanel(){
+  const box=document.createElement("div");
+  box.style.cssText="margin:6px 0 14px;padding:12px;border:1px solid var(--line,#333);border-radius:8px;background:rgba(255,255,255,.02);";
+  box.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+    + '<strong>Key Vault</strong>'
+    + '<span id="kvBadge" style="display:inline-block;padding:2px 8px;border-radius:10px;color:#fff;font-size:11px;background:#888;">…</span>'
+    + '<span id="kvVault" class="hint"></span>'
+    + '<button class="btn" id="btnKvTest" type="button" style="margin-left:auto;">Test Key Vault</button>'
+    + '</div>'
+    + '<div id="kvTestResult" class="hint" style="margin-top:8px;"></div>'
+    + '<div class="hint" style="margin-top:8px;">Secrets live in Key Vault under <code>db-url</code>, <code>s3-secret-access-key</code>, <code>admin-token</code>, <code>manager-auth-password</code>. The service-principal client secret comes from the <code>AZURE_CLIENT_SECRET</code> env var — never the UI. Edit the fields below, then Save + restart to apply.</div>';
+  box.querySelector("#btnKvTest").addEventListener("click", testKeyVault);
+  setTimeout(refreshKeyVaultStatus, 0);
+  return box;
+}
+
+const KV_BADGE_COLORS={ok:"#2a7d4f",degraded:"#c9821f",disabled:"#888",unknown:"#888"};
+async function refreshKeyVaultStatus(){
+  const badge=$("kvBadge"), vault=$("kvVault");
+  if(!badge) return;
+  try{
+    const r=await fetch("/_config/api/keyvault",{cache:"no-store"});
+    const d=await r.json();
+    const st=d.status||"disabled";
+    badge.textContent=st;
+    badge.style.background=KV_BADGE_COLORS[st]||"#888";
+    if(vault){
+      vault.textContent = d.enabled
+        ? [d.vault, d.auth_mode, (d.cached?"cached":null), (d.sdk_installed?null:"SDK not installed")].filter(Boolean).join(" · ")
+        : "not configured";
+    }
+  }catch(e){ badge.textContent="unknown"; badge.style.background="#888"; }
+}
+
+async function testKeyVault(){
+  const res=$("kvTestResult"); if(res){ res.textContent="Testing…"; res.style.color=""; }
+  const val=(k)=>{ const el=document.querySelector('#allSettings [data-key="'+k+'"]'); return el?(el.value||"").trim():""; };
+  const body={ vault_uri:val("keyvault_uri"), auth_mode:val("auth_mode"), tenant_id:val("azure_tenant_id"), client_id:val("azure_client_id") };
+  try{
+    const r=await fetch("/_config/api/keyvault/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(res){
+      res.textContent = d.ok ? ("✓ reachable"+(d.vault?(" ("+d.vault+")"):"")) : ("✗ "+(d.detail||d.error||"failed"));
+      res.style.color = d.ok ? "#2a7d4f" : "#c9541f";
+    }
+  }catch(e){ if(res){ res.textContent="✗ "+e; res.style.color="#c9541f"; } }
+  setTimeout(refreshKeyVaultStatus, 400);
+}
 
 // ---- storage proxy mounts (Storage tab) ----
 const mountState = { mounts: [], enabled: false, reserved: "", supported: ["local"] };

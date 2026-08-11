@@ -134,3 +134,36 @@ def test_load_config_file_tolerates_bom(tmp_path, monkeypatch):
 def test_load_config_file_missing_is_empty(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert config._load_config_file() == {}
+
+
+def test_write_config_updates_persists_keyvault_settings(tmp_path, monkeypatch):
+    # Regression: the Key Vault keys must route to config.system.json (were dropped
+    # by write_config_updates because they were missing from _SETTINGS_TO_FILE_MAP).
+    monkeypatch.chdir(tmp_path)
+    result = config.write_config_updates({
+        "keyvault_uri": "https://fabproxy01.vault.azure.net/",
+        "auth_mode": "managed_identity",
+        "require_keyvault": True,
+        "keyvault_refresh_seconds": 120,
+    })
+    assert "keyvault_uri" in result["changed"]
+    saved = json.loads((tmp_path / "config.system.json").read_text(encoding="utf-8"))["system"]
+    assert saved["keyvault_uri"] == "https://fabproxy01.vault.azure.net/"
+    assert saved["auth_mode"] == "managed_identity"
+    assert saved["require_keyvault"] is True
+    assert saved["keyvault_refresh_seconds"] == 120
+
+
+def test_effective_settings_reads_system_file(tmp_path, monkeypatch):
+    # Regression: system settings (e.g. keyvault_uri) must resolve from
+    # config.system.json in the live editor, not silently fall back to default
+    # (which made a just-saved value appear to vanish on reload).
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.system.json").write_text(
+        json.dumps({"system": {"keyvault_uri": "https://v.vault.azure.net/", "enable_gateway": True}}),
+        encoding="utf-8")
+    by_key = {s["key"]: s for s in config.effective_settings()}
+    assert by_key["keyvault_uri"]["value"] == "https://v.vault.azure.net/"
+    assert by_key["keyvault_uri"]["source"] == "file"
+    assert by_key["enable_gateway"]["value"] is True
+    assert by_key["enable_gateway"]["source"] == "file"

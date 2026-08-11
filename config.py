@@ -39,6 +39,9 @@ from system_config import (
     ENABLE_STORAGE_PROXY, ENFORCE_MOUNT_AUTH, ENABLE_AUDIT_LOG, AUDIT_LOG_FILE,
     # Credential store
     ENABLE_CREDENTIAL_STORE, CREDENTIAL_STORE_PATH,
+    # Entra ID auth & Key Vault (issue #16)
+    AUTH_MODE, KEYVAULT_URI, AZURE_TENANT_ID, AZURE_CLIENT_ID,
+    REQUIRE_KEYVAULT, KEYVAULT_REFRESH_SECONDS, KEYVAULT_CACHE_TTL, KEYVAULT_WRITE_BACK,
     # Artifact Store
     ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_SERVING, PUBLISH_SERVING_IMAGE,
     # Fleet
@@ -175,6 +178,16 @@ _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 _register("MANAGER_AUTH_ENABLED", "manager_auth_enabled", "bool", MANAGER_AUTH_ENABLED)
 _register("MANAGER_AUTH_USERNAME", "manager_auth_username", "str", MANAGER_AUTH_USERNAME)
 _register("MANAGER_AUTH_PASSWORD", "manager_auth_password", "str", MANAGER_AUTH_PASSWORD)
+
+# Entra ID auth & Azure Key Vault (issue #16)
+_register("FSP_AUTH_MODE", "auth_mode", "str", AUTH_MODE)
+_register("FSP_KEYVAULT_URI", "keyvault_uri", "str", KEYVAULT_URI)
+_register("AZURE_TENANT_ID", "azure_tenant_id", "str", AZURE_TENANT_ID)
+_register("AZURE_CLIENT_ID", "azure_client_id", "str", AZURE_CLIENT_ID)
+_register("FSP_REQUIRE_KEYVAULT", "require_keyvault", "bool", REQUIRE_KEYVAULT)
+_register("FSP_KEYVAULT_REFRESH_SECONDS", "keyvault_refresh_seconds", "int", KEYVAULT_REFRESH_SECONDS)
+_register("FSP_KEYVAULT_CACHE_TTL", "keyvault_cache_ttl", "int", KEYVAULT_CACHE_TTL)
+_register("FSP_KEYVAULT_WRITE_BACK", "keyvault_write_back", "bool", KEYVAULT_WRITE_BACK)
 
 # Register memory monitoring settings
 _register("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", "int", 800)
@@ -821,11 +834,21 @@ SETTINGS_META: dict[str, dict] = {
     "retention_gc": {"cat": "Cluster (scale)", "help": "Agent (shard 0): periodically prune orphaned Parquet splits from the shared store."},
     "retention_gc_interval_seconds": {"cat": "Cluster (scale)", "help": "Retention GC sweep interval (seconds)."},
     "rolling_restart_health_timeout": {"cat": "Cluster (scale)", "help": "Rolling restart: max seconds to wait for each Agent to become healthy before the next."},
+    # Entra ID & Key Vault (issue #16)
+    "auth_mode": {"cat": "Entra ID & Key Vault", "help": "Outbound Azure identity for Key Vault access: 'default' (DefaultAzureCredential: managed identity → env → CLI), 'managed_identity', or 'service_principal'.", "choices": ["default", "managed_identity", "service_principal"]},
+    "keyvault_uri": {"cat": "Entra ID & Key Vault", "help": "Azure Key Vault URI (e.g. https://my-vault.vault.azure.net). Blank = Key Vault disabled; the proxy uses local config/env only."},
+    "azure_tenant_id": {"cat": "Entra ID & Key Vault", "help": "Entra tenant id for a service principal or user-assigned managed identity (blank for the default credential chain)."},
+    "azure_client_id": {"cat": "Entra ID & Key Vault", "help": "Client (application) id for a service principal or user-assigned managed identity. The client secret, when needed, comes from the AZURE_CLIENT_SECRET env var — never stored here."},
+    "require_keyvault": {"cat": "Entra ID & Key Vault", "help": "Fail startup only on a COLD start with no local cache when Key Vault is unreachable. Default off: an outage always falls back to the last-known-good local cache and never stops the agent/heartbeat/manager."},
+    "keyvault_refresh_seconds": {"cat": "Entra ID & Key Vault", "help": "Background interval (seconds) to re-pull secrets from Key Vault into the local cache. 0 disables the refresh loop (offline/static)."},
+    "keyvault_cache_ttl": {"cat": "Entra ID & Key Vault", "help": "Local-cache freshness TTL (seconds); 0 or negative = never expire, so an offline/air-gapped deployment runs entirely from a pre-seeded local store."},
+    "keyvault_write_back": {"cat": "Entra ID & Key Vault", "help": "Manager only: also persist saved credentials (DB URLs, mount credentials) INTO Key Vault, making the vault the authoritative store. Needs 'Key Vault Secrets Officer' on the Manager identity; fail-soft — a Key Vault write failure never blocks the local save. Default off."},
 }
 
 _SETTINGS_CAT_ORDER = [
     "Connection", "S3 endpoint", "Server", "Splits & query", "Caching",
-    "Robustness", "Admin & observability", "Iceberg (advanced)", "Data freshness",
+    "Robustness", "Admin & observability", "Entra ID & Key Vault",
+    "Iceberg (advanced)", "Data freshness",
     "Cluster (scale)", "Other",
 ]
 
@@ -1004,6 +1027,15 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "manager_auth_enabled": "config.system.json",
     "manager_auth_username": "config.system.json",
     "manager_auth_password": "config.system.json",
+    # Entra ID & Key Vault (issue #16)
+    "auth_mode": "config.system.json",
+    "keyvault_uri": "config.system.json",
+    "azure_tenant_id": "config.system.json",
+    "azure_client_id": "config.system.json",
+    "require_keyvault": "config.system.json",
+    "keyvault_refresh_seconds": "config.system.json",
+    "keyvault_cache_ttl": "config.system.json",
+    "keyvault_write_back": "config.system.json",
     # Connection settings → config.connection.json
     "db_url": "config.connection.json",
     "source_table": "config.connection.json",
@@ -1076,9 +1108,38 @@ def _coerce_setting_value(typ: str, value):
     return str(value)
 
 
+# Sentinel distinguishing "absent from the persisted file" from a stored null.
+_MISSING = object()
+
+
 def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
-    """Every registered setting with its CURRENT effective value + source."""
+    """Every registered setting with its CURRENT effective value + source.
+
+    Resolves env > persisted config file > built-in default, re-reading the config
+    files fresh so a just-saved (restart-required) setting shows its saved value
+    rather than the running process's stale in-memory one.
+    """
     out: list[dict] = []
+    _file_cache: dict[str, dict] = {}
+
+    def _persisted(key: str):
+        target = _SETTINGS_TO_FILE_MAP.get(key)
+        if not target:
+            return _MISSING
+        if target not in _file_cache:
+            try:
+                with open(target, "r", encoding="utf-8-sig") as fh:
+                    loaded = json.load(fh)
+                _file_cache[target] = loaded if isinstance(loaded, dict) else {}
+            except (OSError, ValueError):
+                _file_cache[target] = {}
+        data = _file_cache[target]
+        section = target.split("config.")[-1].split(".json")[0]
+        sect = data.get(section, data)
+        if isinstance(sect, dict) and key in sect:
+            return sect[key]
+        return _MISSING
+
     for reg in _SETTINGS_REGISTRY.values():
         key, env, typ, default = reg["key"], reg["env"], reg["type"], reg["default"]
         meta = SETTINGS_META.get(key, {})
@@ -1086,10 +1147,12 @@ def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
 
         if env and env in os.environ:
             source, raw = "env", os.environ[env]
-        elif key in _FILE_CFG:
-            source, raw = "file", _FILE_CFG[key]
         else:
-            source, raw = "default", default
+            file_value = _persisted(key)
+            if file_value is not _MISSING:
+                source, raw = "file", file_value
+            else:
+                source, raw = "default", default
 
         try:
             value = _coerce_setting_value(typ, raw)

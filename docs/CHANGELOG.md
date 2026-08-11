@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0]: 2026-08-11
+
+### Added
+- **Entra ID identity + Azure Key Vault credential store (issue #16).** The proxy can now
+  take its **own** outbound Azure identity through Entra ID and use **Azure Key Vault** as a
+  central, RBAC-audited credential source — with an optional **write-back** mode that makes
+  the vault the authoritative store while the encrypted local store becomes a cache.
+  - **Identity modes** (`AUTH_MODE`): `default` (DefaultAzureCredential — managed identity /
+    environment / CLI), `managed_identity`, or `service_principal`. A service-principal
+    client secret is read only from `AZURE_CLIENT_SECRET` (environment), never a config file.
+    Built through one shared `azure-identity` credential and reused by both Key Vault and
+    Azure storage mounts.
+  - **Read-through source** (`KEYVAULT_URI`): on a local cache miss the encrypted store
+    resolves the secret from Key Vault and caches it, so the DB URL, mount credentials, S3
+    secret, admin token, and Manager password can live in the vault. A background loop
+    re-pulls on `KEYVAULT_REFRESH_SECONDS` (default 300).
+  - **Cache-first, never a hard dependency.** A Key Vault / Azure / network outage falls
+    back to the local encrypted cache; `KEYVAULT_CACHE_TTL=0` (default) never expires it, so
+    an offline or air-gapped deployment runs entirely from the local store. `REQUIRE_KEYVAULT=1`
+    opts into failing fast on a cold start with no cache.
+  - **Write-back — the vault as authoritative store** (`KEYVAULT_WRITE_BACK`, default off).
+    The Manager also persists **every** operator-saved credential into Key Vault: DB URLs,
+    mount credentials, the S3 secret / admin token / Manager password, and per-key S3
+    **access keys with their full ACL scope** (allowed buckets/prefixes, permissions,
+    enabled). Deleting a credential soft-deletes its vault secret. A rebuilt Manager or a
+    fresh agent re-populates entirely from the vault. **Fail-soft** — a Key Vault write
+    failure never blocks the local save. Needs **Key Vault Secrets Officer** on the Manager
+    identity; agents stay read-only **Key Vault Secrets User**.
+  - **Secret-name convention:** `db-url` / `db-url-<id>`, `s3-secret-access-key`,
+    `admin-token`, `manager-auth-password`, `access-key-<id>`, and mount secrets by id
+    (override per deployment).
+  - **Observability:** an advisory `key_vault` block in `/readyz`, a Key Vault status card in
+    the monitor and admin console, and a config-builder **Entra ID & Key Vault** panel with a
+    live **Test** button (`GET /_config/api/keyvault`, `POST /_config/api/keyvault/test`).
+  - New optional `keyvault` extra (`azure-keyvault-secrets`, `azure-identity`); the Manager
+    launchers install it by default.
+
+### Changed
+- Both distributions and their runtime API / agent version metadata now report `2.3.0`.
+
 ## [2.2.0]: 2026-08-10
 
 ### Added
@@ -232,7 +272,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[2.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.1...main
+[2.3.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.2.0...main
+[2.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.1...2.2.0
 [2.1.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/1.0.0...2.0.0

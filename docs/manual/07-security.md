@@ -149,7 +149,35 @@ policies in the config builder per-column editor. Validate with the UAT runbooks
 [TOKENIZATION_MULTI_DIALECT_UAT.md](../TOKENIZATION_MULTI_DIALECT_UAT.md) (PostgreSQL, Oracle,
 Databricks).
 
-## 7.9 Hardening checklist
+## 7.9 Entra ID identity and Azure Key Vault
+
+Beyond per-mount Azure auth, the proxy can take its **own** Entra ID identity and use Azure
+Key Vault as a central credential store. `AUTH_MODE` selects the outbound identity —
+`default` (DefaultAzureCredential), `managed_identity`, or `service_principal` — and a
+service-principal secret comes only from `AZURE_CLIENT_SECRET` in the environment, never a
+config file. The same identity is reused for Azure storage mounts.
+
+Set `KEYVAULT_URI` to turn Key Vault on. On a local cache miss the encrypted store resolves
+the secret from the vault and caches it, so the DB URL, mount credentials, S3 secret, admin
+token, and Manager password can live centrally; a background loop re-pulls on
+`KEYVAULT_REFRESH_SECONDS`. Key Vault is never a hard dependency: an outage falls back to the
+local encrypted cache, and `KEYVAULT_CACHE_TTL=0` (default) never expires it, so an offline
+deployment runs entirely from the local store. Set `REQUIRE_KEYVAULT=1` only if you want a
+cold start with no cache to fail fast.
+
+Turn on `KEYVAULT_WRITE_BACK` to make the vault the authoritative store. The Manager then
+persists every saved credential into Key Vault as well as the local cache — DB URLs, mount
+credentials, the S3 secret, admin token, and Manager password, and per-key S3 access keys
+**with their ACL scope** — and soft-deletes the vault secret when you delete a credential. A
+rebuilt Manager or a fresh agent re-populates from the vault. Write-back is fail-soft: a Key
+Vault failure never blocks the local save. Grant **Key Vault Secrets User** to read and, for
+write-back, **Key Vault Secrets Officer** on the Manager identity only; agents stay
+read-only. Check status in the config builder's Entra ID & Key Vault panel (with a live Test
+button), in `/readyz`, and on the monitor. Install the `keyvault` extra
+(`pip install '.[keyvault]'`); the Manager launchers install it by default. Full policy is in
+[SECURITY.md](../SECURITY.md).
+
+## 7.10 Hardening checklist
 
 - Give the proxy a read-only database login scoped to the exposed tables.
 - Set `REQUIRE_SIGV4=1` and issue scoped access keys; stop relying on the legacy wildcard.
@@ -157,9 +185,10 @@ Databricks).
 - Keep the control plane (9200) off the data-facing network.
 - Terminate TLS at the proxy or a fronting endpoint.
 - Turn on the audit log and set `forwarded_allow_ips` behind a load balancer.
-- Store all secrets in the environment or the encrypted store; commit none.
+- Store all secrets in the environment or the encrypted store; commit none. Centralize them
+  in Azure Key Vault (`KEYVAULT_URI`, optionally `KEYVAULT_WRITE_BACK`) where available.
 
-## 7.10 Next
+## 7.11 Next
 
 Continue to [Chapter 8: Operations](08-operations.md) for running, monitoring, scaling, and
 troubleshooting the service.

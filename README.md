@@ -76,6 +76,7 @@ shares/object stores at once.
 - **Per-key authorization**: issue scoped S3 **access keys** (allowed buckets/prefixes, read-only), stored encrypted; SigV4 is verified against them. The legacy single key stays a wildcard until you add a key.
 - **Forced auth on mounts**: `ENFORCE_MOUNT_AUTH` (default on) requires SigV4 on mounted buckets even when `REQUIRE_SIGV4` is off.
 - **Upstream credential mediation**: clients never see upstream S3/Azure secrets; they're held encrypted (DPAPI/Fernet) and resolved by id. Outbound S3 covers static/session/assume-role/web-identity/profile/SSO/instance/process/anonymous; Azure covers connection-string/account-key/SAS/AAD/managed-identity/default/anonymous.
+- **Entra ID + Key Vault (issue #16)**: the proxy can take its own Entra ID identity (`managed_identity`, `service_principal`, or `default`) and use **Azure Key Vault** as a central credential source, with optional **write-back** (`KEYVAULT_WRITE_BACK`) so the vault becomes the authoritative store — DB URLs, mount credentials, the S3 secret / admin token / Manager password, and per-key access keys **with their ACLs**. Cache-first and fail-soft: a Key Vault outage never stops the proxy. See [SECURITY.md](docs/SECURITY.md).
 - **TLS**: terminate HTTPS at the proxy (`TLS_CERT_FILE` + `TLS_KEY_FILE`) or a fronting LB.
 - **Audit**: every mounted-object access (identity, bucket, key, bytes) is logged when `ENABLE_AUDIT_LOG` is on; recent events at `GET /_config/api/audit`.
 

@@ -20,6 +20,7 @@ Settings are organized into these categories, in the order the config builder sh
 | Admin & observability | Request trace, trace buffer, admin token |
 | Iceberg (advanced) | Manifest stats, snapshot history |
 | Data freshness | Auto-refresh, strategy, poll interval, full-pull allowance |
+| Entra ID & Key Vault | Outbound Azure identity, Key Vault source + write-back, refresh cadence, cache TTL |
 | Cluster (scale) | Agent count, gateway, shard strategy, HA, control plane, retention GC |
 
 ## 9.2 Common settings
@@ -47,6 +48,14 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `ENFORCE_MOUNT_AUTH` | `enforce_mount_auth` | `1` | Force auth on mounts even if SigV4 is off |
 | `ENABLE_AUDIT_LOG` | `enable_audit_log` | `1` | Log mounted-object access |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | `tls_cert_file` / `tls_key_file` | *(unset)* | Terminate HTTPS at the proxy |
+| `AUTH_MODE` | `auth_mode` | `default` | Outbound Azure identity: `default`, `managed_identity`, `service_principal` |
+| `KEYVAULT_URI` | `keyvault_uri` | *(unset)* | Azure Key Vault URI; empty disables Key Vault |
+| `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` | `azure_tenant_id` / `azure_client_id` | *(unset)* | Entra tenant / client for a service principal or user-assigned MI |
+| `AZURE_CLIENT_SECRET` | *(env only)* | *(unset)* | Service-principal secret — **environment only**, never a config file |
+| `REQUIRE_KEYVAULT` | `require_keyvault` | `0` | Fail-fast on a cold start with no local cache |
+| `KEYVAULT_REFRESH_SECONDS` | `keyvault_refresh_seconds` | `300` | Background re-pull cadence (seconds) |
+| `KEYVAULT_CACHE_TTL` | `keyvault_cache_ttl` | `0` | Local-cache TTL; `0` = never expire (offline-friendly) |
+| `KEYVAULT_WRITE_BACK` | `keyvault_write_back` | `0` | Manager persists saved credentials into Key Vault (needs Secrets Officer) |
 | `ENABLE_CONFIG_BUILDER` | `enable_config_builder` | `0` | Serve the config builder UI |
 | `ENABLE_MONITOR` | `enable_monitor` | `0` | Serve the monitor dashboard |
 | `AUTO_REFRESH` | `auto_refresh` | `0` | Re-read the source and publish new snapshots |
@@ -128,6 +137,7 @@ launcher uses `--kebab-case`.
 | `/metrics`, `/_admin/stats` | Metrics (Prometheus text and JSON) |
 | `/_admin/timeline`, `/_admin/trace`, `/_admin/objects`, `/_admin/schemas` | Diagnostics |
 | `/_admin/refresh`, `/_admin/gc`, `/_admin/publish-image` | Snapshot, GC, and image actions |
+| `/_config/api/keyvault`, `/_config/api/keyvault/test` | Key Vault status and a live connectivity test |
 | `/_config`, `/_monitor`, `/_manager` | Config builder, monitor, admin console |
 
 Chapter 8 has the full table with methods and query parameters.
@@ -140,6 +150,7 @@ Chapter 8 has the full table with methods and query parameters.
 | `oracle` | `oracledb` | Oracle sources |
 | `s3proxy` | `boto3` | Native S3 / MinIO mounts |
 | `azureblob` | `azure-storage-blob`, `azure-identity` | Azure Blob / ADLS mounts |
+| `keyvault` | `azure-keyvault-secrets`, `azure-identity` | Entra ID identity + Azure Key Vault credential store (issue #16) |
 | `credentials` | `cryptography` | Encrypted store on non-Windows hosts |
 | `dev` | `pyiceberg`, `botocore`, `httpx` | Tests and reference-reader validation |
 

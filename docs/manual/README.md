@@ -1,6 +1,6 @@
 # Fabric Shortcut Proxy — User Manual
 
-Version 2.2.0
+Version 2.3.0
 
 This manual is the end-to-end guide to installing, configuring, and operating the
 Fabric Shortcut Proxy. It is organized into chapters (files) that each cover one
@@ -31,7 +31,7 @@ duplicating it.
 | 4 | [Installation](04-installation.md) | Prerequisites, getting the code, virtual environment, drivers, Lite vs cluster |
 | 5 | [Configuration](05-configuration.md) | Settings model, the config files, the table registry, multi-connection sources |
 | 6 | [Connecting Microsoft Fabric](06-connectivity.md) | Shortcut setup, OPDG and public patterns, storage-proxy mounts |
-| 7 | [Security](07-security.md) | Credentials, SigV4 keys and ACL, credential mediation, TLS, audit, tokenization |
+| 7 | [Security](07-security.md) | Credentials, SigV4 keys and ACL, credential mediation, Entra ID + Key Vault, TLS, audit, tokenization |
 | 8 | [Operations](08-operations.md) | Running the service, endpoints, monitoring, freshness, scaling, troubleshooting |
 | 9 | [Reference](09-reference.md) | Settings groups, dialect matrix, path formats, launcher flags, glossary |
 | 10 | [Tutorials](10-tutorials.md) | End-to-end worked examples: demo, SQL Server shortcut, file-share mount, tokenized column |

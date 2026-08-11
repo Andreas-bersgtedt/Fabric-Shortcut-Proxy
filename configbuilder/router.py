@@ -289,6 +289,13 @@ async def save_config(request: Request) -> JSONResponse:
     except (OSError, ValueError) as exc:
         log.warning("config_builder_save_failed", error=str(exc))
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    # Phase 4 (issue #16): mirror config-file secrets (S3 secret / admin token /
+    # manager password) to Key Vault when write-back is on (fail-soft).
+    try:
+        from security.keyvault import write_back_config_secrets
+        write_back_config_secrets(clean)
+    except Exception:  # noqa: BLE001 - write-back must never break the save
+        pass
     log.info("config_saved", path=result["path"], changed=result["changed"])
     return JSONResponse({
         "ok": True,
@@ -332,6 +339,12 @@ async def apply_config(request: Request) -> JSONResponse:
     except (OSError, ValueError) as exc:
         log.warning("config_builder_save_failed", error=str(exc))
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    # Phase 4 (issue #16): mirror config-file secrets to Key Vault (fail-soft).
+    try:
+        from security.keyvault import write_back_config_secrets
+        write_back_config_secrets(clean)
+    except Exception:  # noqa: BLE001 - write-back must never break the apply
+        pass
 
     log.info("config_applied",
              applied_live=live_result["applied"],

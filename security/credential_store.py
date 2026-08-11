@@ -206,6 +206,9 @@ class CredentialStore:
         # Optional write-back sink (issue #16, Phase 4): fn(kind, key, value) called
         # after a successful local write to also persist to Key Vault (fail-soft).
         self.write_through = None
+        # Optional delete-back sink (issue #16, Phase 4): fn(kind, key) called after a
+        # successful local delete to also remove the secret from Key Vault (fail-soft).
+        self.delete_through = None
 
     # -- capability -------------------------------------------------------
     @property
@@ -299,6 +302,20 @@ class CredentialStore:
         except Exception as exc:  # noqa: BLE001 - write-back is best-effort
             print(f"[credential_store] write-back failed for {kind} {key!r}: {exc}", file=sys.stderr)
 
+    def _emit_delete_through(self, kind: str, key: str) -> None:
+        """After a local delete, also remove the credential from the write-back sink.
+
+        Fail-soft: a delete-back failure is logged and swallowed so removing a
+        credential locally always succeeds (owner directive; local is authoritative).
+        """
+        fn = getattr(self, "delete_through", None)
+        if fn is None:
+            return
+        try:
+            fn(kind, key)
+        except Exception as exc:  # noqa: BLE001 - delete-back is best-effort
+            print(f"[credential_store] delete write-back failed for {kind} {key!r}: {exc}", file=sys.stderr)
+
     # -- public api -------------------------------------------------------
     def set_url(self, connection_id: str, db_url: str) -> None:
         """Encrypt and persist a connection's full database URL."""
@@ -356,6 +373,7 @@ class CredentialStore:
         if cid in data.get("connections", {}):
             del data["connections"][cid]
             self._save(data)
+            self._emit_delete_through("url", cid)
             return True
         return False
 
@@ -413,6 +431,7 @@ class CredentialStore:
         if sid in data.get("secrets", {}):
             del data["secrets"][sid]
             self._save(data)
+            self._emit_delete_through("secret", sid)
             return True
         return False
 
@@ -439,6 +458,7 @@ class CredentialStore:
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         self._save(data)
+        self._emit_write_through("access_key", kid, obj)
 
     def get_access_key(self, key_id: str) -> dict | None:
         """Decrypt and return a proxy access-key record, or ``None`` if absent."""
@@ -463,6 +483,7 @@ class CredentialStore:
         if kid in data.get("access_keys", {}):
             del data["access_keys"][kid]
             self._save(data)
+            self._emit_delete_through("access_key", kid)
             return True
         return False
 

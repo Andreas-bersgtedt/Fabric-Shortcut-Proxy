@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 
 from security.azure_credential import get_credential
@@ -62,6 +63,22 @@ def secret_name_for(local_key: str, cfg: KeyVaultConfig | None = None) -> str:
     if cfg and key in (cfg.overrides or {}):
         return str(cfg.overrides[key])
     return DEFAULT_SECRET_NAMES.get(key, _slug(key) or key)
+
+
+def _kv_name(kind: str, key: str, cfg: KeyVaultConfig | None = None) -> str:
+    """Map a store ``(kind, key)`` pair to its Key Vault secret name.
+
+    Shared by read-through, write-back, and delete so the three never drift: a DB
+    URL for connection ``default`` is ``db-url`` (``db-url-<id>`` for a named one),
+    a proxy access key is ``access-key-<id>``, and any other secret resolves via
+    :func:`secret_name_for`.
+    """
+    k = (key or "").strip()
+    if kind == "url":
+        return "db-url" if (not k or k.lower() == "default") else f"db-url-{_slug(k)}"
+    if kind == "access_key":
+        return f"access-key-{_slug(k)}"
+    return secret_name_for(key, cfg)
 
 
 def config_from_settings(cfg) -> KeyVaultConfig:
@@ -165,6 +182,26 @@ class KeyVaultSecretSource:
         """Write a local credential key to Key Vault via the name convention."""
         self.set_by_name(secret_name_for(local_key, self._cfg), value)
 
+    def delete_by_name(self, name: str) -> None:
+        """Soft-delete a Key Vault secret by its exact vault name (write-back).
+
+        A *not found* is a no-op; any other failure raises :class:`KeyVaultUnavailable`
+        so the caller can swallow it (delete write-through is fail-soft).
+        """
+        client = self._get_client()
+        try:
+            poller = client.begin_delete_secret(name)
+        except Exception as exc:  # noqa: BLE001 - normalize SDK/transport errors
+            if _is_not_found(exc):
+                return
+            raise KeyVaultUnavailable(f"Key Vault delete failed for {name!r}: {exc}") from exc
+        waiter = getattr(poller, "wait", None)
+        if callable(waiter):
+            try:
+                waiter()
+            except Exception:  # noqa: BLE001 - deletion accepted; awaiting completion is best-effort
+                pass
+
     def probe(self) -> tuple[bool, str]:
         """Live connectivity + auth check (used by the 'Test Key Vault' button).
 
@@ -184,17 +221,11 @@ class KeyVaultSecretSource:
 def read_through_for(source: KeyVaultSecretSource, cfg: KeyVaultConfig | None = None):
     """Build a ``CredentialStore.read_through`` callable backed by Key Vault.
 
-    Maps the store's ``(kind, key)`` miss onto a Key Vault secret name: a DB URL
-    for connection ``default`` resolves to ``db-url`` (``db-url-<id>`` for a named
-    connection); a mount secret id resolves via :func:`secret_name_for`.
+    Maps the store's ``(kind, key)`` miss onto a Key Vault secret name via
+    :func:`_kv_name` (shared with write-back / delete so the names never drift).
     """
     def _rt(kind: str, key: str) -> str | None:
-        if kind == "url":
-            k = (key or "").strip()
-            name = "db-url" if (not k or k.lower() == "default") else f"db-url-{_slug(k)}"
-        else:
-            name = secret_name_for(key, cfg)
-        return source.get_by_name(name)
+        return source.get_by_name(_kv_name(kind, key, cfg))
 
     return _rt
 
@@ -202,26 +233,37 @@ def read_through_for(source: KeyVaultSecretSource, cfg: KeyVaultConfig | None = 
 def write_through_for(source: KeyVaultSecretSource, cfg: KeyVaultConfig | None = None):
     """Build a ``CredentialStore.write_through`` callable backed by Key Vault (Phase 4).
 
-    Persists a saved credential to Key Vault under the naming convention: a DB URL
-    for connection ``default`` writes to ``db-url`` (``db-url-<id>`` for a named
-    connection); a mount secret id writes its JSON blob under :func:`secret_name_for`.
+    Persists a saved credential to Key Vault under the shared naming convention
+    (:func:`_kv_name`): a DB URL for connection ``default`` writes to ``db-url``
+    (``db-url-<id>`` for a named connection), a mount secret writes its JSON blob,
+    and a proxy access key writes its full record — **secret + ACL scope** (allowed
+    buckets/prefixes, permissions, enabled) — as JSON under ``access-key-<id>``.
     Raises on failure — the caller (the store) swallows it so write-back is fail-soft.
     """
     def _wt(kind: str, key: str, value) -> None:
-        if kind == "url":
-            k = (key or "").strip()
-            name = "db-url" if (not k or k.lower() == "default") else f"db-url-{_slug(k)}"
-            payload = value if isinstance(value, str) else json.dumps(value)
-        else:
-            name = secret_name_for(key, cfg)
-            payload = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
+        name = _kv_name(kind, key, cfg)
+        payload = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
         source.set_by_name(name, payload)
 
     return _wt
 
 
+def delete_through_for(source: KeyVaultSecretSource, cfg: KeyVaultConfig | None = None):
+    """Build a ``CredentialStore.delete_through`` callable backed by Key Vault (Phase 4).
+
+    Soft-deletes the Key Vault secret for a removed credential under the same
+    :func:`_kv_name` convention. Raises on failure — the store swallows it so a
+    delete write-through never blocks the local removal.
+    """
+    def _dt(kind: str, key: str) -> None:
+        source.delete_by_name(_kv_name(kind, key, cfg))
+
+    return _dt
+
+
 def attach_write_back(store) -> bool:
-    """Attach Key Vault write-back to a store when ``keyvault_write_back`` is on.
+    """Attach Key Vault write-back + delete-through to a store when
+    ``keyvault_write_back`` is on.
 
     No-op (returns False) unless write-back is enabled, a vault is configured, and
     the local store has an encryption backend. Only the Manager should enable this
@@ -233,8 +275,56 @@ def attach_write_back(store) -> bool:
     cfg = config_from_settings(sc)
     if not cfg.enabled or store is None or not getattr(store, "available", False):
         return False
-    store.write_through = write_through_for(KeyVaultSecretSource(cfg), cfg)
+    source = KeyVaultSecretSource(cfg)
+    store.write_through = write_through_for(source, cfg)
+    store.delete_through = delete_through_for(source, cfg)
     return True
+
+
+# Config-file secret SETTINGS (persisted to config files, not the credential store)
+# that also mirror into Key Vault. Maps the config setting key -> the local key used
+# by the DEFAULT_SECRET_NAMES convention.
+CONFIG_SECRET_SETTINGS = {
+    "secret_access_key": "s3_secret_access_key",
+    "admin_token": "admin_token",
+    "manager_auth_password": "manager_auth_password",
+}
+
+
+def write_back_config_secrets(changed: dict) -> list[str]:
+    """Mirror changed config-file secret settings to Key Vault (Phase 4, fail-soft).
+
+    The S3 secret key, admin token, and Manager password persist to config files
+    rather than the credential store, so they bypass the store's write-through. When
+    ``keyvault_write_back`` is on this pushes them to Key Vault too: a non-empty value
+    is written, an explicitly empty value soft-deletes (clears) the secret, and a
+    redacted ``***`` placeholder from the UI is ignored (never overwrites the vault).
+    Returns the setting keys mirrored; never raises (the config save already won).
+    """
+    import system_config as sc
+    if not getattr(sc, "KEYVAULT_WRITE_BACK", False):
+        return []
+    cfg = config_from_settings(sc)
+    if not cfg.enabled or not changed:
+        return []
+    source = KeyVaultSecretSource(cfg)
+    done: list[str] = []
+    for skey, local_key in CONFIG_SECRET_SETTINGS.items():
+        if skey not in changed:
+            continue
+        sval = "" if changed[skey] is None else str(changed[skey])
+        if "***" in sval:
+            continue  # redacted placeholder from the UI — never overwrite KV with a mask
+        name = secret_name_for(local_key, cfg)
+        try:
+            if sval.strip() == "":
+                source.delete_by_name(name)
+            else:
+                source.set_by_name(name, sval)
+            done.append(skey)
+        except Exception as exc:  # noqa: BLE001 - fail-soft; the config save already succeeded
+            print(f"[keyvault] config-secret write-back failed for {skey!r}: {exc}", file=sys.stderr)
+    return done
 
 
 # ---------------------------------------------------------------------------

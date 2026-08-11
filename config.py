@@ -1025,6 +1025,14 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "manager_auth_enabled": "config.system.json",
     "manager_auth_username": "config.system.json",
     "manager_auth_password": "config.system.json",
+    # Entra ID & Key Vault (issue #16)
+    "auth_mode": "config.system.json",
+    "keyvault_uri": "config.system.json",
+    "azure_tenant_id": "config.system.json",
+    "azure_client_id": "config.system.json",
+    "require_keyvault": "config.system.json",
+    "keyvault_refresh_seconds": "config.system.json",
+    "keyvault_cache_ttl": "config.system.json",
     # Connection settings → config.connection.json
     "db_url": "config.connection.json",
     "source_table": "config.connection.json",

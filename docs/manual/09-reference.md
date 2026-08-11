@@ -89,7 +89,10 @@ HA, and the control plane. The settings catalog marks which are live.
 | Databricks | `databricks` | `` `id` `` | `LIMIT` | no | no | yes | yes |
 
 Non-async dialects use a sync threadpool fallback. Databricks needs an explicit `key_column`
-because primary-key reflection is unavailable, and an `http_path` to a SQL warehouse.
+because primary-key reflection is unavailable, and an `http_path` to a SQL warehouse. SQL
+Server accepts a SQL login, Windows (Integrated Security), or an Entra ID service principal —
+choose the method in the Config Builder or set it in the `DB_URL` (see
+[CONFIGURATION.md](../CONFIGURATION.md) §6).
 
 ## 9.4 Path formats
 

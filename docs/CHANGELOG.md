@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0]: 2026-08-11
+
+### Added
+- **SPN + Windows authentication for the SQL Server source connector (issue #19).** The MS
+  SQL connector now supports, alongside SQL logins: **Windows Authentication** (Integrated
+  Security via `Trusted_Connection=yes` — the Manager/agent process identity; Kerberos on
+  Linux) and an **Entra ID service principal** (`Authentication=ActiveDirectoryServicePrincipal`
+  over an encrypted channel, with the client id/secret as UID/PWD; needs ODBC Driver 18 or
+  17.4+). The Config Builder gains an **Authentication** selector (SQL Server only) that swaps
+  the credential inputs per method; the SPN secret is encrypted in the Manager credential
+  store (and mirrored to Key Vault when write-back is on). SQL Login stays the default and is
+  unchanged; connection Test/validation and clear auth-failure errors apply to all three.
+- **Reuse the proxy's own Entra identity for SQL Server (issue #19).** A fourth SQL Server
+  auth option, **Entra ID — reuse the proxy identity**, authenticates with the identity the
+  proxy already uses for Key Vault (issue #16) — no separate credentials. It maps the proxy's
+  `auth_mode` onto the ODBC keyword: `service_principal` -> `ActiveDirectoryServicePrincipal`
+  (the configured `azure_client_id` + `AZURE_CLIENT_SECRET`), `managed_identity` ->
+  `ActiveDirectoryManagedIdentity`, else `ActiveDirectoryDefault`. Grant that identity a SQL
+  login + read access on the source. Validated end-to-end against Azure SQL Database.
+
+### Changed
+- Both distributions and their runtime API / agent version metadata now report `2.4.0`.
+
 ## [2.3.0]: 2026-08-11
 
 ### Added
@@ -272,7 +295,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[2.3.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.2.0...main
+[2.4.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.3.0...main
+[2.3.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.2.0...2.3.0
 [2.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.1...2.2.0
 [2.1.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.0.0...2.1.0

@@ -185,10 +185,28 @@
       <div><label>Port</label><input id="port" placeholder="(default)" /></div>
     </div>
     <label>Database</label><input id="database" placeholder="salesdb" />
-    <div class="row">
+    <div id="authRow" style="display:none;">
+      <label>Authentication (SQL Server)</label>
+      <select id="auth_method">
+        <option value="sql">SQL Login (username &amp; password)</option>
+        <option value="windows">Windows (Integrated Security)</option>
+        <option value="spn">Service Principal (Entra ID)</option>
+        <option value="entra_proxy">Entra ID — reuse the proxy identity (Key Vault)</option>
+      </select>
+    </div>
+    <div class="row" id="sqlLoginRow">
       <div><label>Username</label><input id="username" autocomplete="off" /></div>
       <div><label>Password</label><input id="password" type="password" autocomplete="off" /></div>
     </div>
+    <div id="winAuthNote" class="hint" style="display:none;margin:-6px 0 12px;">Uses the Windows identity of the account running the Manager/agent (Integrated Security). On Linux this needs a Kerberos-joined host. No username or password is stored.</div>
+    <div id="spnRow" style="display:none;">
+      <div class="row">
+        <div><label>Client (application) ID</label><input id="client_id" autocomplete="off" placeholder="00000000-0000-0000-0000-000000000000" /></div>
+        <div><label>Client secret</label><input id="client_secret" type="password" autocomplete="off" /></div>
+      </div>
+      <div class="hint" style="margin:-6px 0 12px;">Entra ID service principal. Needs ODBC Driver 18 (or 17.4+). The secret is encrypted in the Manager credential store (and mirrored to Key Vault when write-back is on).</div>
+    </div>
+    <div id="proxyAuthNote" class="hint" style="display:none;margin:-6px 0 12px;">Reuses the proxy's own Entra identity — the one configured for Key Vault (issue #16): the service principal (<code>auth_mode=service_principal</code> + <code>azure_client_id</code> + <code>AZURE_CLIENT_SECRET</code>), a managed identity, or the default credential chain. No credentials are entered here; the SQL Server must grant that identity a login + read access. Needs ODBC Driver 18.</div>
     <details class="adv">
       <summary>Advanced</summary>
       <label>ODBC driver (SQL Server)</label>
@@ -608,7 +626,7 @@ const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", datab
 // settings are persisted through the generic form store.
 const PERSIST = ["bucket","numSplits","tableFormat","materializeMode","refreshPoll","refreshStrategy","refreshTtl"];
 // Editable connection form fields (password is in-memory only, never persisted).
-const CONN_FIELDS = ["dialect","host","port","database","username","password","driver","token","http_path","catalog","schema"];
+const CONN_FIELDS = ["dialect","host","port","database","username","password","driver","token","http_path","catalog","schema","auth_method","client_id","client_secret"];
 
 const state = {
   db_url: "", db_url_masked: "",
@@ -643,6 +661,7 @@ function envVarFor(id){ return id==="default" ? "DB_URL" : ("DB_URL_" + String(i
 function newConn(id){
   return { id, dialect:"postgresql", host:"", port:"", database:"", username:"", password:"",
     driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"",
+    auth_method:"sql", client_id:"", client_secret:"",
     db_url:"", db_url_masked:"", flavor:"", tested:false };
 }
 
@@ -677,13 +696,28 @@ function writeFormFromConn(c){
   $("connId").disabled = (c.id === "default");
   $("port").placeholder = "(default "+DEFAULT_PORTS[c.dialect||"postgresql"]+")";
   $("connEditTitle").textContent = "Edit connection — " + c.id;
+  updateAuthUI();
+}
+
+// Show the SQL Server auth selector (mssql only) and toggle the credential
+// inputs by method: SQL login -> user/pass, Windows -> none, SPN -> client id/secret.
+function updateAuthUI(){
+  const isMssql = $("dialect").value === "mssql";
+  const method = isMssql ? ($("auth_method").value || "sql") : "sql";
+  $("authRow").style.display = isMssql ? "" : "none";
+  $("sqlLoginRow").style.display = (!isMssql || method === "sql") ? "" : "none";
+  $("winAuthNote").style.display = (isMssql && method === "windows") ? "" : "none";
+  $("spnRow").style.display = (isMssql && method === "spn") ? "" : "none";
+  $("proxyAuthNote").style.display = (isMssql && method === "entra_proxy") ? "" : "none";
 }
 function commitActive(){ readFormIntoConn(state.connections.get(state.activeConnId)); }
 
 function connFields(){
+  const dialect = $("dialect").value;
+  const authMethod = (dialect === "mssql") ? ($("auth_method").value || "sql") : "sql";
   return {
     id: ($("connId").value.trim() || "default"),
-    dialect: $("dialect").value,
+    dialect: dialect,
     host: $("host").value.trim(),
     port: $("port").value.trim() || null,
     database: $("database").value.trim(),
@@ -695,6 +729,9 @@ function connFields(){
     http_path: $("http_path").value.trim() || null,
     catalog: $("catalog").value.trim() || null,
     schema: $("schema").value.trim() || null,
+    auth_method: authMethod,
+    client_id: $("client_id").value.trim() || null,
+    client_secret: $("client_secret").value,
   };
 }
 
@@ -1664,6 +1701,10 @@ $("dialect").addEventListener("change", ()=>{
   $("catalog").value = "";
   $("schema").value = "";
   $("trust_cert").checked = true;
+  $("auth_method").value = "sql";
+  $("client_id").value = "";
+  $("client_secret").value = "";
+  updateAuthUI();
   onConnFormEdit();
 });
 
@@ -1677,6 +1718,7 @@ function onConnFormEdit(){
 }
 CONN_FIELDS.forEach(f => { const el = $(f); if(el) el.addEventListener("input", onConnFormEdit); });
 $("trust_cert").addEventListener("change", onConnFormEdit);
+$("auth_method").addEventListener("change", ()=>{ updateAuthUI(); onConnFormEdit(); });
 $("connId").addEventListener("change", ()=> renameActive($("connId").value));
 
 // ---- all-settings catalog (section 4) ----

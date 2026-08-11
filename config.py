@@ -1275,6 +1275,70 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                 clean[k] = v
             continue
 
+        # Special case: "open_mirror_targets" is an array of target definitions.
+        if k == "open_mirror_targets":
+            if not isinstance(v, list):
+                errors.append(f"{k}: must be a list")
+                continue
+            ok = True
+            seen: set[str] = set()
+            known_connections = {"default"} | {
+                str((c or {}).get("id", "")).strip()
+                for c in (updates.get("connections") or [])
+                if isinstance(c, dict)
+            }
+            for i, target in enumerate(v):
+                if not isinstance(target, dict):
+                    errors.append(f"{k}[{i}]: must be an object")
+                    ok = False
+                    continue
+                tid = str(target.get("id", "")).strip()
+                conn = str(target.get("connection") or target.get("connection_id") or "default").strip() or "default"
+                landing_zone_root = str(target.get("landing_zone_root") or "").strip()
+                if not tid:
+                    errors.append(f"{k}[{i}]: needs non-empty 'id'")
+                    ok = False
+                elif tid in seen:
+                    errors.append(f"{k}[{i}]: duplicate open mirror target id {tid!r}")
+                    ok = False
+                else:
+                    seen.add(tid)
+                if conn not in known_connections:
+                    errors.append(
+                        f"{k}[{i}]: connection {conn!r} is not defined "
+                        f"(known: {sorted(known_connections)})"
+                    )
+                    ok = False
+                if not landing_zone_root:
+                    errors.append(f"{k}[{i}]: landing_zone_root must be non-empty")
+                    ok = False
+                tables = target.get("tables")
+                if tables is not None:
+                    if not isinstance(tables, list):
+                        errors.append(f"{k}[{i}].tables: must be a list")
+                        ok = False
+                    else:
+                        for j, table in enumerate(tables):
+                            if not isinstance(table, dict):
+                                errors.append(f"{k}[{i}].tables[{j}]: must be an object")
+                                ok = False
+                                continue
+                            if not str(table.get("name") or "").strip():
+                                errors.append(f"{k}[{i}].tables[{j}]: name must be non-empty")
+                                ok = False
+                            if not str(table.get("source_table") or "").strip():
+                                errors.append(f"{k}[{i}].tables[{j}]: source_table must be non-empty")
+                                ok = False
+                            if not str(table.get("key_column") or "").strip():
+                                errors.append(f"{k}[{i}].tables[{j}]: key_column must be non-empty")
+                                ok = False
+                            if not str(table.get("target_table") or table.get("name") or "").strip():
+                                errors.append(f"{k}[{i}].tables[{j}]: target_table must be non-empty")
+                                ok = False
+            if ok:
+                clean[k] = v
+            continue
+
         reg = _SETTINGS_REGISTRY.get(k)
         if reg is None:
             errors.append(f"unknown setting {k!r}")
@@ -1310,6 +1374,22 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                     f"table {label!r}: connection {cid!r} is not defined "
                     f"(known: {sorted(known)}) — save its source in the same apply, "
                     f"or remove the table"
+                )
+
+    # Cross-check: each Open Mirroring target must bind to a known source connection.
+    if isinstance(clean.get("open_mirror_targets"), list):
+        known = {"default"} | {
+            str((e or {}).get("id", "")).strip()
+            for e in (clean.get("connections") or []) if isinstance(e, dict)
+        }
+        for target in clean["open_mirror_targets"]:
+            if not isinstance(target, dict):
+                continue
+            cid = str(target.get("connection") or target.get("connection_id") or "default").strip() or "default"
+            if cid not in known:
+                errors.append(
+                    f"open_mirror_targets[{target.get('id', '?')}]: connection {cid!r} is not defined "
+                    f"(known: {sorted(known)})"
                 )
     return clean, errors
 
@@ -1359,6 +1439,7 @@ def write_config_updates(updates: dict) -> dict:
     # Extract array specials (not scalar settings) before per-key file routing.
     tables_update = clean.pop("tables", None)
     connections_update = clean.pop("connections", None)
+    open_mirror_targets_update = clean.pop("open_mirror_targets", None)
 
     # Group settings by their target config file
     settings_by_file: dict[str, dict] = {}
@@ -1383,12 +1464,21 @@ def write_config_updates(updates: dict) -> dict:
             settings_by_file["config.connection.json"] = {}
         settings_by_file["config.connection.json"]["_connections"] = connections_update
 
+    # Phase 1 Open Mirroring target config: dedicated file with an "open_mirror" section
+    # so the standalone config loader can evolve independently of connection config.
+    if open_mirror_targets_update is not None:
+        if "config.open_mirror.json" not in settings_by_file:
+            settings_by_file["config.open_mirror.json"] = {}
+        settings_by_file["config.open_mirror.json"]["_open_mirror_targets"] = open_mirror_targets_update
+
     # Write to each target file
     changed_keys = list(clean.keys())
     if tables_update is not None:
         changed_keys.append("tables")
     if connections_update is not None:
         changed_keys.append("connections")
+    if open_mirror_targets_update is not None:
+        changed_keys.append("open_mirror_targets")
     
     for target_file, file_settings in settings_by_file.items():
         try:
@@ -1407,9 +1497,10 @@ def write_config_updates(updates: dict) -> dict:
             # Pull special array markers out so they don't merge into the section.
             tables_marker = file_settings.pop("_tables", None)
             connections_marker = file_settings.pop("_connections", None)
+            open_mirror_targets_marker = file_settings.pop("_open_mirror_targets", None)
 
             if tables_marker is not None:
-                # config.tables.json -> {"tables": [...]}
+                # config.tables.json -> {"tables": [...]} 
                 existing[section_name] = tables_marker
             elif file_settings:
                 if not isinstance(existing.get(section_name), dict):
@@ -1420,7 +1511,9 @@ def write_config_updates(updates: dict) -> dict:
                 # Top-level "connections" array (sibling of the "connection" section).
                 existing["connections"] = connections_marker
 
-            # Atomic write with temp file
+            if open_mirror_targets_marker is not None:
+                existing["open_mirror"] = {"open_mirror_targets": open_mirror_targets_marker}
+
             tmp = f"{target_file}.tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(existing, fh, indent=2, sort_keys=True)

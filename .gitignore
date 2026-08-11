@@ -69,6 +69,7 @@ config.performance.json
 config.freshness.json
 config.tables.json
 config.mounts.json
+config.open_mirror.json
 *.env
 .env.local
 secrets.json

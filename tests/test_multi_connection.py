@@ -259,6 +259,61 @@ def test_validate_rejects_table_on_undefined_connection_in_same_apply():
     })
     assert errors and any("SyntheticData" in e and "not defined" in e for e in errors)
 
+
+def test_validate_open_mirror_targets():
+    clean, errors = config.validate_setting_updates({
+        "open_mirror_targets": [{
+            "id": "fabric-sales",
+            "connection": "default",
+            "landing_zone_root": "https://onelake.dfs.fabric.microsoft.com/ws/db/Files/LandingZone",
+            "tables": [{
+                "name": "sales",
+                "source_table": "dbo.sales",
+                "key_column": "id",
+                "target_table": "sales",
+                "schema": "dbo",
+                "mode": "incremental",
+            }],
+        }]
+    })
+    assert not errors
+    assert clean["open_mirror_targets"][0]["id"] == "fabric-sales"
+
+    _, invalid = config.validate_setting_updates({
+        "open_mirror_targets": [{
+            "id": "fabric-sales",
+            "connection": "missing-conn",
+            "landing_zone_root": "https://onelake.dfs.fabric.microsoft.com/ws/db/Files/LandingZone",
+            "tables": [{
+                "name": "sales",
+                "source_table": "dbo.sales",
+                "key_column": "id",
+                "target_table": "sales",
+            }],
+        }]
+    })
+    assert invalid and any("missing-conn" in err for err in invalid)
+
+
+def test_write_open_mirror_target_routes_to_its_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config.write_config_updates({
+        "open_mirror_targets": [{
+            "id": "fabric-sales",
+            "connection": "default",
+            "landing_zone_root": "https://onelake.dfs.fabric.microsoft.com/ws/db/Files/LandingZone",
+            "tables": [{
+                "name": "sales",
+                "source_table": "dbo.sales",
+                "key_column": "id",
+                "target_table": "sales",
+            }],
+        }]
+    })
+    data = json.loads((tmp_path / "config.open_mirror.json").read_text(encoding="utf-8"))
+    assert data["open_mirror"]["open_mirror_targets"][0]["id"] == "fabric-sales"
+    assert data["open_mirror"]["open_mirror_targets"][0]["connection"] == "default"
+
     # The same table validates when its source IS in the connections[] payload.
     clean, errs = config.validate_setting_updates({
         "tables": [

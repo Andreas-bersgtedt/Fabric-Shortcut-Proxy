@@ -1,0 +1,28 @@
+{
+  "_comment": "Open Mirroring targets \u2014 push source tables into a Fabric Open Mirroring landing zone. Place as config.open_mirror.json (gitignored). Each target binds to an EXISTING source connection id from config.connection.json via 'connection' (default: 'default'); the source database engine is unchanged. 'landing_zone_root' is the mirrored database's OneLake landing zone (or a local staging directory for now). See https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format and devplan/Open_Mirroring_Integration_Plan.md.",
+  "open_mirror": {
+    "open_mirror_targets": [
+      {
+        "id": "fabric-sales",
+        "connection": "default",
+        "landing_zone_root": "https://onelake.dfs.fabric.microsoft.com/<workspace-id>/<mirrored-database-id>/Files/LandingZone",
+        "workspace_id": "<workspace-id>",
+        "mirrored_database_id": "<mirrored-database-id>",
+        "partner_name": "FabricShortcutProxy",
+        "source_type": "SQL",
+        "source_version": "2025",
+        "enabled": true,
+        "tables": [
+          {
+            "name": "sales",
+            "source_table": "dbo.sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "schema": "dbo",
+            "mode": "incremental"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 import db.reflect as reflect
 from db.reflect import build_url, detect_key_column, UnsupportedDialect
-from configbuilder.router import _clean_error
+from configbuilder.router import _clean_error, _conn_fields
 from configbuilder.router import router as cb_router
 
 _DB = pathlib.Path(__file__).parent / "test_cfgbuilder.db"
@@ -47,6 +47,68 @@ def test_build_url_mssql_prefers_installed_driver(monkeypatch):
                         lambda: ["ODBC Driver 17 for SQL Server"])
     url = build_url(dialect="mssql", host="h", database="db", username="u", password="p")
     assert url.query["driver"] == "ODBC Driver 17 for SQL Server"
+
+
+# --- issue #19: SQL Server SPN + Windows auth --------------------------------
+
+def test_build_url_mssql_sql_auth_unchanged():
+    # Explicit auth_method="sql" is the default path: username/password, no auth keyword.
+    url = build_url(dialect="mssql", host="h", database="db",
+                    username="u", password="p", auth_method="sql")
+    assert url.username == "u" and url.password == "p"
+    assert "Authentication" not in url.query and "Trusted_Connection" not in url.query
+
+
+def test_build_url_mssql_windows_auth():
+    url = build_url(dialect="mssql", host="h", database="db", auth_method="windows")
+    # Integrated Security: no UID/PWD, Trusted_Connection set.
+    assert url.username is None and url.password is None
+    assert url.query["Trusted_Connection"] == "yes"
+
+
+def test_build_url_mssql_windows_ignores_any_credentials():
+    url = build_url(dialect="mssql", host="h", database="db",
+                    username="stray", password="stray", auth_method="windows")
+    assert url.username is None and url.password is None
+    assert url.query["Trusted_Connection"] == "yes"
+
+
+def test_build_url_mssql_spn_auth():
+    url = build_url(dialect="mssql", host="h", database="db", auth_method="spn",
+                    client_id="app-guid", client_secret="sekret")
+    assert url.username == "app-guid" and url.password == "sekret"
+    assert url.query["Authentication"] == "ActiveDirectoryServicePrincipal"
+    assert url.query["Encrypt"] == "yes"
+
+
+def test_build_url_mssql_spn_requires_client_id_and_secret():
+    with pytest.raises(ValueError, match="service-principal"):
+        build_url(dialect="mssql", host="h", database="db", auth_method="spn",
+                  client_id="app-guid")   # secret missing
+
+
+def test_build_url_mssql_unknown_auth_method_errors():
+    with pytest.raises(ValueError, match="auth method"):
+        build_url(dialect="mssql", host="h", database="db", auth_method="nope")
+
+
+def test_build_url_non_mssql_rejects_non_sql_auth_method():
+    with pytest.raises(ValueError, match="only supported for SQL Server"):
+        build_url(dialect="postgresql", host="h", database="db", auth_method="windows")
+
+
+def test_conn_fields_passes_auth_mode_and_spn_creds():
+    out = _conn_fields({"dialect": "mssql", "host": "h", "database": "db",
+                        "auth_method": "SPN", "client_id": "app", "client_secret": "s"})
+    assert out["auth_method"] == "spn"
+    assert out["client_id"] == "app" and out["client_secret"] == "s"
+
+
+def test_conn_fields_defaults_auth_method_to_sql():
+    out = _conn_fields({"dialect": "mssql", "host": "h", "database": "db",
+                        "username": "u", "password": "p"})
+    assert out["auth_method"] == "sql"
+    assert out["client_id"] is None and out["client_secret"] is None
 
 
 def test_clean_error_im002_adds_driver_hint(monkeypatch):

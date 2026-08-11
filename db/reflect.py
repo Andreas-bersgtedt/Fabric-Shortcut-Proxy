@@ -98,6 +98,52 @@ def _default_mssql_odbc_driver() -> str:
     return "ODBC Driver 18 for SQL Server"
 
 
+# SQL Server authentication methods selectable in the connector (issue #19).
+_MSSQL_AUTH_METHODS = ("sql", "windows", "spn")
+
+
+def _apply_mssql_auth(
+    method: str | None,
+    q: dict,
+    username: str | None,
+    password: str | None,
+    *,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Apply a SQL Server auth method to the ODBC ``query``, returning the effective
+    ``(username, password)`` to embed in the URL (issue #19).
+
+    - ``sql`` (default): unchanged SQL login (username/password).
+    - ``windows``: Integrated Security via ``Trusted_Connection=yes`` (the process
+      identity); no username/password.
+    - ``spn``: Entra ID service principal via
+      ``Authentication=ActiveDirectoryServicePrincipal`` over an encrypted channel,
+      with the client (application) id as UID and the client secret as PWD.
+    """
+    m = (method or "sql").strip().lower()
+    if m in ("", "sql"):
+        return username, password
+    if m in ("windows", "integrated", "trusted"):
+        q.setdefault("Trusted_Connection", "yes")
+        return None, None
+    if m in ("spn", "service_principal", "aad_client_secret"):
+        cid = (client_id or username or "").strip()
+        secret = (client_secret or password or "").strip()
+        if not cid or not secret:
+            raise ValueError(
+                "SQL Server service-principal auth requires a client (application) id "
+                "and a client secret."
+            )
+        q.setdefault("Authentication", "ActiveDirectoryServicePrincipal")
+        q.setdefault("Encrypt", "yes")   # Entra ID auth requires an encrypted channel
+        return cid, secret
+    raise ValueError(
+        f"Unknown SQL Server auth method {method!r} (expected one of: "
+        f"{', '.join(_MSSQL_AUTH_METHODS)})."
+    )
+
+
 def build_url(
     *,
     dialect: str,
@@ -109,6 +155,9 @@ def build_url(
     driver: str | None = None,
     trust_cert: bool = True,
     query: dict | None = None,
+    auth_method: str = "sql",
+    client_id: str | None = None,
+    client_secret: str | None = None,
 ) -> URL:
     """Build a SQLAlchemy URL from structured fields (encoding-safe, allowlisted)."""
     key = (dialect or "").strip().lower()
@@ -127,6 +176,15 @@ def build_url(
         q.setdefault("driver", driver or _default_mssql_odbc_driver())
         if trust_cert:
             q.setdefault("TrustServerCertificate", "yes")
+        username, password = _apply_mssql_auth(
+            auth_method, q, username, password,
+            client_id=client_id, client_secret=client_secret,
+        )
+    elif (auth_method or "sql").strip().lower() not in ("", "sql"):
+        raise ValueError(
+            f"auth_method {auth_method!r} is only supported for SQL Server (mssql); "
+            f"dialect {dialect!r} uses username/password."
+        )
 
     # Teradata's driver takes the database and listener port as connection
     # parameters (``database`` / ``dbs_port``), not as URL path/port components.

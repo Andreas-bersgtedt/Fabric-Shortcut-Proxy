@@ -68,6 +68,9 @@ def _conn_fields(d: dict) -> dict:
         driver=d.get("driver") or None,
         trust_cert=bool(d.get("trust_cert", True)),
         query=query or None,
+        auth_method=str(d.get("auth_method") or "sql").strip().lower(),
+        client_id=(d.get("client_id") or None),
+        client_secret=(d.get("client_secret") or None),
     )
 
 

@@ -299,6 +299,7 @@ async def bootstrap_builder() -> JSONResponse:
             "refresh_ttl_seconds": int(config.REFRESH_TTL_SECONDS),
             "tables": tables,
             "connections": connections,
+            "open_mirror_targets": _open_mirror_targets_payload(),
         }
     })
 
@@ -400,6 +401,120 @@ async def apply_config(request: Request) -> JSONResponse:
                 if live_result["restart_required"] else ""
             )
         ),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Open Mirroring targets (config.open_mirror.json)
+# ---------------------------------------------------------------------------
+
+def _open_mirror_targets_payload() -> list[dict]:
+    """Current Open Mirroring targets (fresh from config.open_mirror.json) for the builder."""
+    try:
+        from open_mirror.config import load_targets
+        targets = load_targets()
+    except Exception as exc:  # noqa: BLE001 - the tab must load even if the file is bad
+        log.warning("open_mirror_bootstrap_failed", error=str(exc))
+        return []
+    out: list[dict] = []
+    for t in targets:
+        out.append({
+            "id": t.id,
+            "connection": t.connection_id,
+            "landing_zone_root": t.landing_zone_root,
+            "workspace_id": t.workspace_id,
+            "mirrored_database_id": t.mirrored_database_id,
+            "partner_name": t.partner_name,
+            "source_type": t.source_type,
+            "source_version": t.source_version,
+            "enabled": t.enabled,
+            "tables": [{
+                "name": tb.name,
+                "source_table": tb.source_table,
+                "target_table": tb.target_table,
+                "key_column": tb.key_column,
+                "schema": tb.schema,
+                "mode": tb.mode,
+                "enabled": tb.enabled,
+            } for tb in t.tables],
+        })
+    return out
+
+
+@router.post("/api/open-mirror/save")
+async def save_open_mirror(request: Request) -> JSONResponse:
+    """Validate + persist Open Mirroring targets to config.open_mirror.json.
+
+    Body: ``{"open_mirror_targets": [ {id, connection, landing_zone_root, tables[...]} ]}``.
+    Applies on the next restart (config is import-time).
+    """
+    body = await request.json()
+    targets = body.get("open_mirror_targets") if isinstance(body, dict) else None
+    if not isinstance(targets, list):
+        return JSONResponse({"ok": False, "error": 'body must be {"open_mirror_targets": [...]}'},
+                            status_code=400)
+    clean, errors = config.validate_setting_updates({"open_mirror_targets": targets})
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+    try:
+        result = config.write_config_updates(clean)
+    except (OSError, ValueError) as exc:
+        log.warning("open_mirror_save_failed", error=str(exc))
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("open_mirror_saved", path=result["path"], count=len(targets))
+    return JSONResponse({
+        "ok": True,
+        "path": result["path"],
+        "restart_required": True,
+        "note": "Saved to config.open_mirror.json. Restart the Manager/Agents to apply.",
+    })
+
+
+@router.post("/api/open-mirror/preview")
+async def preview_open_mirror(request: Request) -> JSONResponse:
+    """Validate one target and return the landing-zone folder layout it would write.
+
+    No database access and no writes: this only computes the Fabric folder paths
+    (table folders, ``_metadata.json``, first data file, ``_partnerEvents.json``)
+    so the operator can confirm the target before saving.
+    """
+    body = await request.json()
+    target = body.get("target") if isinstance(body, dict) else None
+    if not isinstance(target, dict):
+        return JSONResponse({"ok": False, "error": 'body must be {"target": {...}}'}, status_code=400)
+    clean, errors = config.validate_setting_updates({"open_mirror_targets": [target]})
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+
+    from open_mirror.landing_zone import is_onelake_uri, table_relative_path
+    from open_mirror.manifest import format_file_name
+    from open_mirror.metadata import PARTNER_EVENTS_FILE, TABLE_METADATA_FILE
+
+    root = str(target.get("landing_zone_root") or "").rstrip("/")
+    layout: list[dict] = []
+    for tb in (target.get("tables") or []):
+        if not isinstance(tb, dict):
+            continue
+        target_table = str(tb.get("target_table") or tb.get("name") or "").strip()
+        if not target_table:
+            continue
+        try:
+            rel = table_relative_path(target_table, tb.get("schema"))
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "errors": [str(exc)]}, status_code=400)
+        keys = [c.strip() for c in str(tb.get("key_column") or "").split(",") if c.strip()]
+        layout.append({
+            "table": tb.get("name"),
+            "folder": f"{root}/{rel}",
+            "metadata_file": f"{root}/{rel}/{TABLE_METADATA_FILE}",
+            "first_data_file": f"{root}/{rel}/{format_file_name(1)}",
+            "key_columns": keys,
+        })
+    return JSONResponse({
+        "ok": True,
+        "is_onelake": is_onelake_uri(root),
+        "partner_events_file": f"{root}/{PARTNER_EVENTS_FILE}",
+        "layout": layout,
     })
 
 

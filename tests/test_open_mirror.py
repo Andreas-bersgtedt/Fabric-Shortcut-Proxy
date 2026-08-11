@@ -96,9 +96,13 @@ def test_is_onelake_uri():
     assert not is_onelake_uri("/tmp/lz")
 
 
-def test_open_landing_zone_rejects_onelake_uri():
-    with pytest.raises(NotImplementedError):
-        open_landing_zone("https://onelake.dfs.fabric.microsoft.com/ws/db/Files/LandingZone")
+def test_open_landing_zone_returns_onelake_backend(tmp_path):
+    # OneLake URIs resolve to the OneLake ADLS backend (auth reuses the proxy identity);
+    # local paths resolve to the filesystem backend.
+    from open_mirror.onelake import OneLakeLandingZone
+    zone = open_landing_zone("https://onelake.dfs.fabric.microsoft.com/ws/db/Files/LandingZone")
+    assert isinstance(zone, OneLakeLandingZone)
+    assert isinstance(open_landing_zone(str(tmp_path)), LocalLandingZone)
 
 
 def test_local_landing_zone_blocks_traversal(tmp_path):

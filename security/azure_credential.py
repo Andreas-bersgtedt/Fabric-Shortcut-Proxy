@@ -60,3 +60,21 @@ def get_credential(
         from azure.identity import DefaultAzureCredential
         return DefaultAzureCredential()
     raise ValueError(f"mode {mode!r} does not resolve to an azure.identity credential")
+
+
+def proxy_credential(cfg):
+    """Build the proxy's OWN outbound Entra credential — the identity already
+    configured for Key Vault (issue #16).
+
+    Reuses ``AUTH_MODE`` + ``AZURE_TENANT_ID`` + ``AZURE_CLIENT_ID`` from the
+    ``config`` module and the ``AZURE_CLIENT_SECRET`` env var (never a config
+    file), so outbound Azure access (Key Vault, OneLake) shares one identity.
+    """
+    import os
+    mode = (getattr(cfg, "AUTH_MODE", "default") or "default").strip().lower()
+    return get_credential(
+        mode,
+        tenant_id=getattr(cfg, "AZURE_TENANT_ID", "") or "",
+        client_id=getattr(cfg, "AZURE_CLIENT_ID", "") or "",
+        client_secret=os.environ.get("AZURE_CLIENT_SECRET", ""),
+    )

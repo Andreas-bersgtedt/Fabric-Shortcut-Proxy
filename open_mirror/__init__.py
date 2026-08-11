@@ -57,3 +57,11 @@ __all__ = [
     "publish_initial_load",
     "publish_target_initial_load",
 ]
+
+
+def __getattr__(name):
+    # Lazy so importing the package never pulls in the optional Azure SDK.
+    if name in ("OneLakeLandingZone", "_parse_onelake_url"):
+        from open_mirror import onelake
+        return getattr(onelake, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

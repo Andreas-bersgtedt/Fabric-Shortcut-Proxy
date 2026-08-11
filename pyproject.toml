@@ -64,6 +64,10 @@ azureblob = ["azure-storage-blob>=12.19", "azure-identity>=1.15"]
 # encrypted local cache so no secret lives in config. azure-identity supplies the
 # managed-identity / service-principal / default credential; kept out of core.
 keyvault = ["azure-keyvault-secrets>=4.7", "azure-identity>=1.15"]
+# OneLake (ADLS Gen2) Open Mirroring landing-zone writer: push Parquet + metadata
+# into a Fabric mirrored database over the DFS endpoint. Reuses the proxy's own
+# Entra identity (issue #16); kept out of core so non-mirroring installs stay lean.
+onelake = ["azure-storage-file-datalake>=12.14", "azure-identity>=1.15"]
 # Object-store tokenizer readers (issue #12): read an existing Delta/Iceberg table
 # from a mount and tokenize it proxy-side. Kept out of core so mounts without a
 # tokenizing format install without delta-rs / pyiceberg.

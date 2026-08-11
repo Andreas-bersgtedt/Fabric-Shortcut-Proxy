@@ -101,16 +101,15 @@ class LocalLandingZone:
         self.write_bytes(rel_path, text.encode("utf-8"))
 
 
-def open_landing_zone(root: str) -> LandingZoneBackend:
+def open_landing_zone(root: str, *, credential=None) -> LandingZoneBackend:
     """Resolve a landing-zone root to a write backend.
 
-    Local/UNC paths return a :class:`LocalLandingZone`. OneLake DFS URIs are not
-    yet writable here; that authenticated ADLS backend is a later phase.
+    Local/UNC paths return a :class:`LocalLandingZone`. OneLake DFS URIs return an
+    :class:`~open_mirror.onelake.OneLakeLandingZone` authenticated with the proxy's
+    OWN Entra identity (the same credential configured for Key Vault, issue #16);
+    pass ``credential`` only to override that reuse.
     """
     if is_onelake_uri(root):
-        raise NotImplementedError(
-            "OneLake DFS landing zones are not writable yet; use a local staging "
-            "directory for now. The authenticated OneLake/ADLS backend is a later "
-            "phase (see devplan/Open_Mirroring_Integration_Plan.md)."
-        )
+        from open_mirror.onelake import OneLakeLandingZone
+        return OneLakeLandingZone(root, credential=credential)
     return LocalLandingZone(root)

@@ -41,7 +41,7 @@ from system_config import (
     ENABLE_CREDENTIAL_STORE, CREDENTIAL_STORE_PATH,
     # Entra ID auth & Key Vault (issue #16)
     AUTH_MODE, KEYVAULT_URI, AZURE_TENANT_ID, AZURE_CLIENT_ID,
-    REQUIRE_KEYVAULT, KEYVAULT_REFRESH_SECONDS, KEYVAULT_CACHE_TTL,
+    REQUIRE_KEYVAULT, KEYVAULT_REFRESH_SECONDS, KEYVAULT_CACHE_TTL, KEYVAULT_WRITE_BACK,
     # Artifact Store
     ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_SERVING, PUBLISH_SERVING_IMAGE,
     # Fleet
@@ -187,6 +187,7 @@ _register("AZURE_CLIENT_ID", "azure_client_id", "str", AZURE_CLIENT_ID)
 _register("FSP_REQUIRE_KEYVAULT", "require_keyvault", "bool", REQUIRE_KEYVAULT)
 _register("FSP_KEYVAULT_REFRESH_SECONDS", "keyvault_refresh_seconds", "int", KEYVAULT_REFRESH_SECONDS)
 _register("FSP_KEYVAULT_CACHE_TTL", "keyvault_cache_ttl", "int", KEYVAULT_CACHE_TTL)
+_register("FSP_KEYVAULT_WRITE_BACK", "keyvault_write_back", "bool", KEYVAULT_WRITE_BACK)
 
 # Register memory monitoring settings
 _register("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", "int", 800)
@@ -841,6 +842,7 @@ SETTINGS_META: dict[str, dict] = {
     "require_keyvault": {"cat": "Entra ID & Key Vault", "help": "Fail startup only on a COLD start with no local cache when Key Vault is unreachable. Default off: an outage always falls back to the last-known-good local cache and never stops the agent/heartbeat/manager."},
     "keyvault_refresh_seconds": {"cat": "Entra ID & Key Vault", "help": "Background interval (seconds) to re-pull secrets from Key Vault into the local cache. 0 disables the refresh loop (offline/static)."},
     "keyvault_cache_ttl": {"cat": "Entra ID & Key Vault", "help": "Local-cache freshness TTL (seconds); 0 or negative = never expire, so an offline/air-gapped deployment runs entirely from a pre-seeded local store."},
+    "keyvault_write_back": {"cat": "Entra ID & Key Vault", "help": "Manager only: also persist saved credentials (DB URLs, mount credentials) INTO Key Vault, making the vault the authoritative store. Needs 'Key Vault Secrets Officer' on the Manager identity; fail-soft — a Key Vault write failure never blocks the local save. Default off."},
 }
 
 _SETTINGS_CAT_ORDER = [
@@ -1033,6 +1035,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "require_keyvault": "config.system.json",
     "keyvault_refresh_seconds": "config.system.json",
     "keyvault_cache_ttl": "config.system.json",
+    "keyvault_write_back": "config.system.json",
     # Connection settings → config.connection.json
     "db_url": "config.connection.json",
     "source_table": "config.connection.json",

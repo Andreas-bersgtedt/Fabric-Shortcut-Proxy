@@ -359,7 +359,15 @@ async def apply_config(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 def _store() -> CredentialStore:
-    return CredentialStore(config.CREDENTIAL_STORE_PATH or None)
+    st = CredentialStore(config.CREDENTIAL_STORE_PATH or None)
+    # Phase 4 (issue #16): when keyvault_write_back is on, also persist saved
+    # credentials into Key Vault (fail-soft — never breaks the local save).
+    try:
+        from security.keyvault import attach_write_back
+        attach_write_back(st)
+    except Exception:  # noqa: BLE001 - write-back must never break the save path
+        pass
+    return st
 
 
 async def _restart_agents(request: Request) -> int:

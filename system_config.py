@@ -186,6 +186,11 @@ KEYVAULT_REFRESH_SECONDS: int = _get_int("FSP_KEYVAULT_REFRESH_SECONDS", "keyvau
 # air-gapped deployment runs entirely from a pre-seeded local store.
 KEYVAULT_CACHE_TTL: int = _get_int("FSP_KEYVAULT_CACHE_TTL", "keyvault_cache_ttl", 0)
 
+# Phase 4 write-back: the Manager persists saved credentials INTO Key Vault too, making
+# the vault the authoritative store. Needs Key Vault Secrets Officer on the Manager
+# identity; fail-soft (the local encrypted save always wins). Default off.
+KEYVAULT_WRITE_BACK: bool = _get_bool("FSP_KEYVAULT_WRITE_BACK", "keyvault_write_back", False)
+
 # ---------------------------------------------------------------------------
 # Artifact Store (cluster seam — Phase 0)
 # ---------------------------------------------------------------------------

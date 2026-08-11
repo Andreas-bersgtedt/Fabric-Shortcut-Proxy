@@ -11,6 +11,7 @@ A test can inject a fake ``client`` so no real Azure SDK is needed.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -148,6 +149,22 @@ class KeyVaultSecretSource:
         """Resolve a local credential key via the name convention, then fetch it."""
         return self.get_by_name(secret_name_for(local_key, self._cfg))
 
+    def set_by_name(self, name: str, value: str) -> None:
+        """Create/update a Key Vault secret by its exact vault name (write-back).
+
+        Raises :class:`KeyVaultUnavailable` on any failure so the caller can decide
+        whether to swallow it (write-back is fail-soft; local persistence still wins).
+        """
+        client = self._get_client()
+        try:
+            client.set_secret(name, value)
+        except Exception as exc:  # noqa: BLE001 - normalize SDK/transport errors
+            raise KeyVaultUnavailable(f"Key Vault write failed for {name!r}: {exc}") from exc
+
+    def set_secret_value(self, local_key: str, value: str) -> None:
+        """Write a local credential key to Key Vault via the name convention."""
+        self.set_by_name(secret_name_for(local_key, self._cfg), value)
+
     def probe(self) -> tuple[bool, str]:
         """Live connectivity + auth check (used by the 'Test Key Vault' button).
 
@@ -180,6 +197,44 @@ def read_through_for(source: KeyVaultSecretSource, cfg: KeyVaultConfig | None = 
         return source.get_by_name(name)
 
     return _rt
+
+
+def write_through_for(source: KeyVaultSecretSource, cfg: KeyVaultConfig | None = None):
+    """Build a ``CredentialStore.write_through`` callable backed by Key Vault (Phase 4).
+
+    Persists a saved credential to Key Vault under the naming convention: a DB URL
+    for connection ``default`` writes to ``db-url`` (``db-url-<id>`` for a named
+    connection); a mount secret id writes its JSON blob under :func:`secret_name_for`.
+    Raises on failure — the caller (the store) swallows it so write-back is fail-soft.
+    """
+    def _wt(kind: str, key: str, value) -> None:
+        if kind == "url":
+            k = (key or "").strip()
+            name = "db-url" if (not k or k.lower() == "default") else f"db-url-{_slug(k)}"
+            payload = value if isinstance(value, str) else json.dumps(value)
+        else:
+            name = secret_name_for(key, cfg)
+            payload = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
+        source.set_by_name(name, payload)
+
+    return _wt
+
+
+def attach_write_back(store) -> bool:
+    """Attach Key Vault write-back to a store when ``keyvault_write_back`` is on.
+
+    No-op (returns False) unless write-back is enabled, a vault is configured, and
+    the local store has an encryption backend. Only the Manager should enable this
+    (it needs ``Key Vault Secrets Officer``); agents stay read-only.
+    """
+    import system_config as sc
+    if not getattr(sc, "KEYVAULT_WRITE_BACK", False):
+        return False
+    cfg = config_from_settings(sc)
+    if not cfg.enabled or store is None or not getattr(store, "available", False):
+        return False
+    store.write_through = write_through_for(KeyVaultSecretSource(cfg), cfg)
+    return True
 
 
 # ---------------------------------------------------------------------------

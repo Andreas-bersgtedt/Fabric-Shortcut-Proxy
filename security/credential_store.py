@@ -203,6 +203,9 @@ class CredentialStore:
         # consulted only on a local miss; the value is written through to the
         # encrypted cache so subsequent reads are local (cache-first).
         self.read_through = None
+        # Optional write-back sink (issue #16, Phase 4): fn(kind, key, value) called
+        # after a successful local write to also persist to Key Vault (fail-soft).
+        self.write_through = None
 
     # -- capability -------------------------------------------------------
     @property
@@ -282,6 +285,20 @@ class CredentialStore:
             return obj
         return None
 
+    def _emit_write_through(self, kind: str, key: str, value) -> None:
+        """After a local write, also persist to the write-back sink (Key Vault).
+
+        Fail-soft: a write-back failure is logged and swallowed so the operator's
+        save always succeeds locally (owner directive; local is the source of cache).
+        """
+        fn = getattr(self, "write_through", None)
+        if fn is None:
+            return
+        try:
+            fn(kind, key, value)
+        except Exception as exc:  # noqa: BLE001 - write-back is best-effort
+            print(f"[credential_store] write-back failed for {kind} {key!r}: {exc}", file=sys.stderr)
+
     # -- public api -------------------------------------------------------
     def set_url(self, connection_id: str, db_url: str) -> None:
         """Encrypt and persist a connection's full database URL."""
@@ -310,6 +327,7 @@ class CredentialStore:
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         self._save(data)
+        self._emit_write_through("url", cid, db_url)
 
     def get_url(self, connection_id: str) -> str | None:
         """Decrypt and return a connection's URL, or ``None`` if absent/unreadable.
@@ -365,6 +383,7 @@ class CredentialStore:
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         self._save(data)
+        self._emit_write_through("secret", sid, obj)
 
     def get_secret(self, secret_id: str) -> dict | None:
         """Decrypt and return a JSON secret, or ``None`` if absent/unreadable.

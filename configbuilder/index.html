@@ -191,6 +191,7 @@
         <option value="sql">SQL Login (username &amp; password)</option>
         <option value="windows">Windows (Integrated Security)</option>
         <option value="spn">Service Principal (Entra ID)</option>
+        <option value="entra_proxy">Entra ID — reuse the proxy identity (Key Vault)</option>
       </select>
     </div>
     <div class="row" id="sqlLoginRow">
@@ -205,6 +206,7 @@
       </div>
       <div class="hint" style="margin:-6px 0 12px;">Entra ID service principal. Needs ODBC Driver 18 (or 17.4+). The secret is encrypted in the Manager credential store (and mirrored to Key Vault when write-back is on).</div>
     </div>
+    <div id="proxyAuthNote" class="hint" style="display:none;margin:-6px 0 12px;">Reuses the proxy's own Entra identity — the one configured for Key Vault (issue #16): the service principal (<code>auth_mode=service_principal</code> + <code>azure_client_id</code> + <code>AZURE_CLIENT_SECRET</code>), a managed identity, or the default credential chain. No credentials are entered here; the SQL Server must grant that identity a login + read access. Needs ODBC Driver 18.</div>
     <details class="adv">
       <summary>Advanced</summary>
       <label>ODBC driver (SQL Server)</label>
@@ -706,6 +708,7 @@ function updateAuthUI(){
   $("sqlLoginRow").style.display = (!isMssql || method === "sql") ? "" : "none";
   $("winAuthNote").style.display = (isMssql && method === "windows") ? "" : "none";
   $("spnRow").style.display = (isMssql && method === "spn") ? "" : "none";
+  $("proxyAuthNote").style.display = (isMssql && method === "entra_proxy") ? "" : "none";
 }
 function commitActive(){ readFormIntoConn(state.connections.get(state.activeConnId)); }
 

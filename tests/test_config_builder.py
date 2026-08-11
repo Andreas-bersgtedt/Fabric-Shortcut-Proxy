@@ -111,6 +111,66 @@ def test_conn_fields_defaults_auth_method_to_sql():
     assert out["client_id"] is None and out["client_secret"] is None
 
 
+# --- issue #19: reuse the proxy's Entra identity (Key Vault SPN/MI/default) ---
+
+def test_build_url_mssql_managed_identity():
+    url = build_url(dialect="mssql", host="h", database="db",
+                    auth_method="managed_identity", client_id="mi-client")
+    assert url.query["Authentication"] == "ActiveDirectoryManagedIdentity"
+    assert url.username == "mi-client" and url.password is None
+    assert url.query["Encrypt"] == "yes"
+
+
+def test_build_url_mssql_default_identity():
+    url = build_url(dialect="mssql", host="h", database="db", auth_method="default")
+    assert url.query["Authentication"] == "ActiveDirectoryDefault"
+    assert url.password is None
+
+
+def test_conn_fields_entra_proxy_reuses_service_principal(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "AUTH_MODE", "service_principal", raising=False)
+    monkeypatch.setattr(config, "AZURE_CLIENT_ID", "proxy-app-id", raising=False)
+    monkeypatch.setenv("AZURE_CLIENT_SECRET", "proxy-secret")
+    out = _conn_fields({"dialect": "mssql", "host": "h", "database": "db",
+                        "auth_method": "entra_proxy"})
+    assert out["auth_method"] == "spn"
+    assert out["client_id"] == "proxy-app-id" and out["client_secret"] == "proxy-secret"
+    url = build_url(**out)
+    assert url.query["Authentication"] == "ActiveDirectoryServicePrincipal"
+    assert url.username == "proxy-app-id" and url.password == "proxy-secret"
+
+
+def test_conn_fields_entra_proxy_managed_identity(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "AUTH_MODE", "managed_identity", raising=False)
+    monkeypatch.setattr(config, "AZURE_CLIENT_ID", "mi-client", raising=False)
+    out = _conn_fields({"dialect": "mssql", "host": "h", "database": "db",
+                        "auth_method": "entra_proxy"})
+    assert out["auth_method"] == "managed_identity"
+    assert build_url(**out).query["Authentication"] == "ActiveDirectoryManagedIdentity"
+
+
+def test_conn_fields_entra_proxy_default(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "AUTH_MODE", "default", raising=False)
+    monkeypatch.setattr(config, "AZURE_CLIENT_ID", "", raising=False)
+    out = _conn_fields({"dialect": "mssql", "host": "h", "database": "db",
+                        "auth_method": "entra_proxy"})
+    assert out["auth_method"] == "default"
+    assert build_url(**out).query["Authentication"] == "ActiveDirectoryDefault"
+
+
+def test_conn_fields_entra_proxy_sp_missing_secret_errors(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "AUTH_MODE", "service_principal", raising=False)
+    monkeypatch.setattr(config, "AZURE_CLIENT_ID", "proxy-app-id", raising=False)
+    monkeypatch.delenv("AZURE_CLIENT_SECRET", raising=False)
+    with pytest.raises(ValueError, match="service principal"):
+        _conn_fields({"dialect": "mssql", "host": "h", "database": "db",
+                      "auth_method": "entra_proxy"})
+
+
 def test_clean_error_im002_adds_driver_hint(monkeypatch):
     monkeypatch.setattr(
         "configbuilder.router._installed_sql_server_odbc_drivers",

@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the credential inputs per method; the SPN secret is encrypted in the Manager credential
   store (and mirrored to Key Vault when write-back is on). SQL Login stays the default and is
   unchanged; connection Test/validation and clear auth-failure errors apply to all three.
+- **Reuse the proxy's own Entra identity for SQL Server (issue #19).** A fourth SQL Server
+  auth option, **Entra ID — reuse the proxy identity**, authenticates with the identity the
+  proxy already uses for Key Vault (issue #16) — no separate credentials. It maps the proxy's
+  `auth_mode` onto the ODBC keyword: `service_principal` -> `ActiveDirectoryServicePrincipal`
+  (the configured `azure_client_id` + `AZURE_CLIENT_SECRET`), `managed_identity` ->
+  `ActiveDirectoryManagedIdentity`, else `ActiveDirectoryDefault`. Grant that identity a SQL
+  login + read access on the source.
 
 ## [2.3.0]: 2026-08-11
 

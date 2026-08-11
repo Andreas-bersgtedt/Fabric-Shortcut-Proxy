@@ -98,8 +98,11 @@ def _default_mssql_odbc_driver() -> str:
     return "ODBC Driver 18 for SQL Server"
 
 
-# SQL Server authentication methods selectable in the connector (issue #19).
-_MSSQL_AUTH_METHODS = ("sql", "windows", "spn")
+# SQL Server authentication methods (issue #19). ``sql``/``windows``/``spn`` are
+# selectable directly; ``managed_identity``/``default`` are what "reuse the proxy's
+# Entra identity" resolves to when the proxy runs as a managed identity or the default
+# credential chain (issue #16). The config layer maps ``entra_proxy`` onto these.
+_MSSQL_AUTH_METHODS = ("sql", "windows", "spn", "managed_identity", "default")
 
 
 def _apply_mssql_auth(
@@ -120,6 +123,10 @@ def _apply_mssql_auth(
     - ``spn``: Entra ID service principal via
       ``Authentication=ActiveDirectoryServicePrincipal`` over an encrypted channel,
       with the client (application) id as UID and the client secret as PWD.
+    - ``managed_identity``: ``Authentication=ActiveDirectoryManagedIdentity`` (a
+      user-assigned identity's client id as UID when given; none = system-assigned).
+    - ``default``: ``Authentication=ActiveDirectoryDefault`` (the ambient credential
+      chain — env / managed identity / CLI).
     """
     m = (method or "sql").strip().lower()
     if m in ("", "sql"):
@@ -138,6 +145,14 @@ def _apply_mssql_auth(
         q.setdefault("Authentication", "ActiveDirectoryServicePrincipal")
         q.setdefault("Encrypt", "yes")   # Entra ID auth requires an encrypted channel
         return cid, secret
+    if m in ("managed_identity", "msi", "aad_msi"):
+        q.setdefault("Authentication", "ActiveDirectoryManagedIdentity")
+        q.setdefault("Encrypt", "yes")
+        return ((client_id or username or "").strip() or None), None
+    if m in ("default", "aad_default"):
+        q.setdefault("Authentication", "ActiveDirectoryDefault")
+        q.setdefault("Encrypt", "yes")
+        return ((client_id or username or "").strip() or None), None
     raise ValueError(
         f"Unknown SQL Server auth method {method!r} (expected one of: "
         f"{', '.join(_MSSQL_AUTH_METHODS)})."

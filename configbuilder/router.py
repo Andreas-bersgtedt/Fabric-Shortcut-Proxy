@@ -41,6 +41,32 @@ _HTML_PATH = pathlib.Path(__file__).parent / "index.html"
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _resolve_proxy_entra_auth() -> tuple[str, str | None, str | None]:
+    """Resolve the ``entra_proxy`` SQL Server auth method onto the proxy's OWN Entra
+    identity — the one already configured for Key Vault (issue #16). Returns a concrete
+    ``(auth_method, client_id, client_secret)`` for :func:`build_url`:
+
+    - ``service_principal`` -> ``spn`` with the configured client id + the
+      ``AZURE_CLIENT_SECRET`` env secret (never a config file).
+    - ``managed_identity`` -> ``managed_identity`` (user-assigned client id when set).
+    - anything else -> ``default`` (the ambient credential chain).
+    """
+    mode = (getattr(config, "AUTH_MODE", "default") or "default").strip().lower()
+    client_id = (getattr(config, "AZURE_CLIENT_ID", "") or "").strip() or None
+    if mode == "service_principal":
+        secret = os.environ.get("AZURE_CLIENT_SECRET") or None
+        if not client_id or not secret:
+            raise ValueError(
+                "Reuse-the-proxy-identity auth needs the proxy's Entra service principal "
+                "configured (auth_mode=service_principal with azure_client_id and the "
+                "AZURE_CLIENT_SECRET env var — see the issue #16 / Key Vault setup)."
+            )
+        return "spn", client_id, secret
+    if mode == "managed_identity":
+        return "managed_identity", client_id, None
+    return "default", client_id, None
+
+
 def _conn_fields(d: dict) -> dict:
     dialect = str(d.get("dialect", "")).strip().lower()
     username = d.get("username") or None
@@ -58,6 +84,13 @@ def _conn_fields(d: dict) -> dict:
         if v:
             query[k] = str(v)
 
+    auth_method = str(d.get("auth_method") or "sql").strip().lower()
+    client_id = d.get("client_id") or None
+    client_secret = d.get("client_secret") or None
+    # "entra_proxy" reuses the proxy's own Entra identity (the Key Vault SPN/MI/default).
+    if dialect == "mssql" and auth_method in ("entra_proxy", "proxy", "proxy_identity", "keyvault_spn"):
+        auth_method, client_id, client_secret = _resolve_proxy_entra_auth()
+
     return dict(
         dialect=dialect,
         host=d.get("host") or None,
@@ -68,9 +101,9 @@ def _conn_fields(d: dict) -> dict:
         driver=d.get("driver") or None,
         trust_cert=bool(d.get("trust_cert", True)),
         query=query or None,
-        auth_method=str(d.get("auth_method") or "sql").strip().lower(),
-        client_id=(d.get("client_id") or None),
-        client_secret=(d.get("client_secret") or None),
+        auth_method=auth_method,
+        client_id=client_id,
+        client_secret=client_secret,
     )
 
 

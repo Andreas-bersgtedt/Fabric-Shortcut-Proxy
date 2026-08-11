@@ -29,6 +29,11 @@ from open_mirror.publisher import (
     LandingZonePublisher,
     build_landing_parquet,
 )
+from open_mirror.source import (
+    PublishResult,
+    publish_initial_load,
+    publish_target_initial_load,
+)
 
 __all__ = [
     "OpenMirrorTableTarget",
@@ -48,4 +53,7 @@ __all__ = [
     "ROW_MARKER_COLUMN",
     "LandingZonePublisher",
     "build_landing_parquet",
+    "PublishResult",
+    "publish_initial_load",
+    "publish_target_initial_load",
 ]

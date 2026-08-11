@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **SPN + Windows authentication for the SQL Server source connector (issue #19).** The MS
+  SQL connector now supports, alongside SQL logins: **Windows Authentication** (Integrated
+  Security via `Trusted_Connection=yes` — the Manager/agent process identity; Kerberos on
+  Linux) and an **Entra ID service principal** (`Authentication=ActiveDirectoryServicePrincipal`
+  over an encrypted channel, with the client id/secret as UID/PWD; needs ODBC Driver 18 or
+  17.4+). The Config Builder gains an **Authentication** selector (SQL Server only) that swaps
+  the credential inputs per method; the SPN secret is encrypted in the Manager credential
+  store (and mirrored to Key Vault when write-back is on). SQL Login stays the default and is
+  unchanged; connection Test/validation and clear auth-failure errors apply to all three.
+
 ## [2.3.0]: 2026-08-11
 
 ### Added

@@ -441,8 +441,11 @@ CREATE TABLE dbo.orders (
 
 ### 6.2 Configure & launch
 
+SQL Server supports three authentication methods. Pick one in the Config Builder's
+**Authentication** selector (SQL Server only), or set the `DB_URL` directly:
+
 ```powershell
-# SQL authentication (Driver 18 encrypts by default -> TrustServerCertificate for dev)
+# 1) SQL authentication (Driver 18 encrypts by default -> TrustServerCertificate for dev)
 $env:DB_URL          = "mssql+aioodbc://sa:Str0ng!Pass@mssql-host:1433/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
 $env:DB_SOURCE_TABLE = "dbo.orders"
 $env:KEY_COLUMN      = "order_id"
@@ -450,9 +453,20 @@ $env:TABLE_NAME      = "orders"
 $env:NUM_SPLITS      = "8"
 .\Manager.ps1 -SkipInstall
 
-# Windows / integrated authentication instead:
-# $env:DB_URL = "mssql+aioodbc://@mssql-host/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&trusted_connection=yes&TrustServerCertificate=yes"
+# 2) Windows / integrated authentication (the account running the Manager/agent;
+#    on Linux this needs a Kerberos-joined host). No username or password is stored.
+# $env:DB_URL = "mssql+aioodbc://@mssql-host/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&Trusted_Connection=yes&TrustServerCertificate=yes"
+
+# 3) Entra ID service principal (SPN). The client id is the UID, the secret is the PWD,
+#    over an encrypted channel. Needs ODBC Driver 18 (or 17.4+). Grant the SPN a login
+#    + read access on the database.
+# $env:DB_URL = "mssql+aioodbc://<client-id>:<client-secret>@mssql-host/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&Authentication=ActiveDirectoryServicePrincipal&Encrypt=yes"
 ```
+
+In the Config Builder, choosing **Windows (Integrated Security)** hides the credential
+fields, and **Service Principal (Entra ID)** swaps them for a client id + client secret; the
+SPN secret is encrypted in the Manager credential store (and mirrored to Key Vault when
+write-back is on — see [SECURITY.md](SECURITY.md)). SQL Login is unchanged.
 
 Generated split SQL (SQL Server dialect, brackets, `BIGINT`, `TOP`):
 

@@ -31,9 +31,14 @@ from open_mirror.publisher import (
 )
 from open_mirror.source import (
     PublishResult,
+    TargetResult,
+    publish_all,
     publish_initial_load,
+    publish_table,
+    publish_target,
     publish_target_initial_load,
 )
+from open_mirror.changes import ChangeBatch, RowMarker, compute_changes
 
 __all__ = [
     "OpenMirrorTableTarget",
@@ -56,6 +61,13 @@ __all__ = [
     "PublishResult",
     "publish_initial_load",
     "publish_target_initial_load",
+    "TargetResult",
+    "publish_all",
+    "publish_table",
+    "publish_target",
+    "ChangeBatch",
+    "RowMarker",
+    "compute_changes",
 ]
 
 

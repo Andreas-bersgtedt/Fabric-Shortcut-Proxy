@@ -106,3 +106,23 @@ class OneLakeLandingZone:
 
     def write_text(self, rel_path: str, text: str) -> None:
         self.write_bytes(rel_path, text.encode("utf-8"))
+
+    def delete(self, rel_path: str) -> None:
+        try:
+            from azure.core.exceptions import ResourceNotFoundError
+        except ImportError:
+            ResourceNotFoundError = ()  # SDK absent (injected client): nothing to catch
+        try:
+            self._fs().get_file_client(self._abs(rel_path)).delete_file()
+        except ResourceNotFoundError:
+            pass
+
+    def remove_tree(self, rel_path: str) -> None:
+        try:
+            from azure.core.exceptions import ResourceNotFoundError
+        except ImportError:
+            ResourceNotFoundError = ()  # SDK absent (injected client): nothing to catch
+        try:
+            self._fs().get_directory_client(self._abs(rel_path)).delete_directory()
+        except ResourceNotFoundError:
+            pass

@@ -182,8 +182,21 @@ def create_manager_app() -> FastAPI:
         else:
             app.state.is_leader = True
             await _start_all()
+        # Open Mirroring publish loop (opt-in): push source tables into the Fabric
+        # landing zone on a schedule. Fails soft per target/table.
+        om_scheduler = None
+        if config.OPEN_MIRROR_PUBLISH:
+            from open_mirror.scheduler import OpenMirrorScheduler
+            om_scheduler = OpenMirrorScheduler()
+            om_scheduler.start()
+            log.info("open_mirror_publish_enabled",
+                     interval_seconds=config.OPEN_MIRROR_INTERVAL_SECONDS,
+                     mode=config.OPEN_MIRROR_MODE)
+        app.state.open_mirror_scheduler = om_scheduler
         yield
         log.info("manager_shutdown")
+        if om_scheduler is not None:
+            await om_scheduler.stop()
         if ha_task is not None:
             ha_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

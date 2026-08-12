@@ -101,3 +101,21 @@ def test_index_has_open_mirror_tab():
     assert 'id="openmirror-tab"' in html
     assert "api/open-mirror/save" in html
     assert "api/open-mirror/preview" in html
+    assert "api/open-mirror/publish" in html
+
+
+async def test_publish_unknown_target_returns_404(app, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    async with _client(app) as c:
+        r = await c.post("/_config/api/open-mirror/publish", json={"target_id": "nope"})
+    assert r.status_code == 404
+
+
+async def test_publish_no_targets_is_ok(app, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no config.open_mirror.json here => zero targets
+    async with _client(app) as c:
+        r = await c.post("/_config/api/open-mirror/publish", json={"dry_run": True})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True and d["targets"] == []
+

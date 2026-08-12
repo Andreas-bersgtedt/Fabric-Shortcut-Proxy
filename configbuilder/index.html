@@ -470,8 +470,12 @@
     <div class="actions" style="margin-top:12px;">
       <button class="btn ghost" id="btnAddOmTarget">+ Add target</button>
       <button class="btn primary" id="btnSaveOm">💾 Save targets to config</button>
+      <button class="btn ghost" id="btnDryRunOm" title="Read the source and report the change set without writing">Dry run</button>
+      <button class="btn ghost" id="btnPublishOm" title="Publish saved targets into the landing zone now">▶ Publish now</button>
     </div>
+    <div class="hint" style="margin-top:6px;">Publish reads the <b>saved</b> targets (save first). OneLake targets need the <code>onelake</code> extra installed and the proxy's Entra identity configured.</div>
     <div class="status" id="omStatus"></div>
+    <pre id="omPublishOut" style="display:none;"></pre>
   </div>
 
   <div class="card" style="margin-top:16px;">
@@ -2534,6 +2538,30 @@ async function omSave(){
   }catch(e){ s.className="status err"; s.textContent="Save request failed."; }
 }
 
+async function omPublish(dryRun){
+  const s = $("omStatus"), pre=$("omPublishOut");
+  s.className="status"; s.textContent = dryRun ? "Dry run…" : "Publishing…"; pre.style.display="none";
+  try{
+    const r = await fetch("/_config/api/open-mirror/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dry_run:!!dryRun})});
+    const d = await r.json();
+    if(!r.ok){ s.className="status err"; s.textContent=(d.errors?d.errors.join("; "):d.error)||"Publish failed"; return; }
+    const lines=[];
+    (d.targets||[]).forEach(t=>{
+      lines.push((t.error?"✗ ":"• ")+t.target_id+(t.skipped?" (disabled)":"")+(t.error?("  ERROR: "+t.error):""));
+      (t.dropped||[]).forEach(dp=>lines.push("    dropped: "+dp));
+      (t.tables||[]).forEach(tb=>{
+        const detail = tb.action==="error" ? ("ERROR: "+tb.error)
+          : (tb.action+"  ins="+tb.inserts+" upd="+tb.updates+" del="+tb.deletes+(tb.path?("  "+tb.path):""));
+        lines.push("    "+tb.table+": "+detail);
+      });
+    });
+    pre.textContent = lines.join("\n") || "(no targets configured)";
+    pre.style.display="block";
+    s.className = d.ok ? "status ok" : "status err";
+    s.textContent = d.ok ? (dryRun?"Dry run complete.":"Publish complete.") : "Completed with errors — see below.";
+  }catch(e){ s.className="status err"; s.textContent="Publish request failed."; }
+}
+
 function omOnBootstrap(builder){
   state.om.targets = Array.isArray(builder && builder.open_mirror_targets)
     ? JSON.parse(JSON.stringify(builder.open_mirror_targets)) : [];
@@ -2548,6 +2576,8 @@ function omInit(){
   wire("btnSaveOm", omSave);
   wire("btnApplyOmTarget", omApplyTarget);
   wire("btnPreviewOm", omPreview);
+  wire("btnDryRunOm", ()=>omPublish(true));
+  wire("btnPublishOm", ()=>omPublish(false));
   wire("btnAddOmTable", ()=>{ if(!state.om.editing) state.om.editing=omNewTarget();
     state.om.editing.tables.push(omNewTable()); omRenderTableRows(); });
   omRenderConnectionOptions();

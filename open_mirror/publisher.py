@@ -160,6 +160,27 @@ class LandingZonePublisher:
         )
         return self.publish_batch(table, rows, columns)
 
+    def publish_changes(
+        self,
+        table: OpenMirrorTableTarget,
+        rows: Sequence[dict[str, Any]],
+        markers: Sequence[int],
+        columns,
+    ) -> str:
+        """Emit ``_metadata.json`` (if missing) + an incremental change file.
+
+        ``rows`` and ``markers`` are parallel; each row carries its ``__rowMarker__``
+        (0=insert, 1=update, 2=delete, 4=upsert) as the final column.
+        """
+        self.ensure_table_metadata(table)
+        return self.publish_batch(table, rows, columns, row_markers=list(markers))
+
+    def drop_table(self, table: OpenMirrorTableTarget) -> str:
+        """Delete a table's landing-zone folder (Fabric drops the mirrored table)."""
+        table_dir = self._table_dir(table)
+        self.backend.remove_tree(table_dir)
+        return table_dir
+
     # -- helpers ----------------------------------------------------------
 
     def _table_dir(self, table: OpenMirrorTableTarget) -> str:

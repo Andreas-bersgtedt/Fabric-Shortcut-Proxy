@@ -518,6 +518,57 @@ async def preview_open_mirror(request: Request) -> JSONResponse:
     })
 
 
+@router.post("/api/open-mirror/publish")
+async def publish_open_mirror(request: Request) -> JSONResponse:
+    """Publish now: read the source and push batches into the landing zone.
+
+    Body (all optional): ``{"target_id": "...", "dry_run": true}``. With no
+    ``target_id`` every configured target is published. Failures are quarantined
+    per target/table and returned in the response rather than raising.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - empty body => publish all
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    target_id = str(body.get("target_id") or "").strip() or None
+    dry_run = bool(body.get("dry_run", False))
+
+    from open_mirror.config import load_targets
+    from open_mirror.source import publish_all
+
+    targets = load_targets()
+    if target_id:
+        targets = [t for t in targets if t.id == target_id]
+        if not targets:
+            return JSONResponse({"ok": False, "error": f"no target with id {target_id!r}"},
+                                status_code=404)
+    try:
+        results = await publish_all(targets=targets, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001 - surface, never 500 the builder
+        log.warning("open_mirror_publish_failed", error=str(exc))
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    summary = []
+    ok = True
+    for tr in results:
+        if tr.error or any(r.action == "error" for r in tr.results):
+            ok = False
+        summary.append({
+            "target_id": tr.target_id,
+            "skipped": tr.skipped,
+            "error": tr.error,
+            "dropped": tr.dropped,
+            "tables": [{
+                "table": r.table, "action": r.action, "rows": r.rows,
+                "inserts": r.inserts, "updates": r.updates, "deletes": r.deletes,
+                "path": r.path, "error": r.error,
+            } for r in tr.results],
+        })
+    log.info("open_mirror_publish_now", target=target_id or "*", dry_run=dry_run, ok=ok)
+    return JSONResponse({"ok": ok, "dry_run": dry_run, "targets": summary})
+
+
 # ---------------------------------------------------------------------------
 # Credential store (persist DB credentials so they survive a restart)
 # ---------------------------------------------------------------------------

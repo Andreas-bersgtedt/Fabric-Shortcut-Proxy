@@ -60,6 +60,10 @@ class LandingZoneBackend(Protocol):
 
     def write_text(self, rel_path: str, text: str) -> None: ...
 
+    def delete(self, rel_path: str) -> None: ...
+
+    def remove_tree(self, rel_path: str) -> None: ...
+
 
 class LocalLandingZone:
     """Filesystem-backed landing zone (local directory or UNC/SMB share)."""
@@ -99,6 +103,16 @@ class LocalLandingZone:
 
     def write_text(self, rel_path: str, text: str) -> None:
         self.write_bytes(rel_path, text.encode("utf-8"))
+
+    def delete(self, rel_path: str) -> None:
+        try:
+            os.remove(self._abs(rel_path))
+        except FileNotFoundError:
+            pass
+
+    def remove_tree(self, rel_path: str) -> None:
+        import shutil
+        shutil.rmtree(self._abs(rel_path), ignore_errors=True)
 
 
 def open_landing_zone(root: str, *, credential=None) -> LandingZoneBackend:

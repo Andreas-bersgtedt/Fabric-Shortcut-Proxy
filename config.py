@@ -39,6 +39,9 @@ from system_config import (
     ENABLE_STORAGE_PROXY, ENFORCE_MOUNT_AUTH, ENABLE_AUDIT_LOG, AUDIT_LOG_FILE,
     # Credential store
     ENABLE_CREDENTIAL_STORE, CREDENTIAL_STORE_PATH,
+    # Open Mirroring publisher
+    OPEN_MIRROR_PUBLISH, OPEN_MIRROR_INTERVAL_SECONDS, OPEN_MIRROR_MODE,
+    OPEN_MIRROR_STATE_DIR, OPEN_MIRROR_MAX_ROWS,
     # Entra ID auth & Key Vault (issue #16)
     AUTH_MODE, KEYVAULT_URI, AZURE_TENANT_ID, AZURE_CLIENT_ID,
     REQUIRE_KEYVAULT, KEYVAULT_REFRESH_SECONDS, KEYVAULT_CACHE_TTL, KEYVAULT_WRITE_BACK,
@@ -168,6 +171,11 @@ _register("ENABLE_STORAGE_PROXY", "enable_storage_proxy", "bool", ENABLE_STORAGE
 _register("ENFORCE_MOUNT_AUTH", "enforce_mount_auth", "bool", ENFORCE_MOUNT_AUTH)
 _register("ENABLE_AUDIT_LOG", "enable_audit_log", "bool", ENABLE_AUDIT_LOG)
 _register("AUDIT_LOG_FILE", "audit_log_file", "str", AUDIT_LOG_FILE)
+_register("OPEN_MIRROR_PUBLISH", "open_mirror_publish", "bool", OPEN_MIRROR_PUBLISH)
+_register("OPEN_MIRROR_INTERVAL_SECONDS", "open_mirror_interval_seconds", "int", OPEN_MIRROR_INTERVAL_SECONDS)
+_register("OPEN_MIRROR_MODE", "open_mirror_mode", "str", OPEN_MIRROR_MODE)
+_register("OPEN_MIRROR_STATE_DIR", "open_mirror_state_dir", "str", OPEN_MIRROR_STATE_DIR)
+_register("OPEN_MIRROR_MAX_ROWS", "open_mirror_max_rows", "int", OPEN_MIRROR_MAX_ROWS)
 _register("TLS_CERT_FILE", "tls_cert_file", "str", TLS_CERT_FILE)
 _register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
@@ -789,6 +797,11 @@ SETTINGS_META: dict[str, dict] = {
     "enforce_mount_auth": {"cat": "Admin & observability", "help": "Require SigV4 auth on mounted buckets even when require_sigv4 is off (a secured proxy never serves a mount unauthenticated)."},
     "enable_audit_log": {"cat": "Admin & observability", "help": "Emit a structured audit event for every mounted-object access (identity, bucket, key, bytes), secrets scrubbed."},
     "audit_log_file": {"cat": "Admin & observability", "help": "Optional file path for audit events (empty = the structured logger only)."},
+    "open_mirror_publish": {"cat": "Admin & observability", "help": "Manager: run the background Open Mirroring publish loop (config.open_mirror.json targets) that pushes initial/incremental batches into the Fabric landing zone. Off by default; publishing is also available on demand from the config builder."},
+    "open_mirror_interval_seconds": {"cat": "Admin & observability", "help": "Seconds between Open Mirroring publish cycles when the loop is enabled."},
+    "open_mirror_mode": {"cat": "Admin & observability", "help": "Open Mirroring publish mode: 'incremental' (diff against the last snapshot via __rowMarker__) or 'initial' (always a full insert batch).", "choices": ["incremental", "initial"]},
+    "open_mirror_state_dir": {"cat": "Admin & observability", "help": "Directory for Open Mirroring incremental change-tracking state (kept OUTSIDE the landing zone). Gitignored."},
+    "open_mirror_max_rows": {"cat": "Admin & observability", "help": "Open Mirroring per-table row cap per cycle (0 = the connection's query_max_rows default)."},
     "request_trace": {"cat": "Admin & observability", "help": "Record the Fabric request timeline."},
     "trace_buffer_size": {"cat": "Admin & observability", "help": "Max request-trace records kept in memory."},
     # Iceberg advanced
@@ -994,6 +1007,11 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "enforce_mount_auth": "config.system.json",
     "enable_audit_log": "config.system.json",
     "audit_log_file": "config.system.json",
+    "open_mirror_publish": "config.system.json",
+    "open_mirror_interval_seconds": "config.system.json",
+    "open_mirror_mode": "config.system.json",
+    "open_mirror_state_dir": "config.system.json",
+    "open_mirror_max_rows": "config.system.json",
     "tls_cert_file": "config.system.json",
     "tls_key_file": "config.system.json",
     "artifact_store_backend": "config.system.json",

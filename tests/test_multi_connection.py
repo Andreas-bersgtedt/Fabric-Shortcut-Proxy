@@ -295,6 +295,36 @@ def test_validate_open_mirror_targets():
     assert invalid and any("missing-conn" in err for err in invalid)
 
 
+def test_validate_open_mirror_target_accepts_existing_named_connection(monkeypatch):
+    # A target may bind to an already-configured named connection even when that
+    # connection is not re-sent in the same save payload (config-builder saves the
+    # Open Mirror tab on its own).
+    named = connection_config.Connection(
+        id="source_1",
+        db_url="impala://h:21050/default",
+        query_timeout_seconds=config.QUERY_TIMEOUT_SECONDS,
+        query_max_rows=config.QUERY_MAX_ROWS,
+        db_max_retries=config.DB_MAX_RETRIES,
+        db_retry_backoff_seconds=config.DB_RETRY_BACKOFF_SECONDS,
+        validate_source_schema=config.VALIDATE_SOURCE_SCHEMA,
+    )
+    registry = dict(connection_config.CONNECTIONS)
+    registry["source_1"] = named
+    monkeypatch.setattr(config, "CONNECTIONS", registry, raising=False)
+
+    clean, errors = config.validate_setting_updates({
+        "open_mirror_targets": [{
+            "id": "testtttt",
+            "connection": "source_1",
+            "landing_zone_root": "https://onelake.dfs.fabric.microsoft.com/ws/db/Files/LandingZone",
+            "tables": [{"name": "employees", "source_table": "default.employees",
+                        "target_table": "employees", "key_column": "id"}],
+        }]
+    })
+    assert not errors
+    assert clean["open_mirror_targets"][0]["connection"] == "source_1"
+
+
 def test_write_open_mirror_target_routes_to_its_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config.write_config_updates({

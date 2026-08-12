@@ -1300,7 +1300,7 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                 continue
             ok = True
             seen: set[str] = set()
-            known_connections = {"default"} | {
+            known_connections = {"default"} | set(CONNECTIONS) | {
                 str((c or {}).get("id", "")).strip()
                 for c in (updates.get("connections") or [])
                 if isinstance(c, dict)
@@ -1396,7 +1396,7 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
 
     # Cross-check: each Open Mirroring target must bind to a known source connection.
     if isinstance(clean.get("open_mirror_targets"), list):
-        known = {"default"} | {
+        known = {"default"} | set(CONNECTIONS) | {
             str((e or {}).get("id", "")).strip()
             for e in (clean.get("connections") or []) if isinstance(e, dict)
         }

@@ -1789,6 +1789,14 @@ async function loadSettings(){
     const d = await r.json();
     state.settings = (d.settings||[]).filter(s=>!SETTINGS_EXCLUDE.has(s.key));
   }catch(e){ state.settings = []; }
+  // Effective values (env/file/default) so the panel reflects what is persisted,
+  // not just the built-in defaults — otherwise saved settings look "not sticky".
+  try{
+    const rc = await fetch("/_config/api/current", {cache:"no-store"});
+    const dc = await rc.json();
+    state.effective = {};
+    (dc.settings||[]).forEach(s=>{ state.effective[s.key] = s; });
+  }catch(e){ state.effective = state.effective || {}; }
   renderSettings();
 }
 function renderSettings(){
@@ -1818,6 +1826,12 @@ function renderSettings(){
       inp.placeholder = s.secret ? "•••• (leave blank to keep)" : ("default: "+String(s.default));
     }
     inp.dataset.key=s.key; inp.dataset.type=s.type; inp.dataset.default=String(s.default);
+    // Prefill with the current effective value so a saved override shows through.
+    const eff = (state.effective||{})[s.key];
+    if(eff && eff.source && eff.source!=="default" && !s.secret && eff.value!==null && eff.value!==undefined){
+      if(s.type==="bool") inp.value = (eff.value===true || String(eff.value)==="true") ? "true" : "false";
+      else inp.value = String(eff.value);
+    }
     inp.addEventListener("input", updatePreview); inp.addEventListener("change", updatePreview);
     const help=document.createElement("div"); help.className="sethelp"; help.textContent=s.help||"";
     row.append(lab, inp, help); wrap.appendChild(row);
@@ -2973,6 +2987,7 @@ async function applyAdvanced(){
     if(d.restart_required && d.restart_required.length)
       msg += "↺ Saved (restart needed): "+d.restart_required.join(", ")+".";
     liveFlash($("advancedStatus"), msg || "✓ Done.", true);
+    loadSettings();  // re-read effective values so the panel reflects the change
   }catch(e){ liveFlash($("advancedStatus"), "Apply error: "+e); }
 }
 
@@ -2986,6 +3001,7 @@ async function saveAdvanced(){
     const d=await r.json();
     if(!r.ok){ liveFlash($("advancedStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
     liveFlash($("advancedStatus"), "✓ Saved "+d.changed.join(", ")+" to config.json (restart to apply).", true);
+    loadSettings();  // re-read effective values so the panel reflects the save
   }catch(e){ liveFlash($("advancedStatus"), "Save error: "+e); }
 }
 

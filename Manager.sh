@@ -10,7 +10,7 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 STAMP_FILE="$VENV_DIR/.deps-installed"
 # Bump when the required dependency SET changes so existing venvs auto-reinstall.
-DEPS_VERSION="drivers+objectstore+azure-v1"
+DEPS_VERSION="drivers+objectstore+azure+onelake-v1"
 
 ARG_CONTROL_PORT=""
 ARG_CONTROL_HOST=""
@@ -373,8 +373,8 @@ elif [[ $ARG_REINSTALL -eq 1 || ! -f "$STAMP_FILE" || "$(cat "$STAMP_FILE" 2>/de
   step "Upgrading pip"
   "$VENV_PYTHON" -m pip install --upgrade pip --quiet
 
-  step "Installing project dependencies, database drivers, object-store readers, and Azure (Blob + Key Vault) from pyproject.toml"
-  "$VENV_PYTHON" -m pip install -e '.[drivers,objectstore,azureblob,keyvault]' -e ./enterprise --quiet
+  step "Installing project dependencies, database drivers, object-store readers, Azure (Blob + Key Vault), and OneLake (Open Mirroring) from pyproject.toml"
+  "$VENV_PYTHON" -m pip install -e '.[drivers,objectstore,azureblob,keyvault,onelake]' -e ./enterprise --quiet
 
   printf '%s' "$DEPS_VERSION" > "$STAMP_FILE"
   step "Dependencies installed"

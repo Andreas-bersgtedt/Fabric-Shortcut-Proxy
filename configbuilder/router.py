@@ -569,6 +569,69 @@ async def publish_open_mirror(request: Request) -> JSONResponse:
     return JSONResponse({"ok": ok, "dry_run": dry_run, "targets": summary})
 
 
+def _connection_url_for(connection_id: str):
+    """SQLAlchemy URL for a saved connection id (uses the stored/effective URL)."""
+    from sqlalchemy.engine import make_url
+    return make_url(config.effective_db_url(connection_id or "default"))
+
+
+@router.post("/api/open-mirror/list-tables")
+async def open_mirror_list_tables(request: Request) -> JSONResponse:
+    """List tables/views for a SAVED connection id (for the Open Mirror table picker).
+
+    Body: ``{"connection": "source_1"}``. Reflects using the connection's stored
+    URL — no credentials are entered or returned.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - empty body => default connection
+        body = {}
+    connection = str((body or {}).get("connection") or "default").strip() or "default"
+    try:
+        url = _connection_url_for(connection)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    try:
+        async with SchemaReflector(url) as ref:
+            tables = await ref.list_tables()
+    except Exception as exc:  # noqa: BLE001 - surface a clean message to the UI
+        log.warning("open_mirror_list_tables_failed", connection=connection, error=_clean_error(exc))
+        return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "connection": connection, "tables": tables})
+
+
+@router.post("/api/open-mirror/inspect-table")
+async def open_mirror_inspect_table(request: Request) -> JSONResponse:
+    """Detect the key column + columns for one table on a saved connection id.
+
+    Body: ``{"connection": "source_1", "schema": "SalesLT", "name": "Customer"}``.
+    """
+    body = await request.json()
+    body = body if isinstance(body, dict) else {}
+    connection = str(body.get("connection") or "default").strip() or "default"
+    schema = body.get("schema") or None
+    name = body.get("name")
+    if not name:
+        return JSONResponse({"ok": False, "error": "name is required"}, status_code=400)
+    source_table = f"{schema}.{name}" if schema else str(name)
+    try:
+        url = _connection_url_for(connection)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    try:
+        async with SchemaReflector(url) as ref:
+            cols = await ref.columns(source_table)
+            pk = await ref.primary_key(source_table)
+            detected, int_keys = detect_key_column(cols, pk)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("open_mirror_inspect_table_failed", connection=connection, error=_clean_error(exc))
+        return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
+    return JSONResponse({
+        "ok": True, "source_table": source_table, "detected_key": detected,
+        "integer_keys": int_keys, "columns": cols,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Credential store (persist DB credentials so they survive a restart)
 # ---------------------------------------------------------------------------

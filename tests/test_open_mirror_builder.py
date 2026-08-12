@@ -15,6 +15,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+import config
 from configbuilder.router import router as cb_router
 
 
@@ -102,6 +103,35 @@ def test_index_has_open_mirror_tab():
     assert "api/open-mirror/save" in html
     assert "api/open-mirror/preview" in html
     assert "api/open-mirror/publish" in html
+    assert "api/open-mirror/list-tables" in html
+    assert "api/open-mirror/inspect-table" in html
+
+
+async def test_list_and_inspect_tables_for_connection(app, tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, text
+    db = tmp_path / "picker.db"
+    eng = create_engine(f"sqlite:///{db.as_posix()}")
+    with eng.begin() as c:
+        c.execute(text("CREATE TABLE customer (id INTEGER PRIMARY KEY, name TEXT)"))
+        c.execute(text("CREATE TABLE orders (order_id INTEGER PRIMARY KEY, total REAL)"))
+    eng.dispose()
+    monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{db.as_posix()}", raising=False)
+
+    async with _client(app) as c:
+        r = await c.post("/_config/api/open-mirror/list-tables", json={"connection": "default"})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["ok"] is True
+        names = {t["name"] for t in d["tables"]}
+        assert {"customer", "orders"} <= names
+
+        r2 = await c.post("/_config/api/open-mirror/inspect-table",
+                          json={"connection": "default", "name": "customer"})
+        assert r2.status_code == 200
+        d2 = r2.json()
+        assert d2["ok"] is True
+        assert d2["detected_key"] == "id"
+
 
 
 async def test_publish_unknown_target_returns_404(app, tmp_path, monkeypatch):

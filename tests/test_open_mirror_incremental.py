@@ -207,3 +207,122 @@ async def test_scheduler_run_cycle(sqlite_src, monkeypatch):
     results = await run_cycle()
     assert results[0].results[0].action == "initial"
     assert (landing / "dbo.schema" / "sales" / "00000000000000000001.parquet").exists()
+
+
+# --- watermark mode --------------------------------------------------------
+
+import datetime as _dt
+
+from open_mirror.state import decode_watermark, encode_watermark, load_state
+from open_mirror.source import _max_watermark, _select_ordered_sql, _select_since_sql
+from planner.dialects import _MSSQL, _ORACLE, _SQLITE
+
+
+def test_watermark_encode_decode_roundtrip():
+    for v in [7, 3.5, "abc", _dt.datetime(2026, 8, 12, 9, 30), _dt.date(2026, 8, 12), b"\x00\x08"]:
+        assert decode_watermark(encode_watermark(v)) == v
+    assert encode_watermark(None) is None
+    assert decode_watermark(None) is None
+
+
+def test_max_watermark_ignores_nulls():
+    rows = [{"ver": 3}, {"ver": None}, {"ver": 9}, {"ver": 5}]
+    assert _max_watermark(rows, "ver") == 9
+    assert _max_watermark([{"ver": None}], "ver") is None
+
+
+def test_select_since_sql_per_dialect():
+    assert "WHERE \"ver\" > :wm" in _select_since_sql(_SQLITE, '"id"', '"t"', '"ver"', wm_param="wm")
+    assert _select_since_sql(_SQLITE, '"id"', '"t"', '"ver"', wm_param="wm").endswith("LIMIT :max_rows")
+    assert _select_since_sql(_MSSQL, "[id]", "[t]", "[ver]", wm_param="wm").startswith("SELECT TOP (:max_rows)")
+    assert "FETCH FIRST :max_rows ROWS ONLY" in _select_ordered_sql(_ORACLE, '"id"', '"t"', '"ver"')
+
+
+def _seed_wm(path, rows):
+    eng = create_engine(f"sqlite:///{path.as_posix()}")
+    with eng.begin() as c:
+        c.execute(text("CREATE TABLE sales (id INTEGER PRIMARY KEY, name TEXT, ver INTEGER)"))
+        for r in rows:
+            c.execute(text("INSERT INTO sales (id,name,ver) VALUES (:i,:n,:v)"),
+                      {"i": r[0], "n": r[1], "v": r[2]})
+    eng.dispose()
+
+
+@pytest.fixture
+async def sqlite_wm(tmp_path, monkeypatch):
+    db = tmp_path / "wm.db"
+    _seed_wm(db, [(1, "a", 1), (2, "b", 2), (3, "c", 3)])
+    monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{db.as_posix()}", raising=False)
+    monkeypatch.setattr(config, "OPEN_MIRROR_STATE_DIR", str(tmp_path / "state"), raising=False)
+    executor._engine = None
+    executor._sync_engine = None
+    yield tmp_path, db
+    await executor.dispose_engines()
+
+
+def _wm_target(landing):
+    return target_from_dict({
+        "id": "t1", "connection": "default", "landing_zone_root": str(landing), "source_type": "SQL",
+        "tables": [{"name": "sales", "source_table": "sales", "target_table": "sales",
+                    "key_column": "id", "schema": "dbo", "watermark_column": "ver"}],
+    })
+
+
+async def test_watermark_initial_then_incremental_upserts(sqlite_wm):
+    tmp_path, db = sqlite_wm
+    landing = tmp_path / "lz"
+    state_dir = str(tmp_path / "state")
+    target = _wm_target(landing)
+    table = target.tables[0]
+
+    first = await om_source.publish_table(target, table, mode="incremental")
+    assert first.action == "initial" and first.rows == 3
+    assert decode_watermark(load_state(state_dir, target, table).watermark) == 3
+
+    # Bump an existing row's watermark and insert a new higher-watermark row.
+    _apply(db, "UPDATE sales SET name='a2', ver=10 WHERE id=1")
+    _apply(db, "INSERT INTO sales (id,name,ver) VALUES (4,'d',11)")
+
+    inc = await om_source.publish_table(target, table, mode="incremental")
+    assert inc.action == "incremental" and inc.rows == 2  # only ver>3
+
+    change = pq.read_table(landing / "dbo.schema" / "sales" / "00000000000000000002.parquet")
+    assert change.schema.names[-1] == ROW_MARKER_COLUMN
+    assert set(change.column(ROW_MARKER_COLUMN).to_pylist()) == {RowMarker.UPSERT}
+    assert decode_watermark(load_state(state_dir, target, table).watermark) == 11
+
+
+async def test_watermark_no_new_rows_is_noop(sqlite_wm):
+    tmp_path, db = sqlite_wm
+    landing = tmp_path / "lz"
+    target = _wm_target(landing)
+    table = target.tables[0]
+    await om_source.publish_table(target, table)          # initial (watermark=3)
+    noop = await om_source.publish_table(target, table)   # nothing past 3
+    assert noop.action == "noop"
+
+
+async def test_watermark_does_not_detect_deletes(sqlite_wm):
+    tmp_path, db = sqlite_wm
+    landing = tmp_path / "lz"
+    target = _wm_target(landing)
+    table = target.tables[0]
+    await om_source.publish_table(target, table)          # initial, watermark=3
+    _apply(db, "DELETE FROM sales WHERE id=2")            # a delete a watermark query can't see
+    res = await om_source.publish_table(target, table)
+    assert res.action == "noop"                           # no delete emitted
+    assert not (landing / "dbo.schema" / "sales" / "00000000000000000002.parquet").exists()
+
+
+async def test_watermark_invalid_column_errors(sqlite_wm):
+    tmp_path, db = sqlite_wm
+    landing = tmp_path / "lz"
+    target = target_from_dict({
+        "id": "t1", "connection": "default", "landing_zone_root": str(landing), "source_type": "SQL",
+        "tables": [{"name": "sales", "source_table": "sales", "target_table": "sales",
+                    "key_column": "id", "watermark_column": "nope"}],
+    })
+    result = await om_source.publish_target(target)
+    assert result.results[0].action == "error"
+    assert "nope" in (result.results[0].error or "")
+

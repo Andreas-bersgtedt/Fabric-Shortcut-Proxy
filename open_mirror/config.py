@@ -49,6 +49,7 @@ class OpenMirrorTableTarget:
     key_column: str
     schema: str | None = None
     mode: str = "incremental"
+    watermark_column: str | None = None
     enabled: bool = True
 
     @property
@@ -86,6 +87,7 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
     target_table = str(d.get("target_table") or name).strip()
     schema = str(d["schema"]).strip() if d.get("schema") else None
     mode = str(d.get("mode") or "incremental").strip().lower()
+    watermark_column = str(d["watermark_column"]).strip() if d.get("watermark_column") else None
     return OpenMirrorTableTarget(
         name=name,
         source_table=source_table,
@@ -93,6 +95,7 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
         key_column=key_column,
         schema=schema,
         mode=mode,
+        watermark_column=watermark_column,
         enabled=bool(d.get("enabled", True)),
     )
 

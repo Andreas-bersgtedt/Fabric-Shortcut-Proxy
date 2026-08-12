@@ -11,6 +11,7 @@ local directory (default ``./.open_mirror_state``), one JSON file per table.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import json
 import os
@@ -19,6 +20,48 @@ from dataclasses import dataclass, field
 from open_mirror.config import OpenMirrorTableTarget, OpenMirrorTarget
 
 DEFAULT_STATE_DIR = "./.open_mirror_state"
+
+
+def encode_watermark(value):
+    """Serialize a watermark value with a type tag so it survives JSON + restart."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return {"t": "int", "v": int(value)}
+    if isinstance(value, int):
+        return {"t": "int", "v": value}
+    if isinstance(value, float):
+        return {"t": "float", "v": value}
+    if isinstance(value, _dt.datetime):
+        return {"t": "datetime", "v": value.isoformat()}
+    if isinstance(value, _dt.date):
+        return {"t": "date", "v": value.isoformat()}
+    if isinstance(value, (bytes, bytearray)):
+        return {"t": "bytes", "v": bytes(value).hex()}
+    return {"t": "str", "v": str(value)}
+
+
+def decode_watermark(stored):
+    """Rebuild a watermark value (for SQL binding) from its stored tagged form."""
+    if not isinstance(stored, dict):
+        return None
+    t, v = stored.get("t"), stored.get("v")
+    if v is None:
+        return None
+    try:
+        if t == "int":
+            return int(v)
+        if t == "float":
+            return float(v)
+        if t == "datetime":
+            return _dt.datetime.fromisoformat(str(v))
+        if t == "date":
+            return _dt.date.fromisoformat(str(v))
+        if t == "bytes":
+            return bytes.fromhex(str(v))
+    except (ValueError, TypeError):
+        return None
+    return str(v)
 
 
 def _canon(value) -> str:
@@ -41,17 +84,27 @@ def key_string(row: dict, key_columns: list[str]) -> str:
 
 @dataclass
 class PublishState:
-    """Last-published snapshot: key-string -> {"h": row_hash, "k": [key values]}."""
+    """Last-published snapshot: key-string -> {"h": row_hash, "k": [key values]}.
+
+    In watermark mode ``keys`` is empty and ``watermark`` holds the tagged
+    last-seen value of the source's monotonic column instead.
+    """
 
     keys: dict[str, dict] = field(default_factory=dict)
+    watermark: dict | None = None
 
     def to_json(self) -> dict:
-        return {"version": 1, "keys": self.keys}
+        out = {"version": 1, "keys": self.keys}
+        if self.watermark is not None:
+            out["watermark"] = self.watermark
+        return out
 
     @classmethod
     def from_json(cls, data: dict) -> "PublishState":
         keys = data.get("keys") if isinstance(data, dict) else None
-        return cls(keys=keys if isinstance(keys, dict) else {})
+        wm = data.get("watermark") if isinstance(data, dict) else None
+        return cls(keys=keys if isinstance(keys, dict) else {},
+                   watermark=wm if isinstance(wm, dict) else None)
 
 
 def _slug(text: str) -> str:

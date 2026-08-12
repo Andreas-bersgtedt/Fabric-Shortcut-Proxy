@@ -18,17 +18,20 @@ from dataclasses import dataclass, field
 import config
 from db.executor import derive_table_schema, execute_split_query
 from observability.logging import get_logger
-from open_mirror.changes import compute_changes
+from open_mirror.changes import RowMarker, compute_changes
 from open_mirror.config import OpenMirrorTableTarget, OpenMirrorTarget
 from open_mirror.landing_zone import LandingZoneBackend, open_landing_zone
 from open_mirror.publisher import LandingZonePublisher
 from open_mirror.state import (
     build_state_from_rows,
+    decode_watermark,
     delete_state,
+    encode_watermark,
     load_published_tables,
     load_state,
     save_published_tables,
     save_state,
+    PublishState,
 )
 from planner.dialects import get_dialect
 
@@ -85,6 +88,68 @@ def _select_all_sql(dialect, projected: str, source: str, *, max_rows_param: str
             f"QUALIFY ROW_NUMBER() OVER (ORDER BY 1) <= :{max_rows_param}"
         )
     return f"SELECT {projected} FROM {source} LIMIT :{max_rows_param}"
+
+
+def _select_ordered_sql(dialect, projected: str, source: str, order_col: str, *,
+                        max_rows_param: str = _MAX_ROWS_PARAM) -> str:
+    """Bounded full-table read ordered by the watermark column (initial load)."""
+    name = getattr(dialect, "name", "generic")
+    order = f"ORDER BY {order_col}"
+    if name == "mssql":
+        return f"SELECT TOP (:{max_rows_param}) {projected} FROM {source} {order}"
+    if name == "oracle":
+        return f"SELECT {projected} FROM {source} {order} FETCH FIRST :{max_rows_param} ROWS ONLY"
+    if name == "teradata":
+        return (f"SELECT {projected} FROM {source} "
+                f"QUALIFY ROW_NUMBER() OVER ({order}) <= :{max_rows_param} {order}")
+    return f"SELECT {projected} FROM {source} {order} LIMIT :{max_rows_param}"
+
+
+def _select_since_sql(dialect, projected: str, source: str, order_col: str, *,
+                      wm_param: str, max_rows_param: str = _MAX_ROWS_PARAM) -> str:
+    """Bounded read of rows whose watermark is greater than the last seen value."""
+    name = getattr(dialect, "name", "generic")
+    where = f"WHERE {order_col} > :{wm_param}"
+    order = f"ORDER BY {order_col}"
+    if name == "mssql":
+        return f"SELECT TOP (:{max_rows_param}) {projected} FROM {source} {where} {order}"
+    if name == "oracle":
+        return f"SELECT {projected} FROM {source} {where} {order} FETCH FIRST :{max_rows_param} ROWS ONLY"
+    if name == "teradata":
+        return (f"SELECT {projected} FROM {source} {where} "
+                f"QUALIFY ROW_NUMBER() OVER ({order}) <= :{max_rows_param} {order}")
+    return f"SELECT {projected} FROM {source} {where} {order} LIMIT :{max_rows_param}"
+
+
+async def _read_rows_watermark(
+    source_table: str,
+    columns: list["config.ColumnDef"],
+    connection: str,
+    watermark_column: str,
+    last_watermark,
+    *,
+    max_rows: int | None = None,
+) -> list[dict]:
+    dialect = get_dialect(config.effective_db_url(connection))
+    projected = ", ".join(dialect.quote(col.name) for col in columns)
+    source = dialect.quote_qualified(source_table)
+    order_col = dialect.quote(watermark_column)
+    limit = max_rows if max_rows is not None else config.effective_query_max_rows(connection)
+    if last_watermark is None:
+        sql = _select_ordered_sql(dialect, projected, source, order_col)
+        params = {_MAX_ROWS_PARAM: limit}
+    else:
+        sql = _select_since_sql(dialect, projected, source, order_col, wm_param="wm")
+        params = {_MAX_ROWS_PARAM: limit, "wm": last_watermark}
+    return await execute_split_query(sql, params, split_index=0, connection=connection)
+
+
+def _max_watermark(rows, watermark_column: str):
+    vals = [r.get(watermark_column) for r in rows if r.get(watermark_column) is not None]
+    try:
+        return max(vals) if vals else None
+    except TypeError:  # mixed/uncomparable types — fall back to the last row's value
+        return vals[-1] if vals else None
 
 
 async def _read_source_rows(
@@ -145,6 +210,15 @@ async def publish_table(
     key_columns = table.key_columns
 
     columns = await derive_table_schema(table.source_table, connection)
+
+    # Watermark mode: read only rows past the last-seen monotonic value (upserts;
+    # deletes are not visible to a watermark query — use snapshot mode for those).
+    if table.watermark_column:
+        return await _publish_watermark(
+            target, table, columns, publisher, mode=mode, dry_run=dry_run,
+            max_rows=max_rows, state_dir=state_dir,
+        )
+
     rows = await _read_source_rows(table.source_table, columns, connection, max_rows=max_rows)
 
     if publisher is None:
@@ -183,6 +257,71 @@ async def publish_table(
     return PublishResult(target.id, table.name, action="incremental", rows=batch.total,
                          inserts=batch.inserts, updates=batch.updates, deletes=batch.deletes,
                          path=path, columns=columns)
+
+
+# ---------------------------------------------------------------------------
+# Watermark-mode publish (source-side high-water mark; upsert-only)
+# ---------------------------------------------------------------------------
+
+async def _publish_watermark(
+    target: OpenMirrorTarget,
+    table: OpenMirrorTableTarget,
+    columns,
+    publisher: LandingZonePublisher | None,
+    *,
+    mode: str,
+    dry_run: bool,
+    max_rows: int | None,
+    state_dir: str,
+) -> "PublishResult":
+    wm_col = table.watermark_column
+    if wm_col not in {c.name for c in columns}:
+        raise ValueError(
+            f"watermark_column {wm_col!r} is not a column of {table.source_table!r}"
+        )
+
+    if publisher is None:
+        backend = open_landing_zone(target.landing_zone_root)
+        publisher = LandingZonePublisher(backend, target)
+
+    prev = load_state(state_dir, target, table)
+    last_wm = decode_watermark(prev.watermark) if prev else None
+    do_initial = mode == "initial" or prev is None or last_wm is None
+
+    read_from = None if do_initial else last_wm
+    rows = await _read_rows_watermark(
+        table.source_table, columns, target.connection_id, wm_col, read_from, max_rows=max_rows,
+    )
+    new_wm = _max_watermark(rows, wm_col)
+
+    if do_initial:
+        if dry_run:
+            return PublishResult(target.id, table.name, action="dry_run", rows=len(rows),
+                                 inserts=len(rows), columns=columns)
+        publisher.ensure_partner_events()
+        path = publisher.publish_initial_load(table, rows, columns)
+        save_state(state_dir, target, table, PublishState(watermark=encode_watermark(new_wm)))
+        log.info("open_mirror_initial_watermark", target=target.id, table=table.name,
+                 rows=len(rows), watermark=str(new_wm), path=path)
+        return PublishResult(target.id, table.name, action="initial", rows=len(rows),
+                             inserts=len(rows), path=path, columns=columns)
+
+    if not rows:
+        return PublishResult(target.id, table.name, action="noop", rows=0, columns=columns)
+
+    if dry_run:
+        return PublishResult(target.id, table.name, action="dry_run", rows=len(rows),
+                             updates=len(rows), columns=columns)
+
+    publisher.ensure_partner_events()
+    markers = [RowMarker.UPSERT] * len(rows)
+    path = publisher.publish_changes(table, rows, markers, columns)
+    # Retry-safe: advance the watermark only AFTER the change file is written.
+    save_state(state_dir, target, table, PublishState(watermark=encode_watermark(new_wm or last_wm)))
+    log.info("open_mirror_incremental_watermark", target=target.id, table=table.name,
+             upserts=len(rows), watermark=str(new_wm or last_wm), path=path)
+    return PublishResult(target.id, table.name, action="incremental", rows=len(rows),
+                         updates=len(rows), path=path, columns=columns)
 
 
 # ---------------------------------------------------------------------------

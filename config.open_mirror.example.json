@@ -19,7 +19,9 @@
             "target_table": "sales",
             "key_column": "id",
             "schema": "dbo",
-            "mode": "incremental"
+            "mode": "incremental",
+            "_comment_watermark": "Optional: set 'watermark_column' to a monotonic id/timestamp/rowversion for efficient incremental (reads only rows past the last value; upsert-only, no deletes). Omit it for a full snapshot diff that also detects deletes.",
+            "watermark_column": "ModifiedDate"
           }
         ]
       }

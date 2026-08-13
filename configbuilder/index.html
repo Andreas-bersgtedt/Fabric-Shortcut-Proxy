@@ -484,7 +484,18 @@
     <input id="omId" placeholder="fabric-sales" />
     <label>Source connection <span class="hint">(the source database engine — from the Connection tab)</span></label>
     <select id="omConnection"></select>
-    <label>Landing zone root</label>
+    <label>Fabric workspace <span class="hint">(browse via the proxy's Entra identity — no URL pasting)</span></label>
+    <div class="row">
+      <div><input id="omWsFilter" placeholder="Filter workspaces…" /></div>
+      <div style="display:flex;gap:6px;">
+        <select id="omWorkspace" style="flex:1;"><option value="">— Load workspaces —</option></select>
+        <button class="btn ghost" id="btnLoadWorkspaces" type="button" title="List Fabric workspaces">🔄</button>
+      </div>
+    </div>
+    <label>Mirrored database</label>
+    <select id="omMirroredDb"><option value="">— pick a workspace first —</option></select>
+    <div class="status" id="omFabricStatus"></div>
+    <label>Landing zone root <span class="hint">(auto-filled from the picker, or paste/edit)</span></label>
     <input id="omLandingRoot" placeholder="https://onelake.dfs.fabric.microsoft.com/&lt;workspace-id&gt;/&lt;mirrored-db-id&gt;/Files/LandingZone" />
     <div class="hint" id="omRootHint" style="margin:-6px 0 10px;">The mirrored database's OneLake landing zone URL (or a local staging directory for now).</div>
     <div class="row">
@@ -2512,6 +2523,58 @@ function omPickOptions(tb){
   return opts;
 }
 
+// ---- Fabric workspace / mirrored-database pickers (via the proxy identity) ----
+async function omLoadWorkspaces(){
+  const s = $("omFabricStatus"); s.className="status"; s.textContent="Loading workspaces…";
+  try{
+    const r = await fetch("/_config/api/open-mirror/fabric/workspaces",{cache:"no-store"});
+    const d = await r.json();
+    if(!r.ok || !d.ok){ s.className="status err"; s.textContent="✗ "+((d&&d.error)||"could not list workspaces"); return; }
+    state.om.workspaces = d.workspaces||[];
+    omRenderWorkspaceOptions($("omWsFilter").value||"");
+    s.className="status ok"; s.textContent="Found "+state.om.workspaces.length+" workspace(s). Filter and pick one.";
+  }catch(e){ s.className="status err"; s.textContent="Request failed."; }
+}
+
+function omRenderWorkspaceOptions(filter){
+  const sel = $("omWorkspace"); if(!sel) return;
+  const f = (filter||"").toLowerCase();
+  const list = (state.om.workspaces||[]).filter(w=>!f
+    || String(w.name).toLowerCase().includes(f) || String(w.id).toLowerCase().includes(f));
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">— select workspace (${list.length}) —</option>`
+    + list.map(w=>`<option value="${omEsc(w.id)}">${omEsc(w.name)}</option>`).join("");
+  if(cur && list.some(w=>w.id===cur)) sel.value = cur;
+}
+
+async function omLoadMirroredDbs(wsId){
+  const sel = $("omMirroredDb"); const s = $("omFabricStatus");
+  if(!wsId){ sel.innerHTML = `<option value="">— pick a workspace first —</option>`; return; }
+  s.className="status"; s.textContent="Loading mirrored databases…";
+  try{
+    const r = await fetch("/_config/api/open-mirror/fabric/workspaces/"+encodeURIComponent(wsId)+"/mirrored-databases",{cache:"no-store"});
+    const d = await r.json();
+    if(!r.ok || !d.ok){ s.className="status err"; s.textContent="✗ "+((d&&d.error)||"could not list mirrored databases"); return; }
+    state.om.mirroredDbs = d.mirrored_databases||[];
+    sel.innerHTML = `<option value="">— select mirrored database (${state.om.mirroredDbs.length}) —</option>`
+      + state.om.mirroredDbs.map(x=>`<option value="${omEsc(x.id)}">${omEsc(x.name)}</option>`).join("");
+    s.className="status ok"; s.textContent="Found "+state.om.mirroredDbs.length+" mirrored database(s). Pick one to set the landing zone.";
+  }catch(e){ s.className="status err"; s.textContent="Request failed."; }
+}
+
+function omPickMirroredDb(dbId){
+  const db = (state.om.mirroredDbs||[]).find(x=>x.id===dbId); if(!db) return;
+  $("omLandingRoot").value = db.landing_zone_root||"";
+  $("omWorkspaceId").value = db.workspace_id||"";
+  $("omDbId").value = db.id||"";
+  if(state.om.editing){
+    state.om.editing.landing_zone_root = db.landing_zone_root||"";
+    state.om.editing.workspace_id = db.workspace_id||"";
+    state.om.editing.mirrored_database_id = db.id||"";
+  }
+  const s = $("omFabricStatus"); s.className="status ok"; s.textContent="Landing zone set from “"+db.name+"”.";
+}
+
 async function omLoadTables(){
   const s = $("omTablesStatus"); const conn = $("omConnection").value || "default";
   s.className="status"; s.textContent="Loading tables from "+conn+"…";
@@ -2677,6 +2740,10 @@ function omInit(){
   wire("btnDryRunOm", ()=>omPublish(true));
   wire("btnPublishOm", ()=>omPublish(false));
   wire("btnLoadOmTables", omLoadTables);
+  wire("btnLoadWorkspaces", omLoadWorkspaces);
+  const wsFilter = $("omWsFilter"); if(wsFilter) wsFilter.addEventListener("input", ()=>omRenderWorkspaceOptions(wsFilter.value));
+  const wsSel = $("omWorkspace"); if(wsSel) wsSel.addEventListener("change", ()=>omLoadMirroredDbs(wsSel.value));
+  const dbSel = $("omMirroredDb"); if(dbSel) dbSel.addEventListener("change", ()=>omPickMirroredDb(dbSel.value));
   wire("btnAddOmTable", ()=>{ if(!state.om.editing) state.om.editing=omNewTarget();
     state.om.editing.tables.push(omNewTable()); omRenderTableRows(); });
   // Changing the source connection invalidates the loaded table list.

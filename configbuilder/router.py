@@ -13,6 +13,7 @@ The generated ``config.json`` is assembled client-side from these responses.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import pathlib
 
@@ -630,6 +631,47 @@ async def open_mirror_inspect_table(request: Request) -> JSONResponse:
         "ok": True, "source_table": source_table, "detected_key": detected,
         "integer_keys": int_keys, "columns": cols,
     })
+
+
+def _clean_fabric_error(exc: Exception) -> str:
+    """Redact secrets and add an install hint when azure-identity is missing."""
+    msg = config.redact_db_url(str(exc))
+    low = msg.lower()
+    if "azure-identity" in low or "azure.identity" in low or "no module named 'azure" in low:
+        msg += ("\nHint: install the OneLake extra so the proxy can call Fabric: "
+                "pip install 'fabric-shortcut-proxy[onelake]'.")
+    return msg[:400]
+
+
+@router.get("/api/open-mirror/fabric/workspaces")
+async def open_mirror_fabric_workspaces() -> JSONResponse:
+    """List Fabric workspaces visible to the proxy's Entra identity (Open Mirror picker)."""
+    from open_mirror.fabric_api import FabricApiError, list_workspaces
+    try:
+        workspaces = await asyncio.to_thread(list_workspaces)
+    except FabricApiError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001 - surface a clean message (e.g. SDK missing)
+        log.warning("open_mirror_fabric_workspaces_failed", error=str(exc))
+        return JSONResponse({"ok": False, "error": _clean_fabric_error(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "workspaces": workspaces})
+
+
+@router.get("/api/open-mirror/fabric/workspaces/{workspace_id}/mirrored-databases")
+async def open_mirror_fabric_mirrored_dbs(workspace_id: str) -> JSONResponse:
+    """List mirrored databases in a workspace, each with its computed landing-zone root."""
+    from open_mirror.fabric_api import FabricApiError, list_mirrored_databases
+    wsid = (workspace_id or "").strip()
+    if not wsid:
+        return JSONResponse({"ok": False, "error": "workspace_id is required"}, status_code=400)
+    try:
+        dbs = await asyncio.to_thread(list_mirrored_databases, wsid)
+    except FabricApiError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("open_mirror_fabric_mirrored_dbs_failed", workspace=wsid, error=str(exc))
+        return JSONResponse({"ok": False, "error": _clean_fabric_error(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "workspace_id": wsid, "mirrored_databases": dbs})
 
 
 # ---------------------------------------------------------------------------

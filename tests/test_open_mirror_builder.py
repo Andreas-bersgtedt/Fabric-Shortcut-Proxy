@@ -105,6 +105,8 @@ def test_index_has_open_mirror_tab():
     assert "api/open-mirror/publish" in html
     assert "api/open-mirror/list-tables" in html
     assert "api/open-mirror/inspect-table" in html
+    assert "api/open-mirror/fabric/workspaces" in html
+    assert 'id="omMirroredDb"' in html
 
 
 async def test_list_and_inspect_tables_for_connection(app, tmp_path, monkeypatch):

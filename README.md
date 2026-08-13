@@ -451,6 +451,27 @@ Each table gets its own deterministic snapshot lineage, format-specific metadata
 and on-demand Parquet splits. Create one Fabric shortcut per table pointing at its
 canonical table prefix.
 
+## Open Mirroring publisher
+
+Beyond the shortcut/virtualization path, the proxy can **push** selected tables into a
+Microsoft Fabric [Open Mirroring](https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format)
+landing zone — so one deployment can both virtualize a source *and* replicate tables into OneLake.
+
+- **Reuses your source connectors.** Targets live in `config.open_mirror.json` and bind to an
+  existing connection id (from `config.connection.json`); the source engine is unchanged.
+- **Landing-zone writer.** Emits `_metadata.json` (`keyColumns`), an optional `_partnerEvents.json`,
+  and 20-digit numbered Parquet files with a trailing `__rowMarker__` column for incremental changes.
+- **Incremental.** Snapshot-diff (insert/update/delete) by default, or set a monotonic
+  `watermark_column` per table for efficient `WHERE wm > :last` upserts on large tables.
+- **OneLake auth.** Writes authenticate with the proxy's **own Entra identity** (the Key Vault
+  service principal / managed identity / default credential); no separate secret.
+- **Config-builder Open Mirror tab.** Pick source tables (key auto-detected), set a watermark,
+  and **browse Fabric workspaces + mirrored databases** so the landing-zone URL fills itself in.
+  Publish on a schedule (`OPEN_MIRROR_PUBLISH`) or on demand with **Publish now** / **Dry run**.
+
+Run the manager with the OneLake dependency (`Manager.sh` / `Manager.ps1` install the `onelake`
+extra automatically), enable the config UI, and configure a target on the **Open Mirror** tab.
+
 ## Key environment variables
 
 | Variable              | Default                                  | Description                         |
@@ -486,6 +507,11 @@ canonical table prefix.
 | `AUTO_REFRESH`        | `0`                                      | Re-read the source and publish a new snapshot when data changes (see [CONFIGURATION.md](docs/CONFIGURATION.md) §12) |
 | `ENABLE_MONITOR`      | `0`                                      | Serve the read-only monitoring dashboard at `/_monitor/` (local admin only) |
 | `REQUEST_TRACE`       | `1`                                      | Record the Fabric request timeline (powers `/_admin/timeline` + the monitor) |
+| `OPEN_MIRROR_PUBLISH` | `0`                                      | Manager: run the background Open Mirroring publish loop (`config.open_mirror.json` targets) |
+| `OPEN_MIRROR_INTERVAL_SECONDS` | `300`                           | Seconds between Open Mirroring publish cycles when the loop is on |
+| `OPEN_MIRROR_MODE`    | `incremental`                            | Publish mode: `incremental` (diff / watermark via `__rowMarker__`) or `initial` (full insert) |
+| `OPEN_MIRROR_MAX_ROWS` | `0`                                     | Per-table row cap per cycle (0 = the connection's `query_max_rows`) |
+| `OPEN_MIRROR_STATE_DIR` | `./.open_mirror_state`                 | Local, gitignored change-tracking state (kept outside the landing zone) |
 
 > This is a curated subset. **Every** setting, with defaults, categories, and help
 > text, is documented in [CONFIGURATION.md](docs/CONFIGURATION.md) and browsable in the

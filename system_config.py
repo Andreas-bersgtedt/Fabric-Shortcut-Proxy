@@ -159,6 +159,26 @@ ENABLE_CREDENTIAL_STORE: bool = _get_bool("ENABLE_CREDENTIAL_STORE", "enable_cre
 CREDENTIAL_STORE_PATH: str = _get_str("CREDENTIAL_STORE_PATH", "credential_store_path", "")
 
 # ---------------------------------------------------------------------------
+# Open Mirroring publisher (config.open_mirror.json targets)
+# ---------------------------------------------------------------------------
+
+# Run the background publish loop on the Manager: periodically read each target's
+# source tables and push initial/incremental batches into the Fabric landing zone.
+# Off by default (publishing is also available on demand via the config builder).
+OPEN_MIRROR_PUBLISH: bool = _get_bool("OPEN_MIRROR_PUBLISH", "open_mirror_publish", False)
+# Seconds between publish cycles when the loop is enabled.
+OPEN_MIRROR_INTERVAL_SECONDS: int = _get_int("OPEN_MIRROR_INTERVAL_SECONDS", "open_mirror_interval_seconds", 300)
+# Publish mode: "incremental" (diff against the last snapshot via __rowMarker__) or
+# "initial" (always a full insert batch, no markers).
+OPEN_MIRROR_MODE: str = _get_str("OPEN_MIRROR_MODE", "open_mirror_mode", "incremental").strip().lower()
+# Directory for the incremental change-tracking state (key -> row hash per table).
+# Kept OUTSIDE the landing zone so Fabric never sees it. Gitignored.
+OPEN_MIRROR_STATE_DIR: str = _get_str("OPEN_MIRROR_STATE_DIR", "open_mirror_state_dir", "./.open_mirror_state")
+# Per-table row cap per cycle (0 = the connection's query_max_rows default).
+OPEN_MIRROR_MAX_ROWS: int = _get_int("OPEN_MIRROR_MAX_ROWS", "open_mirror_max_rows", 0)
+
+
+# ---------------------------------------------------------------------------
 # Entra ID auth & Azure Key Vault (issue #16)
 # ---------------------------------------------------------------------------
 

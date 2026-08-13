@@ -41,6 +41,9 @@ config.json
 # Artifact store (Phase 0 - local backend default dir)
 .artifacts/
 
+# Open Mirroring incremental change-tracking state (local, per target/table)
+.open_mirror_state/
+
 # C++ Agent build artifacts (Phase 6 - source is committed, binaries are not)
 agent-cpp/*.exe
 agent-cpp/*.obj
@@ -69,6 +72,7 @@ config.performance.json
 config.freshness.json
 config.tables.json
 config.mounts.json
+config.open_mirror.json
 *.env
 .env.local
 secrets.json

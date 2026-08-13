@@ -146,6 +146,7 @@
 <div class="tabs">
   <button class="tab-btn active" data-tab="connection">Connection</button>
   <button class="tab-btn" data-tab="tables">Tables</button>
+  <button class="tab-btn" data-tab="openmirror">Open Mirror</button>
   <button class="tab-btn" data-tab="storage">Storage</button>
   <button class="tab-btn" data-tab="settings">Settings</button>
   <button class="tab-btn" data-tab="advanced">Advanced</button>
@@ -458,6 +459,70 @@
       </div>
       <div class="status" id="akEditStatus"></div>
     </div>
+  </div>
+</div>
+<!-- OPEN MIRROR TAB -->
+<div id="openmirror-tab" class="tab-content">
+  <div class="card">
+    <h2>Open Mirroring Targets</h2>
+    <div class="hint" style="margin-bottom:12px;">Push source tables into a Microsoft Fabric <b>Open Mirroring</b> landing zone. Each target reuses an existing <b>source connection</b> (configured on the <b>Connection</b> tab) and writes Parquet data files plus <code>_metadata.json</code> to the mirrored database's landing zone. Saved to <code>config.open_mirror.json</code>; applies on the next restart. See the <a href="https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format" target="_blank" rel="noopener">landing-zone format</a>.</div>
+    <div id="omList" class="connlist"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn ghost" id="btnAddOmTarget">+ Add target</button>
+      <button class="btn primary" id="btnSaveOm">💾 Save targets to config</button>
+      <button class="btn ghost" id="btnDryRunOm" title="Read the source and report the change set without writing">Dry run</button>
+      <button class="btn ghost" id="btnPublishOm" title="Publish saved targets into the landing zone now">▶ Publish now</button>
+    </div>
+    <div class="hint" style="margin-top:6px;">Publish reads the <b>saved</b> targets (save first). OneLake targets need the <code>onelake</code> extra installed and the proxy's Entra identity configured.</div>
+    <div class="status" id="omStatus"></div>
+    <pre id="omPublishOut" style="display:none;"></pre>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2 id="omEditTitle">Edit target</h2>
+    <label>Target id</label>
+    <input id="omId" placeholder="fabric-sales" />
+    <label>Source connection <span class="hint">(the source database engine — from the Connection tab)</span></label>
+    <select id="omConnection"></select>
+    <label>Fabric workspace <span class="hint">(browse via the proxy's Entra identity — no URL pasting)</span></label>
+    <div class="row">
+      <div><input id="omWsFilter" placeholder="Filter workspaces…" /></div>
+      <div style="display:flex;gap:6px;">
+        <select id="omWorkspace" style="flex:1;"><option value="">— Load workspaces —</option></select>
+        <button class="btn ghost" id="btnLoadWorkspaces" type="button" title="List Fabric workspaces">🔄</button>
+      </div>
+    </div>
+    <label>Mirrored database</label>
+    <select id="omMirroredDb"><option value="">— pick a workspace first —</option></select>
+    <div class="status" id="omFabricStatus"></div>
+    <label>Landing zone root <span class="hint">(auto-filled from the picker, or paste/edit)</span></label>
+    <input id="omLandingRoot" placeholder="https://onelake.dfs.fabric.microsoft.com/&lt;workspace-id&gt;/&lt;mirrored-db-id&gt;/Files/LandingZone" />
+    <div class="hint" id="omRootHint" style="margin:-6px 0 10px;">The mirrored database's OneLake landing zone URL (or a local staging directory for now).</div>
+    <div class="row">
+      <div><label>Workspace id</label><input id="omWorkspaceId" placeholder="(optional)" /></div>
+      <div><label>Mirrored database id</label><input id="omDbId" placeholder="(optional)" /></div>
+    </div>
+    <div class="row">
+      <div><label>Partner name</label><input id="omPartner" placeholder="FabricShortcutProxy" /></div>
+      <div><label>Source type</label><input id="omSourceType" placeholder="SQL" /></div>
+    </div>
+    <div class="checkbox" style="margin:10px 0;"><input type="checkbox" id="omEnabled" checked /><span>Enabled</span></div>
+
+    <h2 style="margin-top:8px;">Tables</h2>
+    <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. Set a <b>watermark column</b> (a monotonic id/timestamp/rowversion) for efficient incremental (reads only rows past the last value; upsert-only, no deletes). Leave it blank for a full snapshot diff (detects inserts/updates/deletes).</div>
+    <div class="actions" style="margin-bottom:8px;">
+      <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">🔄 Load tables from source</button>
+      <span class="status" id="omTablesStatus" style="margin:0 0 0 4px;display:inline-block;"></span>
+    </div>
+    <div id="omTableRows"></div>
+    <button class="btn ghost" id="btnAddOmTable" style="margin-top:8px;">+ Add table</button>
+
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn primary" id="btnApplyOmTarget">Add / update target</button>
+      <button class="btn ghost" id="btnPreviewOm">Preview layout</button>
+    </div>
+    <div class="status" id="omEditStatus"></div>
+    <pre id="omPreview" style="display:none;"></pre>
   </div>
 </div>
 <div id="settings-tab" class="tab-content">
@@ -931,6 +996,7 @@ function applyBootstrap(builder){
   writeFormFromConn(active);
   renderConnList();
   renderSelected();
+  if(typeof omOnBootstrap === "function") omOnBootstrap(builder);
   saveForm();
   persistConns();
 }
@@ -1734,6 +1800,14 @@ async function loadSettings(){
     const d = await r.json();
     state.settings = (d.settings||[]).filter(s=>!SETTINGS_EXCLUDE.has(s.key));
   }catch(e){ state.settings = []; }
+  // Effective values (env/file/default) so the panel reflects what is persisted,
+  // not just the built-in defaults — otherwise saved settings look "not sticky".
+  try{
+    const rc = await fetch("/_config/api/current", {cache:"no-store"});
+    const dc = await rc.json();
+    state.effective = {};
+    (dc.settings||[]).forEach(s=>{ state.effective[s.key] = s; });
+  }catch(e){ state.effective = state.effective || {}; }
   renderSettings();
 }
 function renderSettings(){
@@ -1763,6 +1837,12 @@ function renderSettings(){
       inp.placeholder = s.secret ? "•••• (leave blank to keep)" : ("default: "+String(s.default));
     }
     inp.dataset.key=s.key; inp.dataset.type=s.type; inp.dataset.default=String(s.default);
+    // Prefill with the current effective value so a saved override shows through.
+    const eff = (state.effective||{})[s.key];
+    if(eff && eff.source && eff.source!=="default" && !s.secret && eff.value!==null && eff.value!==undefined){
+      if(s.type==="bool") inp.value = (eff.value===true || String(eff.value)==="true") ? "true" : "false";
+      else inp.value = String(eff.value);
+    }
     inp.addEventListener("input", updatePreview); inp.addEventListener("change", updatePreview);
     const help=document.createElement("div"); help.className="sethelp"; help.textContent=s.help||"";
     row.append(lab, inp, help); wrap.appendChild(row);
@@ -2346,6 +2426,340 @@ async function removeAccessKey(id){
   await loadAccessKeys();
 }
 
+// ---- Open Mirroring targets (config.open_mirror.json) ----
+if(!state.om) state.om = { targets: [], editing: null };
+function omEsc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", watermark_column:"" }; }
+function omNewTarget(){ return { id:"", connection:"default", landing_zone_root:"", workspace_id:"",
+  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, tables:[ omNewTable() ] }; }
+
+function omRenderConnectionOptions(){
+  const sel = $("omConnection"); if(!sel) return;
+  const ids = Array.from(state.connections.keys());
+  const want = (state.om.editing && state.om.editing.connection) || sel.value || "default";
+  sel.innerHTML = ids.map(id=>`<option value="${omEsc(id)}">${omEsc(id)}</option>`).join("");
+  sel.value = ids.includes(want) ? want : (ids[0] || "default");
+}
+
+function omRenderList(){
+  const box = $("omList"); if(!box) return;
+  const ts = state.om.targets;
+  if(!ts.length){ box.innerHTML = `<div class="hint">No targets yet. Click <b>+ Add target</b> to create one.</div>`; return; }
+  box.innerHTML = "";
+  ts.forEach((t,i)=>{
+    const row = document.createElement("div"); row.className="connrow";
+    const tables = (t.tables||[]).map(x=>x.name||x.target_table||x.source_table).filter(Boolean).join(", ");
+    row.innerHTML = `<div><div class="cid">${omEsc(t.id||"(unnamed)")} `
+      + `<span class="badge ${t.enabled!==false?"ok":""}">${t.enabled!==false?"enabled":"disabled"}</span></div>`
+      + `<div class="meta">→ ${omEsc(t.connection||"default")} · ${omEsc(t.landing_zone_root||"")}`
+      + (tables?` · tables: ${omEsc(tables)}`:"")+`</div></div>`
+      + `<div class="connacts"><button class="iconbtn" data-i="${i}" data-act="edit" title="Edit">✎</button>`
+      + `<button class="iconbtn" data-i="${i}" data-act="del" title="Remove">✕</button></div>`;
+    box.appendChild(row);
+  });
+  box.querySelectorAll(".iconbtn").forEach(b=>{
+    b.onclick = (e)=>{ e.stopPropagation(); const i=parseInt(b.dataset.i);
+      if(b.dataset.act==="edit") omEdit(i); else omRemove(i); };
+  });
+}
+
+function omRenderTableRows(){
+  const box = $("omTableRows"); if(!box) return;
+  const t = state.om.editing; if(!t){ box.innerHTML=""; return; }
+  if(!t.tables || !t.tables.length) t.tables = [ omNewTable() ];
+  box.innerHTML = "";
+  t.tables.forEach((tb,i)=>{
+    const row = document.createElement("div"); row.className="policy-editor";
+    row.style.padding="8px"; row.style.marginBottom="8px";
+    row.innerHTML =
+      `<label>Source table <span class="hint">(pick from the connection, or type below)</span></label>`
+      + `<select class="ompick" data-i="${i}">${omPickOptions(tb)}</select>`
+      + `<div class="row"><div><label>Name</label><input data-i="${i}" data-f="name" value="${omEsc(tb.name)}" placeholder="sales" /></div>`
+      + `<div><label>Source table</label><input data-i="${i}" data-f="source_table" value="${omEsc(tb.source_table)}" placeholder="dbo.sales" /></div></div>`
+      + `<div class="row"><div><label>Target table</label><input data-i="${i}" data-f="target_table" value="${omEsc(tb.target_table)}" placeholder="sales" /></div>`
+      + `<div><label>Landing-zone schema <span class="hint">(optional)</span></label><input data-i="${i}" data-f="schema" value="${omEsc(tb.schema)}" placeholder="(root)" /></div></div>`
+      + `<div class="row"><div><label>Key column(s) <span class="hint">(auto-detected on pick)</span></label><input data-i="${i}" data-f="key_column" value="${omEsc(tb.key_column)}" placeholder="id" /></div>`
+      + `<div><label>Watermark column <span class="hint">(optional — efficient incremental)</span></label>`
+      + `<input list="omwm${i}" data-i="${i}" data-f="watermark_column" value="${omEsc(tb.watermark_column)}" placeholder="(none — full snapshot diff)" />`
+      + `<datalist id="omwm${i}">${omColsDatalist(tb)}</datalist></div></div>`
+      + `<div style="display:flex;justify-content:flex-end;"><button class="iconbtn" data-del="${i}" title="Remove table">✕ remove</button></div>`;
+    box.appendChild(row);
+  });
+  box.querySelectorAll("input").forEach(inp=>{
+    inp.oninput = ()=>{ const i=parseInt(inp.dataset.i), f=inp.dataset.f;
+      if(state.om.editing.tables[i]) state.om.editing.tables[i][f]=inp.value; };
+  });
+  box.querySelectorAll("select.ompick").forEach(sel=>{
+    sel.onchange = ()=>omPickTable(parseInt(sel.dataset.i), sel.value);
+  });
+  box.querySelectorAll("[data-del]").forEach(b=>{
+    b.onclick = ()=>{ const i=parseInt(b.dataset.del); state.om.editing.tables.splice(i,1);
+      if(!state.om.editing.tables.length) state.om.editing.tables=[omNewTable()]; omRenderTableRows(); };
+  });
+}
+
+// Build a <datalist> of the picked table's columns (for the watermark field).
+function omColsDatalist(tb){
+  const cols = (tb && tb._cols) || [];
+  return cols.map(n=>`<option value="${omEsc(n)}"></option>`).join("");
+}
+
+// Build the <select> options for one table row from the loaded table list.
+function omPickOptions(tb){
+  const list = state.om.tableList;
+  const cur = tb.source_table || "";
+  if(!Array.isArray(list)){
+    return `<option value="">— Load tables to pick —</option>`;
+  }
+  let opts = `<option value="">— pick a table —</option>`;
+  list.forEach(x=>{
+    const src = x.schema ? (x.schema+"."+x.name) : x.name;
+    const label = src + (x.kind==="view" ? "  (view)" : "");
+    const enc = omEsc(JSON.stringify({schema:x.schema||null, name:x.name, source:src}));
+    opts += `<option value="${enc}" ${src===cur?"selected":""}>${omEsc(label)}</option>`;
+  });
+  if(cur && !list.some(x=> (x.schema?(x.schema+"."+x.name):x.name)===cur ))
+    opts += `<option value="" selected>${omEsc(cur)} (typed)</option>`;
+  return opts;
+}
+
+// ---- Fabric workspace / mirrored-database pickers (via the proxy identity) ----
+async function omLoadWorkspaces(){
+  const s = $("omFabricStatus"); s.className="status"; s.textContent="Loading workspaces…";
+  try{
+    const r = await fetch("/_config/api/open-mirror/fabric/workspaces",{cache:"no-store"});
+    const d = await r.json();
+    if(!r.ok || !d.ok){ s.className="status err"; s.textContent="✗ "+((d&&d.error)||"could not list workspaces"); return; }
+    state.om.workspaces = d.workspaces||[];
+    omRenderWorkspaceOptions($("omWsFilter").value||"");
+    s.className="status ok"; s.textContent="Found "+state.om.workspaces.length+" workspace(s). Filter and pick one.";
+  }catch(e){ s.className="status err"; s.textContent="Request failed."; }
+}
+
+function omRenderWorkspaceOptions(filter){
+  const sel = $("omWorkspace"); if(!sel) return;
+  const f = (filter||"").toLowerCase();
+  const list = (state.om.workspaces||[]).filter(w=>!f
+    || String(w.name).toLowerCase().includes(f) || String(w.id).toLowerCase().includes(f));
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">— select workspace (${list.length}) —</option>`
+    + list.map(w=>`<option value="${omEsc(w.id)}">${omEsc(w.name)}</option>`).join("");
+  if(cur && list.some(w=>w.id===cur)) sel.value = cur;
+}
+
+async function omLoadMirroredDbs(wsId){
+  const sel = $("omMirroredDb"); const s = $("omFabricStatus");
+  if(!wsId){ sel.innerHTML = `<option value="">— pick a workspace first —</option>`; return; }
+  s.className="status"; s.textContent="Loading mirrored databases…";
+  try{
+    const r = await fetch("/_config/api/open-mirror/fabric/workspaces/"+encodeURIComponent(wsId)+"/mirrored-databases",{cache:"no-store"});
+    const d = await r.json();
+    if(!r.ok || !d.ok){ s.className="status err"; s.textContent="✗ "+((d&&d.error)||"could not list mirrored databases"); return; }
+    state.om.mirroredDbs = d.mirrored_databases||[];
+    sel.innerHTML = `<option value="">— select mirrored database (${state.om.mirroredDbs.length}) —</option>`
+      + state.om.mirroredDbs.map(x=>`<option value="${omEsc(x.id)}">${omEsc(x.name)}</option>`).join("");
+    s.className="status ok"; s.textContent="Found "+state.om.mirroredDbs.length+" mirrored database(s). Pick one to set the landing zone.";
+  }catch(e){ s.className="status err"; s.textContent="Request failed."; }
+}
+
+function omPickMirroredDb(dbId){
+  const db = (state.om.mirroredDbs||[]).find(x=>x.id===dbId); if(!db) return;
+  $("omLandingRoot").value = db.landing_zone_root||"";
+  $("omWorkspaceId").value = db.workspace_id||"";
+  $("omDbId").value = db.id||"";
+  if(state.om.editing){
+    state.om.editing.landing_zone_root = db.landing_zone_root||"";
+    state.om.editing.workspace_id = db.workspace_id||"";
+    state.om.editing.mirrored_database_id = db.id||"";
+  }
+  const s = $("omFabricStatus"); s.className="status ok"; s.textContent="Landing zone set from “"+db.name+"”.";
+}
+
+async function omLoadTables(){
+  const s = $("omTablesStatus"); const conn = $("omConnection").value || "default";
+  s.className="status"; s.textContent="Loading tables from "+conn+"…";
+  try{
+    const r = await fetch("/_config/api/open-mirror/list-tables",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({connection:conn})});
+    const d = await r.json();
+    if(!r.ok || !d.ok){ s.className="status err"; s.textContent="✗ "+((d&&d.error)||"could not list tables"); state.om.tableList=null; omRenderTableRows(); return; }
+    state.om.tableList = d.tables||[]; state.om.tableConn = conn;
+    s.className="status ok"; s.textContent="Found "+state.om.tableList.length+" table(s) on "+conn+".";
+    omRenderTableRows();
+  }catch(e){ s.className="status err"; s.textContent="Request failed."; }
+}
+
+async function omPickTable(i, value){
+  const t = state.om.editing; if(!t || !t.tables[i]) return;
+  if(!value){ return; }  // "— pick a table —" / typed placeholder
+  let picked; try{ picked = JSON.parse(value); }catch(e){ return; }
+  const row = t.tables[i];
+  row.source_table = picked.source;
+  if(!row.name) row.name = picked.name;
+  if(!row.target_table) row.target_table = picked.name;
+  omRenderTableRows();  // reflect source_table/name immediately
+  // Auto-detect the key column for the picked table.
+  const s = $("omTablesStatus"); s.className="status"; s.textContent="Detecting key for "+picked.source+"…";
+  try{
+    const conn = $("omConnection").value || "default";
+    const r = await fetch("/_config/api/open-mirror/inspect-table",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({connection:conn, schema:picked.schema, name:picked.name})});
+    const d = await r.json();
+    if(r.ok && d.ok){
+      row._cols = (d.columns||[]).map(c=>c.name);
+      if(!row.watermark_column){ const wm = omGuessWatermark(d.columns||[]); if(wm) row.watermark_column = wm; }
+      if(d.detected_key){ row.key_column = d.detected_key; s.className="status ok"; s.textContent="Key for "+picked.name+": "+d.detected_key+(row.watermark_column?("  · watermark: "+row.watermark_column):""); }
+      else { s.className="status"; s.textContent="No key detected for "+picked.name+" — set it manually."; }
+      omRenderTableRows();
+    } else { s.className="status err"; s.textContent="✗ "+((d&&d.error)||"key detection failed"); }
+  }catch(e){ s.className="status err"; s.textContent="Key detection request failed."; }
+}
+
+// Suggest a monotonic watermark column by name/type (best-effort).
+function omGuessWatermark(cols){
+  const rx = /(rowversion|row_version|last[_ ]?modified|last[_ ]?updated|modified|updated|changed|_ts$|timestamp|version)/i;
+  const named = cols.find(c=> rx.test(String(c.name||"")));
+  if(named) return named.name;
+  return "";
+}
+
+function omWriteForm(t){
+  state.om.editing = t;
+  $("omId").value = t.id||"";
+  $("omLandingRoot").value = t.landing_zone_root||"";
+  $("omWorkspaceId").value = t.workspace_id||"";
+  $("omDbId").value = t.mirrored_database_id||"";
+  $("omPartner").value = t.partner_name||"";
+  $("omSourceType").value = t.source_type||"";
+  $("omEnabled").checked = t.enabled!==false;
+  omRenderConnectionOptions();
+  if(t.connection && Array.from(state.connections.keys()).includes(t.connection)) $("omConnection").value = t.connection;
+  omRenderTableRows();
+  $("omEditTitle").textContent = t.id ? ("Edit target — "+t.id) : "New target";
+}
+
+function omReadForm(){
+  const t = state.om.editing || omNewTarget();
+  t.id = $("omId").value.trim();
+  t.connection = $("omConnection").value || "default";
+  t.landing_zone_root = $("omLandingRoot").value.trim();
+  t.workspace_id = $("omWorkspaceId").value.trim();
+  t.mirrored_database_id = $("omDbId").value.trim();
+  t.partner_name = $("omPartner").value.trim();
+  t.source_type = $("omSourceType").value.trim();
+  t.enabled = $("omEnabled").checked;
+  t.tables = (t.tables||[]).map(tb=>({
+    name:(tb.name||"").trim(), source_table:(tb.source_table||"").trim(),
+    target_table:(tb.target_table||tb.name||"").trim(), key_column:(tb.key_column||"").trim(),
+    schema:(tb.schema||"").trim() || null,
+    watermark_column:(tb.watermark_column||"").trim() || null,
+  })).filter(tb=>tb.name||tb.source_table);
+  return t;
+}
+
+function omEdit(i){
+  const t = JSON.parse(JSON.stringify(state.om.targets[i]));
+  if(!t.tables || !t.tables.length) t.tables=[omNewTable()];
+  omWriteForm(t);
+}
+function omRemove(i){ state.om.targets.splice(i,1); omRenderList(); }
+function omAddTarget(){ omWriteForm(omNewTarget()); }
+
+function omApplyTarget(){
+  const s = $("omEditStatus"); s.className="status";
+  const t = omReadForm();
+  if(!t.id){ s.className="status err"; s.textContent="Target id is required."; return; }
+  if(!t.landing_zone_root){ s.className="status err"; s.textContent="Landing zone root is required."; return; }
+  const idx = state.om.targets.findIndex(x=>x.id===t.id);
+  if(idx>=0) state.om.targets[idx]=JSON.parse(JSON.stringify(t)); else state.om.targets.push(JSON.parse(JSON.stringify(t)));
+  omRenderList();
+  s.className="status ok"; s.textContent=`Target "${t.id}" staged — click "Save targets to config" to persist.`;
+}
+
+async function omPreview(){
+  const s = $("omEditStatus"), pre=$("omPreview"); s.className="status"; s.textContent="Previewing…"; pre.style.display="none";
+  const t = omReadForm();
+  try{
+    const r = await fetch("/_config/api/open-mirror/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:t})});
+    const d = await r.json();
+    if(!r.ok || !d.ok){ s.className="status err"; s.textContent=(d.errors?d.errors.join("; "):d.error)||"Preview failed"; return; }
+    s.className="status ok"; s.textContent = d.is_onelake ? "Valid OneLake landing zone." : "Valid (local/staging path).";
+    const lines=["partnerEvents: "+d.partner_events_file];
+    (d.layout||[]).forEach(l=>{ lines.push(""); lines.push("• "+l.table+"  (keys: "+(l.key_columns||[]).join(", ")+")");
+      lines.push("    "+l.metadata_file); lines.push("    "+l.first_data_file); });
+    pre.textContent = lines.join("\n"); pre.style.display="block";
+  }catch(e){ s.className="status err"; s.textContent="Preview request failed."; }
+}
+
+async function omSave(){
+  const s = $("omStatus"); s.className="status"; s.textContent="Saving…";
+  try{
+    const r = await fetch("/_config/api/open-mirror/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({open_mirror_targets:state.om.targets})});
+    const d = await r.json();
+    if(!r.ok || !d.ok){ s.className="status err"; s.textContent=(d.errors?d.errors.join("; "):d.error)||"Save failed"; return; }
+    s.className="status ok"; s.textContent="Saved to config.open_mirror.json. Restart the Manager/Agents to apply.";
+  }catch(e){ s.className="status err"; s.textContent="Save request failed."; }
+}
+
+async function omPublish(dryRun){
+  const s = $("omStatus"), pre=$("omPublishOut");
+  s.className="status"; s.textContent = dryRun ? "Dry run…" : "Publishing…"; pre.style.display="none";
+  try{
+    const r = await fetch("/_config/api/open-mirror/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dry_run:!!dryRun})});
+    const d = await r.json();
+    if(!r.ok){ s.className="status err"; s.textContent=(d.errors?d.errors.join("; "):d.error)||"Publish failed"; return; }
+    const lines=[];
+    (d.targets||[]).forEach(t=>{
+      lines.push((t.error?"✗ ":"• ")+t.target_id+(t.skipped?" (disabled)":"")+(t.error?("  ERROR: "+t.error):""));
+      (t.dropped||[]).forEach(dp=>lines.push("    dropped: "+dp));
+      (t.tables||[]).forEach(tb=>{
+        const detail = tb.action==="error" ? ("ERROR: "+tb.error)
+          : (tb.action+"  ins="+tb.inserts+" upd="+tb.updates+" del="+tb.deletes+(tb.path?("  "+tb.path):""));
+        lines.push("    "+tb.table+": "+detail);
+      });
+    });
+    pre.textContent = lines.join("\n") || "(no targets configured)";
+    pre.style.display="block";
+    s.className = d.ok ? "status ok" : "status err";
+    s.textContent = d.ok ? (dryRun?"Dry run complete.":"Publish complete.") : "Completed with errors — see below.";
+  }catch(e){ s.className="status err"; s.textContent="Publish request failed."; }
+}
+
+function omOnBootstrap(builder){
+  state.om.targets = Array.isArray(builder && builder.open_mirror_targets)
+    ? JSON.parse(JSON.stringify(builder.open_mirror_targets)) : [];
+  omRenderConnectionOptions();
+  omRenderList();
+  if(!state.om.editing) omWriteForm(omNewTarget());
+}
+
+function omInit(){
+  const wire=(id,fn)=>{ const el=$(id); if(el) el.onclick=fn; };
+  wire("btnAddOmTarget", omAddTarget);
+  wire("btnSaveOm", omSave);
+  wire("btnApplyOmTarget", omApplyTarget);
+  wire("btnPreviewOm", omPreview);
+  wire("btnDryRunOm", ()=>omPublish(true));
+  wire("btnPublishOm", ()=>omPublish(false));
+  wire("btnLoadOmTables", omLoadTables);
+  wire("btnLoadWorkspaces", omLoadWorkspaces);
+  const wsFilter = $("omWsFilter"); if(wsFilter) wsFilter.addEventListener("input", ()=>omRenderWorkspaceOptions(wsFilter.value));
+  const wsSel = $("omWorkspace"); if(wsSel) wsSel.addEventListener("change", ()=>omLoadMirroredDbs(wsSel.value));
+  const dbSel = $("omMirroredDb"); if(dbSel) dbSel.addEventListener("change", ()=>omPickMirroredDb(dbSel.value));
+  wire("btnAddOmTable", ()=>{ if(!state.om.editing) state.om.editing=omNewTarget();
+    state.om.editing.tables.push(omNewTable()); omRenderTableRows(); });
+  // Changing the source connection invalidates the loaded table list.
+  const connSel = $("omConnection");
+  if(connSel) connSel.addEventListener("change", ()=>{
+    if(state.om.tableConn && state.om.tableConn !== connSel.value){
+      state.om.tableList = null; state.om.tableConn = null;
+      const s = $("omTablesStatus"); if(s){ s.className="status"; s.textContent=""; }
+      omRenderTableRows();
+    }
+  });
+  omRenderConnectionOptions();
+  omRenderList();
+  if(!state.om.editing) omWriteForm(omNewTarget());
+}
+
 loadForm();
 loadConns();
 ensureDefaultConn();
@@ -2354,6 +2768,7 @@ renderConnList();
 loadSettings();
 loadMounts();
 loadAccessKeys();
+omInit();
 $("port").placeholder = "(default "+DEFAULT_PORTS[$("dialect").value]+")";
 loadBuilderBootstrap();
 
@@ -2639,6 +3054,7 @@ async function applyAdvanced(){
     if(d.restart_required && d.restart_required.length)
       msg += "↺ Saved (restart needed): "+d.restart_required.join(", ")+".";
     liveFlash($("advancedStatus"), msg || "✓ Done.", true);
+    loadSettings();  // re-read effective values so the panel reflects the change
   }catch(e){ liveFlash($("advancedStatus"), "Apply error: "+e); }
 }
 
@@ -2652,6 +3068,7 @@ async function saveAdvanced(){
     const d=await r.json();
     if(!r.ok){ liveFlash($("advancedStatus"), "Save failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status)); return; }
     liveFlash($("advancedStatus"), "✓ Saved "+d.changed.join(", ")+" to config.json (restart to apply).", true);
+    loadSettings();  // re-read effective values so the panel reflects the save
   }catch(e){ liveFlash($("advancedStatus"), "Save error: "+e); }
 }
 

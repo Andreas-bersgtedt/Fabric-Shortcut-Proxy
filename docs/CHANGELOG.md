@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0]: 2026-08-13
+
+### Added
+- **Open Mirroring publisher (`open_mirror` package).** The proxy can now push a source table
+  into a Microsoft Fabric **Open Mirroring** landing zone, alongside the existing
+  shortcut/virtualization path. Targets live in `config.open_mirror.json` and each binds to an
+  **existing source connection** (from `config.connection.json`) — the source database engine
+  and connector selection are unchanged; only the sink is new.
+  - **Landing-zone writer** conforming to the [landing-zone format](https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format):
+    per-table folders (optionally under a `<schema>.schema` folder), a `_metadata.json` with
+    `keyColumns`, an optional database-level `_partnerEvents.json`, and monotonically numbered
+    20-digit Parquet data files.
+  - **Incremental change stream.** A local, gitignored snapshot store (kept outside the landing
+    zone) diffs the source each cycle to emit `__rowMarker__` **insert/update/delete** rows.
+    Retry-safe: the snapshot advances only after the change file is durably written.
+  - **Source watermark mode.** A table may declare a monotonic `watermark_column`
+    (id/timestamp/rowversion); incremental cycles then read only `WHERE wm > :last ORDER BY wm`
+    (per dialect, bounded) and publish **upserts** (`__rowMarker__=4`), storing the last
+    watermark (type-tagged so it survives restart). Efficient for large tables; deletes are not
+    visible to a watermark query (leave it blank for the full snapshot diff).
+  - **OneLake (ADLS Gen2) backend** authenticated with the proxy's **own Entra identity** — the
+    same service principal / managed identity / default credential already used for Key Vault
+    (issue #16). Local/UNC staging paths are also supported. Azure SDK is the optional `onelake`
+    extra.
+  - **Runtime trigger.** A background publish loop on the Manager (`OPEN_MIRROR_PUBLISH`, with
+    `OPEN_MIRROR_INTERVAL_SECONDS` / `OPEN_MIRROR_MODE` / `OPEN_MIRROR_MAX_ROWS` /
+    `OPEN_MIRROR_STATE_DIR`), plus on-demand **Publish now** / **Dry run** in the config builder.
+    Per-table failures are quarantined; a table removed from config has its landing-zone folder
+    dropped (add/drop reconciliation).
+  - **Config-builder Open Mirror tab.** A dedicated tab (separate from the source Connection tab)
+    to bind a target to a connection, **pick source tables** from the connection with
+    auto-detected key columns, set an optional watermark column, and **browse Fabric workspaces
+    and mirrored databases** (via the proxy identity) so the OneLake landing-zone root is filled
+    in automatically — no URL pasting.
+- **Manager launchers install the `onelake` extra.** `Manager.sh` and `Manager.ps1` now install
+  `azure-storage-file-datalake` + `azure-identity` and bump the dependency stamp so existing
+  `.venv`s auto-reinstall on next launch.
+
+### Fixed
+- **Config builder — settings now reflect saved values.** The Advanced "All Settings" panel
+  prefills each field with its current effective value (env / file) instead of always showing
+  the built-in default, so persisted overrides no longer look "not sticky" after a reload.
+- **Open Mirroring targets may bind to an already-configured connection**, not only connections
+  re-sent in the same save payload.
+
+### Changed
+- Both distributions and their runtime API / agent version metadata now report `2.5.0`.
+
 ## [2.4.0]: 2026-08-11
 
 ### Added
@@ -295,7 +343,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[2.4.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.3.0...main
+[2.5.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.4.0...main
+[2.4.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.3.0...2.4.0
 [2.3.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.2.0...2.3.0
 [2.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.1...2.2.0
 [2.1.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.1.0...2.1.1

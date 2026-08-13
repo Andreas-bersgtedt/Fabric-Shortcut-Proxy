@@ -6,7 +6,6 @@ quarantine, dry-run, and the background scheduler's one-shot cycle.
 """
 from __future__ import annotations
 
-import io
 import os
 import pathlib
 
@@ -76,7 +75,7 @@ def _target(root):
 def test_publish_changes_writes_marker_file(tmp_path):
     target = _target(tmp_path)
     pub = LandingZonePublisher(LocalLandingZone(str(tmp_path)), target)
-    rel = pub.publish_changes(target.tables[0], [_row(1, "a"), {"id": 2}], [RowMarker.UPDATE, RowMarker.DELETE], _COLUMNS)
+    pub.publish_changes(target.tables[0], [_row(1, "a"), {"id": 2}], [RowMarker.UPDATE, RowMarker.DELETE], _COLUMNS)
     table = pq.read_table(tmp_path / "dbo.schema" / "sales" / "00000000000000000001.parquet")
     assert table.schema.names[-1] == ROW_MARKER_COLUMN
     assert table.column(ROW_MARKER_COLUMN).to_pylist() == [1, 2]

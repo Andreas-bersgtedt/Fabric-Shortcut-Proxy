@@ -63,6 +63,8 @@ Open Mirroring and this proxy solve different problems:
 
 Use Open Mirroring when a supported, durable replication path and incremental freshness are the priority. The proxy is more relevant when the requirement is to expose an existing relational source through a Fabric shortcut without first building a conventional ingestion or replication pipeline.
 
+> Since 2.5.0 the proxy also ships an **Open Mirroring publisher** (the `open_mirror` module and the config-builder **Open Mirror** tab), so a single deployment can both virtualize a source through a shortcut *and* push selected tables into a Fabric Open Mirroring landing zone. The publisher reuses the same source connectors and the proxy's Entra identity (for OneLake), supports snapshot-diff or source-watermark incremental change tracking, and can browse Fabric workspaces/mirrored databases so no OneLake URL is pasted by hand.
+
 ## If the proxy uses SQL pushdown, how is it different from a Data Factory connector?
 
 A Data Factory connector is used by a pipeline to copy or transform data into a destination. It is scheduled or event-driven ingestion: the pipeline owns movement, retries, checkpoints, and the persisted destination data.

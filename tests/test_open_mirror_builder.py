@@ -151,3 +151,45 @@ async def test_publish_no_targets_is_ok(app, tmp_path, monkeypatch):
     d = r.json()
     assert d["ok"] is True and d["targets"] == []
 
+
+async def test_save_rejects_unknown_tracking_mode(app, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target = _target()
+    target["tables"][0]["mode"] = "magic"
+
+    async with _client(app) as c:
+        r = await c.post(
+            "/_config/api/open-mirror/save",
+            json={"open_mirror_targets": [target]},
+        )
+
+    assert r.status_code == 400
+    assert "unsupported mode" in " ".join(r.json()["errors"])
+
+
+async def test_reset_requires_confirmation_and_is_table_scoped(
+    app, tmp_path, monkeypatch
+):
+    import open_mirror.config as om_config
+    from open_mirror.config import target_from_dict
+
+    target = target_from_dict(_target(str(tmp_path / "lz")))
+    monkeypatch.setattr(om_config, "load_targets", lambda: [target])
+    monkeypatch.setattr(
+        config, "OPEN_MIRROR_STATE_DIR", str(tmp_path / "state"), raising=False
+    )
+
+    async with _client(app) as c:
+        denied = await c.post(
+            "/_config/api/open-mirror/reset",
+            json={"target_id": target.id, "table": "sales"},
+        )
+        reset = await c.post(
+            "/_config/api/open-mirror/reset",
+            json={"target_id": target.id, "table": "sales", "confirm": True},
+        )
+
+    assert denied.status_code == 400
+    assert reset.status_code == 200
+    assert reset.json()["reason"] == "table_reset"
+    assert reset.json()["previous_status"] == "missing"

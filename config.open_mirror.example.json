@@ -1,5 +1,5 @@
 {
-  "_comment": "Open Mirroring targets \u2014 push source tables into a Fabric Open Mirroring landing zone. Place as config.open_mirror.json (gitignored). Each target binds to an EXISTING source connection id from config.connection.json via 'connection' (default: 'default'); the source database engine is unchanged. 'landing_zone_root' is the mirrored database's OneLake landing zone (or a local staging directory for now). See https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format and devplan/Open_Mirroring_Integration_Plan.md.",
+  "_comment": "Open Mirroring targets push source tables into a Fabric Open Mirroring landing zone. Place as config.open_mirror.json (gitignored). Each target binds to an existing source connection id from config.connection.json via 'connection' (default: 'default'). 'landing_zone_root' is the mirrored database's OneLake landing zone or a local staging directory. See https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format and devplan/Open_Mirroring_Integration_Plan.md.",
   "open_mirror": {
     "open_mirror_targets": [
       {
@@ -11,6 +11,7 @@
         "partner_name": "FabricShortcutProxy",
         "source_type": "SQL",
         "source_version": "2025",
+        "self_healing": true,
         "enabled": true,
         "tables": [
           {
@@ -20,7 +21,7 @@
             "key_column": "id",
             "schema": "dbo",
             "mode": "incremental",
-            "_comment_watermark": "Optional: set 'watermark_column' to a monotonic id/timestamp/rowversion for efficient incremental (reads only rows past the last value; upsert-only, no deletes). Omit it for a full snapshot diff that also detects deletes.",
+            "_comment_watermark": "Set 'watermark_column' to a non-null monotonic id, timestamp, or rowversion for source-incremental upserts. Omit it for a full-source snapshot scan that also detects deletes.",
             "watermark_column": "ModifiedDate"
           }
         ]

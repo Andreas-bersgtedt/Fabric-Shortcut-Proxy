@@ -42,6 +42,9 @@ from system_config import (
     # Open Mirroring publisher
     OPEN_MIRROR_PUBLISH, OPEN_MIRROR_INTERVAL_SECONDS, OPEN_MIRROR_MODE,
     OPEN_MIRROR_STATE_DIR, OPEN_MIRROR_MAX_ROWS,
+    OPEN_MIRROR_MAX_PAGES_PER_CYCLE, OPEN_MIRROR_MAX_ROWS_PER_CYCLE,
+    OPEN_MIRROR_SELF_HEALING, OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS,
+    OPEN_MIRROR_START_COOLDOWN_SECONDS, OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS,
     # Entra ID auth & Key Vault (issue #16)
     AUTH_MODE, KEYVAULT_URI, AZURE_TENANT_ID, AZURE_CLIENT_ID,
     REQUIRE_KEYVAULT, KEYVAULT_REFRESH_SECONDS, KEYVAULT_CACHE_TTL, KEYVAULT_WRITE_BACK,
@@ -176,6 +179,12 @@ _register("OPEN_MIRROR_INTERVAL_SECONDS", "open_mirror_interval_seconds", "int",
 _register("OPEN_MIRROR_MODE", "open_mirror_mode", "str", OPEN_MIRROR_MODE)
 _register("OPEN_MIRROR_STATE_DIR", "open_mirror_state_dir", "str", OPEN_MIRROR_STATE_DIR)
 _register("OPEN_MIRROR_MAX_ROWS", "open_mirror_max_rows", "int", OPEN_MIRROR_MAX_ROWS)
+_register("OPEN_MIRROR_MAX_PAGES_PER_CYCLE", "open_mirror_max_pages_per_cycle", "int", OPEN_MIRROR_MAX_PAGES_PER_CYCLE)
+_register("OPEN_MIRROR_MAX_ROWS_PER_CYCLE", "open_mirror_max_rows_per_cycle", "int", OPEN_MIRROR_MAX_ROWS_PER_CYCLE)
+_register("OPEN_MIRROR_SELF_HEALING", "open_mirror_self_healing", "bool", OPEN_MIRROR_SELF_HEALING)
+_register("OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS", "open_mirror_preflight_timeout_seconds", "int", OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS)
+_register("OPEN_MIRROR_START_COOLDOWN_SECONDS", "open_mirror_start_cooldown_seconds", "int", OPEN_MIRROR_START_COOLDOWN_SECONDS)
+_register("OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS", "open_mirror_fabric_retry_attempts", "int", OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS)
 _register("TLS_CERT_FILE", "tls_cert_file", "str", TLS_CERT_FILE)
 _register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
@@ -1330,6 +1339,23 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                 if not landing_zone_root:
                     errors.append(f"{k}[{i}]: landing_zone_root must be non-empty")
                     ok = False
+                if (
+                    target.get("self_healing") is not None
+                    and not isinstance(target.get("self_healing"), bool)
+                ):
+                    errors.append(
+                        f"{k}[{i}]: self_healing must be a boolean or null"
+                    )
+                    ok = False
+                if target.get("self_healing") is True and (
+                    not str(target.get("workspace_id") or "").strip()
+                    or not str(target.get("mirrored_database_id") or "").strip()
+                ):
+                    errors.append(
+                        f"{k}[{i}]: self_healing requires workspace_id and "
+                        "mirrored_database_id"
+                    )
+                    ok = False
                 tables = target.get("tables")
                 if tables is not None:
                     if not isinstance(tables, list):
@@ -1352,6 +1378,20 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                                 ok = False
                             if not str(table.get("target_table") or table.get("name") or "").strip():
                                 errors.append(f"{k}[{i}].tables[{j}]: target_table must be non-empty")
+                                ok = False
+                            mode = str(table.get("mode") or "incremental").strip().lower()
+                            if mode not in {"incremental", "watermark", "snapshot", "initial"}:
+                                errors.append(
+                                    f"{k}[{i}].tables[{j}]: unsupported mode {mode!r}"
+                                )
+                                ok = False
+                            if mode == "watermark" and not str(
+                                table.get("watermark_column") or ""
+                            ).strip():
+                                errors.append(
+                                    f"{k}[{i}].tables[{j}]: watermark mode requires "
+                                    "watermark_column"
+                                )
                                 ok = False
             if ok:
                 clean[k] = v

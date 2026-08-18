@@ -485,10 +485,11 @@ Run the manager with the OneLake dependency (`Manager.sh` / `Manager.ps1` instal
 extra automatically), enable the config UI, and configure a target on the **Open Mirror** tab.
 
 The Manager identity needs Read and Write access to each mirrored database. The Fabric tenant
-setting that permits service principals to use Fabric APIs must also be enabled. A systemd
-process defaults its state path to `/var/lib/fabric-shortcut-proxy/open-mirror`; create that
-directory for the service user before startup. `OPEN_MIRROR_STATE_DIR` overrides this path.
-Back up the state directory with the landing-zone file indexes.
+setting that permits service principals to use Fabric APIs must also be enabled. On Linux the
+state path defaults to `/var/lib/fabric-shortcut-proxy/open-mirror` when that directory already
+exists and is writable by the service user; otherwise it falls back to `./.open_mirror_state`.
+Create the directory for the service user before startup, or set `OPEN_MIRROR_STATE_DIR`
+explicitly. Back up the state directory with the landing-zone file indexes.
 
 Use `POST /_config/api/open-mirror/reset` only when a table needs an operator-approved full
 load. The request must contain `target_id`, `table`, and `"confirm": true`. The response
@@ -534,7 +535,7 @@ explicit reset.
 | `OPEN_MIRROR_INTERVAL_SECONDS` | `300`                           | Seconds between Open Mirroring publish cycles when the loop is on |
 | `OPEN_MIRROR_MODE`    | `incremental`                            | Global fallback mode; invocation mode overrides table mode, and table mode overrides this value |
 | `OPEN_MIRROR_MAX_ROWS` | `0`                                     | Watermark page size (0 = the connection's `query_max_rows`) |
-| `OPEN_MIRROR_STATE_DIR` | `./.open_mirror_state`                 | Local state outside the landing zone; systemd default: `/var/lib/fabric-shortcut-proxy/open-mirror` |
+| `OPEN_MIRROR_STATE_DIR` | `./.open_mirror_state`                 | Local state outside the landing zone; on Linux defaults to `/var/lib/fabric-shortcut-proxy/open-mirror` when that directory exists and is writable |
 | `OPEN_MIRROR_MAX_PAGES_PER_CYCLE` | `0`                         | Watermark page safety limit per table and cycle (0 = no page limit) |
 | `OPEN_MIRROR_MAX_ROWS_PER_CYCLE` | `0`                          | Watermark row safety limit per table and cycle (0 = no row limit) |
 | `OPEN_MIRROR_SELF_HEALING` | `1`                                | Check Fabric mirroring and attempt a bounded start before source reads |

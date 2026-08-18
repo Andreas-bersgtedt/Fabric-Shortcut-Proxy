@@ -429,6 +429,7 @@ def _open_mirror_targets_payload() -> list[dict]:
             "source_type": t.source_type,
             "source_version": t.source_version,
             "enabled": t.enabled,
+            "self_healing": t.self_healing,
             "tables": [{
                 "name": tb.name,
                 "source_table": tb.source_table,
@@ -436,6 +437,7 @@ def _open_mirror_targets_payload() -> list[dict]:
                 "key_column": tb.key_column,
                 "schema": tb.schema,
                 "mode": tb.mode,
+                "watermark_column": tb.watermark_column,
                 "enabled": tb.enabled,
             } for tb in t.tables],
         })
@@ -534,9 +536,10 @@ async def publish_open_mirror(request: Request) -> JSONResponse:
     body = body if isinstance(body, dict) else {}
     target_id = str(body.get("target_id") or "").strip() or None
     dry_run = bool(body.get("dry_run", False))
+    mode = str(body.get("mode") or "").strip().lower() or None
 
     from open_mirror.config import load_targets
-    from open_mirror.source import publish_all
+    from open_mirror.scheduler import publish_targets_with_preflight
 
     targets = load_targets()
     if target_id:
@@ -545,7 +548,9 @@ async def publish_open_mirror(request: Request) -> JSONResponse:
             return JSONResponse({"ok": False, "error": f"no target with id {target_id!r}"},
                                 status_code=404)
     try:
-        results = await publish_all(targets=targets, dry_run=dry_run)
+        results = await publish_targets_with_preflight(
+            targets, dry_run=dry_run, mode=mode
+        )
     except Exception as exc:  # noqa: BLE001 - surface, never 500 the builder
         log.warning("open_mirror_publish_failed", error=str(exc))
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
@@ -560,14 +565,100 @@ async def publish_open_mirror(request: Request) -> JSONResponse:
             "skipped": tr.skipped,
             "error": tr.error,
             "dropped": tr.dropped,
+            "replication_status": tr.replication_status,
+            "replication_action": tr.replication_action,
             "tables": [{
                 "table": r.table, "action": r.action, "rows": r.rows,
                 "inserts": r.inserts, "updates": r.updates, "deletes": r.deletes,
                 "path": r.path, "error": r.error,
+                "strategy": r.strategy, "reason": r.reason,
+                "input_cursor": r.input_cursor, "output_cursor": r.output_cursor,
+                "pages_read": r.pages_read, "rows_scanned": r.rows_scanned,
+                "rows_published": r.rows_published,
+                "state_status": r.state_status, "state_path": r.state_path,
+                "recovery": r.recovery, "query_mode": r.query_mode,
             } for r in tr.results],
         })
     log.info("open_mirror_publish_now", target=target_id or "*", dry_run=dry_run, ok=ok)
     return JSONResponse({"ok": ok, "dry_run": dry_run, "targets": summary})
+
+
+@router.post("/api/open-mirror/reset")
+async def reset_open_mirror_table(request: Request) -> JSONResponse:
+    """Explicitly remove one table's local cursor after operator confirmation."""
+    body = await request.json()
+    body = body if isinstance(body, dict) else {}
+    target_id = str(body.get("target_id") or "").strip()
+    table_name = str(body.get("table") or "").strip()
+    if not target_id or not table_name:
+        return JSONResponse(
+            {"ok": False, "error": "target_id and table are required"},
+            status_code=400,
+        )
+    if body.get("confirm") is not True:
+        return JSONResponse(
+            {"ok": False, "error": "reset requires confirm=true"},
+            status_code=400,
+        )
+
+    from open_mirror.config import load_targets
+    from open_mirror.state import delete_state, load_state
+
+    target = next((item for item in load_targets() if item.id == target_id), None)
+    if target is None:
+        return JSONResponse(
+            {"ok": False, "error": f"no target with id {target_id!r}"},
+            status_code=404,
+        )
+    table = next(
+        (
+            item for item in target.tables
+            if item.name == table_name or item.target_table == table_name
+        ),
+        None,
+    )
+    if table is None:
+        return JSONResponse(
+            {"ok": False, "error": f"no table {table_name!r} in target {target_id!r}"},
+            status_code=404,
+        )
+    state_dir = getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state")
+    loaded = load_state(state_dir, target, table)
+    previous = None
+    if loaded.state:
+        previous = {
+            "version": 2,
+            "strategy": loaded.state.strategy,
+            "initialized": loaded.state.initialized,
+            "committed": (
+                loaded.state.committed.to_json()
+                if loaded.state.committed else None
+            ),
+            "pending": (
+                {
+                    "prior": (
+                        loaded.state.pending.prior.to_json()
+                        if loaded.state.pending.prior else None
+                    ),
+                    "next": loaded.state.pending.next.to_json(),
+                    "path": loaded.state.pending.path,
+                    "row_count": loaded.state.pending.row_count,
+                    "content_hash": loaded.state.pending.content_hash,
+                    "initial": loaded.state.pending.initial,
+                }
+                if loaded.state.pending else None
+            ),
+        }
+    delete_state(state_dir, target, table)
+    log.warning(
+        "open_mirror_table_reset", target=target_id, table=table_name,
+        previous_status=loaded.status, state_path=loaded.path,
+    )
+    return JSONResponse({
+        "ok": True, "target_id": target_id, "table": table_name,
+        "previous_status": loaded.status, "previous_state": previous,
+        "state_path": loaded.path, "reason": "table_reset",
+    })
 
 
 def _connection_url_for(connection_id: str):

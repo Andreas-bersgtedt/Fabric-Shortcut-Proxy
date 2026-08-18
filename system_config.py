@@ -171,11 +171,50 @@ OPEN_MIRROR_INTERVAL_SECONDS: int = _get_int("OPEN_MIRROR_INTERVAL_SECONDS", "op
 # Publish mode: "incremental" (diff against the last snapshot via __rowMarker__) or
 # "initial" (always a full insert batch, no markers).
 OPEN_MIRROR_MODE: str = _get_str("OPEN_MIRROR_MODE", "open_mirror_mode", "incremental").strip().lower()
-# Directory for the incremental change-tracking state (key -> row hash per table).
+# Directory for the change-tracking cursor/state (one JSON file per table).
 # Kept OUTSIDE the landing zone so Fabric never sees it. Gitignored.
-OPEN_MIRROR_STATE_DIR: str = _get_str("OPEN_MIRROR_STATE_DIR", "open_mirror_state_dir", "./.open_mirror_state")
+# A packaged Linux install creates /var/lib/fabric-shortcut-proxy/open-mirror and
+# grants it to the service user; that path is used only when it already exists and
+# is writable, so unprivileged runs (tests, CI, source checkouts) stay local.
+_OPEN_MIRROR_SERVICE_STATE_DIR = "/var/lib/fabric-shortcut-proxy/open-mirror"
+
+
+def _open_mirror_state_default() -> str:
+    if os.name != "posix":
+        return "./.open_mirror_state"
+    if os.path.isdir(_OPEN_MIRROR_SERVICE_STATE_DIR) and os.access(
+        _OPEN_MIRROR_SERVICE_STATE_DIR, os.W_OK
+    ):
+        return _OPEN_MIRROR_SERVICE_STATE_DIR
+    return "./.open_mirror_state"
+
+
+_OPEN_MIRROR_STATE_DEFAULT = _open_mirror_state_default()
+OPEN_MIRROR_STATE_DIR: str = _get_str(
+    "OPEN_MIRROR_STATE_DIR", "open_mirror_state_dir", _OPEN_MIRROR_STATE_DEFAULT
+)
 # Per-table row cap per cycle (0 = the connection's query_max_rows default).
 OPEN_MIRROR_MAX_ROWS: int = _get_int("OPEN_MIRROR_MAX_ROWS", "open_mirror_max_rows", 0)
+# Optional safety bounds for draining watermark pages (0 = unlimited this cycle).
+OPEN_MIRROR_MAX_PAGES_PER_CYCLE: int = _get_int(
+    "OPEN_MIRROR_MAX_PAGES_PER_CYCLE", "open_mirror_max_pages_per_cycle", 0
+)
+OPEN_MIRROR_MAX_ROWS_PER_CYCLE: int = _get_int(
+    "OPEN_MIRROR_MAX_ROWS_PER_CYCLE", "open_mirror_max_rows_per_cycle", 0
+)
+# Fabric mirroring preflight and bounded self-healing.
+OPEN_MIRROR_SELF_HEALING: bool = _get_bool(
+    "OPEN_MIRROR_SELF_HEALING", "open_mirror_self_healing", True
+)
+OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS: int = _get_int(
+    "OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS", "open_mirror_preflight_timeout_seconds", 60
+)
+OPEN_MIRROR_START_COOLDOWN_SECONDS: int = _get_int(
+    "OPEN_MIRROR_START_COOLDOWN_SECONDS", "open_mirror_start_cooldown_seconds", 300
+)
+OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS: int = _get_int(
+    "OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS", "open_mirror_fabric_retry_attempts", 3
+)
 
 
 # ---------------------------------------------------------------------------

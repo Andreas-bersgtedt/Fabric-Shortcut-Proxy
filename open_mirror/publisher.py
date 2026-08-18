@@ -10,6 +10,7 @@ whole file as inserts.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from collections.abc import Sequence
@@ -127,6 +128,30 @@ class LandingZonePublisher:
 
     # -- data -------------------------------------------------------------
 
+    def reserve_batch_path(self, table: OpenMirrorTableTarget) -> str:
+        """Return the next numbered path without writing it."""
+        table_dir = self._table_dir(table)
+        index = next_file_index(self.backend.list_dir(table_dir))
+        return f"{table_dir}/{format_file_name(index)}"
+
+    def prepare_batch(
+        self,
+        rows: Sequence[dict[str, Any]],
+        columns,
+        *,
+        row_markers: Sequence[int] | None = None,
+    ) -> tuple[bytes, str]:
+        """Build a deterministic Parquet payload and its SHA-256 digest."""
+        payload = build_landing_parquet(rows, columns, row_markers=row_markers)
+        return payload, hashlib.sha256(payload).hexdigest()
+
+    def write_batch_at(self, path: str, payload: bytes) -> str:
+        """Write a prepared payload to an already-reserved exact path."""
+        self.backend.write_bytes(path, payload)
+        if not self.backend.exists(path):
+            raise OSError(f"landing-zone write could not be verified at {path!r}")
+        return path
+
     def publish_batch(
         self,
         table: OpenMirrorTableTarget,
@@ -136,12 +161,9 @@ class LandingZonePublisher:
         row_markers: Sequence[int] | None = None,
     ) -> str:
         """Write the next numbered Parquet file for ``table`` and return its path."""
-        table_dir = self._table_dir(table)
-        index = next_file_index(self.backend.list_dir(table_dir))
-        rel = f"{table_dir}/{format_file_name(index)}"
-        parquet_bytes = build_landing_parquet(rows, columns, row_markers=row_markers)
-        self.backend.write_bytes(rel, parquet_bytes)
-        return rel
+        rel = self.reserve_batch_path(table)
+        payload, _ = self.prepare_batch(rows, columns, row_markers=row_markers)
+        return self.write_batch_at(rel, payload)
 
     def publish_initial_load(
         self,

@@ -455,14 +455,26 @@ canonical table prefix.
 
 Beyond the shortcut/virtualization path, the proxy can **push** selected tables into a
 Microsoft Fabric [Open Mirroring](https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format)
-landing zone — so one deployment can both virtualize a source *and* replicate tables into OneLake.
+landing zone, so one deployment can both virtualize a source and replicate tables into OneLake.
 
 - **Reuses your source connectors.** Targets live in `config.open_mirror.json` and bind to an
   existing connection id (from `config.connection.json`); the source engine is unchanged.
 - **Landing-zone writer.** Emits `_metadata.json` (`keyColumns`), an optional `_partnerEvents.json`,
   and 20-digit numbered Parquet files with a trailing `__rowMarker__` column for incremental changes.
-- **Incremental.** Snapshot-diff (insert/update/delete) by default, or set a monotonic
-  `watermark_column` per table for efficient `WHERE wm > :last` upserts on large tables.
+- **Watermark tracking.** A table with `watermark_column` uses a composite
+  `(watermark, keyColumns...)` cursor. Pages are ordered by that tuple and committed after
+  each landing-zone file is verified. Watermark tracking publishes inserts and updates; it
+  does not detect deletes or rows that arrive below the committed watermark.
+- **Snapshot tracking.** A table without `watermark_column` scans the source snapshot on every
+  cycle and compares row hashes. This mode detects inserts, updates, and deletes, but it is a
+  full-source scan.
+- **Restart recovery.** State version 2 records a pending file before upload. On restart, an
+  existing pending file advances the cursor without publishing it again. Missing, unreadable,
+  corrupt, and unsupported state never trigger an automatic full load.
+- **Replication preflight.** The Manager checks the mirrored database before reading the
+  source. It starts `Initialized`, `Paused`, or `Stopped` mirroring with the same Entra
+  credential used for OneLake, then waits for `Running` for a bounded period. This operation
+  does not start or resume Fabric capacity.
 - **OneLake auth.** Writes authenticate with the proxy's **own Entra identity** (the Key Vault
   service principal / managed identity / default credential); no separate secret.
 - **Config-builder Open Mirror tab.** Pick source tables (key auto-detected), set a watermark,
@@ -471,6 +483,18 @@ landing zone — so one deployment can both virtualize a source *and* replicate 
 
 Run the manager with the OneLake dependency (`Manager.sh` / `Manager.ps1` install the `onelake`
 extra automatically), enable the config UI, and configure a target on the **Open Mirror** tab.
+
+The Manager identity needs Read and Write access to each mirrored database. The Fabric tenant
+setting that permits service principals to use Fabric APIs must also be enabled. On Linux the
+state path defaults to `/var/lib/fabric-shortcut-proxy/open-mirror` when that directory already
+exists and is writable by the service user; otherwise it falls back to `./.open_mirror_state`.
+Create the directory for the service user before startup, or set `OPEN_MIRROR_STATE_DIR`
+explicitly. Back up the state directory with the landing-zone file indexes.
+
+Use `POST /_config/api/open-mirror/reset` only when a table needs an operator-approved full
+load. The request must contain `target_id`, `table`, and `"confirm": true`. The response
+includes the previous cursor and absolute state path. Invalid state is preserved until this
+explicit reset.
 
 ## Key environment variables
 
@@ -509,9 +533,14 @@ extra automatically), enable the config UI, and configure a target on the **Open
 | `REQUEST_TRACE`       | `1`                                      | Record the Fabric request timeline (powers `/_admin/timeline` + the monitor) |
 | `OPEN_MIRROR_PUBLISH` | `0`                                      | Manager: run the background Open Mirroring publish loop (`config.open_mirror.json` targets) |
 | `OPEN_MIRROR_INTERVAL_SECONDS` | `300`                           | Seconds between Open Mirroring publish cycles when the loop is on |
-| `OPEN_MIRROR_MODE`    | `incremental`                            | Publish mode: `incremental` (diff / watermark via `__rowMarker__`) or `initial` (full insert) |
-| `OPEN_MIRROR_MAX_ROWS` | `0`                                     | Per-table row cap per cycle (0 = the connection's `query_max_rows`) |
-| `OPEN_MIRROR_STATE_DIR` | `./.open_mirror_state`                 | Local, gitignored change-tracking state (kept outside the landing zone) |
+| `OPEN_MIRROR_MODE`    | `incremental`                            | Global fallback mode; invocation mode overrides table mode, and table mode overrides this value |
+| `OPEN_MIRROR_MAX_ROWS` | `0`                                     | Watermark page size (0 = the connection's `query_max_rows`) |
+| `OPEN_MIRROR_STATE_DIR` | `./.open_mirror_state`                 | Local state outside the landing zone; on Linux defaults to `/var/lib/fabric-shortcut-proxy/open-mirror` when that directory exists and is writable |
+| `OPEN_MIRROR_MAX_PAGES_PER_CYCLE` | `0`                         | Watermark page safety limit per table and cycle (0 = no page limit) |
+| `OPEN_MIRROR_MAX_ROWS_PER_CYCLE` | `0`                          | Watermark row safety limit per table and cycle (0 = no row limit) |
+| `OPEN_MIRROR_SELF_HEALING` | `1`                                | Check Fabric mirroring and attempt a bounded start before source reads |
+| `OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS` | `60`                  | Maximum time to wait for mirroring to reach `Running` |
+| `OPEN_MIRROR_START_COOLDOWN_SECONDS` | `300`                    | Minimum interval between start attempts for one target |
 
 > This is a curated subset. **Every** setting, with defaults, categories, and help
 > text, is documented in [CONFIGURATION.md](docs/CONFIGURATION.md) and browsable in the

@@ -507,9 +507,15 @@
       <div><label>Source type</label><input id="omSourceType" placeholder="SQL" /></div>
     </div>
     <div class="checkbox" style="margin:10px 0;"><input type="checkbox" id="omEnabled" checked /><span>Enabled</span></div>
+    <label>Fabric replication self-healing</label>
+    <select id="omSelfHealing">
+      <option value="">Use global setting (enabled by default)</option>
+      <option value="true">Enabled for this target</option>
+      <option value="false">Disabled for this target</option>
+    </select>
 
     <h2 style="margin-top:8px;">Tables</h2>
-    <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. Set a <b>watermark column</b> (a monotonic id/timestamp/rowversion) for efficient incremental (reads only rows past the last value; upsert-only, no deletes). Leave it blank for a full snapshot diff (detects inserts/updates/deletes).</div>
+    <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. <b>Watermark</b> tracking reads only rows after the committed composite cursor (upsert-only; no deletes). <b>Snapshot</b> tracking performs a full-source scan every cycle to detect inserts, updates, and deletes.</div>
     <div class="actions" style="margin-bottom:8px;">
       <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">🔄 Load tables from source</button>
       <span class="status" id="omTablesStatus" style="margin:0 0 0 4px;display:inline-block;"></span>
@@ -2429,9 +2435,9 @@ async function removeAccessKey(id){
 // ---- Open Mirroring targets (config.open_mirror.json) ----
 if(!state.om) state.om = { targets: [], editing: null };
 function omEsc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", watermark_column:"" }; }
+function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"" }; }
 function omNewTarget(){ return { id:"", connection:"default", landing_zone_root:"", workspace_id:"",
-  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, tables:[ omNewTable() ] }; }
+  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, self_healing:null, tables:[ omNewTable() ] }; }
 
 function omRenderConnectionOptions(){
   const sel = $("omConnection"); if(!sel) return;
@@ -2480,9 +2486,14 @@ function omRenderTableRows(){
       + `<div><label>Landing-zone schema <span class="hint">(optional)</span></label><input data-i="${i}" data-f="schema" value="${omEsc(tb.schema)}" placeholder="(root)" /></div></div>`
       + `<div class="row"><div><label>Key column(s) <span class="hint">(auto-detected on pick)</span></label><input data-i="${i}" data-f="key_column" value="${omEsc(tb.key_column)}" placeholder="id" /></div>`
       + `<div><label>Watermark column <span class="hint">(optional — efficient incremental)</span></label>`
-      + `<input list="omwm${i}" data-i="${i}" data-f="watermark_column" value="${omEsc(tb.watermark_column)}" placeholder="(none — full snapshot diff)" />`
+      + `<input list="omwm${i}" data-i="${i}" data-f="watermark_column" value="${omEsc(tb.watermark_column)}" placeholder="(none — snapshot full-source scan)" />`
       + `<datalist id="omwm${i}">${omColsDatalist(tb)}</datalist></div></div>`
-      + `<div style="display:flex;justify-content:flex-end;"><button class="iconbtn" data-del="${i}" title="Remove table">✕ remove</button></div>`;
+      + `<label>Tracking strategy</label><select class="ommode" data-i="${i}" data-f="mode">`
+      + `<option value="incremental"${(tb.mode||"incremental")==="incremental"?" selected":""}>Automatic (watermark when configured; otherwise snapshot full-source scan)</option>`
+      + `<option value="watermark"${tb.mode==="watermark"?" selected":""}>Watermark (source-incremental)</option>`
+      + `<option value="snapshot"${tb.mode==="snapshot"?" selected":""}>Snapshot (full-source scan every cycle)</option></select>`
+      + `<div style="display:flex;justify-content:flex-end;gap:6px;"><button class="iconbtn" data-reset="${i}" title="Delete the saved cursor and require a new initial load">Reset saved state</button>`
+      + `<button class="iconbtn" data-del="${i}" title="Remove table">✕ remove</button></div>`;
     box.appendChild(row);
   });
   box.querySelectorAll("input").forEach(inp=>{
@@ -2492,10 +2503,31 @@ function omRenderTableRows(){
   box.querySelectorAll("select.ompick").forEach(sel=>{
     sel.onchange = ()=>omPickTable(parseInt(sel.dataset.i), sel.value);
   });
+  box.querySelectorAll("select.ommode").forEach(sel=>{
+    sel.onchange = ()=>{ const i=parseInt(sel.dataset.i); if(state.om.editing.tables[i]) state.om.editing.tables[i].mode=sel.value; };
+  });
   box.querySelectorAll("[data-del]").forEach(b=>{
     b.onclick = ()=>{ const i=parseInt(b.dataset.del); state.om.editing.tables.splice(i,1);
       if(!state.om.editing.tables.length) state.om.editing.tables=[omNewTable()]; omRenderTableRows(); };
   });
+  box.querySelectorAll("[data-reset]").forEach(b=>{
+    b.onclick = ()=>omResetTable(parseInt(b.dataset.reset));
+  });
+}
+
+async function omResetTable(i){
+  const target = state.om.editing, table = target && target.tables && target.tables[i];
+  const s = $("omEditStatus");
+  if(!target || !target.id || !table || !(table.name||table.target_table)){
+    s.className="status err"; s.textContent="Save the target and table name before resetting state."; return;
+  }
+  const name=table.name||table.target_table;
+  if(!confirm(`Reset saved Open Mirror state for ${target.id}/${name}? The next publish will be a full initial load.`)) return;
+  const r=await fetch("/_config/api/open-mirror/reset",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({target_id:target.id,table:name,confirm:true})});
+  const d=await r.json();
+  s.className=r.ok&&d.ok?"status ok":"status err";
+  s.textContent=d.ok?`State reset for ${target.id}/${name}. Previous status: ${d.previous_status}.`:(d.error||"Reset failed.");
 }
 
 // Build a <datalist> of the picked table's columns (for the watermark field).
@@ -2630,6 +2662,7 @@ function omWriteForm(t){
   $("omPartner").value = t.partner_name||"";
   $("omSourceType").value = t.source_type||"";
   $("omEnabled").checked = t.enabled!==false;
+  $("omSelfHealing").value = t.self_healing===true ? "true" : (t.self_healing===false ? "false" : "");
   omRenderConnectionOptions();
   if(t.connection && Array.from(state.connections.keys()).includes(t.connection)) $("omConnection").value = t.connection;
   omRenderTableRows();
@@ -2646,10 +2679,12 @@ function omReadForm(){
   t.partner_name = $("omPartner").value.trim();
   t.source_type = $("omSourceType").value.trim();
   t.enabled = $("omEnabled").checked;
+  t.self_healing = $("omSelfHealing").value==="" ? null : $("omSelfHealing").value==="true";
   t.tables = (t.tables||[]).map(tb=>({
     name:(tb.name||"").trim(), source_table:(tb.source_table||"").trim(),
     target_table:(tb.target_table||tb.name||"").trim(), key_column:(tb.key_column||"").trim(),
     schema:(tb.schema||"").trim() || null,
+    mode:(tb.mode||"incremental").trim(),
     watermark_column:(tb.watermark_column||"").trim() || null,
   })).filter(tb=>tb.name||tb.source_table);
   return t;

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Open Mirror watermark tables now use version 2 state with a composite watermark and key
+  cursor, drain multiple pages per cycle, and commit each page after its numbered Parquet file
+  exists.
+- Corrupt, unreadable, and unsupported state now stops the table instead of starting a full
+  load. Empty initial reads persist `initialized=true`.
+- Pending file metadata closes the upload-to-cursor crash window. Restart finalizes an existing
+  pending file or retries a missing file at the reserved path.
+- Publish results now report strategy, reason, cursors, pages, scanned rows, published rows,
+  state status and path, query mode, and recovery action. Table reset requires a named target,
+  named table, and explicit confirmation.
+- The Manager checks Fabric mirroring once per target before source extraction. It can start
+  `Initialized`, `Paused`, or `Stopped` mirroring with its existing Entra credential and uses
+  bounded polling, retry handling, and per-target cooldown.
+
 All notable changes to the Fabric Shortcut Proxy are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

@@ -37,6 +37,7 @@ from dataclasses import dataclass
 _CONFIG_FILE = "config.open_mirror.json"
 
 DEFAULT_PARTNER_NAME = "FabricShortcutProxy"
+VALID_TABLE_MODES = frozenset({"incremental", "watermark", "snapshot", "initial"})
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class OpenMirrorTableTarget:
     target_table: str
     key_column: str
     schema: str | None = None
-    mode: str = "incremental"
+    mode: str | None = None
     watermark_column: str | None = None
     enabled: bool = True
 
@@ -56,6 +57,13 @@ class OpenMirrorTableTarget:
     def key_columns(self) -> list[str]:
         """Key column(s) as a list (``key_column`` may be a comma-separated compound key)."""
         return [c.strip() for c in self.key_column.split(",") if c.strip()]
+
+    @property
+    def strategy(self) -> str:
+        """Resolve the backward-compatible incremental mode to a tracking strategy."""
+        if self.mode in {"watermark", "snapshot"}:
+            return self.mode
+        return "watermark" if self.watermark_column else "snapshot"
 
 
 @dataclass(frozen=True)
@@ -71,6 +79,7 @@ class OpenMirrorTarget:
     source_type: str | None = None
     source_version: str | None = None
     enabled: bool = True
+    self_healing: bool | None = None
     tables: tuple[OpenMirrorTableTarget, ...] = ()
 
 
@@ -86,8 +95,21 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
         raise ValueError(f"open mirror table {name!r}: 'key_column' must be non-empty")
     target_table = str(d.get("target_table") or name).strip()
     schema = str(d["schema"]).strip() if d.get("schema") else None
-    mode = str(d.get("mode") or "incremental").strip().lower()
+    mode = (
+        str(d["mode"]).strip().lower()
+        if d.get("mode") is not None and str(d["mode"]).strip()
+        else None
+    )
+    if mode is not None and mode not in VALID_TABLE_MODES:
+        raise ValueError(
+            f"open mirror table {name!r}: unsupported mode {mode!r}; "
+            f"expected one of {sorted(VALID_TABLE_MODES)}"
+        )
     watermark_column = str(d["watermark_column"]).strip() if d.get("watermark_column") else None
+    if mode == "watermark" and not watermark_column:
+        raise ValueError(
+            f"open mirror table {name!r}: mode 'watermark' requires watermark_column"
+        )
     return OpenMirrorTableTarget(
         name=name,
         source_table=source_table,
@@ -108,10 +130,14 @@ def target_from_dict(d: dict) -> OpenMirrorTarget:
     landing_zone_root = str(d.get("landing_zone_root") or "").strip()
     if not landing_zone_root:
         raise ValueError(f"open mirror target {tid!r}: 'landing_zone_root' must be non-empty")
+    if d.get("self_healing") is not None and not isinstance(d["self_healing"], bool):
+        raise TypeError(
+            f"open mirror target {tid!r}: 'self_healing' must be a boolean or null"
+        )
     connection_id = str(d.get("connection") or d.get("connection_id") or "default").strip() or "default"
     raw_tables = d.get("tables") or []
     if not isinstance(raw_tables, list):
-        raise ValueError(f"open mirror target {tid!r}: 'tables' must be a list")
+        raise TypeError(f"open mirror target {tid!r}: 'tables' must be a list")
     tables = tuple(_table_from_dict(t) for t in raw_tables if isinstance(t, dict))
     return OpenMirrorTarget(
         id=tid,
@@ -123,6 +149,9 @@ def target_from_dict(d: dict) -> OpenMirrorTarget:
         source_type=(str(d["source_type"]).strip() if d.get("source_type") else None),
         source_version=(str(d["source_version"]).strip() if d.get("source_version") else None),
         enabled=bool(d.get("enabled", True)),
+        self_healing=(
+            d["self_healing"] if d.get("self_healing") is not None else None
+        ),
         tables=tables,
     )
 
@@ -156,7 +185,7 @@ def load_targets(path: str = _CONFIG_FILE) -> list[OpenMirrorTarget]:
             continue
         try:
             targets.append(target_from_dict(entry))
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             print(f"[open_mirror.config] skipping invalid target: {exc}", file=sys.stderr)
     return targets
 

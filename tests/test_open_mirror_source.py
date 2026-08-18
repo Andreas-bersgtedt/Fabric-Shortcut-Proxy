@@ -43,6 +43,9 @@ async def sqlite_source(tmp_path, monkeypatch):
     db = tmp_path / "src.db"
     _seed_sqlite(db)
     monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{db.as_posix()}", raising=False)
+    monkeypatch.setattr(
+        config, "OPEN_MIRROR_STATE_DIR", str(tmp_path / "state"), raising=False
+    )
     executor._engine = None
     executor._sync_engine = None
     yield tmp_path

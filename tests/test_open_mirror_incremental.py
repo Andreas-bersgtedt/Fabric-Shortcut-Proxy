@@ -6,6 +6,7 @@ quarantine, dry-run, and the background scheduler's one-shot cycle.
 """
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 
@@ -16,14 +17,21 @@ import pytest
 from sqlalchemy import create_engine, text
 
 import config
-import db.executor as executor
 from config import ColumnDef
+from db import executor
+from open_mirror import source as om_source
 from open_mirror import target_from_dict
 from open_mirror.changes import RowMarker, compute_changes
 from open_mirror.landing_zone import LocalLandingZone
 from open_mirror.publisher import ROW_MARKER_COLUMN, LandingZonePublisher
-from open_mirror.state import PublishState, build_state_from_rows
-from open_mirror import source as om_source
+from open_mirror.state import (
+    CommittedCursor,
+    PendingBatch,
+    PublishState,
+    build_state_from_rows,
+    save_state,
+    state_file_path,
+)
 
 _COLUMNS = [
     ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
@@ -212,8 +220,8 @@ async def test_scheduler_run_cycle(sqlite_src, monkeypatch):
 
 import datetime as _dt
 
-from open_mirror.state import decode_watermark, encode_watermark, load_state
 from open_mirror.source import _max_watermark, _select_ordered_sql, _select_since_sql
+from open_mirror.state import decode_watermark, encode_watermark, load_state
 from planner.dialects import _MSSQL, _ORACLE, _SQLITE
 
 
@@ -235,6 +243,28 @@ def test_select_since_sql_per_dialect():
     assert _select_since_sql(_SQLITE, '"id"', '"t"', '"ver"', wm_param="wm").endswith("LIMIT :max_rows")
     assert _select_since_sql(_MSSQL, "[id]", "[t]", "[ver]", wm_param="wm").startswith("SELECT TOP (:max_rows)")
     assert "FETCH FIRST :max_rows ROWS ONLY" in _select_ordered_sql(_ORACLE, '"id"', '"t"', '"ver"')
+
+
+def test_mode_precedence_invocation_then_table_then_global(monkeypatch):
+    global_table = target_from_dict({
+        "id": "t", "landing_zone_root": "lz",
+        "tables": [{
+            "name": "sales", "source_table": "sales",
+            "target_table": "sales", "key_column": "id",
+        }],
+    }).tables[0]
+    table_override = target_from_dict({
+        "id": "t", "landing_zone_root": "lz",
+        "tables": [{
+            "name": "sales", "source_table": "sales",
+            "target_table": "sales", "key_column": "id", "mode": "snapshot",
+        }],
+    }).tables[0]
+    monkeypatch.setattr(config, "OPEN_MIRROR_MODE", "watermark", raising=False)
+
+    assert om_source._effective_mode(global_table, None) == "watermark"
+    assert om_source._effective_mode(table_override, None) == "snapshot"
+    assert om_source._effective_mode(table_override, "initial") == "initial"
 
 
 def _seed_wm(path, rows):
@@ -325,3 +355,155 @@ async def test_watermark_invalid_column_errors(sqlite_wm):
     assert result.results[0].action == "error"
     assert "nope" in (result.results[0].error or "")
 
+
+async def test_corrupt_state_fails_closed_without_source_publish(sqlite_wm):
+    tmp_path, _ = sqlite_wm
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+    path = pathlib.Path(state_file_path(str(tmp_path / "state"), target, table))
+    path.parent.mkdir(parents=True)
+    path.write_text("{truncated", encoding="utf-8")
+
+    result = await om_source.publish_target(target)
+
+    assert result.results[0].action == "error"
+    assert result.results[0].state_status == "corrupt"
+    assert "refusing an implicit full load" in result.results[0].error
+    assert not (tmp_path / "lz" / "dbo.schema" / "sales").exists()
+
+
+async def test_empty_initial_is_initialized_once(sqlite_wm):
+    tmp_path, db = sqlite_wm
+    _apply(db, "DELETE FROM sales")
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+
+    first = await om_source.publish_table(target, table)
+    second = await om_source.publish_table(target, table)
+
+    assert first.action == "initial"
+    assert first.reason == "state_missing"
+    assert second.action == "noop"
+    assert load_state(str(tmp_path / "state"), target, table).initialized is True
+
+
+async def test_tied_watermark_pages_use_keyset_cursor(sqlite_wm):
+    tmp_path, db = sqlite_wm
+    _apply(db, "DELETE FROM sales")
+    for row_id in range(1, 6):
+        _apply(
+            db,
+            "INSERT INTO sales (id,name,ver) VALUES (:id,:name,7)",
+            {"id": row_id, "name": f"r{row_id}"},
+        )
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+
+    result = await om_source.publish_table(target, table, max_rows=2)
+
+    assert result.action == "initial"
+    assert result.rows_published == 5
+    assert result.pages_read == 3
+    files = sorted((tmp_path / "lz" / "dbo.schema" / "sales").glob("*.parquet"))
+    assert len(files) == 3
+    ids = [
+        value
+        for file in files
+        for value in pq.read_table(file).column("id").to_pylist()
+    ]
+    assert ids == [1, 2, 3, 4, 5]
+    committed = load_state(str(tmp_path / "state"), target, table).committed
+    assert decode_watermark(committed.watermark) == 7
+    assert [decode_watermark(value) for value in committed.keys] == [5]
+
+
+async def test_restart_finalizes_uploaded_pending_batch(sqlite_wm, monkeypatch):
+    tmp_path, _ = sqlite_wm
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+    real_save = om_source.save_state
+    calls = 0
+
+    def fail_commit(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated cursor commit failure")
+        return real_save(*args)
+
+    monkeypatch.setattr(om_source, "save_state", fail_commit)
+    with pytest.raises(OSError, match="cursor commit"):
+        await om_source.publish_table(target, table)
+    monkeypatch.setattr(om_source, "save_state", real_save)
+
+    recovered = await om_source.publish_table(target, table)
+
+    assert recovered.action == "recovery"
+    assert recovered.recovery == "finalized_existing_file"
+    assert len(list((tmp_path / "lz" / "dbo.schema" / "sales").glob("*.parquet"))) == 1
+    assert load_state(str(tmp_path / "state"), target, table).pending is None
+
+
+async def test_pending_source_mismatch_has_recovery_reason(sqlite_wm):
+    tmp_path, _ = sqlite_wm
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+    prior = CommittedCursor(
+        watermark=encode_watermark(1), keys=[encode_watermark(1)]
+    )
+    state = PublishState(
+        strategy="watermark",
+        initialized=True,
+        committed=prior,
+        pending=PendingBatch(
+            prior=prior,
+            next=CommittedCursor(
+                watermark=encode_watermark(2), keys=[encode_watermark(2)]
+            ),
+            path="dbo.schema/sales/00000000000000000001.parquet",
+            row_count=99,
+            content_hash="0" * 64,
+        ),
+    )
+    save_state(str(tmp_path / "state"), target, table, state)
+
+    result = await om_source.publish_target(target)
+
+    assert result.results[0].action == "error"
+    assert result.results[0].reason == "state_pending_invalid"
+
+
+def test_version_one_watermark_state_migrates_in_memory(tmp_path):
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+    path = pathlib.Path(state_file_path(str(tmp_path / "state"), target, table))
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"version": 1, "keys": {}, "watermark": encode_watermark(9)}),
+        encoding="utf-8",
+    )
+
+    loaded = load_state(str(tmp_path / "state"), target, table)
+
+    assert loaded.status == "valid"
+    assert loaded.state.initialized is True
+    assert decode_watermark(loaded.state.committed.watermark) == 9
+
+
+async def test_version_one_watermark_resumes_without_key_bind(sqlite_wm):
+    tmp_path, _ = sqlite_wm
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+    path = pathlib.Path(state_file_path(str(tmp_path / "state"), target, table))
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"version": 1, "keys": {}, "watermark": encode_watermark(1)}),
+        encoding="utf-8",
+    )
+
+    result = await om_source.publish_table(target, table)
+
+    assert result.action == "incremental"
+    assert result.rows == 2
+    loaded = load_state(str(tmp_path / "state"), target, table)
+    assert [decode_watermark(value) for value in loaded.committed.keys] == [3]

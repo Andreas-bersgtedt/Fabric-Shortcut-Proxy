@@ -1,6 +1,6 @@
 # Fabric Shortcut Proxy — User Manual
 
-Version 2.4.0
+Version 2.5.1
 
 This manual is the end-to-end guide to installing, configuring, and operating the
 Fabric Shortcut Proxy. It is organized into chapters (files) that each cover one

@@ -26,6 +26,7 @@ class CleanupCandidate:
     eligible: bool
     retention_days: int
     reason: str
+    file_paths: tuple[str, ...] = ()
 
 
 def _modified(value) -> dt.datetime | None:
@@ -56,9 +57,18 @@ def inspect_cleanup(
         raise ValueError("cleanup retention days cannot be negative")
     backend = backend or open_landing_zone(target.landing_zone_root)
     path = f"{table_relative_path(table.target_table, table.schema)}/{READY_DIR}"
-    entries = backend.list_entries(path)
-    files = [entry for entry in entries if not entry["is_directory"]]
-    modified = [_modified(entry.get("last_modified")) for entry in files]
+    files: list[tuple[str, dict]] = []
+    pending = [path]
+    while pending:
+        current_path = pending.pop()
+        for entry in backend.list_entries(current_path):
+            entry_path = f"{current_path}/{entry['name']}"
+            if entry["is_directory"]:
+                pending.append(entry_path)
+            else:
+                files.append((entry_path, entry))
+    file_entries = [entry for _, entry in files]
+    modified = [_modified(entry.get("last_modified")) for entry in file_entries]
     oldest = min((value for value in modified if value), default=None)
     current = now or dt.datetime.now(dt.UTC)
     cutoff = current - dt.timedelta(days=retention)
@@ -74,8 +84,9 @@ def inspect_cleanup(
         reason = "retention_not_elapsed"
     return CleanupCandidate(
         target.id, table.target_table, path, len(files),
-        sum(int(entry.get("content_length", 0) or 0) for entry in files),
+        sum(int(entry.get("content_length", 0) or 0) for entry in file_entries),
         oldest.isoformat() if oldest else None, eligible, retention, reason,
+        tuple(file_path for file_path, _ in files),
     )
 
 
@@ -95,7 +106,13 @@ def cleanup_target(
     if execute:
         for candidate in candidates:
             if candidate.eligible:
+                for file_path in candidate.file_paths:
+                    backend.delete(file_path)
                 backend.remove_tree(candidate.path)
+                if backend.exists(candidate.path):
+                    raise RuntimeError(
+                        f"cleanup could not verify deletion of {candidate.path}"
+                    )
                 deleted.append(candidate.path)
     return {
         "target_id": target.id,

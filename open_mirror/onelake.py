@@ -22,6 +22,13 @@ _INSTALL_HINT = (
 )
 
 
+def _is_directory(value) -> bool:
+    """Normalize Azure SDK and test-double directory flags."""
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return bool(value)
+
+
 def _require_sdk() -> None:
     try:
         import azure.storage.filedatalake  # noqa: F401
@@ -106,7 +113,7 @@ class OneLakeLandingZone:
             paths = self._fs().get_paths(path=self._abs(rel_path), recursive=False)
             return [{
                 "name": p.name.split("/")[-1],
-                "is_directory": bool(getattr(p, "is_directory", False)),
+                "is_directory": _is_directory(getattr(p, "is_directory", False)),
                 "last_modified": getattr(p, "last_modified", None),
                 "content_length": getattr(p, "content_length", 0) or 0,
             } for p in paths]

@@ -214,6 +214,8 @@ The Manager Monitor includes a Data File Manager for processed landing-zone file
 seven days. Inspect is always a dry run. Delete eligible files requires explicit confirmation and
 removes only a complete `_FilesReadyToDelete` folder whose files have all passed the retention
 period. Active table files and the current sequence file are not selected.
+The Manager deletes eligible files individually, removes the now-empty ready directory, and
+reports a failure if the directory still exists after the operation.
 
 The Config Builder's Open Mirror tab exposes the same policy. Set the target retention in days,
 or leave a table override blank to inherit it. Saving writes both values to

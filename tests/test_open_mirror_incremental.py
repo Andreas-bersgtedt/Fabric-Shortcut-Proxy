@@ -129,6 +129,20 @@ def test_cleanup_dry_run_preserves_recent_ready_files(tmp_path):
     assert ready.exists()
 
 
+def test_cleanup_deletes_nested_ready_files(tmp_path):
+    target = _target(tmp_path)
+    ready = tmp_path / "dbo.schema" / "sales" / "_FilesReadyToDelete" / "batch"
+    ready.mkdir(parents=True)
+    old = ready / "old.parquet"
+    old.write_bytes(b"old")
+    old_time = (dt.datetime.now(dt.UTC) - dt.timedelta(days=8)).timestamp()
+    os.utime(old, (old_time, old_time))
+
+    result = cleanup_target(target, execute=True)
+    assert result["deleted"] == ["dbo.schema/sales/_FilesReadyToDelete"]
+    assert not (tmp_path / "dbo.schema" / "sales" / "_FilesReadyToDelete").exists()
+
+
 # --- end-to-end incremental against a live SQLite source -------------------
 
 def _seed(path: pathlib.Path, rows):

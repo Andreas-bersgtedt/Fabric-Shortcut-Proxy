@@ -140,6 +140,17 @@ async def test_proxy_summary_with_no_agents(proxy_app):
         assert r2.status_code == 200 and r2.json()["reset_agents"] == 0
 
 
+async def test_proxy_open_mirror_with_no_agents(proxy_app):
+    transport = httpx.ASGITransport(app=proxy_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.get("/_monitor/api/open-mirror")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["agents_total"] == 0
+        assert d["targets"] == []
+        assert d["totals"]["tables"] == 0
+
+
 async def test_proxy_logs_with_no_agents(proxy_app):
     from observability.logbuffer import get_buffer
 

@@ -84,6 +84,61 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
         merged["agents_total"] = len(bases)
         return JSONResponse(merged)
 
+    @router.get("/api/open-mirror")
+    async def open_mirror() -> JSONResponse:
+        """Merge Open Mirror status and publishing statistics from live Agents."""
+        bases = _agent_base_urls(supervisors)
+        payloads = []
+        if bases:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                results = await asyncio.gather(
+                    *(_scrape(client, b, "/_monitor/api/open-mirror") for b in bases)
+                )
+            payloads = [r for r in results if isinstance(r, dict)]
+
+        by_id: dict[str, dict] = {}
+        for payload in payloads:
+            for target in payload.get("targets", []) or []:
+                target_id = str(target.get("id") or "")
+                if not target_id:
+                    continue
+                current = by_id.get(target_id)
+                if current is None:
+                    current = dict(target)
+                    current["agent_count"] = 0
+                    current["published_rows"] = 0
+                    current["published_tables"] = 0
+                    by_id[target_id] = current
+                current["agent_count"] += 1
+                current["published_rows"] += int(target.get("published_rows", 0) or 0)
+                current["published_tables"] = max(
+                    current["published_tables"], int(target.get("published_tables", 0) or 0)
+                )
+
+        targets = list(by_id.values())
+        tables = sum(len(target.get("tables", []) or []) for target in targets)
+        initialized = sum(
+            1 for target in targets for table in target.get("tables", []) or []
+            if table.get("initialized")
+        )
+        pending = sum(
+            1 for target in targets for table in target.get("tables", []) or []
+            if table.get("pending")
+        )
+        return JSONResponse({
+            "generated_at": payloads[0].get("generated_at") if payloads else None,
+            "agents_total": len(bases),
+            "targets": targets,
+            "totals": {
+                "targets": len(targets),
+                "enabled_targets": sum(1 for target in targets if target.get("enabled")),
+                "tables": tables,
+                "initialized_tables": initialized,
+                "pending_tables": pending,
+                "published_rows": sum(target["published_rows"] for target in targets),
+            },
+        })
+
     @router.post("/api/reset")
     async def reset() -> JSONResponse:
         bases = _agent_base_urls(supervisors)

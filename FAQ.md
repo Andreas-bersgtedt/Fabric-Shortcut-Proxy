@@ -47,7 +47,7 @@ incremental freshness, Fabric‑managed). The proxy **virtualizes** an existing 
 shortcut with no copy pipeline — freshness is poll/probe/manual, and the source remains
 authoritative. Use Open Mirroring when durable replication and near‑instant freshness are the
 priority; use the proxy to expose an existing source as a shortcut without building ingestion
-first. Since 2.5.0 the proxy also **ships an Open Mirroring publisher** (config‑builder **Open
+first. Since 2.5.1 the proxy also **ships an Open Mirroring publisher** (config‑builder **Open
 Mirror** tab) that pushes selected tables into a Fabric landing zone using the same connectors
 and the proxy's Entra identity — so one deployment can do both. See [docs/FAQ.md](docs/FAQ.md).
 

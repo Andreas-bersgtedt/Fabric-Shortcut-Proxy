@@ -70,7 +70,34 @@ To publish on demand instead of on a timer, `POST /_admin/refresh`. Note that ra
 tokenization is incompatible with content-based refresh and the proxy rejects that
 combination at startup.
 
-## 8.5 Caching
+## 8.5 Open Mirror publishing
+
+The Manager publishes targets from `config.open_mirror.json` only when
+`OPEN_MIRROR_PUBLISH=1`. The interval is controlled by `OPEN_MIRROR_INTERVAL_SECONDS`; a
+target can also be published on demand from the config builder with **Publish now** or **Dry run**.
+
+Before reading a OneLake target's source tables, the Manager checks the mirrored database status.
+When `self_healing` is enabled, it calls Fabric's mirroring start operation for `Initialized`,
+`Paused`, or `Stopped`, then waits for `Running` within
+`OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS`. `OPEN_MIRROR_START_COOLDOWN_SECONDS` prevents repeated
+start attempts for the same target. This operation does not start or resume Fabric capacity.
+
+Use watermark tracking for source-incremental upserts. Use snapshot tracking when delete detection
+is required; it is a full-source scan. The state directory contains the committed cursor and
+pending-file recovery metadata. Back it up with the landing-zone file indexes.
+
+To force an operator-approved full load for one table, call:
+
+```bash
+curl -X POST http://localhost:9200/_config/api/open-mirror/reset \
+  -H 'Content-Type: application/json' \
+  -d '{"target_id":"fabric-sales","table":"sales","confirm":true}'
+```
+
+The reset endpoint requires all three fields. It preserves invalid state until this explicit
+action, so a corrupt or unreadable state file never becomes an accidental full load.
+
+## 8.6 Caching
 
 Generated Parquet is cached in memory, and optionally on disk for warm restarts:
 
@@ -84,7 +111,7 @@ byte-identical while the snapshot is current, which prevents size-drift read fai
 sizing and TTLs (`parquet_cache_max_bytes`, `metadata_cache_ttl`, `parquet_cache_ttl`) are
 live settings that can change without a restart.
 
-## 8.6 Scaling the fleet
+## 8.7 Scaling the fleet
 
 The enterprise edition scales horizontally by running more agents behind the Manager.
 
@@ -102,7 +129,7 @@ supervisor restarts crashed agents with backoff and will not crash-loop on a per
 configuration error; it emits a clear, redacted message instead. The scale design is in
 [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md).
 
-## 8.7 Materialization and data size
+## 8.8 Materialization and data size
 
 Understanding when data is read matters most for large tables. By default
 (`MATERIALIZE_MODE=eager`) the proxy materializes each split at startup: it runs the split's
@@ -170,19 +197,19 @@ Sizing guidance for large tables:
 `lazy` and `virtual` are incompatible with auto-refresh and serving-image publishing. Set the
 mode in the config builder (Global Settings) or `config.performance.json`.
 
-## 8.8 High availability
+## 8.9 High availability
 
 Enable Manager HA with `-Ha` (leader lease over the shared artifact store). Only the primary
 Manager supervises agents; a standby is a warm spare and reports as ready. The gateway on a
 standby naturally returns 503 because no agents register to it. Roll agents with health-gated
 restarts (`rolling_restart_health_timeout`).
 
-## 8.9 Retention
+## 8.10 Retention
 
 Enable the retention garbage collector with `-RetentionGc` to prune orphaned Parquet splits
 on a timer (`retention_gc_interval_seconds`), or trigger it once with `POST /_admin/gc`.
 
-## 8.10 Troubleshooting
+## 8.11 Troubleshooting
 
 | Symptom | Likely cause | First check |
 |---|---|---|
@@ -193,13 +220,15 @@ on a timer (`retention_gc_interval_seconds`), or trigger it once with `POST /_ad
 | Change-probe-unavailable warning | Source has no cheap probe | Set `REFRESH_ALLOW_FULL_PULL=1` or use `ttl` |
 | A view fails to plan | No primary key detected | Set `key_column` for the view |
 | Tokenized table fails at startup | Missing key, unsupported dialect, or refresh conflict | Read the redacted error; see chapter 7 |
+| Open Mirror table stops after a restart | State is missing, corrupt, unreadable, or incompatible | Inspect `OPEN_MIRROR_STATE_DIR`; use the explicit reset endpoint only after review |
+| Open Mirror preflight does not start mirroring | Target is not a OneLake target, self-healing is disabled, or Fabric identifiers are missing | Check `landing_zone_root`, `workspace_id`, `mirrored_database_id`, and `self_healing` |
 
 Launcher and host issues are covered in
 [LINUX_MANAGER_TROUBLESHOOTING.md](../LINUX_MANAGER_TROUBLESHOOTING.md) and the deployment
 guides. Oracle and Databricks operational specifics are in
 [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](../ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
-## 8.11 Next
+## 8.12 Next
 
 Continue to [Chapter 9: Reference](09-reference.md) for the settings groups, dialect matrix,
 path formats, and launcher flags.

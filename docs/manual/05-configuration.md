@@ -180,9 +180,35 @@ commit model and type mapping.
   a determinism self-check that fails closed on drift.
 
 `lazy` and `virtual` are incompatible with auto-refresh. Full behavior and sizing guidance are
-in [Chapter 8, §8.7](08-operations.md).
+in [Chapter 8, §8.8](08-operations.md).
 
-## 5.11 Validation
+## 5.11 Open Mirroring targets
+
+Open Mirror publishing is configured separately from the shortcut table registry. Copy
+[config.open_mirror.example.json](../../config.open_mirror.example.json) to
+`config.open_mirror.json`, then set the source connection, Fabric mirrored database identifiers,
+landing-zone root, and tables to publish.
+
+Each table uses one of these strategies:
+
+- `watermark_column` present: source-incremental upserts ordered by the watermark and key columns.
+  This does not detect deletes or rows whose watermark is not greater than the committed cursor.
+- `watermark_column` omitted: a full-source snapshot scan with local row-hash diffing. This detects
+  inserts, updates, and deletes, but reads the source table on every cycle.
+- `mode: "initial"`: an explicit full load. Invocation mode takes precedence over table mode,
+  which takes precedence over `OPEN_MIRROR_MODE`.
+
+The Manager stores cursor and recovery state outside the landing zone. Set
+`OPEN_MIRROR_STATE_DIR` explicitly for a service installation, or create the Linux service
+directory before startup. Missing state permits the first load; corrupt or unreadable state stops
+the table until an operator uses the explicit reset endpoint.
+
+For OneLake targets, the Manager checks mirroring before source extraction. With
+`self_healing: true` (the default), it uses the existing proxy Entra identity to start mirroring
+when Fabric reports `Initialized`, `Paused`, or `Stopped`, then waits for `Running`. This starts
+the mirrored database operation only; it does not start Fabric capacity.
+
+## 5.12 Validation
 
 The proxy validates configuration at startup and fails closed with a clear, redacted
 message on problems: unknown dialects, missing token keys, transformed split keys, malformed
@@ -190,7 +216,7 @@ policy schemas, duplicate table names, undefined connections, and incompatible
 refresh/tokenization combinations. Fix the reported problem and restart. A masked (`***`)
 connection string is never stored, hydrated, or treated as a credential.
 
-## 5.12 Next
+## 5.13 Next
 
 Continue to [Chapter 6: Connecting Microsoft Fabric](06-connectivity.md) to wire a shortcut
 to the tables you just registered.

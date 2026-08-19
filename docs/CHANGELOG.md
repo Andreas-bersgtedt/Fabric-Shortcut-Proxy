@@ -1,7 +1,5 @@
 # Changelog
 
-## Unreleased
-
 All notable changes to the Fabric Shortcut Proxy are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

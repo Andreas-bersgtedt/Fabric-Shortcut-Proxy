@@ -92,6 +92,14 @@ async def test_summary_shape(client):
     assert "auto_refresh" in d["refresh"]
 
 
+async def test_open_mirror_summary_shape(client):
+    r = await client.get("/_monitor/api/open-mirror")
+    assert r.status_code == 200
+    d = r.json()
+    assert "targets" in d and "totals" in d and "state_dir" in d
+    assert d["totals"]["targets"] == len(d["targets"])
+
+
 async def test_reset_clears(client):
     querystats.record_query(table="X", split_index=0, sql_ms=1, gen_ms=1,
                             total_ms=2, rows=1, resp_bytes=1, cache_hit=False)
@@ -168,4 +176,3 @@ def test_self_poll_suppressed_through_real_logging_handler():
     assert any("real work" in ln for ln in lines)                 # sanity: buffering works
     assert not any("/_monitor/api/logs" in ln for ln in lines)    # self-poll suppressed
     buf.clear()
-

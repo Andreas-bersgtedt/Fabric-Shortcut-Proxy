@@ -1,0 +1,29 @@
+# Non-secret answers for install.sh --answers.
+# Secret values must be referenced as env:NAME or file:/absolute/path.
+# Do not put passwords, tokens, client secrets, or private-key contents here.
+
+APPLY=APPLY
+install_dir=/opt/fabric-shortcut-proxy
+service_user=fsp
+service_group=fsp
+unit_name=fabric-shortcut-proxy.service
+identity_mode=managed_identity
+keyvault_mode=disabled
+secret_backend=env-file
+tls_mode=disabled
+start_service=no
+
+# For service_principal identity, add:
+# tenant_id=00000000-0000-0000-0000-000000000000
+# client_id=00000000-0000-0000-0000-000000000000
+# client_secret_reference=env:FSP_CLIENT_SECRET
+
+# For Key Vault:
+# keyvault_mode=required
+# keyvault_uri=https://my-vault.vault.azure.net
+
+# For TLS:
+# tls_mode=nginx
+# tls_hostname=proxy.example.com
+# tls_cert_file=/etc/letsencrypt/live/proxy.example.com/fullchain.pem
+# tls_key_file=/etc/letsencrypt/live/proxy.example.com/privkey.pem

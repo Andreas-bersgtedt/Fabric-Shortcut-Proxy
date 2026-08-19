@@ -86,7 +86,19 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
 
     @router.get("/api/open-mirror")
     async def open_mirror() -> JSONResponse:
-        """Merge Open Mirror status and publishing statistics from live Agents."""
+        """Return Manager-owned Open Mirror status and publishing statistics.
+
+        The Open Mirror scheduler runs in the Manager process, so its configured
+        targets and state are authoritative there. Agent data is retained as a
+        fallback for deployments where publishing is delegated to Agents.
+        """
+        from monitor.router import open_mirror_summary
+
+        local = await open_mirror_summary()
+        if local.get("targets"):
+            local["agents_total"] = len(_agent_base_urls(supervisors))
+            return JSONResponse(local)
+
         bases = _agent_base_urls(supervisors)
         payloads = []
         if bases:

@@ -227,9 +227,17 @@ install.sh --dry-run       Show actions without changing the host
 install.sh --help          Show options
 ```
 
-The answers file should be JSON or YAML with a documented schema. Secrets should be
-provided through environment-variable names or protected file references, not inline
-values by default.
+The first shell implementation uses a strict `KEY=VALUE` answers file documented in
+`docs/ASCII_INSTALLER_ANSWERS.example`. Secrets are provided through environment-variable
+names or protected file references, not inline values.
+
+The current foundation implements the host, identity selection, Key Vault settings, local
+or Key Vault credential provisioning, TLS file checks, systemd unit rendering, and read-only
+health checks. `ADMIN_TOKEN`, `MANAGER_AUTH_PASSWORD`, and S3 credentials are generated only
+after `APPLY`; generated values are written to the selected protected backend and never to
+installer state. The current application has no separate `AGENT_TOKEN` setting, so the wizard
+labels that optional value as unused rather than pretending it authenticates Manager-to-Agent
+traffic.
 
 ## Implementation layout
 

@@ -56,6 +56,8 @@ class LandingZoneBackend(Protocol):
 
     def read_text(self, rel_path: str) -> str: ...
 
+    def read_bytes(self, rel_path: str) -> bytes: ...
+
     def write_bytes(self, rel_path: str, data: bytes) -> None: ...
 
     def write_text(self, rel_path: str, text: str) -> None: ...
@@ -89,6 +91,10 @@ class LocalLandingZone:
 
     def read_text(self, rel_path: str) -> str:
         with open(self._abs(rel_path), "r", encoding="utf-8") as fh:
+            return fh.read()
+
+    def read_bytes(self, rel_path: str) -> bytes:
+        with open(self._abs(rel_path), "rb") as fh:
             return fh.read()
 
     def write_bytes(self, rel_path: str, data: bytes) -> None:

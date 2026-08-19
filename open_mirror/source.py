@@ -283,6 +283,9 @@ def _finalize_pending(state_dir, target, table, state: PublishState) -> None:
     state.committed = pending.next
     state.watermark = pending.next.watermark
     state.initialized = True
+    state.published_rows_total += pending.row_count
+    state.last_batch_rows = pending.row_count
+    state.last_published_at = state.committed.committed_at
     if pending.snapshot_keys is not None:
         state.keys = pending.snapshot_keys
     state.pending = None

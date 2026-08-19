@@ -29,6 +29,7 @@ from open_mirror.state import (
     PendingBatch,
     PublishState,
     build_state_from_rows,
+    load_state,
     save_state,
     state_file_path,
 )
@@ -137,6 +138,10 @@ async def test_incremental_cycle_initial_then_diff(sqlite_src):
 
     first = await om_source.publish_table(target, table, mode="incremental")
     assert first.action == "initial" and first.rows == 3
+    state = load_state(str(tmp_path / "state"), target, table).state
+    assert state.published_rows_total == 3
+    assert state.last_batch_rows == 3
+    assert state.last_published_at
 
     # No source change -> no-op, no new file.
     noop = await om_source.publish_table(target, table, mode="incremental")
@@ -150,6 +155,11 @@ async def test_incremental_cycle_initial_then_diff(sqlite_src):
     inc = await om_source.publish_table(target, table, mode="incremental")
     assert inc.action == "incremental"
     assert inc.inserts == 1 and inc.updates == 1 and inc.deletes == 1
+    state = load_state(str(tmp_path / "state"), target, table).state
+    assert state.published_rows_total == 6
+    assert state.last_batch_rows == 3
+    from monitor.router import _landing_zone_rows
+    assert _landing_zone_rows(target, table) == 6
 
     change_file = landing / "dbo.schema" / "sales" / "00000000000000000002.parquet"
     t = pq.read_table(change_file)
@@ -221,7 +231,7 @@ async def test_scheduler_run_cycle(sqlite_src, monkeypatch):
 import datetime as _dt
 
 from open_mirror.source import _max_watermark, _select_ordered_sql, _select_since_sql
-from open_mirror.state import decode_watermark, encode_watermark, load_state
+from open_mirror.state import decode_watermark, encode_watermark
 from planner.dialects import _MSSQL, _ORACLE, _SQLITE
 
 

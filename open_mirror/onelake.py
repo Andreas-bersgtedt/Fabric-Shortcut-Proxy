@@ -101,6 +101,10 @@ class OneLakeLandingZone:
         data = self._fs().get_file_client(self._abs(rel_path)).download_file().readall()
         return data.decode("utf-8") if isinstance(data, (bytes, bytearray)) else str(data)
 
+    def read_bytes(self, rel_path: str) -> bytes:
+        data = self._fs().get_file_client(self._abs(rel_path)).download_file().readall()
+        return bytes(data)
+
     def write_bytes(self, rel_path: str, data: bytes) -> None:
         self._fs().get_file_client(self._abs(rel_path)).upload_data(data, overwrite=True)
 

@@ -166,6 +166,9 @@ class PublishState:
     pending: PendingBatch | None = None
     keys: dict[str, dict] = field(default_factory=dict)
     watermark: dict | None = None
+    published_rows_total: int = 0
+    last_batch_rows: int = 0
+    last_published_at: str | None = None
 
     def __post_init__(self) -> None:
         # ``watermark=`` was the public version 1 constructor API.
@@ -182,6 +185,9 @@ class PublishState:
             "committed": self.committed.to_json() if self.committed else None,
             "pending": self.pending.to_json() if self.pending else None,
             "keys": self.keys,
+            "published_rows_total": self.published_rows_total,
+            "last_batch_rows": self.last_batch_rows,
+            "last_published_at": self.last_published_at,
         }
 
     @classmethod
@@ -209,12 +215,24 @@ class PublishState:
         keys = data.get("keys", {})
         if not isinstance(data.get("initialized"), bool) or not isinstance(keys, dict):
             raise TypeError("state initialized/keys fields are invalid")
+        published_rows_total = data.get("published_rows_total", 0)
+        last_batch_rows = data.get("last_batch_rows", 0)
+        last_published_at = data.get("last_published_at")
+        if (
+            not isinstance(published_rows_total, int) or published_rows_total < 0
+            or not isinstance(last_batch_rows, int) or last_batch_rows < 0
+            or (last_published_at is not None and not isinstance(last_published_at, str))
+        ):
+            raise ValueError("published row metrics are invalid")
         return cls(
             strategy=strategy,
             initialized=data["initialized"],
             committed=CommittedCursor.from_json(data.get("committed")),
             pending=PendingBatch.from_json(data.get("pending")),
             keys=keys,
+            published_rows_total=published_rows_total,
+            last_batch_rows=last_batch_rows,
+            last_published_at=last_published_at,
         )
 
 

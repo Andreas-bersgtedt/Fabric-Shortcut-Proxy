@@ -15,22 +15,25 @@ Read-only. Combines:
 """
 from __future__ import annotations
 
+import asyncio
+import io
 import pathlib
 import time
-import asyncio
 
+import pyarrow.parquet as pq
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
-import config
 import cache.lru_cache as cache
+import config
 from db.capabilities import capabilities_for_db_url
 from iceberg.state_store import get_all_snapshots
-from observability import metrics, trace, querystats
+from observability import metrics, querystats, trace
 from observability.logbuffer import get_buffer
 from observability.logging import get_logger
 from open_mirror.config import load_targets
 from open_mirror.fabric_api import FabricApiError, get_mirroring_status
+from open_mirror.landing_zone import open_landing_zone, table_relative_path
 from open_mirror.state import load_published_tables, load_state
 
 log = get_logger(__name__)
@@ -39,6 +42,26 @@ router = APIRouter(prefix="/_monitor")
 _HTML_PATH = pathlib.Path(__file__).parent / "index.html"
 _MIRROR_STATUS_CACHE: dict[str, tuple[float, dict]] = {}
 _MIRROR_STATUS_CACHE_SECONDS = 15.0
+
+
+def _landing_zone_rows(target, table) -> int:
+    backend = open_landing_zone(target.landing_zone_root)
+    root = table_relative_path(table.target_table, table.schema)
+    total = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        for name in backend.list_dir(directory):
+            path = f"{directory}/{name}"
+            if name.lower().endswith(".parquet"):
+                total += _parquet_rows(backend.read_bytes(path))
+            elif backend.list_dir(path):
+                pending.append(path)
+    return total
+
+
+def _parquet_rows(payload: bytes) -> int:
+    return pq.ParquetFile(io.BytesIO(payload)).metadata.num_rows
 
 
 @router.get("")
@@ -186,7 +209,7 @@ async def summary() -> dict:
     }
 
 
-async def open_mirror_summary() -> dict:
+async def open_mirror_summary(*, include_landing_zone_count: bool = False) -> dict:
     """Return Open Mirror status and local publishing statistics."""
     state_dir = getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state")
     targets = []
@@ -195,6 +218,33 @@ async def open_mirror_summary() -> dict:
         for table in target.tables:
             state_result = load_state(state_dir, target, table)
             state = state_result.state
+            landing_zone_rows = None
+            if include_landing_zone_count and state_result.status == "valid":
+                try:
+                    landing_zone_rows = await asyncio.to_thread(
+                        _landing_zone_rows, target, table
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    log.warning("open_mirror_landing_zone_count_failed",
+                                target=target.id, table=table.name, error=str(exc))
+            published_rows_total = state.published_rows_total if state else 0
+            if published_rows_total == 0 and landing_zone_rows is not None:
+                # Pre-metrics state files can recover their historical total from
+                # the landing-zone Parquet files when an operator requests a scan.
+                published_rows_total = landing_zone_rows
+            last_batch_rows = state.last_batch_rows if state else 0
+            last_published_at = state.last_published_at if state else None
+            if state and state.committed:
+                last_published_at = last_published_at or state.committed.committed_at
+                if include_landing_zone_count and not last_batch_rows:
+                    try:
+                        backend = open_landing_zone(target.landing_zone_root)
+                        last_batch_rows = _parquet_rows(
+                            backend.read_bytes(state.committed.file)
+                        ) if state.committed.file else 0
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        log.warning("open_mirror_last_batch_count_failed",
+                                    target=target.id, table=table.name, error=str(exc))
             tables.append({
                 "table": table.target_table,
                 "strategy": table.strategy,
@@ -202,6 +252,10 @@ async def open_mirror_summary() -> dict:
                 "initialized": state.initialized if state else False,
                 "pending": bool(state and state.pending),
                 "committed_file": state.committed.file if state and state.committed else None,
+                "published_rows_total": published_rows_total,
+                "last_batch_rows": last_batch_rows,
+                "last_published_at": last_published_at,
+                "landing_zone_rows": landing_zone_rows,
             })
         now = time.monotonic()
         cached = _MIRROR_STATUS_CACHE.get(target.id)
@@ -224,6 +278,10 @@ async def open_mirror_summary() -> dict:
         else:
             status = {"status": "local", "error": None}
         published = load_published_tables(state_dir, target)
+        last_published_at = max(
+            (table["last_published_at"] for table in tables if table["last_published_at"]),
+            default=None,
+        )
         targets.append({
             "id": target.id,
             "enabled": target.enabled,
@@ -233,7 +291,10 @@ async def open_mirror_summary() -> dict:
             "self_healing": target.self_healing,
             "tables": tables,
             "published_tables": len(published),
-            "published_rows": sum(int(item.get("rows", 0) or 0) for item in published),
+            "published_rows": sum(
+                table["published_rows_total"] for table in tables
+            ),
+            "last_published_at": last_published_at,
         })
     return {
         "generated_at": round(time.time(), 3),
@@ -250,13 +311,24 @@ async def open_mirror_summary() -> dict:
                 1 for target in targets for table in target["tables"] if table["pending"]
             ),
             "published_rows": sum(target["published_rows"] for target in targets),
+            "last_batch_rows": sum(
+                table["last_batch_rows"]
+                for target in targets for table in target["tables"]
+            ),
+            "last_published_at": max(
+                (target["last_published_at"] for target in targets
+                 if target["last_published_at"]),
+                default=None,
+            ),
         },
     }
 
 
 @router.get("/api/open-mirror")
-async def open_mirror() -> dict:
-    return await open_mirror_summary()
+async def open_mirror(include_landing_zone_count: bool = False) -> dict:
+    return await open_mirror_summary(
+        include_landing_zone_count=include_landing_zone_count
+    )
 
 
 @router.post("/api/reset")

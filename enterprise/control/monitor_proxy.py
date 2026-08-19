@@ -85,7 +85,7 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
         return JSONResponse(merged)
 
     @router.get("/api/open-mirror")
-    async def open_mirror() -> JSONResponse:
+    async def open_mirror(include_landing_zone_count: bool = False) -> JSONResponse:
         """Return Manager-owned Open Mirror status and publishing statistics.
 
         The Open Mirror scheduler runs in the Manager process, so its configured
@@ -94,7 +94,9 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
         """
         from monitor.router import open_mirror_summary
 
-        local = await open_mirror_summary()
+        local = await open_mirror_summary(
+            include_landing_zone_count=include_landing_zone_count
+        )
         if local.get("targets"):
             local["agents_total"] = len(_agent_base_urls(supervisors))
             return JSONResponse(local)
@@ -104,7 +106,11 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
         if bases:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 results = await asyncio.gather(
-                    *(_scrape(client, b, "/_monitor/api/open-mirror") for b in bases)
+                    *(_scrape(
+                        client, b,
+                        "/_monitor/api/open-mirror"
+                        + ("?include_landing_zone_count=true" if include_landing_zone_count else ""),
+                    ) for b in bases)
                 )
             payloads = [r for r in results if isinstance(r, dict)]
 
@@ -120,12 +126,19 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
                     current["agent_count"] = 0
                     current["published_rows"] = 0
                     current["published_tables"] = 0
+                    current["last_published_at"] = None
                     by_id[target_id] = current
                 current["agent_count"] += 1
                 current["published_rows"] += int(target.get("published_rows", 0) or 0)
                 current["published_tables"] = max(
                     current["published_tables"], int(target.get("published_tables", 0) or 0)
                 )
+                candidate_time = target.get("last_published_at")
+                if candidate_time and (
+                    current["last_published_at"] is None
+                    or candidate_time > current["last_published_at"]
+                ):
+                    current["last_published_at"] = candidate_time
 
         targets = list(by_id.values())
         tables = sum(len(target.get("tables", []) or []) for target in targets)
@@ -148,6 +161,16 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
                 "initialized_tables": initialized,
                 "pending_tables": pending,
                 "published_rows": sum(target["published_rows"] for target in targets),
+                "last_batch_rows": sum(
+                    sum(table.get("last_batch_rows", 0) or 0
+                        for table in target.get("tables", []) or [])
+                    for target in targets
+                ),
+                "last_published_at": max(
+                    (target["last_published_at"] for target in targets
+                     if target["last_published_at"]),
+                    default=None,
+                ),
             },
         })
 

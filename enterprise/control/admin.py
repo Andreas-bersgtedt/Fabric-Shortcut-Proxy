@@ -380,6 +380,7 @@ _ADMIN_HTML = r"""<!doctype html>
       </label>
       <button onclick="monitorRefresh()">Refresh</button>
       <button onclick="monitorReset()">Reset stats</button>
+      <button onclick="pollOpenMirror(true)">Count landing-zone rows</button>
     </div>
     <div class="cards" id="monitorCards"></div>
     <details class="section">
@@ -668,7 +669,9 @@ function renderOpenMirror(d){
     ["Enabled", fmtNum(t.enabled_targets)],
     ["Initialized tables", fmtNum(t.initialized_tables)],
     ["Pending recovery", fmtNum(t.pending_tables)],
-    ["Published rows", fmtNum(t.published_rows)]
+    ["Total rows published", fmtNum(t.published_rows)],
+    ["Rows in last batch", fmtNum(t.last_batch_rows)],
+    ["Last publish", esc(t.last_published_at || "not published")]
   ].map(([k,v]) => `<div class="card"><div class="l">${k}</div><div class="n">${v}</div></div>`).join("");
   $("mirrorGrid").innerHTML = (d.targets || []).length ? d.targets.map(target => `
     <div class="mirror-card">
@@ -679,19 +682,30 @@ function renderOpenMirror(d){
         <dt>Self-healing</dt><dd>${target.self_healing === false ? "off" : "on/default"}</dd>
         <dt>Published tables</dt><dd>${fmtNum(target.published_tables)}</dd>
         <dt>Published rows</dt><dd>${fmtNum(target.published_rows)}</dd>
+        <dt>Last publish</dt><dd>${esc(target.last_published_at || "not published")}</dd>
       </dl>
       ${target.status_error ? `<div class="err">${esc(target.status_error)}</div>` : ""}
       <div class="mirror-tables">${(target.tables || []).map(table => `
         <div class="mirror-table">
           <span>${esc(table.table)} <span class="pill">${esc(table.strategy || "unknown")}</span></span>
-          <span class="${table.state_status === "valid" ? "" : "err"}">${esc(table.state_status || "unknown")} · ${table.initialized ? "ready" : "initial"}</span>
+          <span class="${table.state_status === "valid" ? "" : "err"}">
+            ${esc(table.state_status || "unknown")} · ${table.initialized ? "ready" : "initial"}
+            · total ${fmtNum(table.published_rows_total)}
+            · last ${fmtNum(table.last_batch_rows)}
+            · ${esc(table.last_published_at || "not published")}
+            ${table.landing_zone_rows == null ? "" : ` · landing zone ${fmtNum(table.landing_zone_rows)}`}
+          </span>
         </div>`).join("")}</div>
     </div>`).join("") : `<div class="empty">No Open Mirror targets configured.</div>`;
 }
 
-async function pollOpenMirror(){
+async function pollOpenMirror(includeLandingZoneCount = false){
   try{
-    const r = await fetch("/_monitor/api/open-mirror", {cache:"no-store"});
+    const r = await fetch(
+      "/_monitor/api/open-mirror"
+      + (includeLandingZoneCount ? "?include_landing_zone_count=true" : ""),
+      {cache:"no-store"}
+    );
     if(!r.ok) throw new Error("HTTP "+r.status);
     renderOpenMirror(await r.json());
   }catch(e){

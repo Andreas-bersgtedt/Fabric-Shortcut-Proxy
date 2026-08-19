@@ -82,6 +82,7 @@ class OpenMirrorTarget:
     enabled: bool = True
     self_healing: bool | None = None
     cleanup_retention_days: int = 7
+    fabric_retention_days: int | None = None
     tables: tuple[OpenMirrorTableTarget, ...] = ()
 
 
@@ -155,6 +156,15 @@ def target_from_dict(d: dict) -> OpenMirrorTarget:
         raise ValueError(
             f"open mirror target {tid!r}: cleanup_retention_days must be >= 0"
         )
+    fabric_retention_days = d.get("fabric_retention_days")
+    if fabric_retention_days is not None and (
+        isinstance(fabric_retention_days, bool)
+        or not isinstance(fabric_retention_days, int)
+        or not 1 <= fabric_retention_days <= 30
+    ):
+        raise ValueError(
+            f"open mirror target {tid!r}: fabric_retention_days must be an integer from 1 through 30"
+        )
     return OpenMirrorTarget(
         id=tid,
         connection_id=connection_id,
@@ -170,6 +180,7 @@ def target_from_dict(d: dict) -> OpenMirrorTarget:
         ),
         tables=tables,
         cleanup_retention_days=cleanup_retention_days,
+        fabric_retention_days=fabric_retention_days,
     )
 
 

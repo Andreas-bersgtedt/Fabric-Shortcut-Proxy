@@ -13,6 +13,7 @@
         "source_version": "2025",
         "self_healing": true,
         "cleanup_retention_days": 7,
+        "fabric_retention_days": 7,
         "enabled": true,
         "tables": [
           {

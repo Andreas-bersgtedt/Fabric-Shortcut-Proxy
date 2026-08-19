@@ -208,6 +208,12 @@ For OneLake targets, the Manager checks mirroring before source extraction. With
 when Fabric reports `Initialized`, `Paused`, or `Stopped`, then waits for `Running`. This starts
 the mirrored database operation only; it does not start Fabric capacity.
 
+Set `fabric_retention_days` on a target to reconcile Fabric's mirrored-database
+`retentionInDays` setting before publishing. The value must be between 1 and 30 days.
+This is separate from `cleanup_retention_days`, which controls deletion of processed
+landing-zone files. The Manager uses its existing Fabric identity and preserves the rest of
+the mirrored-database definition when it changes this value.
+
 The Manager Monitor includes a Data File Manager for processed landing-zone files. Set
 `cleanup_retention_days` on a target to choose how long files remain in Fabric's
 `_FilesReadyToDelete` folder. A table-level value overrides the target value. The default is

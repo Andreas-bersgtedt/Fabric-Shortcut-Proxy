@@ -14,6 +14,7 @@ from open_mirror.fabric_api import (
     FabricApiError,
     get_mirroring_status,
     start_mirroring,
+    update_mirrored_database_retention,
 )
 from open_mirror.source import TargetResult, publish_target
 
@@ -70,13 +71,27 @@ def _self_healing_enabled(target: OpenMirrorTarget) -> bool:
 
 async def ensure_replication_running(target: OpenMirrorTarget) -> ReplicationPreflight:
     """Apply Fabric's documented status decision table for one target."""
-    if not _self_healing_enabled(target):
-        return ReplicationPreflight(True, None, "disabled")
-    if not target.workspace_id or not target.mirrored_database_id:
+    if (target.fabric_retention_days is not None or _self_healing_enabled(target)) and (
+        not target.workspace_id or not target.mirrored_database_id
+    ):
         return ReplicationPreflight(
             False, None, "configuration_error",
-            "self-healing requires workspace_id and mirrored_database_id",
+            "Fabric retention and self-healing require workspace_id and mirrored_database_id",
         )
+    if target.fabric_retention_days is not None:
+        try:
+            await _fabric_call(
+                update_mirrored_database_retention,
+                target.workspace_id,
+                target.mirrored_database_id,
+                target.fabric_retention_days,
+            )
+        except FabricApiError as exc:
+            return ReplicationPreflight(
+                False, None, "retention_error", str(exc), exc.request_id
+            )
+    if not _self_healing_enabled(target):
+        return ReplicationPreflight(True, None, "disabled")
 
     deadline_seconds = float(
         getattr(config, "OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS", 60) or 60

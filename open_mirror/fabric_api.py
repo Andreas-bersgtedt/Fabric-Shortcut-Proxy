@@ -1,7 +1,10 @@
 """Fabric REST helpers using the Manager's existing Entra credential."""
 from __future__ import annotations
 
+import base64
+import copy
 import email.utils
+import json
 import time
 
 import config
@@ -88,14 +91,24 @@ def _fabric_error(resp) -> FabricApiError:
     )
 
 
-def _request(method: str, path: str, token: str, *, timeout: float = 30.0) -> dict:
+def _request(
+    method: str,
+    path: str,
+    token: str,
+    *,
+    timeout: float = 30.0,
+    json_body: dict | None = None,
+) -> dict:
     import httpx
 
     url = f"{_FABRIC_BASE}/{path.lstrip('/')}"
     try:
         with httpx.Client(timeout=timeout) as client:
             resp = client.request(
-                method, url, headers={"Authorization": f"Bearer {token}"}
+                method,
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                **({"json": json_body} if json_body is not None else {}),
             )
     except httpx.TransportError as exc:
         raise FabricApiError(
@@ -191,3 +204,58 @@ def start_mirroring(
         "/startMirroring"
     )
     return _request("POST", path, _token(credential))
+
+
+def get_mirrored_database_definition(
+    workspace_id: str, mirrored_database_id: str, credential=None
+) -> dict:
+    path = (
+        f"workspaces/{workspace_id}/mirroredDatabases/{mirrored_database_id}"
+        "/getDefinition"
+    )
+    return _request("POST", path, _token(credential))
+
+
+def update_mirrored_database_retention(
+    workspace_id: str,
+    mirrored_database_id: str,
+    retention_days: int,
+    credential=None,
+) -> bool:
+    """Set retentionInDays while preserving every other definition part."""
+    if (
+        isinstance(retention_days, bool)
+        or not isinstance(retention_days, int)
+        or not 1 <= retention_days <= 30
+    ):
+        raise ValueError("retention_days must be an integer from 1 through 30")
+    current = get_mirrored_database_definition(
+        workspace_id, mirrored_database_id, credential
+    )
+    definition = copy.deepcopy(current.get("definition"))
+    if not isinstance(definition, dict) or not isinstance(definition.get("parts"), list):
+        raise FabricApiError("Fabric mirrored database definition has no parts")
+    for part in definition["parts"]:
+        if not isinstance(part, dict) or part.get("path") != "mirroring.json":
+            continue
+        if part.get("payloadType") != "InlineBase64" or not isinstance(part.get("payload"), str):
+            raise FabricApiError("Fabric mirroring.json definition is not InlineBase64")
+        try:
+            payload = json.loads(base64.b64decode(part["payload"]).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FabricApiError("Fabric mirroring.json definition is invalid") from exc
+        target = payload.setdefault("properties", {}).setdefault("target", {})
+        type_properties = target.setdefault("typeProperties", {})
+        if type_properties.get("retentionInDays") == retention_days:
+            return False
+        type_properties["retentionInDays"] = retention_days
+        part["payload"] = base64.b64encode(
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        path = (
+            f"workspaces/{workspace_id}/mirroredDatabases/{mirrored_database_id}"
+            "/updateDefinition"
+        )
+        _request("POST", path, _token(credential), json_body={"definition": definition})
+        return True
+    raise FabricApiError("Fabric mirrored database definition has no mirroring.json part")

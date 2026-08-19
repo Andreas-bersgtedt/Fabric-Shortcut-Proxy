@@ -515,6 +515,8 @@
     </select>
     <label>Cleanup retention (days) <span class="hint">(processed _FilesReadyToDelete files; default 7)</span></label>
     <input id="omCleanupRetention" type="number" min="0" step="1" value="7" />
+    <label>Fabric mirrored-database retention (days) <span class="hint">(1-30; blank leaves Fabric unchanged)</span></label>
+    <input id="omFabricRetention" type="number" min="1" max="30" step="1" placeholder="Fabric default" />
 
     <h2 style="margin-top:8px;">Tables</h2>
     <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. <b>Watermark</b> tracking reads only rows after the committed composite cursor (upsert-only; no deletes). <b>Snapshot</b> tracking performs a full-source scan every cycle to detect inserts, updates, and deletes. A table retention value overrides the target value.</div>
@@ -2439,7 +2441,7 @@ if(!state.om) state.om = { targets: [], editing: null };
 function omEsc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"", cleanup_retention_days:null }; }
 function omNewTarget(){ return { id:"", connection:"default", landing_zone_root:"", workspace_id:"",
-  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, self_healing:null, cleanup_retention_days:7, tables:[ omNewTable() ] }; }
+  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, self_healing:null, cleanup_retention_days:7, fabric_retention_days:null, tables:[ omNewTable() ] }; }
 
 function omRenderConnectionOptions(){
   const sel = $("omConnection"); if(!sel) return;
@@ -2668,6 +2670,7 @@ function omWriteForm(t){
   $("omEnabled").checked = t.enabled!==false;
   $("omSelfHealing").value = t.self_healing===true ? "true" : (t.self_healing===false ? "false" : "");
   $("omCleanupRetention").value = t.cleanup_retention_days==null ? 7 : t.cleanup_retention_days;
+  $("omFabricRetention").value = t.fabric_retention_days==null ? "" : t.fabric_retention_days;
   omRenderConnectionOptions();
   if(t.connection && Array.from(state.connections.keys()).includes(t.connection)) $("omConnection").value = t.connection;
   omRenderTableRows();
@@ -2689,6 +2692,12 @@ function omReadForm(){
   t.cleanup_retention_days = retention === "" ? 7 : Number(retention);
   if(!Number.isInteger(t.cleanup_retention_days) || t.cleanup_retention_days < 0){
     throw new Error("Target cleanup retention must be a non-negative whole number.");
+  }
+  const fabricRetention = $("omFabricRetention").value.trim();
+  t.fabric_retention_days = fabricRetention === "" ? null : Number(fabricRetention);
+  if(t.fabric_retention_days !== null && (!Number.isInteger(t.fabric_retention_days)
+    || t.fabric_retention_days < 1 || t.fabric_retention_days > 30)){
+    throw new Error("Fabric mirrored-database retention must be blank or a whole number from 1 through 30.");
   }
   t.tables = (t.tables||[]).map(tb=>({
     name:(tb.name||"").trim(), source_table:(tb.source_table||"").trim(),

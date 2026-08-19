@@ -6,7 +6,10 @@ landing-zone URL, and that the router surfaces results and errors.
 """
 from __future__ import annotations
 
+import base64
+import json
 import os
+from typing import ClassVar
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
@@ -31,7 +34,7 @@ def test_request_uses_bearer_token(monkeypatch):
     class Response:
         status_code = 202
         content = b""
-        headers = {}
+        headers: ClassVar[dict] = {}
 
     class Client:
         def __init__(self, **kwargs):
@@ -51,6 +54,84 @@ def test_request_uses_bearer_token(monkeypatch):
 
     assert fab._request("POST", "status", "unit-token") == {}
     assert seen["Authorization"] == "Bearer" + " " + "unit-token"
+
+
+def test_update_mirrored_database_retention_preserves_definition(monkeypatch):
+    payload = {
+        "properties": {
+            "target": {
+                "typeProperties": {
+                    "retentionInDays": 7,
+                    "databaseName": "sales",
+                }
+            }
+        },
+        "unrelated": {"keep": True},
+    }
+    definition = {
+        "parts": [
+            {
+                "path": "mirroring.json",
+                "payloadType": "InlineBase64",
+                "payload": base64.b64encode(
+                    json.dumps(payload).encode("utf-8")
+                ).decode("ascii"),
+            },
+            {"path": "other.json", "payload": "unchanged"},
+        ]
+    }
+    calls = []
+
+    monkeypatch.setattr(
+        fab, "get_mirrored_database_definition",
+        lambda *args: {"definition": definition},
+    )
+    monkeypatch.setattr(
+        fab, "_request",
+        lambda method, path, token, **kwargs: calls.append((method, path, kwargs)) or {},
+    )
+    monkeypatch.setattr(fab, "_token", lambda credential=None: "token")
+
+    assert fab.update_mirrored_database_retention("ws", "db", 14) is True
+    sent = calls[0][2]["json_body"]["definition"]
+    updated = json.loads(
+        base64.b64decode(sent["parts"][0]["payload"]).decode("utf-8")
+    )
+    assert updated["properties"]["target"]["typeProperties"]["retentionInDays"] == 14
+    assert updated["unrelated"] == {"keep": True}
+    assert sent["parts"][1] == definition["parts"][1]
+
+
+def test_update_mirrored_database_retention_skips_matching_value(monkeypatch):
+    monkeypatch.setattr(
+        fab, "get_mirrored_database_definition",
+        lambda *args: {"definition": {"parts": [{
+            "path": "mirroring.json",
+            "payloadType": "InlineBase64",
+            "payload": base64.b64encode(
+                b'{"properties":{"target":{"typeProperties":{"retentionInDays":7}}}}'
+            ).decode("ascii"),
+        }]}},
+    )
+    monkeypatch.setattr(fab, "_request", lambda *args, **kwargs: pytest.fail("no update"))
+    assert fab.update_mirrored_database_retention("ws", "db", 7) is False
+
+
+def test_target_fabric_retention_validation(tmp_path):
+    target = target_from_dict({
+        "id": "db",
+        "connection": "default",
+        "landing_zone_root": str(tmp_path),
+        "fabric_retention_days": 30,
+    })
+    assert target.fabric_retention_days == 30
+    with pytest.raises(ValueError, match="1 through 30"):
+        target_from_dict({
+            "id": "db",
+            "connection": "default",
+            "landing_zone_root": str(tmp_path),
+            "fabric_retention_days": 31,
+        })
 
 
 def test_list_workspaces_maps_and_skips_idless(monkeypatch):

@@ -430,6 +430,7 @@ def _open_mirror_targets_payload() -> list[dict]:
             "source_version": t.source_version,
             "enabled": t.enabled,
             "self_healing": t.self_healing,
+            "fabric_retention_days": t.fabric_retention_days,
             "tables": [{
                 "name": tb.name,
                 "source_table": tb.source_table,

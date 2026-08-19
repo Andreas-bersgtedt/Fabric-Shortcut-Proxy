@@ -186,6 +186,7 @@ async def test_token_guards_mutations_but_not_reads():
     async with _client(app) as c:
         # reads stay open
         assert (await c.get("/_manager/api/fleet")).status_code == 200
+        assert "/_monitor/api/open-mirror" in (await c.get("/_manager")).text
         # mutation without token -> 401
         assert (await c.post("/_manager/api/agents/agent-1/stop")).status_code == 401
         assert sup.calls == []

@@ -691,7 +691,7 @@ function renderOpenMirror(d){
 
 async function pollOpenMirror(){
   try{
-    const r = await fetch("/_manager/api/open-mirror", {cache:"no-store"});
+    const r = await fetch("/_monitor/api/open-mirror", {cache:"no-store"});
     if(!r.ok) throw new Error("HTTP "+r.status);
     renderOpenMirror(await r.json());
   }catch(e){

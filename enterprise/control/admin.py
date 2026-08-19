@@ -714,7 +714,9 @@ async function inspectMirrorCleanup(targetId, execute = false) {
     if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
     const candidates = (d.candidates || []).map(c =>
       `${c.table}: ${c.file_count} files, ${fmtNum(c.bytes)} bytes, `
-      + `${c.eligible ? "eligible" : c.reason} (retention ${c.retention_days} days)`
+      + `${c.eligible_file_paths ? c.eligible_file_paths.length : 0} eligible, `
+      + `${c.retained_file_count || 0} retained, `
+      + `${c.reason} (retention ${c.retention_days} days)`
     );
     alert((execute ? "Cleanup complete.\n" : "Cleanup is dry-run only.\n")
       + (candidates.join("\n") || "No ready files found.")

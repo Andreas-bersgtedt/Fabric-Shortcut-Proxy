@@ -112,8 +112,9 @@ def test_cleanup_inspects_and_deletes_only_expired_ready_files(tmp_path):
 
     candidate = inspect_cleanup(target, target.tables[0])
     assert candidate.eligible is True
+    assert candidate.eligible_file_paths == ("dbo.schema/sales/_FilesReadyToDelete/old.parquet",)
     result = cleanup_target(target, execute=True)
-    assert result["deleted"] == ["dbo.schema/sales/_FilesReadyToDelete"]
+    assert result["deleted"] == ["dbo.schema/sales/_FilesReadyToDelete/old.parquet"]
     assert not ready.exists()
 
 
@@ -139,8 +140,67 @@ def test_cleanup_deletes_nested_ready_files(tmp_path):
     os.utime(old, (old_time, old_time))
 
     result = cleanup_target(target, execute=True)
-    assert result["deleted"] == ["dbo.schema/sales/_FilesReadyToDelete"]
+    assert result["deleted"] == ["dbo.schema/sales/_FilesReadyToDelete/batch/old.parquet"]
     assert not (tmp_path / "dbo.schema" / "sales" / "_FilesReadyToDelete").exists()
+
+
+def test_cleanup_deletes_old_files_and_keeps_recent_files(tmp_path):
+    target = _target(tmp_path)
+    ready = tmp_path / "dbo.schema" / "sales" / "_FilesReadyToDelete"
+    ready.mkdir(parents=True)
+    old = ready / "old.parquet"
+    recent = ready / "recent.parquet"
+    old.write_bytes(b"old")
+    recent.write_bytes(b"recent")
+    now = dt.datetime(2026, 8, 19, 17, 0, tzinfo=dt.UTC)
+    old_time = (now - dt.timedelta(days=8)).timestamp()
+    recent_time = (now - dt.timedelta(hours=1)).timestamp()
+    os.utime(old, (old_time, old_time))
+    os.utime(recent, (recent_time, recent_time))
+
+    candidate = inspect_cleanup(target, target.tables[0], now=now)
+    assert candidate.eligible is True
+    assert candidate.retained_file_count == 1
+    assert candidate.reason == "retention_elapsed"
+
+    result = cleanup_target(target, execute=True)
+    assert result["deleted"] == ["dbo.schema/sales/_FilesReadyToDelete/old.parquet"]
+    assert not old.exists()
+    assert recent.exists()
+    assert ready.exists()
+
+
+def test_cleanup_keeps_files_without_timestamps(tmp_path):
+    target = _target(tmp_path)
+
+    class Backend:
+        def __init__(self):
+            self.entries = {
+                "dbo.schema/sales/_FilesReadyToDelete": [
+                    {"name": "unknown.parquet", "is_directory": False,
+                     "last_modified": None, "content_length": 1},
+                ],
+            }
+            self.deleted = []
+
+        def list_entries(self, path):
+            return self.entries.get(path, [])
+
+        def delete(self, path):
+            self.deleted.append(path)
+
+        def remove_tree(self, path):
+            self.entries.pop(path, None)
+
+        def exists(self, path):
+            return path in self.entries
+
+    backend = Backend()
+    candidate = inspect_cleanup(target, target.tables[0], backend=backend)
+    assert candidate.eligible is False
+    assert candidate.retained_file_count == 1
+    assert candidate.reason == "file_timestamp_unavailable"
+    assert backend.deleted == []
 
 
 # --- end-to-end incremental against a live SQLite source -------------------

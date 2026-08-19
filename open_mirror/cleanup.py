@@ -27,6 +27,8 @@ class CleanupCandidate:
     retention_days: int
     reason: str
     file_paths: tuple[str, ...] = ()
+    eligible_file_paths: tuple[str, ...] = ()
+    retained_file_count: int = 0
 
 
 def _modified(value) -> dt.datetime | None:
@@ -35,7 +37,7 @@ def _modified(value) -> dt.datetime | None:
     if value is None:
         return None
     try:
-        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = dt.datetime.fromisoformat(str(value))
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
     except ValueError:
         return None
@@ -72,14 +74,20 @@ def inspect_cleanup(
     oldest = min((value for value in modified if value), default=None)
     current = now or dt.datetime.now(dt.UTC)
     cutoff = current - dt.timedelta(days=retention)
+    eligible_paths = tuple(
+        file_path
+        for (file_path, _), value in zip(files, modified)
+        if value is not None and value <= cutoff
+    )
     unknown_time = any(value is None for value in modified)
-    eligible = bool(files) and not unknown_time and all(value <= cutoff for value in modified if value)
+    retained_file_count = len(files) - len(eligible_paths)
+    eligible = bool(eligible_paths)
     if not files:
         reason = "no_ready_files"
+    elif eligible:
+        reason = "file_timestamp_unavailable" if unknown_time else "retention_elapsed"
     elif unknown_time:
         reason = "file_timestamp_unavailable"
-    elif eligible:
-        reason = "retention_elapsed"
     else:
         reason = "retention_not_elapsed"
     return CleanupCandidate(
@@ -87,6 +95,8 @@ def inspect_cleanup(
         sum(int(entry.get("content_length", 0) or 0) for entry in file_entries),
         oldest.isoformat() if oldest else None, eligible, retention, reason,
         tuple(file_path for file_path, _ in files),
+        eligible_paths,
+        retained_file_count,
     )
 
 
@@ -105,15 +115,15 @@ def cleanup_target(
     deleted = []
     if execute:
         for candidate in candidates:
-            if candidate.eligible:
-                for file_path in candidate.file_paths:
-                    backend.delete(file_path)
+            for file_path in candidate.eligible_file_paths:
+                backend.delete(file_path)
+                deleted.append(file_path)
+            if candidate.eligible_file_paths and candidate.retained_file_count == 0:
                 backend.remove_tree(candidate.path)
-                if backend.exists(candidate.path):
+                if backend.exists(candidate.path) or backend.list_entries(candidate.path):
                     raise RuntimeError(
                         f"cleanup could not verify deletion of {candidate.path}"
                     )
-                deleted.append(candidate.path)
     return {
         "target_id": target.id,
         "execute": execute,

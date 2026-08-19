@@ -212,10 +212,12 @@ The Manager Monitor includes a Data File Manager for processed landing-zone file
 `cleanup_retention_days` on a target to choose how long files remain in Fabric's
 `_FilesReadyToDelete` folder. A table-level value overrides the target value. The default is
 seven days. Inspect is always a dry run. Delete eligible files requires explicit confirmation and
-removes only a complete `_FilesReadyToDelete` folder whose files have all passed the retention
-period. Active table files and the current sequence file are not selected.
-The Manager deletes eligible files individually, removes the now-empty ready directory, and
-reports a failure if the directory still exists after the operation.
+deletes each file in `_FilesReadyToDelete` after that file passes the retention period.
+Newer files and files without a usable timestamp remain in place. The ready folder is
+removed only after all of its files have been deleted. Active table files and the current
+sequence file are not selected. The Manager deletes eligible files individually and removes
+the ready directory only when no files remain. It reports a failure if that empty-directory
+cleanup cannot be verified.
 
 The Config Builder's Open Mirror tab exposes the same policy. Set the target retention in days,
 or leave a table override blank to inherit it. Saving writes both values to

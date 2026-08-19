@@ -513,9 +513,11 @@
       <option value="true">Enabled for this target</option>
       <option value="false">Disabled for this target</option>
     </select>
+    <label>Cleanup retention (days) <span class="hint">(processed _FilesReadyToDelete files; default 7)</span></label>
+    <input id="omCleanupRetention" type="number" min="0" step="1" value="7" />
 
     <h2 style="margin-top:8px;">Tables</h2>
-    <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. <b>Watermark</b> tracking reads only rows after the committed composite cursor (upsert-only; no deletes). <b>Snapshot</b> tracking performs a full-source scan every cycle to detect inserts, updates, and deletes.</div>
+    <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. <b>Watermark</b> tracking reads only rows after the committed composite cursor (upsert-only; no deletes). <b>Snapshot</b> tracking performs a full-source scan every cycle to detect inserts, updates, and deletes. A table retention value overrides the target value.</div>
     <div class="actions" style="margin-bottom:8px;">
       <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">🔄 Load tables from source</button>
       <span class="status" id="omTablesStatus" style="margin:0 0 0 4px;display:inline-block;"></span>
@@ -2435,9 +2437,9 @@ async function removeAccessKey(id){
 // ---- Open Mirroring targets (config.open_mirror.json) ----
 if(!state.om) state.om = { targets: [], editing: null };
 function omEsc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"" }; }
+function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"", cleanup_retention_days:null }; }
 function omNewTarget(){ return { id:"", connection:"default", landing_zone_root:"", workspace_id:"",
-  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, self_healing:null, tables:[ omNewTable() ] }; }
+  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, self_healing:null, cleanup_retention_days:7, tables:[ omNewTable() ] }; }
 
 function omRenderConnectionOptions(){
   const sel = $("omConnection"); if(!sel) return;
@@ -2492,6 +2494,8 @@ function omRenderTableRows(){
       + `<option value="incremental"${(tb.mode||"incremental")==="incremental"?" selected":""}>Automatic (watermark when configured; otherwise snapshot full-source scan)</option>`
       + `<option value="watermark"${tb.mode==="watermark"?" selected":""}>Watermark (source-incremental)</option>`
       + `<option value="snapshot"${tb.mode==="snapshot"?" selected":""}>Snapshot (full-source scan every cycle)</option></select>`
+      + `<label>Cleanup retention override (days) <span class="hint">(blank uses target value)</span></label>`
+      + `<input type="number" min="0" step="1" data-i="${i}" data-f="cleanup_retention_days" value="${tb.cleanup_retention_days==null?"":omEsc(tb.cleanup_retention_days)}" placeholder="Target default" />`
       + `<div style="display:flex;justify-content:flex-end;gap:6px;"><button class="iconbtn" data-reset="${i}" title="Delete the saved cursor and require a new initial load">Reset saved state</button>`
       + `<button class="iconbtn" data-del="${i}" title="Remove table">✕ remove</button></div>`;
     box.appendChild(row);
@@ -2663,6 +2667,7 @@ function omWriteForm(t){
   $("omSourceType").value = t.source_type||"";
   $("omEnabled").checked = t.enabled!==false;
   $("omSelfHealing").value = t.self_healing===true ? "true" : (t.self_healing===false ? "false" : "");
+  $("omCleanupRetention").value = t.cleanup_retention_days==null ? 7 : t.cleanup_retention_days;
   omRenderConnectionOptions();
   if(t.connection && Array.from(state.connections.keys()).includes(t.connection)) $("omConnection").value = t.connection;
   omRenderTableRows();
@@ -2680,13 +2685,24 @@ function omReadForm(){
   t.source_type = $("omSourceType").value.trim();
   t.enabled = $("omEnabled").checked;
   t.self_healing = $("omSelfHealing").value==="" ? null : $("omSelfHealing").value==="true";
+  const retention = $("omCleanupRetention").value.trim();
+  t.cleanup_retention_days = retention === "" ? 7 : Number(retention);
+  if(!Number.isInteger(t.cleanup_retention_days) || t.cleanup_retention_days < 0){
+    throw new Error("Target cleanup retention must be a non-negative whole number.");
+  }
   t.tables = (t.tables||[]).map(tb=>({
     name:(tb.name||"").trim(), source_table:(tb.source_table||"").trim(),
     target_table:(tb.target_table||tb.name||"").trim(), key_column:(tb.key_column||"").trim(),
     schema:(tb.schema||"").trim() || null,
     mode:(tb.mode||"incremental").trim(),
     watermark_column:(tb.watermark_column||"").trim() || null,
+    cleanup_retention_days:(tb.cleanup_retention_days==null || String(tb.cleanup_retention_days).trim()==="")
+      ? null : Number(tb.cleanup_retention_days),
   })).filter(tb=>tb.name||tb.source_table);
+  if(t.tables.some(tb=>!Number.isInteger(tb.cleanup_retention_days) && tb.cleanup_retention_days !== null
+    || (tb.cleanup_retention_days !== null && tb.cleanup_retention_days < 0))){
+    throw new Error("Table cleanup retention must be blank or a non-negative whole number.");
+  }
   return t;
 }
 
@@ -2700,7 +2716,7 @@ function omAddTarget(){ omWriteForm(omNewTarget()); }
 
 function omApplyTarget(){
   const s = $("omEditStatus"); s.className="status";
-  const t = omReadForm();
+  let t; try{ t = omReadForm(); }catch(e){ s.className="status err"; s.textContent=e.message; return; }
   if(!t.id){ s.className="status err"; s.textContent="Target id is required."; return; }
   if(!t.landing_zone_root){ s.className="status err"; s.textContent="Landing zone root is required."; return; }
   const idx = state.om.targets.findIndex(x=>x.id===t.id);
@@ -2711,7 +2727,7 @@ function omApplyTarget(){
 
 async function omPreview(){
   const s = $("omEditStatus"), pre=$("omPreview"); s.className="status"; s.textContent="Previewing…"; pre.style.display="none";
-  const t = omReadForm();
+  let t; try{ t = omReadForm(); }catch(e){ s.className="status err"; s.textContent=e.message; return; }
   try{
     const r = await fetch("/_config/api/open-mirror/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:t})});
     const d = await r.json();

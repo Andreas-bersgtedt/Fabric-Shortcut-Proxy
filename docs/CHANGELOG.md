@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The Config Builder Open Mirror editor now saves target and per-table cleanup retention values.
 - The Manager Monitor now includes a Data File Manager for Open Mirror cleanup. It inspects
   Fabric's `_FilesReadyToDelete` folders, applies per-target or per-table retention, defaults to
   dry-run inspection, and deletes only eligible processed folders after explicit confirmation.

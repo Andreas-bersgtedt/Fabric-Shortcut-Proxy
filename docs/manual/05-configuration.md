@@ -215,6 +215,10 @@ seven days. Inspect is always a dry run. Delete eligible files requires explicit
 removes only a complete `_FilesReadyToDelete` folder whose files have all passed the retention
 period. Active table files and the current sequence file are not selected.
 
+The Config Builder's Open Mirror tab exposes the same policy. Set the target retention in days,
+or leave a table override blank to inherit it. Saving writes both values to
+`config.open_mirror.json`; restart the Manager for the scheduler to use a changed policy.
+
 ## 5.12 Validation
 
 The proxy validates configuration at startup and fails closed with a clear, redacted

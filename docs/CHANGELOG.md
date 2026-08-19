@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The Manager Monitor now includes a Data File Manager for Open Mirror cleanup. It inspects
+  Fabric's `_FilesReadyToDelete` folders, applies per-target or per-table retention, defaults to
+  dry-run inspection, and deletes only eligible processed folders after explicit confirmation.
+
 ## [2.5.1]: 2026-08-19
 
 ### Added

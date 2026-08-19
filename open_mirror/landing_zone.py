@@ -13,6 +13,7 @@ logic.
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
 from typing import Protocol, runtime_checkable
 
@@ -54,6 +55,8 @@ class LandingZoneBackend(Protocol):
 
     def list_dir(self, rel_path: str) -> list[str]: ...
 
+    def list_entries(self, rel_path: str) -> list[dict]: ...
+
     def read_text(self, rel_path: str) -> str: ...
 
     def read_bytes(self, rel_path: str) -> bytes: ...
@@ -88,6 +91,22 @@ class LocalLandingZone:
         if not os.path.isdir(target):
             return []
         return sorted(os.listdir(target))
+
+    def list_entries(self, rel_path: str) -> list[dict]:
+        target = self._abs(rel_path)
+        if not os.path.isdir(target):
+            return []
+        return [
+            {
+                "name": entry.name,
+                "is_directory": entry.is_dir(),
+                "last_modified": dt.datetime.fromtimestamp(
+                    entry.stat().st_mtime, tz=dt.timezone.utc
+                ),
+                "content_length": entry.stat().st_size if entry.is_file() else 0,
+            }
+            for entry in os.scandir(target)
+        ]
 
     def read_text(self, rel_path: str) -> str:
         with open(self._abs(rel_path), "r", encoding="utf-8") as fh:

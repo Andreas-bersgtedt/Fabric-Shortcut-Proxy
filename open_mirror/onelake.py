@@ -97,6 +97,22 @@ class OneLakeLandingZone:
         except ResourceNotFoundError:
             return []
 
+    def list_entries(self, rel_path: str) -> list[dict]:
+        try:
+            from azure.core.exceptions import ResourceNotFoundError
+        except ImportError:
+            ResourceNotFoundError = ()
+        try:
+            paths = self._fs().get_paths(path=self._abs(rel_path), recursive=False)
+            return [{
+                "name": p.name.split("/")[-1],
+                "is_directory": bool(getattr(p, "is_directory", False)),
+                "last_modified": getattr(p, "last_modified", None),
+                "content_length": getattr(p, "content_length", 0) or 0,
+            } for p in paths]
+        except ResourceNotFoundError:
+            return []
+
     def read_text(self, rel_path: str) -> str:
         data = self._fs().get_file_client(self._abs(rel_path)).download_file().readall()
         return data.decode("utf-8") if isinstance(data, (bytes, bytearray)) else str(data)

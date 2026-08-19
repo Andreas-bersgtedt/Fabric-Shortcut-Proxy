@@ -12,6 +12,7 @@
         "source_type": "SQL",
         "source_version": "2025",
         "self_healing": true,
+        "cleanup_retention_days": 7,
         "enabled": true,
         "tables": [
           {
@@ -22,7 +23,8 @@
             "schema": "dbo",
             "mode": "incremental",
             "_comment_watermark": "Set 'watermark_column' to a non-null monotonic id, timestamp, or rowversion for source-incremental upserts. Omit it for a full-source snapshot scan that also detects deletes.",
-            "watermark_column": "ModifiedDate"
+            "watermark_column": "ModifiedDate",
+            "cleanup_retention_days": 7
           }
         ]
       }

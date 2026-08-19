@@ -324,6 +324,18 @@ async def open_mirror_summary(*, include_landing_zone_count: bool = False) -> di
     }
 
 
+async def open_mirror_cleanup(target_id: str, table_name: str | None = None, execute: bool = False) -> dict:
+    """Inspect or execute retention cleanup for one Manager-owned target."""
+    from open_mirror.cleanup import cleanup_target
+
+    target = next((item for item in load_targets() if item.id == target_id), None)
+    if target is None:
+        raise ValueError(f"unknown Open Mirror target {target_id!r}")
+    return await asyncio.to_thread(
+        cleanup_target, target, table_name=table_name, execute=execute
+    )
+
+
 @router.get("/api/open-mirror")
 async def open_mirror(include_landing_zone_count: bool = False) -> dict:
     return await open_mirror_summary(

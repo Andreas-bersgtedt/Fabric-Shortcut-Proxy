@@ -6,6 +6,7 @@ quarantine, dry-run, and the background scheduler's one-shot cycle.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import pathlib
@@ -22,6 +23,7 @@ from db import executor
 from open_mirror import source as om_source
 from open_mirror import target_from_dict
 from open_mirror.changes import RowMarker, compute_changes
+from open_mirror.cleanup import cleanup_target, inspect_cleanup
 from open_mirror.landing_zone import LocalLandingZone
 from open_mirror.publisher import ROW_MARKER_COLUMN, LandingZonePublisher
 from open_mirror.state import (
@@ -97,6 +99,34 @@ def test_drop_table_removes_folder(tmp_path):
     assert (tmp_path / "dbo.schema" / "sales").is_dir()
     pub.drop_table(target.tables[0])
     assert not (tmp_path / "dbo.schema" / "sales").exists()
+
+
+def test_cleanup_inspects_and_deletes_only_expired_ready_files(tmp_path):
+    target = _target(tmp_path)
+    ready = tmp_path / "dbo.schema" / "sales" / "_FilesReadyToDelete"
+    ready.mkdir(parents=True)
+    old = ready / "old.parquet"
+    old.write_bytes(b"old")
+    old_time = (dt.datetime.now(dt.UTC) - dt.timedelta(days=8)).timestamp()
+    os.utime(old, (old_time, old_time))
+
+    candidate = inspect_cleanup(target, target.tables[0])
+    assert candidate.eligible is True
+    result = cleanup_target(target, execute=True)
+    assert result["deleted"] == ["dbo.schema/sales/_FilesReadyToDelete"]
+    assert not ready.exists()
+
+
+def test_cleanup_dry_run_preserves_recent_ready_files(tmp_path):
+    target = _target(tmp_path)
+    ready = tmp_path / "dbo.schema" / "sales" / "_FilesReadyToDelete"
+    ready.mkdir(parents=True)
+    (ready / "recent.parquet").write_bytes(b"recent")
+
+    result = cleanup_target(target)
+    assert result["execute"] is False
+    assert result["deleted"] == []
+    assert ready.exists()
 
 
 # --- end-to-end incremental against a live SQLite source -------------------

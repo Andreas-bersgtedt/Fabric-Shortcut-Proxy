@@ -174,6 +174,26 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
             },
         })
 
+    @router.post("/api/open-mirror/cleanup")
+    async def open_mirror_cleanup(payload: dict) -> JSONResponse:
+        from monitor.router import open_mirror_cleanup as run_cleanup
+
+        target_id = str(payload.get("target_id") or "").strip()
+        if not target_id:
+            return JSONResponse({"error": "target_id is required"}, status_code=400)
+        try:
+            result = await run_cleanup(
+                target_id,
+                table_name=(str(payload["table"]) if payload.get("table") else None),
+                execute=bool(payload.get("execute", False)),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            log.warning("open_mirror_cleanup_failed", target=target_id, error=str(exc))
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        log.info("open_mirror_cleanup", target=target_id, execute=result["execute"],
+                 deleted=len(result["deleted"]))
+        return JSONResponse(result)
+
     @router.post("/api/reset")
     async def reset() -> JSONResponse:
         bases = _agent_base_urls(supervisors)

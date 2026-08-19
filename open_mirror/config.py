@@ -52,6 +52,7 @@ class OpenMirrorTableTarget:
     mode: str | None = None
     watermark_column: str | None = None
     enabled: bool = True
+    cleanup_retention_days: int | None = None
 
     @property
     def key_columns(self) -> list[str]:
@@ -80,6 +81,7 @@ class OpenMirrorTarget:
     source_version: str | None = None
     enabled: bool = True
     self_healing: bool | None = None
+    cleanup_retention_days: int = 7
     tables: tuple[OpenMirrorTableTarget, ...] = ()
 
 
@@ -110,6 +112,11 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
         raise ValueError(
             f"open mirror table {name!r}: mode 'watermark' requires watermark_column"
         )
+    cleanup_retention_days = d.get("cleanup_retention_days")
+    if cleanup_retention_days is not None and (
+        not isinstance(cleanup_retention_days, int) or cleanup_retention_days < 0
+    ):
+        raise ValueError(f"open mirror table {name!r}: cleanup_retention_days must be >= 0")
     return OpenMirrorTableTarget(
         name=name,
         source_table=source_table,
@@ -119,6 +126,10 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
         mode=mode,
         watermark_column=watermark_column,
         enabled=bool(d.get("enabled", True)),
+        cleanup_retention_days=(
+            cleanup_retention_days
+            if cleanup_retention_days is not None else None
+        ),
     )
 
 
@@ -139,6 +150,11 @@ def target_from_dict(d: dict) -> OpenMirrorTarget:
     if not isinstance(raw_tables, list):
         raise TypeError(f"open mirror target {tid!r}: 'tables' must be a list")
     tables = tuple(_table_from_dict(t) for t in raw_tables if isinstance(t, dict))
+    cleanup_retention_days = d.get("cleanup_retention_days", 7)
+    if not isinstance(cleanup_retention_days, int) or cleanup_retention_days < 0:
+        raise ValueError(
+            f"open mirror target {tid!r}: cleanup_retention_days must be >= 0"
+        )
     return OpenMirrorTarget(
         id=tid,
         connection_id=connection_id,
@@ -153,6 +169,7 @@ def target_from_dict(d: dict) -> OpenMirrorTarget:
             d["self_healing"] if d.get("self_healing") is not None else None
         ),
         tables=tables,
+        cleanup_retention_days=cleanup_retention_days,
     )
 
 

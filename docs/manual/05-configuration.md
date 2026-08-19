@@ -208,6 +208,13 @@ For OneLake targets, the Manager checks mirroring before source extraction. With
 when Fabric reports `Initialized`, `Paused`, or `Stopped`, then waits for `Running`. This starts
 the mirrored database operation only; it does not start Fabric capacity.
 
+The Manager Monitor includes a Data File Manager for processed landing-zone files. Set
+`cleanup_retention_days` on a target to choose how long files remain in Fabric's
+`_FilesReadyToDelete` folder. A table-level value overrides the target value. The default is
+seven days. Inspect is always a dry run. Delete eligible files requires explicit confirmation and
+removes only a complete `_FilesReadyToDelete` folder whose files have all passed the retention
+period. Active table files and the current sequence file are not selected.
+
 ## 5.12 Validation
 
 The proxy validates configuration at startup and fails closed with a clear, redacted

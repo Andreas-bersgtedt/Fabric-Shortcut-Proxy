@@ -684,6 +684,10 @@ function renderOpenMirror(d){
         <dt>Published rows</dt><dd>${fmtNum(target.published_rows)}</dd>
         <dt>Last publish</dt><dd>${esc(target.last_published_at || "not published")}</dd>
       </dl>
+      <div class="mirror-actions">
+        <button onclick="inspectMirrorCleanup('${esc(target.id)}')">Inspect file cleanup</button>
+        <button onclick="executeMirrorCleanup('${esc(target.id)}')">Delete eligible files</button>
+      </div>
       ${target.status_error ? `<div class="err">${esc(target.status_error)}</div>` : ""}
       <div class="mirror-tables">${(target.tables || []).map(table => `
         <div class="mirror-table">
@@ -697,6 +701,32 @@ function renderOpenMirror(d){
           </span>
         </div>`).join("")}</div>
     </div>`).join("") : `<div class="empty">No Open Mirror targets configured.</div>`;
+}
+
+async function inspectMirrorCleanup(targetId, execute = false) {
+  try {
+    const r = await fetch("/_monitor/api/open-mirror/cleanup", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({target_id: targetId, execute})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+    const candidates = (d.candidates || []).map(c =>
+      `${c.table}: ${c.file_count} files, ${fmtNum(c.bytes)} bytes, ${c.eligible ? "eligible" : c.reason}`
+    );
+    alert((execute ? "Cleanup complete.\n" : "Cleanup is dry-run only.\n")
+      + (candidates.join("\n") || "No ready files found."));
+    pollOpenMirror();
+  } catch (e) {
+    alert("Open Mirror cleanup failed: " + e.message);
+  }
+}
+
+function executeMirrorCleanup(targetId) {
+  if (confirm("Delete only files in eligible _FilesReadyToDelete folders?")) {
+    inspectMirrorCleanup(targetId, true);
+  }
 }
 
 async function pollOpenMirror(includeLandingZoneCount = false){

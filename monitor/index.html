@@ -74,18 +74,6 @@
   .logview .ln.lvl-warn{color:#fcd34d}
   .logview mark{background:var(--warn);color:#000;border-radius:2px;padding:0 1px}
   .logmeta{color:var(--muted);font-size:12px}
-  details.section{margin:26px 0 0}
-  details.section > summary{cursor:pointer;color:var(--muted);font-size:14px;text-transform:uppercase;
-    letter-spacing:.05em;font-weight:600;list-style-position:inside}
-  details.section > summary::marker{color:var(--accent)}
-  details.section > .panel,.section-content{margin-top:10px}
-  .mirror-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;padding:12px}
-  .mirror-card{border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--panel2)}
-  .mirror-card h3{font-size:14px;margin:0 0 8px}
-  .mirror-meta{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px}
-  .mirror-meta dt{color:var(--muted)} .mirror-meta dd{margin:0;text-align:right;overflow:hidden;text-overflow:ellipsis}
-  .mirror-tables{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
-  .mirror-table{display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:12px}
 </style>
 </head>
 <body>
@@ -113,14 +101,7 @@
 <main>
   <div class="cards" id="cards"></div>
 
-  <details class="section">
-  <summary>Open Mirror publishing</summary>
-  <div class="cards section-content" id="mirrorCards"></div>
-  <div class="mirror-grid panel" id="mirrorGrid"><div class="empty">Loading Open Mirror status…</div></div>
-  </details>
-
-  <details class="section">
-  <summary>Per-table read &amp; query statistics</summary>
+  <h2>Per-table read &amp; query statistics</h2>
   <div class="panel">
     <table id="tbl">
       <thead><tr>
@@ -132,10 +113,8 @@
       <tbody id="tblBody"></tbody>
     </table>
   </div>
-  </details>
 
-  <details class="section">
-  <summary>Query lag — Fabric&nbsp;→&nbsp;SQL&nbsp;→&nbsp;Parquet&nbsp;→&nbsp;Fabric</summary>
+  <h2>Query lag — Fabric&nbsp;→&nbsp;SQL&nbsp;→&nbsp;Parquet&nbsp;→&nbsp;Fabric (average per table)</h2>
   <div class="legend">
     <span><b class="seg-sql"></b>SQL execution</span>
     <span><b class="seg-gen"></b>Parquet generation</span>
@@ -145,10 +124,8 @@
     <div class="rq muted"><div>Table</div><div>Cache</div><div>Avg Fabric→SQL→Parquet lag</div><div>Avg total</div></div>
     <div id="recentBody"></div>
   </div>
-  </details>
 
-  <details class="section">
-  <summary>Process logs — last 1000 lines</summary>
+  <h2>Process logs — last 1000 lines</h2>
   <div class="panel">
     <div class="logbar">
       <span class="grow"><input type="text" id="logSearch" placeholder="Search logs (case-insensitive substring)…" autocomplete="off" spellcheck="false" /></span>
@@ -156,7 +133,6 @@
       <button class="ghost" id="logRefresh">Refresh</button>
       <span class="logmeta" id="logMeta"></span>
     </div>
-    </details>
     <pre class="logview" id="logView"></pre>
   </div>
 </main>
@@ -181,7 +157,6 @@ async function poll(){
     $("err").textContent = "";
     $("livedot").classList.add("live");
     render(d);
-    pollOpenMirror();
   }catch(e){
     $("err").textContent = "✗ "+e.message;
     $("livedot").classList.remove("live");
@@ -260,43 +235,6 @@ function render(d){
       <div class="lag">${fmtMs(t.avg_total_ms)} <span class="muted">${t.data_requests}×</span></div>
     </div>`;
   }).join("") : `<div class="empty">No data requests captured yet. Trigger a Fabric read (or reset then read).</div>`;
-}
-
-function renderOpenMirror(d){
-  const t = d.totals || {};
-  $("mirrorCards").innerHTML = [
-    ["Targets", fmtNum(t.targets)],
-    ["Enabled", fmtNum(t.enabled_targets)],
-    ["Initialized tables", fmtNum(t.initialized_tables)],
-    ["Pending recovery", fmtNum(t.pending_tables)],
-    ["Published rows", fmtNum(t.published_rows)]
-  ].map(([k,v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
-  $("mirrorGrid").innerHTML = (d.targets||[]).length ? d.targets.map(target => `
-    <div class="mirror-card">
-      <h3>${esc(target.id)} <span class="pill ${target.status==="Running"?"on":"off"}">${esc(target.status||"unknown")}</span></h3>
-      <dl class="mirror-meta">
-        <dt>Landing zone</dt><dd title="${esc(target.landing_zone||"")}">${esc(target.landing_zone||"local")}</dd>
-        <dt>Self-healing</dt><dd>${target.self_healing===false?"off":"on/default"}</dd>
-        <dt>Published tables</dt><dd>${fmtNum(target.published_tables)}</dd>
-        <dt>Published rows</dt><dd>${fmtNum(target.published_rows)}</dd>
-      </dl>
-      ${target.status_error ? `<div class="err">${esc(target.status_error)}</div>` : ""}
-      <div class="mirror-tables">${(target.tables||[]).map(table => `
-        <div class="mirror-table">
-          <span>${esc(table.table)} <span class="pill">${esc(table.strategy)}</span></span>
-          <span class="${table.state_status==="valid"?"":"warn"}">${esc(table.state_status)} · ${table.initialized?"ready":"initial"}</span>
-        </div>`).join("")}</div>
-    </div>`).join("") : `<div class="empty">No Open Mirror targets configured.</div>`;
-}
-
-async function pollOpenMirror(){
-  try{
-    const r = await fetch("/_monitor/api/open-mirror", {cache:"no-store"});
-    if(!r.ok) throw new Error("HTTP "+r.status);
-    renderOpenMirror(await r.json());
-  }catch(e){
-    $("mirrorGrid").innerHTML = `<div class="empty err">Open Mirror status unavailable: ${esc(e.message)}</div>`;
-  }
 }
 
 // --- Log viewer ---------------------------------------------------------

@@ -15,7 +15,6 @@ Read-only. Combines:
 """
 from __future__ import annotations
 
-import asyncio
 import pathlib
 import time
 
@@ -29,16 +28,11 @@ from iceberg.state_store import get_all_snapshots
 from observability import metrics, trace, querystats
 from observability.logbuffer import get_buffer
 from observability.logging import get_logger
-from open_mirror.config import load_targets
-from open_mirror.fabric_api import FabricApiError, get_mirroring_status
-from open_mirror.state import load_published_tables, load_state
 
 log = get_logger(__name__)
 
 router = APIRouter(prefix="/_monitor")
 _HTML_PATH = pathlib.Path(__file__).parent / "index.html"
-_MIRROR_STATUS_CACHE: dict[str, tuple[float, dict]] = {}
-_MIRROR_STATUS_CACHE_SECONDS = 15.0
 
 
 @router.get("")
@@ -183,87 +177,6 @@ async def summary() -> dict:
         "recent_queries": qs["recent"],
         "object_store_tokenizer": _object_store_tokenizer_summary(),
         "key_vault": _keyvault_summary(),
-    }
-
-
-async def _mirror_status(target) -> dict:
-    now = time.monotonic()
-    cached = _MIRROR_STATUS_CACHE.get(target.id)
-    if cached and now - cached[0] < _MIRROR_STATUS_CACHE_SECONDS:
-        return cached[1]
-    if not (
-        target.workspace_id
-        and target.mirrored_database_id
-        and target.landing_zone_root.lower().startswith(
-            "https://onelake.dfs.fabric.microsoft.com/"
-        )
-    ):
-        result = {"status": "local", "error": None}
-    else:
-        try:
-            payload = await asyncio.to_thread(
-                get_mirroring_status, target.workspace_id, target.mirrored_database_id
-            )
-            status = payload.get("status") or payload.get("mirroringStatus")
-            if isinstance(status, dict):
-                status = status.get("status")
-            result = {"status": str(status) if status is not None else "unknown", "error": None}
-        except FabricApiError as exc:
-            result = {"status": "unavailable", "error": str(exc)}
-        except (OSError, RuntimeError) as exc:
-            result = {"status": "unavailable", "error": str(exc)}
-    _MIRROR_STATUS_CACHE[target.id] = (now, result)
-    return result
-
-
-@router.get("/api/open-mirror")
-async def open_mirror_summary() -> dict:
-    """Return configured mirror status and local publishing statistics."""
-    state_dir = getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state")
-    targets = []
-    for target in load_targets():
-        tables = []
-        for table in target.tables:
-            state_result = load_state(state_dir, target, table)
-            state = state_result.state
-            tables.append({
-                "table": table.target_table,
-                "strategy": table.strategy,
-                "state_status": state_result.status,
-                "initialized": state.initialized if state else False,
-                "pending": bool(state and state.pending),
-                "committed_file": state.committed.file if state and state.committed else None,
-                "source_rows": len(state.keys) if state and table.strategy == "snapshot" else None,
-            })
-        status = await _mirror_status(target)
-        published = load_published_tables(state_dir, target)
-        targets.append({
-            "id": target.id,
-            "enabled": target.enabled,
-            "landing_zone": target.landing_zone_root,
-            "status": status["status"],
-            "status_error": status["error"],
-            "self_healing": target.self_healing,
-            "tables": tables,
-            "published_tables": len(published),
-            "published_rows": sum(int(item.get("rows", 0) or 0) for item in published),
-        })
-    return {
-        "generated_at": round(time.time(), 3),
-        "state_dir": str(pathlib.Path(state_dir).resolve()),
-        "targets": targets,
-        "totals": {
-            "targets": len(targets),
-            "enabled_targets": sum(1 for target in targets if target["enabled"]),
-            "tables": sum(len(target["tables"]) for target in targets),
-            "initialized_tables": sum(
-                1 for target in targets for table in target["tables"] if table["initialized"]
-            ),
-            "pending_tables": sum(
-                1 for target in targets for table in target["tables"] if table["pending"]
-            ),
-            "published_rows": sum(target["published_rows"] for target in targets),
-        },
     }
 
 

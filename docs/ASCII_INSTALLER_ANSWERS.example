@@ -1,4 +1,4 @@
-# Non-secret answers for install.sh --answers.
+# Non-secret answers for installer.sh --answers.
 # Secret values must be referenced as env:NAME or file:/absolute/path.
 # Do not put passwords, tokens, client secrets, or private-key contents here.
 

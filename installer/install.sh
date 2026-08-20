@@ -53,11 +53,11 @@ usage() {
 Fabric Shortcut Proxy installer
 
 Usage:
-  sudo ./install.sh
-  sudo ./install.sh --resume
-  sudo ./install.sh --answers FILE
-  sudo ./install.sh --check
-  ./install.sh --dry-run
+  sudo ./installer.sh
+  sudo ./installer.sh --resume
+  sudo ./installer.sh --answers FILE
+  sudo ./installer.sh --check
+  ./installer.sh --dry-run
 
 Options:
   --resume       Resume the last incomplete run.

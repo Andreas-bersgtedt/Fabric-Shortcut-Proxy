@@ -17,7 +17,13 @@ mappings, cleanup policies, or other application settings. Users continue to man
 through the existing `config.*.json` files and Config Builder. The installer prepares the
 identity and secret plumbing those settings consume.
 
-`Manager.sh` remains the application launcher. The installer prepares the host and service,
+`Manager.sh` remains the application launcher. The root `installer.sh` rebuilds the C++
+frontend in `installer/fsp-installer` before every launch. A failed build stops the
+installer instead of executing a stale binary. The C++ frontend owns terminal navigation;
+the shell installer remains the provisioning implementation until each step is migrated
+and tested.
+
+The installer prepares the host and service,
 then performs the first service checks. It must be safe to rerun after a failed or
 disconnected SSH session.
 
@@ -26,7 +32,7 @@ disconnected SSH session.
 Default command:
 
 ```bash
-sudo ./install.sh
+sudo ./installer.sh
 ```
 
 The flow is one screen at a time:
@@ -219,12 +225,12 @@ On rerun:
 ## Command-line modes
 
 ```text
-install.sh                 Interactive SSH-safe setup
-install.sh --resume        Resume the last incomplete run
-install.sh --answers FILE  Non-interactive setup for automation
-install.sh --check         Check identity, Key Vault, service, and permissions
-install.sh --dry-run       Show actions without changing the host
-install.sh --help          Show options
+installer.sh               Interactive SSH-safe setup
+installer.sh --resume      Resume the last incomplete run
+installer.sh --answers FILE Non-interactive setup for automation
+installer.sh --check       Check identity, Key Vault, service, and permissions
+installer.sh --dry-run     Show actions without changing the host
+installer.sh --help        Show options
 ```
 
 The first shell implementation uses a strict `KEY=VALUE` answers file documented in
@@ -242,27 +248,13 @@ traffic.
 ## Implementation layout
 
 ```text
-install.sh
+installer.sh              C++ frontend dispatcher with shell fallback
 installer/
-  __init__.py
-  cli.py                 Mode and argument handling
-  flow.py                Step navigation and resume
-  prompts.py             SSH-safe prompts and masked input
-  answers.py             Answers-file loading and validation
-  prerequisites.py       OS, packages, Python, Git, and systemd
-  identity.py            SPA/MSAL identity setup and token checks
-  keyvault.py            Key Vault setup and baseline secret seeding
-  credentials.py         Agent/admin credential generation and storage
-  ssl.py                 Certificate, nginx, and TLS validation
-  systemd.py             Unit rendering, install, enable, and verification
-  checks.py              Service, Key Vault, handshake, and permission checks
-tests/
-  test_installer_prompts.py
-  test_installer_answers.py
-  test_installer_identity.py
-  test_installer_keyvault.py
-  test_installer_credentials.py
-  test_installer_ssl.py
+  install.sh               Line-based provisioning fallback
+ main.cpp                Arrow-key SSH frontend
+ Makefile                Linux build
+ build.sh                Build wrapper
+ README.md               Build and fallback behavior
   test_installer_systemd.py
 ```
 

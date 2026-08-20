@@ -2,6 +2,11 @@
 
 Branch: `Open-Mirror-Tokenizer`
 
+Current kickoff status: deterministic projections, column omission, builder
+preservation, dialect SQL reuse, and projection-state safety are implemented.
+`random_token` is fail-closed for Open Mirror until prepared-payload recovery is
+designed and tested.
+
 ## Goal
 
 Give Open Mirror tables the same allowlisted column tokenization policies already
@@ -70,13 +75,12 @@ Rules for the first implementation:
    used only in quoted SQL expressions and validation.
 4. Deterministic hashing is supported for watermark and snapshot modes. It must use
    the existing dialect capability checks and bound key/domain parameters.
-5. `random_token` is initially supported only for watermark mode, where each source
-   row is extracted once after the committed cursor. Snapshot mode must reject it:
-   re-reading the same source row would create a change on every cycle.
-6. Pending-batch recovery must be deterministic. A random-token batch cannot be
-   regenerated from a source query and compared by digest, so random-token support
-   requires either durable prepared-payload recovery or an explicit fail-closed rule
-   before it is enabled. Do not weaken the current pending-state safety check.
+5. `random_token` is fail-closed for all Open Mirror modes in the first implementation.
+   Snapshot rereads would create a change on every cycle, and watermark retries can
+   regenerate different values for the same pending source page.
+6. Pending-batch recovery must remain deterministic. Random-token support requires
+   either durable prepared-payload recovery or a deterministic per-row seed before it
+   is enabled. Do not weaken the current pending-state safety check.
 
 ## Implementation phases
 
@@ -113,10 +117,11 @@ Rules for the first implementation:
    source-only or omitted fields.
 4. Include transformed output columns in Parquet with their declared types and aliases.
 5. Include token policy identity (kind, key reference, domain, normalization) in the
-   state/policy fingerprint. A policy change must require an explicit initial/reset load,
-   not silently compare old and new token values.
-6. Keep pending-batch digest and recovery behavior fail-closed. Add the random-token
-   recovery design before enabling random tokens for production Open Mirror targets.
+   state/policy fingerprint. This fingerprint is now persisted without secret key
+   material; a policy change requires an explicit initial/reset load rather than silently
+   comparing old and new token values.
+6. Keep pending-batch digest and recovery behavior fail-closed. Random-token recovery
+   remains the next design task before enabling that policy for Open Mirror targets.
 
 ### Phase 4: testing and rollout
 

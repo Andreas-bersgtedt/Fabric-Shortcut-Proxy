@@ -161,6 +161,7 @@ class PublishState:
     """Version 2 table state; ``keys`` remains the snapshot-diff row map."""
 
     strategy: str = "snapshot"
+    projection_fingerprint: str | None = None
     initialized: bool = False
     committed: CommittedCursor | None = None
     pending: PendingBatch | None = None
@@ -181,6 +182,7 @@ class PublishState:
         return {
             "version": STATE_VERSION,
             "strategy": self.strategy,
+            "projection_fingerprint": self.projection_fingerprint,
             "initialized": self.initialized,
             "committed": self.committed.to_json() if self.committed else None,
             "pending": self.pending.to_json() if self.pending else None,
@@ -213,6 +215,12 @@ class PublishState:
         if strategy not in {"watermark", "snapshot", "initial"}:
             raise ValueError(f"unsupported state strategy {strategy!r}")
         keys = data.get("keys", {})
+        projection_fingerprint = data.get("projection_fingerprint")
+        if projection_fingerprint is not None and (
+            not isinstance(projection_fingerprint, str)
+            or len(projection_fingerprint) != 64
+        ):
+            raise ValueError("projection fingerprint is invalid")
         if not isinstance(data.get("initialized"), bool) or not isinstance(keys, dict):
             raise TypeError("state initialized/keys fields are invalid")
         published_rows_total = data.get("published_rows_total", 0)
@@ -226,6 +234,7 @@ class PublishState:
             raise ValueError("published row metrics are invalid")
         return cls(
             strategy=strategy,
+            projection_fingerprint=projection_fingerprint,
             initialized=data["initialized"],
             committed=CommittedCursor.from_json(data.get("committed")),
             pending=PendingBatch.from_json(data.get("pending")),
@@ -262,6 +271,28 @@ def _canon(value) -> str:
 def row_hash(row: dict, columns) -> str:
     parts = [_canon(row.get(col.name)) for col in columns]
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def projection_fingerprint(columns) -> str:
+    """Identify a published projection without including token key material."""
+    policy = []
+    for column in columns:
+        transform = column.transform
+        policy.append({
+            "field_id": column.field_id,
+            "name": column.name,
+            "source": column.source_name,
+            "type": column.iceberg_type,
+            "nullable": column.nullable,
+            "transform": ({
+                "kind": transform.kind,
+                "key_ref": transform.key_ref,
+                "domain": transform.domain,
+                "normalization": transform.normalization,
+            } if transform else None),
+        })
+    encoded = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def key_string(row: dict, key_columns: list[str]) -> str:

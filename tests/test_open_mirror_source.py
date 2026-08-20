@@ -147,7 +147,7 @@ def test_open_mirror_random_tokens_reject_snapshot_tracking():
         ),
     ]
 
-    with pytest.raises(ValueError, match="incompatible with snapshot tracking"):
+    with pytest.raises(ValueError, match="prepared tokenized payload"):
         _validate_projection_strategy(columns, "snapshot")
 
 

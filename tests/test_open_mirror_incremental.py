@@ -234,6 +234,49 @@ async def sqlite_src(tmp_path, monkeypatch):
     await executor.dispose_engines()
 
 
+async def test_projection_change_requires_explicit_reset(sqlite_src):
+    tmp_path, _ = sqlite_src
+    landing = tmp_path / "lz"
+    base = target_from_dict({
+        "id": "t1",
+        "connection": "default",
+        "landing_zone_root": str(landing),
+        "tables": [{
+            "name": "sales",
+            "source_table": "sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "columns": [
+                {"field_id": 1, "name": "id", "type": "long", "nullable": False},
+                {"field_id": 2, "name": "name", "type": "string"},
+            ],
+        }],
+    })
+    first = await om_source.publish_table(base, base.tables[0], mode="snapshot")
+    assert first.action == "initial"
+    state = load_state(str(tmp_path / "state"), base, base.tables[0]).state
+    assert state.projection_fingerprint
+
+    changed = target_from_dict({
+        "id": "t1",
+        "connection": "default",
+        "landing_zone_root": str(landing),
+        "tables": [{
+            "name": "sales",
+            "source_table": "sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "columns": [
+                {"field_id": 1, "name": "id", "type": "long", "nullable": False},
+                {"field_id": 2, "name": "name_alias", "source": "name", "type": "string"},
+            ],
+        }],
+    })
+
+    with pytest.raises(om_source.StateSafetyError, match="projection changed"):
+        await om_source.publish_table(changed, changed.tables[0], mode="snapshot")
+
+
 async def test_incremental_cycle_initial_then_diff(sqlite_src):
     tmp_path, db = sqlite_src
     landing = tmp_path / "lz"

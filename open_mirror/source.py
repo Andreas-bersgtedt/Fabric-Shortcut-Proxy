@@ -21,6 +21,7 @@ from open_mirror.state import (
     encode_watermark,
     load_published_tables,
     load_state,
+    projection_fingerprint,
     save_published_tables,
     save_state,
 )
@@ -270,12 +271,13 @@ def _render_projection(dialect, columns) -> tuple[str, dict]:
 
 def _validate_projection_strategy(columns, strategy: str) -> None:
     """Reject projection policies whose semantics cannot survive the strategy."""
-    if strategy == "snapshot" and any(
+    if any(
         column.transform and column.transform.kind == "random_token"
         for column in columns
     ):
         raise ValueError(
-            "Open Mirror random_token columns are incompatible with snapshot tracking"
+            "Open Mirror random_token columns are disabled until pending-batch recovery "
+            "can preserve a prepared tokenized payload"
         )
 
 
@@ -375,6 +377,24 @@ async def publish_table(
             f"tracking strategy changed from {state.strategy!r} to {strategy!r} at "
             f"{loaded.path}; explicitly reset or request an initial load"
         )
+    configured_fingerprint = (
+        projection_fingerprint(table.columns) if table.columns is not None else None
+    )
+    if state is not None and configured_fingerprint:
+        if state.projection_fingerprint is None and state.initialized:
+            raise StateSafetyError(
+                f"Open Mirror state at {loaded.path} has no projection fingerprint; "
+                "explicitly reset or request an initial load"
+            )
+        if (
+            state.projection_fingerprint is not None
+            and state.projection_fingerprint != configured_fingerprint
+            and not explicit_initial
+        ):
+            raise StateSafetyError(
+                f"Open Mirror projection changed at {loaded.path}; explicitly reset "
+                "or request an initial load"
+            )
     if publisher is None:
         backend = backend or open_landing_zone(target.landing_zone_root)
         publisher = LandingZonePublisher(backend, target)
@@ -396,6 +416,19 @@ async def publish_table(
     reflected_columns = await derive_table_schema(table.source_table, target.connection_id)
     columns = _configured_columns(table, reflected_columns)
     _validate_projection_strategy(columns, strategy)
+    current_fingerprint = projection_fingerprint(columns)
+    if state is None:
+        state = PublishState(
+            strategy=strategy,
+            projection_fingerprint=current_fingerprint,
+        )
+    elif state.projection_fingerprint is None:
+        state.projection_fingerprint = current_fingerprint
+    elif state.projection_fingerprint != current_fingerprint and not explicit_initial:
+        raise StateSafetyError(
+            f"Open Mirror projection changed at {loaded.path}; explicitly reset "
+            "or request an initial load"
+        )
     if strategy == "watermark":
         return await _publish_watermark(
             target, table, columns, publisher, state, loaded, reason=reason,

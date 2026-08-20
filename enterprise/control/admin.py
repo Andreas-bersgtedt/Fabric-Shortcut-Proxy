@@ -659,15 +659,19 @@ function renderHealth(h, history){
       host.memory_pct == null ? "" : host.memory_pct.toFixed(1)+"% used of "+fmtBytes(host.memory_total_bytes)],
     ["Disk", host.disk_used_bytes == null ? "–" : fmtBytes(host.disk_used_bytes),
       host.disk_pct == null ? "" : host.disk_pct.toFixed(1)+"% used of "+fmtBytes(host.disk_total_bytes)],
+    ["Network RX", host.network_receive_bytes_per_sec == null ? "–" : fmtRate(host.network_receive_bytes_per_sec), "Manager host"],
+    ["Network TX", host.network_transmit_bytes_per_sec == null ? "–" : fmtRate(host.network_transmit_bytes_per_sec), "Manager host"],
   ].map(([k,v,s])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div><div class="sub">${s}</div></div>`).join("");
   $("healthAlerts").innerHTML = alerts.length
     ? alerts.map(a=>`<div class="alert ${a.severity.toLowerCase()}"><b>${a.severity}</b> ${a.message}<div class="sub">${a.remediation}</div></div>`).join("")
     : '<div class="empty">No active cluster alerts.</div>';
   const points = history.slice().reverse();
   $("healthTrend").innerHTML = points.length
-    ? `<div class="sub">Host resource trend, ${points.length} samples</div>${healthChart(points)}`
+    ? `<div class="sub">Host resource trend, ${points.length} samples</div>${healthChart(points)}${networkChart(points)}`
     : '<div class="empty">No health history collected yet.</div>';
 }
+
+function fmtRate(bytes){ return fmtBytes(bytes)+"/s"; }
 
 function healthChart(points){
   const width=760, height=220, left=42, right=16, top=18, bottom=30;
@@ -689,6 +693,26 @@ function healthChart(points){
     <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#526078"/>
     <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#526078"/>
     <text x="8" y="${top+4}" class="chart-label">100%</text><text x="18" y="${height-bottom+4}" class="chart-label">0%</text>
+    ${lines}</svg>`;
+}
+
+function networkChart(points){
+  const width=760, height=180, left=58, right=16, top=18, bottom=30;
+  const colors={network_receive_bytes_per_sec:"#f59e0b", network_transmit_bytes_per_sec:"#f472b6"};
+  const labels={network_receive_bytes_per_sec:"Network RX", network_transmit_bytes_per_sec:"Network TX"};
+  const values=Object.keys(colors).flatMap(key=>points.map(p=>p.host && p.host[key] || 0));
+  const max=Math.max(1, ...values);
+  const x=i=>left+(points.length<2?0:i*(width-left-right)/(points.length-1));
+  const y=v=>top+(max-v)*(height-top-bottom)/max;
+  const lines=Object.keys(colors).map(key=>{
+    const path=points.map((p,i)=>`${i?"L":"M"} ${x(i).toFixed(1)} ${y(p.host && p.host[key] || 0).toFixed(1)}`).join(" ");
+    return `<path d="${path}" fill="none" stroke="${colors[key]}" stroke-width="2"/>`;
+  }).join("");
+  const legend=Object.keys(colors).map(key=>`<span style="color:${colors[key]}">● ${labels[key]}</span>`).join(" ");
+  return `<div class="chart-legend">${legend}</div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host network receive and transmit trend">
+    <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#526078"/>
+    <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#526078"/>
+    <text x="4" y="${top+4}" class="chart-label">${fmtRate(max)}</text><text x="26" y="${height-bottom+4}" class="chart-label">0/s</text>
     ${lines}</svg>`;
 }
 

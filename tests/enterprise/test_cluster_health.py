@@ -42,6 +42,8 @@ def test_healthy_snapshot_and_resource_aggregation():
         "disk_used_bytes",
         "disk_total_bytes",
         "disk_pct",
+        "network_receive_bytes_per_sec",
+        "network_transmit_bytes_per_sec",
     }
     assert snapshot["alerts"] == []
 

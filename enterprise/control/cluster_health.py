@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover - enterprise dependencies include psutil
 
 _history: deque[dict[str, Any]] = deque(maxlen=17280)
 _history_lock = Lock()
+_network_sample: tuple[float, int, int] | None = None
 
 
 def _alert(alert_id: str, severity: str, message: str, remediation: str) -> dict[str, str]:
@@ -25,6 +26,7 @@ def _alert(alert_id: str, severity: str, message: str, remediation: str) -> dict
 
 
 def _host_resources() -> dict[str, float | int | None]:
+    global _network_sample
     if psutil is None:
         return {
             "cpu_pct": None,
@@ -34,9 +36,21 @@ def _host_resources() -> dict[str, float | int | None]:
             "disk_used_bytes": None,
             "disk_total_bytes": None,
             "disk_pct": None,
+            "network_receive_bytes_per_sec": None,
+            "network_transmit_bytes_per_sec": None,
         }
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage(".")
+    now = time.time()
+    counters = psutil.net_io_counters()
+    receive_rate = transmit_rate = 0.0
+    if _network_sample is not None:
+        previous_time, previous_receive, previous_transmit = _network_sample
+        elapsed = now - previous_time
+        if elapsed > 0:
+            receive_rate = max(0, counters.bytes_recv - previous_receive) / elapsed
+            transmit_rate = max(0, counters.bytes_sent - previous_transmit) / elapsed
+    _network_sample = (now, counters.bytes_recv, counters.bytes_sent)
     return {
         "cpu_pct": float(psutil.cpu_percent(interval=None)),
         "memory_used_bytes": int(memory.used),
@@ -45,6 +59,8 @@ def _host_resources() -> dict[str, float | int | None]:
         "disk_used_bytes": int(disk.used),
         "disk_total_bytes": int(disk.total),
         "disk_pct": float(disk.percent),
+        "network_receive_bytes_per_sec": receive_rate,
+        "network_transmit_bytes_per_sec": transmit_rate,
     }
 
 

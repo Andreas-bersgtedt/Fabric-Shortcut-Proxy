@@ -624,9 +624,9 @@ async def sigv4_auth_middleware(request, call_next):
         except Exception:  # noqa: BLE001 - proxy lookup must never break the front door
             mounted = False
 
-    # A secured proxy forces auth on mounted buckets even if the global flag is off.
+    # REQUIRE_SIGV4 controls both object and administrative request signing.
     protected = any(path == p or path.startswith(p + "/") for p in _AUTH_REQUIRED_PREFIXES)
-    require = protected or config.REQUIRE_SIGV4 or (mounted and config.ENFORCE_MOUNT_AUTH)
+    require = config.REQUIRE_SIGV4 or (mounted and config.ENFORCE_MOUNT_AUTH)
     if require:
         try:
             identity = verify_signature(

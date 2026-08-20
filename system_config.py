@@ -305,6 +305,11 @@ AGENT_ID: str = _get_str("AGENT_ID", "agent_id", "").strip()
 # HOST is a wildcard like 0.0.0.0). Set to a real address for a multi-host fleet.
 AGENT_ADVERTISE_HOST: str = _get_str("AGENT_ADVERTISE_HOST", "agent_advertise_host", "").strip()
 
+# Manager: comma-separated exact hosts or IP networks accepted during registration.
+AGENT_HOST_ALLOWLIST: str = _get_str(
+    "AGENT_HOST_ALLOWLIST", "agent_host_allowlist", "127.0.0.1,0.0.0.0,::1,::,localhost"
+).strip()
+
 # Manager: control-plane REST bind address
 CONTROL_HOST: str = _get_str("CONTROL_HOST", "control_host", "127.0.0.1")
 

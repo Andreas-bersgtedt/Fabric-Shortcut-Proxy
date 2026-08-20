@@ -81,7 +81,10 @@ def create_control_router(server: ControlServer):
     @router.post("/register")
     async def register(request: Request):
         body = await request.json()
-        resp = server.register(RegisterRequest.from_dict(body))
+        try:
+            resp = server.register(RegisterRequest.from_dict(body))
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": "invalid_registration", "detail": str(exc)})
         return resp.to_dict()
 
     @router.post("/heartbeat")

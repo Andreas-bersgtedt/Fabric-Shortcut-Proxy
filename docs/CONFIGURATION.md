@@ -545,6 +545,7 @@ Create one Fabric shortcut per table.
 | `VALIDATE_SOURCE_SCHEMA` | `1` | Validate declared columns exist (no-op for reflected schemas) |
 | `REQUIRE_SIGV4` | `1` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
+| `AGENT_HOST_ALLOWLIST` | `127.0.0.1,0.0.0.0,::1,::,localhost` | Hosts or CIDRs accepted in Manager agent registration |
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |

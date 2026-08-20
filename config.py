@@ -53,7 +53,7 @@ from system_config import (
     # Fleet
     AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
     # Control Plane
-    MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT,
+    MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT, AGENT_HOST_ALLOWLIST,
     AGENT_ADVERTISE_HOST,
     HEARTBEAT_MS, HEARTBEAT_MISS_LIMIT, AGENT_RESTART_BACKOFF_SECONDS, AGENT_MAX_RAPID_RESTARTS,
     AGENT_DRAIN_GRACE_SECONDS,
@@ -197,6 +197,7 @@ _register("MANAGER_AUTH_ENABLED", "manager_auth_enabled", "bool", MANAGER_AUTH_E
 _register("MANAGER_AUTH_USERNAME", "manager_auth_username", "str", MANAGER_AUTH_USERNAME)
 _register("MANAGER_AUTH_PASSWORD", "manager_auth_password", "str", MANAGER_AUTH_PASSWORD)
 _register("CORS_ALLOWED_ORIGINS", "cors_allowed_origins", "str", CORS_ALLOWED_ORIGINS)
+_register("AGENT_HOST_ALLOWLIST", "agent_host_allowlist", "str", AGENT_HOST_ALLOWLIST)
 
 # Entra ID auth & Azure Key Vault (issue #16)
 _register("FSP_AUTH_MODE", "auth_mode", "str", AUTH_MODE)

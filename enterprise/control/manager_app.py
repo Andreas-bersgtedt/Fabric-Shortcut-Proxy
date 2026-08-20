@@ -106,7 +106,13 @@ def _make_supervisor(i: int, count: int) -> AgentSupervisor:
 
 
 def create_manager_app() -> FastAPI:
-    registry = Registry(heartbeat_ms=config.HEARTBEAT_MS, miss_limit=config.HEARTBEAT_MISS_LIMIT)
+    registry = Registry(
+        heartbeat_ms=config.HEARTBEAT_MS,
+        miss_limit=config.HEARTBEAT_MISS_LIMIT,
+        allowed_hosts=tuple(
+            item.strip() for item in config.AGENT_HOST_ALLOWLIST.split(",") if item.strip()
+        ),
+    )
     service = ControlService(registry, tables=[t.name for t in config.TABLES])
     supervisors = _build_supervisors()
     gateway = None

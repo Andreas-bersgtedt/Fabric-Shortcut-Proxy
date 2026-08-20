@@ -14,6 +14,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+import ipaddress
 from dataclasses import dataclass, field
 
 from enterprise.control.contract import (
@@ -70,11 +71,30 @@ class LeaseError(Exception):
 class Registry:
     """Thread‑safe registry of Agents with heartbeat‑based liveness."""
 
-    def __init__(self, *, heartbeat_ms: int = 2000, miss_limit: int = 3) -> None:
+    def __init__(
+        self, *, heartbeat_ms: int = 2000, miss_limit: int = 3,
+        allowed_hosts: tuple[str, ...] | None = None,
+    ) -> None:
         self.heartbeat_ms = heartbeat_ms
         self.miss_limit = max(1, miss_limit)
         self._agents: dict[str, AgentRecord] = {}
         self._lock = threading.Lock()
+        self._allowed_hosts = tuple(x.strip().lower() for x in (allowed_hosts or ()) if x.strip())
+
+    def _host_allowed(self, host: str) -> bool:
+        if not self._allowed_hosts:
+            return True
+        value = host.strip().lower().rstrip(".")
+        for entry in self._allowed_hosts:
+            if value == entry.rstrip("."):
+                return True
+            try:
+                address = ipaddress.ip_address(value)
+                if address in ipaddress.ip_network(entry, strict=False):
+                    return True
+            except ValueError:
+                continue
+        return False
 
     # -- registration --------------------------------------------------------
 
@@ -84,6 +104,11 @@ class Registry:
         Re‑registration (same ``agent_id``) issues a fresh lease and clears stale
         queued commands — used when a crashed Agent is respawned.
         """
+        advertised = req.advertise_host or req.host
+        if not (1 <= req.port <= 65535):
+            raise ValueError("agent port must be in 1..65535")
+        if not self._host_allowed(req.host) or not self._host_allowed(advertised):
+            raise ValueError("agent host is not allowed by AGENT_HOST_ALLOWLIST")
         lease = uuid.uuid4().hex
         now = _now()
         with self._lock:

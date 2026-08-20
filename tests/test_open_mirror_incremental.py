@@ -277,6 +277,11 @@ async def test_projection_change_requires_explicit_reset(sqlite_src):
     with pytest.raises(om_source.StateSafetyError, match="projection changed"):
         await om_source.publish_table(changed, changed.tables[0], mode="snapshot")
 
+    reset = await om_source.publish_table(changed, changed.tables[0], mode="initial")
+    assert reset.action == "initial"
+    reset_state = load_state(str(tmp_path / "state"), changed, changed.tables[0]).state
+    assert reset_state.projection_fingerprint != state.projection_fingerprint
+
 
 async def test_incremental_cycle_initial_then_diff(sqlite_src):
     tmp_path, db = sqlite_src

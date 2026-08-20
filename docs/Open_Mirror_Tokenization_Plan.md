@@ -6,6 +6,8 @@ Current kickoff status: deterministic projections, column omission, builder
 preservation, dialect SQL reuse, and projection-state safety are implemented.
 `random_token` recovery now persists a prepared Parquet sidecar before the landing-zone
 write and replays that sidecar after an interrupted publish.
+Sidecar paths are constrained to the deterministic state-file location, and an explicit
+`initial` load replaces a changed projection fingerprint.
 
 ## Goal
 

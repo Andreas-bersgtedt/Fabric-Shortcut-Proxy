@@ -448,6 +448,11 @@ async def publish_table(
                 query_mode="watermark" if strategy == "watermark" else "snapshot_full_scan",
             )
         if pending.payload_path and os.path.exists(pending.payload_path):
+            expected_payload_path = _pending_payload_path(state_dir, target, table)
+            if os.path.abspath(pending.payload_path) != os.path.abspath(expected_payload_path):
+                raise StateSafetyError(
+                    f"pending payload path at {loaded.path} is outside the expected state path"
+                )
             payload = _read_pending_payload(pending.payload_path, pending.content_hash)
             publisher.write_batch_at(pending.path, payload)
             _finalize_pending(state_dir, target, table, state)
@@ -472,11 +477,13 @@ async def publish_table(
         )
     elif state.projection_fingerprint is None:
         state.projection_fingerprint = current_fingerprint
-    elif state.projection_fingerprint != current_fingerprint and not explicit_initial:
-        raise StateSafetyError(
-            f"Open Mirror projection changed at {loaded.path}; explicitly reset "
-            "or request an initial load"
-        )
+    elif state.projection_fingerprint != current_fingerprint:
+        if not explicit_initial:
+            raise StateSafetyError(
+                f"Open Mirror projection changed at {loaded.path}; explicitly reset "
+                "or request an initial load"
+            )
+        state.projection_fingerprint = current_fingerprint
     if strategy == "watermark":
         return await _publish_watermark(
             target, table, columns, publisher, state, loaded, reason=reason,

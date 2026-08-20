@@ -625,7 +625,6 @@ async def sigv4_auth_middleware(request, call_next):
             mounted = False
 
     # REQUIRE_SIGV4 controls both object and administrative request signing.
-    protected = any(path == p or path.startswith(p + "/") for p in _AUTH_REQUIRED_PREFIXES)
     require = config.REQUIRE_SIGV4 or (mounted and config.ENFORCE_MOUNT_AUTH)
     if require:
         try:

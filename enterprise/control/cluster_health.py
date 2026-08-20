@@ -11,7 +11,7 @@ try:
 except ImportError:  # pragma: no cover - enterprise dependencies include psutil
     psutil = None
 
-_history: deque[dict[str, Any]] = deque(maxlen=1440)
+_history: deque[dict[str, Any]] = deque(maxlen=17280)
 _history_lock = Lock()
 
 
@@ -159,11 +159,14 @@ def aggregate_health(registry, supervisors, *, now: float | None = None) -> dict
     return snapshot
 
 
-def health_history(limit: int = 60) -> list[dict[str, Any]]:
-    """Return newest health snapshots first, bounded to the in-memory history."""
-    limit = max(1, min(int(limit), 1440))
+def health_history(limit: int = 60, *, hours: float | None = None) -> list[dict[str, Any]]:
+    """Return newest health snapshots first, optionally bounded by age."""
     with _history_lock:
-        return list(reversed(list(_history)[-limit:]))
+        samples = list(_history)
+    if hours is not None:
+        cutoff = time.time() - max(0.0, float(hours)) * 3600
+        samples = [sample for sample in samples if sample["generated_at"] >= cutoff]
+    return list(reversed(samples[-max(1, int(limit)):]))
 
 
 def clear_history() -> None:

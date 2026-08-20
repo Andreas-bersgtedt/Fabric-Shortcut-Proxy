@@ -142,9 +142,9 @@ def create_admin_router(
         return aggregate_health(registry, supervisors)
 
     @router.get("/_manager/api/health/history")
-    async def health_history(limit: int = 60) -> dict:
+    async def health_history(hours: float = 5) -> dict:
         from enterprise.control.cluster_health import health_history
-        return {"history": health_history(limit)}
+        return {"history": health_history(limit=17280, hours=hours)}
 
     @router.get("/_manager/api/memory-history/{name}")
     async def memory_history(name: str) -> dict:
@@ -321,6 +321,9 @@ _ADMIN_HTML = r"""<!doctype html>
   .trend span.healthy { background: #4ade80; }
   .trend span.warning { background: #fcd34d; }
   .trend span.critical { background: #f87171; }
+  .health-chart { width: 100%; height: 220px; display: block; }
+  .chart-label { fill: #8a93a6; font-size: 11px; }
+  .chart-legend { display: flex; gap: 16px; padding: 10px 12px 0; font-size: 12px; }
   .logbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #232a3a; flex-wrap: wrap; }
   .logbar .grow { flex: 1; min-width: 160px; }
   .logbar input[type=text] { width: 100%; }
@@ -409,9 +412,9 @@ _ADMIN_HTML = r"""<!doctype html>
       <div id="healthAlerts" class="panel"></div>
       <label>History window
         <select id="healthHistoryLimit" onchange="monitorRefresh()">
-          <option value="12">1 hour</option>
-          <option value="60" selected>5 hours</option>
-          <option value="288">24 hours</option>
+          <option value="1">1 hour</option>
+          <option value="5" selected>5 hours</option>
+          <option value="24">24 hours</option>
         </select>
       </label>
       <div class="panel" id="healthTrend"></div>
@@ -629,8 +632,8 @@ async function monitorRefresh(){
     const d = await r.json();
     monitorRender(d);
     const h = await (await fetch("/_manager/api/health", {cache:"no-store"})).json();
-    const limit = $("healthHistoryLimit").value;
-    const history = await (await fetch("/_manager/api/health/history?limit="+limit,
+    const hours = $("healthHistoryLimit").value;
+    const history = await (await fetch("/_manager/api/health/history?hours="+hours,
       {cache:"no-store"})).json();
     renderHealth(h, history.history || []);
   }catch(e){
@@ -662,10 +665,31 @@ function renderHealth(h, history){
     : '<div class="empty">No active cluster alerts.</div>';
   const points = history.slice().reverse();
   $("healthTrend").innerHTML = points.length
-    ? `<div class="sub">Health trend, newest ${points.length} samples</div><div class="trend">${
-        points.map(p=>`<span class="${(p.status||"warning").toLowerCase()}" title="${new Date(p.generated_at*1000).toLocaleString()}">${p.status[0]}</span>`).join("")
-      }</div>`
+    ? `<div class="sub">Host resource trend, ${points.length} samples</div>${healthChart(points)}`
     : '<div class="empty">No health history collected yet.</div>';
+}
+
+function healthChart(points){
+  const width=760, height=220, left=42, right=16, top=18, bottom=30;
+  const colors={cpu_pct:"#38bdf8", memory_pct:"#a78bfa", disk_pct:"#4ade80"};
+  const labels={cpu_pct:"CPU", memory_pct:"Memory", disk_pct:"Disk"};
+  const x=i=>left+(points.length<2?0:i*(width-left-right)/(points.length-1));
+  const y=v=>top+(100-Math.max(0,Math.min(100,v)))*(height-top-bottom)/100;
+  const lines=Object.keys(colors).map(key=>{
+    const values=points.map(p=>p.host && p.host[key]).filter(v=>v!=null);
+    if(!values.length) return "";
+    const path=points.map((p,i)=>{
+      const value=p.host && p.host[key];
+      return value==null ? null : `${i?"L":"M"} ${x(i).toFixed(1)} ${y(value).toFixed(1)}`;
+    }).filter(Boolean).join(" ");
+    return `<path d="${path}" fill="none" stroke="${colors[key]}" stroke-width="2"/>`;
+  }).join("");
+  const legend=Object.keys(colors).map(key=>`<span style="color:${colors[key]}">● ${labels[key]}</span>`).join(" ");
+  return `<div class="chart-legend">${legend}</div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host CPU, memory, and disk usage trend">
+    <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#526078"/>
+    <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#526078"/>
+    <text x="8" y="${top+4}" class="chart-label">100%</text><text x="18" y="${height-bottom+4}" class="chart-label">0%</text>
+    ${lines}</svg>`;
 }
 
 function monitorRender(d){

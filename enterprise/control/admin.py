@@ -404,6 +404,8 @@ _ADMIN_HTML = r"""<!doctype html>
     <div class="section">
       <h3>Cluster health</h3>
       <div class="cards" id="healthCards"></div>
+      <h4>Manager host</h4>
+      <div class="cards" id="hostCards"></div>
       <div id="healthAlerts" class="panel"></div>
       <label>History window
         <select id="healthHistoryLimit" onchange="monitorRefresh()">
@@ -641,11 +643,19 @@ async function monitorRefresh(){
 function renderHealth(h, history){
   const status = h.status || "Unknown";
   const alerts = h.alerts || [];
+  const host = h.host || {};
   $("healthCards").innerHTML = [
     ["Status", `<span class="${status.toLowerCase()}">${status}</span>`, `${(h.agents||[]).length} agents`],
     ["CPU", h.resources && h.resources.cpu_pct != null ? h.resources.cpu_pct.toFixed(1)+"%" : "–", "fleet average"],
     ["Memory", h.resources && h.resources.memory_bytes != null ? fmtBytes(h.resources.memory_bytes) : "–", "reported Agent memory"],
     ["Alerts", fmtNum(alerts.length), alerts.length ? "attention required" : "none active"],
+  ].map(([k,v,s])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div><div class="sub">${s}</div></div>`).join("");
+  $("hostCards").innerHTML = [
+    ["CPU", host.cpu_pct == null ? "–" : host.cpu_pct.toFixed(1)+"%", "Manager host"],
+    ["Memory", host.memory_used_bytes == null ? "–" : fmtBytes(host.memory_used_bytes),
+      host.memory_pct == null ? "" : host.memory_pct.toFixed(1)+"% used of "+fmtBytes(host.memory_total_bytes)],
+    ["Disk", host.disk_used_bytes == null ? "–" : fmtBytes(host.disk_used_bytes),
+      host.disk_pct == null ? "" : host.disk_pct.toFixed(1)+"% used of "+fmtBytes(host.disk_total_bytes)],
   ].map(([k,v,s])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div><div class="sub">${s}</div></div>`).join("");
   $("healthAlerts").innerHTML = alerts.length
     ? alerts.map(a=>`<div class="alert ${a.severity.toLowerCase()}"><b>${a.severity}</b> ${a.message}<div class="sub">${a.remediation}</div></div>`).join("")

@@ -626,7 +626,8 @@ per-table read/query statistics,
 snapshot version, cache/pinned occupancy, and the **query lag** breakdown
 (Fabric request → SQL execution → Parquet generation → bytes returned) per data
 request. Cluster health includes active alerts and a selectable history window of
-1 hour, 5 hours, or 24 hours. The Manager health endpoints are
+1 hour, 5 hours, or 24 hours. It also reports Manager-host CPU, memory, and disk
+usage. The Manager health endpoints are
 `GET /_manager/api/health` and `GET /_manager/api/health/history`. Run it locally,
 don't expose publicly.
 

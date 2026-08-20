@@ -6,6 +6,11 @@ from collections import deque
 from threading import Lock
 from typing import Any
 
+try:
+    import psutil
+except ImportError:  # pragma: no cover - enterprise dependencies include psutil
+    psutil = None
+
 _history: deque[dict[str, Any]] = deque(maxlen=1440)
 _history_lock = Lock()
 
@@ -16,6 +21,30 @@ def _alert(alert_id: str, severity: str, message: str, remediation: str) -> dict
         "severity": severity,
         "message": message,
         "remediation": remediation,
+    }
+
+
+def _host_resources() -> dict[str, float | int | None]:
+    if psutil is None:
+        return {
+            "cpu_pct": None,
+            "memory_used_bytes": None,
+            "memory_total_bytes": None,
+            "memory_pct": None,
+            "disk_used_bytes": None,
+            "disk_total_bytes": None,
+            "disk_pct": None,
+        }
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage(".")
+    return {
+        "cpu_pct": float(psutil.cpu_percent(interval=None)),
+        "memory_used_bytes": int(memory.used),
+        "memory_total_bytes": int(memory.total),
+        "memory_pct": float(memory.percent),
+        "disk_used_bytes": int(disk.used),
+        "disk_total_bytes": int(disk.total),
+        "disk_pct": float(disk.percent),
     }
 
 
@@ -121,6 +150,7 @@ def aggregate_health(registry, supervisors, *, now: float | None = None) -> dict
             "storage": None,
             "network": None,
         },
+        "host": _host_resources(),
         "alerts": alerts,
         "events": [],
     }

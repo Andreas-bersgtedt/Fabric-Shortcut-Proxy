@@ -37,6 +37,9 @@ line-based installer fallback. It also provides **Reset Manager admin password**
 The reset generates a new password, stores it in the configured Key Vault or
 protected environment file, and never prints the value. The operator can restart
 the service immediately or restart it later.
+If the deployment predates installer checkpoints, reset mode recovers the backend
+and username from the existing systemd environment file instead of requiring a
+new setup run.
 Actions can be selected with the arrow keys or numeric shortcuts `1` through `6`.
 
 This is the first migration slice for point 10. Further provisioning steps must keep the

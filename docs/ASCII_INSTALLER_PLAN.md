@@ -212,7 +212,9 @@ and start operations.
 
 The C++ menu also exposes a password-reset action. It generates a new Manager admin
 password in the shell backend, stores it in the configured secret backend, and never
-displays or places the value in process arguments.
+displays or places the value in process arguments. Reset mode can recover a
+pre-installer deployment from its systemd environment file when no installer checkpoint
+exists.
 
 ## SSH and terminal safety
 

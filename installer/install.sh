@@ -289,6 +289,29 @@ load_state() {
     done < "$STATE_FILE"
 }
 
+recover_existing_configuration() {
+    if [ ! -r "$ENV_FILE" ] && command -v systemctl >/dev/null 2>&1; then
+        discovered_env=$(systemctl show "$UNIT_NAME" --property=EnvironmentFiles --value 2>/dev/null |
+            awk '{for (i = 1; i <= NF; i++) {value=$i; sub(/^-/, "", value); if (value ~ /^\//) {print value; exit}}}')
+        [ -n "$discovered_env" ] && ENV_FILE=$discovered_env
+    fi
+    [ -r "$ENV_FILE" ] || die "existing service environment file not found: $ENV_FILE"
+    KEYVAULT_URI=$(awk -F= '$1 == "FSP_KEYVAULT_URI" {print substr($0, index($0, "=") + 1); exit}' "$ENV_FILE")
+    MANAGER_AUTH_USERNAME=$(awk -F= '$1 == "MANAGER_AUTH_USERNAME" {print substr($0, index($0, "=") + 1); exit}' "$ENV_FILE")
+    [ -n "$MANAGER_AUTH_USERNAME" ] || MANAGER_AUTH_USERNAME=operator
+    if [ -n "$KEYVAULT_URI" ]; then
+        SECRET_BACKEND=keyvault
+        if grep -q '^FSP_REQUIRE_KEYVAULT=1$' "$ENV_FILE"; then
+            KEYVAULT_MODE=required
+        else
+            KEYVAULT_MODE=read-through
+        fi
+    else
+        SECRET_BACKEND=env-file
+        KEYVAULT_MODE=disabled
+    fi
+}
+
 step_header() {
     printf '%s\n' ''
     print_rule
@@ -778,8 +801,11 @@ main() {
         exit 0
     fi
     if [ "$RESET_ADMIN_PASSWORD" -eq 1 ]; then
-        [ -f "$STATE_FILE" ] || die "installer state not found: $STATE_FILE; run setup first"
-        load_state
+        if [ -f "$STATE_FILE" ]; then
+            load_state
+        else
+            recover_existing_configuration
+        fi
         reset_admin_password
         exit 0
     fi

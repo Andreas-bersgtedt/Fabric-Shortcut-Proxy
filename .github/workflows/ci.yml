@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  # CI starts the Python proxy and exercises its default configuration. These
+  # non-secret values satisfy the fail-closed SigV4 startup validation.
+  S3_ACCESS_KEY_ID: ci-test-access-key
+  S3_SECRET_ACCESS_KEY: ci-test-secret-key
+
 jobs:
   lint-unused:
     name: lint unused/import checks (ruff F)

@@ -11,8 +11,8 @@ Design notes
   directly from the ``x-amz-content-sha256`` header (usually ``UNSIGNED-PAYLOAD``
   for S3 reads) exactly as AWS SigV4 for S3 specifies -- we never need to hash a
   body.
-* Verification is **opt-in** via ``config.REQUIRE_SIGV4`` (default off) so the
-  known-good Fabric path is unaffected until signature enforcement is validated.
+* Verification is enabled by default via ``config.REQUIRE_SIGV4``. Deployments
+  that enable it must configure matching S3 credentials.
 * On failure we return an S3-style error code (``AccessDenied`` /
   ``InvalidAccessKeyId`` / ``SignatureDoesNotMatch``) which the middleware maps
   to a 403.

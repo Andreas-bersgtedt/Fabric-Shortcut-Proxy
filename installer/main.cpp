@@ -96,6 +96,8 @@ void clear_screen() {
 void draw_menu(std::size_t selected) {
     static const char* const entries[] = {
         "Start setup wizard",
+        "Resume setup wizard",
+        "Preview setup (dry-run)",
         "Run read-only checks",
         "Use line-based installer",
         "Quit",
@@ -105,10 +107,11 @@ void draw_menu(std::size_t selected) {
               << "  FABRIC SHORTCUT PROXY\n"
               << "========================================\n\n"
               << "  SSH-safe installer\n\n";
-    for (std::size_t index = 0; index < 4; ++index) {
-        std::cout << (index == selected ? "  > " : "    ") << entries[index] << '\n';
+    for (std::size_t index = 0; index < 6; ++index) {
+        std::cout << (index == selected ? "  > " : "    ") << (index + 1) << ") "
+                  << entries[index] << '\n';
     }
-    std::cout << "\n  Use Up/Down, Enter, or Q to quit.\n" << std::flush;
+    std::cout << "\n  Use Up/Down, 1-6, Enter, or Q to quit.\n" << std::flush;
 }
 
 int interactive(const std::filesystem::path& script) {
@@ -128,18 +131,32 @@ int interactive(const std::filesystem::path& script) {
         if (key == 'q' || key == 'Q' || key == 3) {
             return 0;
         }
+        if (key >= '1' && key <= '6') {
+            selected = static_cast<std::size_t>(key - '1');
+            key = '\r';
+        }
         if (key == '\r' || key == '\n') {
-            if (selected == 3) {
+            if (selected == 5) {
                 return 0;
             }
-            if (selected == 2) {
+            if (selected == 4) {
                 terminal.restore();
                 return run_shell_installer(script, 1, nullptr);
             }
-            if (selected == 1) {
+            if (selected == 3) {
                 terminal.restore();
                 const char* check_args[] = {"install.sh", "--check", nullptr};
                 return run_shell_installer(script, 2, const_cast<char**>(check_args));
+            }
+            if (selected == 2) {
+                terminal.restore();
+                const char* dry_run_args[] = {"install.sh", "--dry-run", nullptr};
+                return run_shell_installer(script, 2, const_cast<char**>(dry_run_args));
+            }
+            if (selected == 1) {
+                terminal.restore();
+                const char* resume_args[] = {"install.sh", "--resume", nullptr};
+                return run_shell_installer(script, 2, const_cast<char**>(resume_args));
             }
             terminal.restore();
             return run_shell_installer(script, 1, nullptr);
@@ -149,7 +166,7 @@ int interactive(const std::filesystem::path& script) {
             if (read(STDIN_FILENO, sequence, sizeof(sequence)) == 2 && sequence[0] == '[') {
                 if (sequence[1] == 'A' && selected > 0) {
                     --selected;
-                } else if (sequence[1] == 'B' && selected < 3) {
+                } else if (sequence[1] == 'B' && selected < 5) {
                     ++selected;
                 }
             }

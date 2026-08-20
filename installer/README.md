@@ -21,3 +21,7 @@ Run the already-built binary directly:
 The binary falls back to `installer/install.sh` when stdin is not a terminal. Command-line
 arguments are passed through to the shell installer, so `--answers`, `--resume`,
 `--check`, and `--dry-run` retain their existing behavior.
+
+The interactive menu exposes the same common actions: start or resume setup, preview
+the setup with a dry run, run read-only checks, or open the line-based installer.
+Actions can be selected with the arrow keys or numeric shortcuts `1` through `6`.

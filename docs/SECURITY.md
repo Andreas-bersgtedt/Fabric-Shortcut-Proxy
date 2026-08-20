@@ -281,7 +281,8 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
 |---|---|---|
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets as passthrough |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounts even if `REQUIRE_SIGV4=0` |
-| `REQUIRE_SIGV4` | `0` | Enforce SigV4 on **all** buckets |
+| `REQUIRE_SIGV4` | `1` | Enforce SigV4 on **all** buckets |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Disable cross-origin browser access unless explicitly configured |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access |
 | `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |

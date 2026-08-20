@@ -173,7 +173,7 @@ def create_manager_app() -> FastAPI:
                  tables=[t.name for t in config.TABLES])
         if config.MANAGER_AUTH_ENABLED and not config.MANAGER_AUTH_PASSWORD:
             log.warning("manager_auth_enabled_without_password",
-                        hint="set MANAGER_AUTH_PASSWORD to activate the Basic auth gate; running open")
+                        hint="set MANAGER_AUTH_PASSWORD before exposing the Manager")
         ha_task = None
         if lease is not None:
             app.state.is_leader = False

@@ -18,6 +18,7 @@ which is fine for drain/reload/publish.
 from __future__ import annotations
 
 import abc
+import base64
 from typing import Protocol, runtime_checkable
 
 from fastapi import APIRouter, Request, Response
@@ -129,33 +130,51 @@ class RestControlClient(ControlClient):
         )
 
     async def register(self, req: RegisterRequest) -> RegisterResponse:
-        r = await self._client.post(f"{CONTROL_PREFIX}/register", json=req.to_dict())
+        r = await self._client.post(f"{CONTROL_PREFIX}/register", json=req.to_dict(),
+                                    headers=self._auth_headers())
         r.raise_for_status()
         return RegisterResponse.from_dict(r.json())
 
     async def heartbeat(self, req: HeartbeatRequest) -> list[ControlCommand]:
-        r = await self._client.post(f"{CONTROL_PREFIX}/heartbeat", json=req.to_dict())
+        r = await self._client.post(f"{CONTROL_PREFIX}/heartbeat", json=req.to_dict(),
+                                    headers=self._auth_headers())
         if r.status_code == 409:
             raise StaleLeaseError(r.json().get("detail", "stale lease"))
         r.raise_for_status()
         return [ControlCommand.from_dict(c) for c in r.json().get("commands", [])]
 
     async def get_assignment(self, agent_id: str) -> Assignment:
-        r = await self._client.get(f"{CONTROL_PREFIX}/assignment/{agent_id}")
+        r = await self._client.get(f"{CONTROL_PREFIX}/assignment/{agent_id}",
+                                   headers=self._auth_headers())
         r.raise_for_status()
         return Assignment.from_dict(r.json())
 
     async def get_snapshot(self, table: str, epoch: int = 0) -> SnapshotManifest | None:
-        r = await self._client.get(f"{CONTROL_PREFIX}/snapshot/{table}", params={"epoch": epoch})
+        r = await self._client.get(f"{CONTROL_PREFIX}/snapshot/{table}",
+                                   params={"epoch": epoch}, headers=self._auth_headers())
         if r.status_code == 404:
             return None
         r.raise_for_status()
         return SnapshotManifest.from_dict(r.json())
 
     async def report_task_result(self, res: TaskResult) -> Ack:
-        r = await self._client.post(f"{CONTROL_PREFIX}/task-result", json=res.to_dict())
+        r = await self._client.post(f"{CONTROL_PREFIX}/task-result", json=res.to_dict(),
+                                    headers=self._auth_headers())
         r.raise_for_status()
         return Ack.from_dict(r.json())
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    @staticmethod
+    def _auth_headers() -> dict[str, str]:
+        try:
+            import config
+            username = str(config.MANAGER_AUTH_USERNAME or "")
+            password = str(config.MANAGER_AUTH_PASSWORD or "")
+        except (ImportError, AttributeError):
+            return {}
+        if not username or not password:
+            return {}
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return {"Authorization": f"Basic {token}"}

@@ -91,11 +91,11 @@ OBJECT_PATH_LAYOUT: str = _get_str("OBJECT_PATH_LAYOUT", "object_path_layout", "
 ENABLE_LEGACY_PATH_ALIASES: bool = _get_bool("ENABLE_LEGACY_PATH_ALIASES", "enable_legacy_path_aliases", False)
 
 # S3 credentials
-ACCESS_KEY_ID: str = _get_str("S3_ACCESS_KEY_ID", "access_key_id", "AKIAIOSFODNN7EXAMPLE")
-SECRET_ACCESS_KEY: str = _get_str("S3_SECRET_ACCESS_KEY", "secret_access_key", "poc-secret-not-checked")
+ACCESS_KEY_ID: str = _get_str("S3_ACCESS_KEY_ID", "access_key_id", "")
+SECRET_ACCESS_KEY: str = _get_str("S3_SECRET_ACCESS_KEY", "secret_access_key", "")
 
 # S3 request signature enforcement
-REQUIRE_SIGV4: bool = _get_bool("REQUIRE_SIGV4", "require_sigv4", False)
+REQUIRE_SIGV4: bool = _get_bool("REQUIRE_SIGV4", "require_sigv4", True)
 
 # ---------------------------------------------------------------------------
 # Server
@@ -108,6 +108,9 @@ PORT: int = _get_int("PORT", "port", 9000)
 # so the agent recovers the real client IP + scheme behind a load balancer (used
 # by audit logging). Default trusts loopback only (uvicorn's default) = no change.
 FORWARDED_ALLOW_IPS: str = _get_str("FORWARDED_ALLOW_IPS", "forwarded_allow_ips", "127.0.0.1").strip()
+
+# Browser origins allowed to call the API. Empty means no cross-origin browser access.
+CORS_ALLOWED_ORIGINS: str = _get_str("CORS_ALLOWED_ORIGINS", "cors_allowed_origins", "").strip()
 
 # TLS termination at the proxy (Phase 4). Provide BOTH a cert and key to serve
 # HTTPS; empty = plain HTTP (terminate TLS at a fronting LB instead).
@@ -363,6 +366,6 @@ ADMIN_TOKEN: str = _get_str("ADMIN_TOKEN", "admin_token", "").strip()
 # credentials for the operator surface (/_manager, /_config, /_monitor, /agents,
 # root). Machine + liveness endpoints (/control, /healthz, /readyz) stay open so
 # the fleet keeps registering and load balancers can probe.
-MANAGER_AUTH_ENABLED: bool = _get_bool("MANAGER_AUTH_ENABLED", "manager_auth_enabled", False)
+MANAGER_AUTH_ENABLED: bool = _get_bool("MANAGER_AUTH_ENABLED", "manager_auth_enabled", True)
 MANAGER_AUTH_USERNAME: str = _get_str("MANAGER_AUTH_USERNAME", "manager_auth_username", "admin").strip()
 MANAGER_AUTH_PASSWORD: str = _get_str("MANAGER_AUTH_PASSWORD", "manager_auth_password", "")

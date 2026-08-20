@@ -543,7 +543,8 @@ Create one Fabric shortcut per table.
 | `S3_BUCKET` | `fabric-iceberg-poc` | Bucket Fabric connects to |
 | `PORT` | `9000` | HTTP listen port |
 | `VALIDATE_SOURCE_SCHEMA` | `1` | Validate declared columns exist (no-op for reflected schemas) |
-| `REQUIRE_SIGV4` | `0` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
+| `REQUIRE_SIGV4` | `1` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |
@@ -772,7 +773,8 @@ allowed buckets/prefixes:
 |---|---|---|
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounts even when `REQUIRE_SIGV4=0` |
-| `REQUIRE_SIGV4` | `0` | Enforce SigV4 on **all** buckets |
+| `REQUIRE_SIGV4` | `1` | Enforce SigV4 on **all** buckets |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access |
 | `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |
@@ -780,4 +782,3 @@ allowed buckets/prefixes:
 Manage keys in the config-builder **Storage → Access keys** panel (create returns
 the secret once; rotate/delete supported). The legacy single key stays a wildcard
 until the first access key is created. Full security model: [SECURITY.md](SECURITY.md).
-

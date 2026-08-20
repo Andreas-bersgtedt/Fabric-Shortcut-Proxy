@@ -136,6 +136,16 @@ def create_admin_router(
     async def fleet() -> dict:
         return fleet_snapshot(registry, supervisors, gateway=gateway, token_required=token_required)
 
+    @router.get("/_manager/api/health")
+    async def health() -> dict:
+        from enterprise.control.cluster_health import aggregate_health
+        return aggregate_health(registry, supervisors)
+
+    @router.get("/_manager/api/health/history")
+    async def health_history(hours: float = 5) -> dict:
+        from enterprise.control.cluster_health import health_history
+        return {"history": health_history(limit=17280, hours=hours)}
+
     @router.get("/_manager/api/memory-history/{name}")
     async def memory_history(name: str) -> dict:
         """Get memory history (RSS samples in MB) for a specific agent."""
@@ -303,6 +313,21 @@ _ADMIN_HTML = r"""<!doctype html>
   .warnrow td { background: rgba(239,68,68,.06); }
   .monitor-controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
   .monitor-controls label { color: #8a93a6; font-size: 12px; }
+  .healthy { color: #4ade80; } .warning { color: #fcd34d; } .critical { color: #f87171; }
+  .alert { padding: 10px 12px; border-bottom: 1px solid #2a3344; }
+  .alert:last-child { border-bottom: 0; } .trend { display: flex; gap: 3px; padding: 12px; }
+  .trend span { display: inline-block; width: 18px; height: 18px; border-radius: 3px;
+    color: #111827; text-align: center; font-size: 11px; line-height: 18px; }
+  .trend span.healthy { background: #4ade80; }
+  .trend span.warning { background: #fcd34d; }
+  .trend span.critical { background: #f87171; }
+  .chart-wrap { position: relative; width: 100%; }
+  .health-chart { width: 100%; height: auto; aspect-ratio: 760 / 220; display: block; }
+  .chart-label { fill: #8a93a6; font-size: 11px; }
+  .chart-legend { display: flex; gap: 16px; padding: 10px 12px 0; font-size: 12px; }
+  .chart-tooltip { position: absolute; display: none; pointer-events: none; z-index: 2;
+    background: #0b1220; border: 1px solid #526078; border-radius: 4px;
+    padding: 7px 9px; color: #e5e7eb; font-size: 11px; white-space: nowrap; }
   .logbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #232a3a; flex-wrap: wrap; }
   .logbar .grow { flex: 1; min-width: 160px; }
   .logbar input[type=text] { width: 100%; }
@@ -383,6 +408,21 @@ _ADMIN_HTML = r"""<!doctype html>
       <button onclick="pollOpenMirror(true)">Count landing-zone rows</button>
     </div>
     <div class="cards" id="monitorCards"></div>
+    <div class="section">
+      <h3>Cluster health</h3>
+      <div class="cards" id="healthCards"></div>
+      <h4>Manager host</h4>
+      <div class="cards" id="hostCards"></div>
+      <div id="healthAlerts" class="panel"></div>
+      <label>History window
+        <select id="healthHistoryLimit" onchange="monitorRefresh()">
+          <option value="1">1 hour</option>
+          <option value="5" selected>5 hours</option>
+          <option value="24">24 hours</option>
+        </select>
+      </label>
+      <div class="panel" id="healthTrend"></div>
+    </div>
     <details class="section">
     <summary>Open Mirror publishing and mirroring</summary>
     <div class="cards" id="mirrorCards"></div>
@@ -595,11 +635,127 @@ async function monitorRefresh(){
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d = await r.json();
     monitorRender(d);
+    const h = await (await fetch("/_manager/api/health", {cache:"no-store"})).json();
+    const hours = $("healthHistoryLimit").value;
+    const history = await (await fetch("/_manager/api/health/history?hours="+hours,
+      {cache:"no-store"})).json();
+    renderHealth(h, history.history || []);
   }catch(e){
     console.error("Monitor error:", e);
   }
   pollOpenMirror();
   pollLogs();
+}
+
+function renderHealth(h, history){
+  const status = h.status || "Unknown";
+  const alerts = h.alerts || [];
+  const host = h.host || {};
+  $("healthCards").innerHTML = [
+    ["Status", `<span class="${status.toLowerCase()}">${status}</span>`, `${(h.agents||[]).length} agents`],
+    ["CPU", h.resources && h.resources.cpu_pct != null ? h.resources.cpu_pct.toFixed(1)+"%" : "–", "fleet average"],
+    ["Memory", h.resources && h.resources.memory_bytes != null ? fmtBytes(h.resources.memory_bytes) : "–", "reported Agent memory"],
+    ["Alerts", fmtNum(alerts.length), alerts.length ? "attention required" : "none active"],
+  ].map(([k,v,s])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div><div class="sub">${s}</div></div>`).join("");
+  $("hostCards").innerHTML = [
+    ["CPU", host.cpu_pct == null ? "–" : host.cpu_pct.toFixed(1)+"%", "Manager host"],
+    ["Memory", host.memory_used_bytes == null ? "–" : fmtBytes(host.memory_used_bytes),
+      host.memory_pct == null ? "" : host.memory_pct.toFixed(1)+"% used of "+fmtBytes(host.memory_total_bytes)],
+    ["Disk", host.disk_used_bytes == null ? "–" : fmtBytes(host.disk_used_bytes),
+      host.disk_pct == null ? "" : host.disk_pct.toFixed(1)+"% used of "+fmtBytes(host.disk_total_bytes)],
+    ["Network RX", host.network_receive_bytes_per_sec == null ? "–" : fmtRate(host.network_receive_bytes_per_sec), "Manager host"],
+    ["Network TX", host.network_transmit_bytes_per_sec == null ? "–" : fmtRate(host.network_transmit_bytes_per_sec), "Manager host"],
+  ].map(([k,v,s])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div><div class="sub">${s}</div></div>`).join("");
+  $("healthAlerts").innerHTML = alerts.length
+    ? alerts.map(a=>`<div class="alert ${a.severity.toLowerCase()}"><b>${a.severity}</b> ${a.message}<div class="sub">${a.remediation}</div></div>`).join("")
+    : '<div class="empty">No active cluster alerts.</div>';
+  const points = history.slice().reverse();
+  window.healthChartPoints = points;
+  $("healthTrend").innerHTML = points.length
+    ? `<div class="sub">Host resource trend, ${points.length} samples</div>${healthChart(points)}${networkChart(points)}`
+    : '<div class="empty">No health history collected yet.</div>';
+  if(points.length) installHealthChartTooltips();
+}
+
+function fmtRate(bytes){ return fmtBytes(bytes)+"/s"; }
+
+function healthChart(points){
+  const width=760, height=220, left=58, right=16, top=18, bottom=30;
+  const colors={cpu_pct:"#38bdf8", memory_pct:"#a78bfa", disk_pct:"#4ade80"};
+  const labels={cpu_pct:"CPU", memory_pct:"Memory", disk_pct:"Disk"};
+  const x=i=>left+(points.length<2?0:i*(width-left-right)/(points.length-1));
+  const y=v=>top+(100-Math.max(0,Math.min(100,v)))*(height-top-bottom)/100;
+  const lines=Object.keys(colors).map(key=>{
+    const values=points.map(p=>p.host && p.host[key]).filter(v=>v!=null);
+    if(!values.length) return "";
+    const path=points.map((p,i)=>{
+      const value=p.host && p.host[key];
+      return value==null ? null : `${i?"L":"M"} ${x(i).toFixed(1)} ${y(value).toFixed(1)}`;
+    }).filter(Boolean).join(" ");
+    const dots=points.map((p,i)=>{
+      const value=p.host && p.host[key];
+      return value==null ? "" : `<circle cx="${x(i).toFixed(1)}" cy="${y(value).toFixed(1)}" r="4" fill="${colors[key]}" data-index="${i}" data-key="${key}"/>`;
+    }).join("");
+    return `<path d="${path}" fill="none" stroke="${colors[key]}" stroke-width="2"/>${dots}`;
+  }).join("");
+  const legend=Object.keys(colors).map(key=>`<span style="color:${colors[key]}">● ${labels[key]}</span>`).join(" ");
+  const ticks=timeTicks(points, x, width, height, left, right, bottom);
+  return `<div class="chart-legend">${legend}</div><div class="chart-wrap"><div class="chart-tooltip"></div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host CPU, memory, and disk usage trend">
+    <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#526078"/>
+    <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#526078"/>
+    <text x="18" y="${top+4}" class="chart-label">100%</text><text x="28" y="${height-bottom+4}" class="chart-label">0%</text>
+    ${lines}${ticks}</svg></div>`;
+}
+
+function networkChart(points){
+  const width=760, height=220, left=58, right=16, top=18, bottom=30;
+  const colors={network_receive_bytes_per_sec:"#f59e0b", network_transmit_bytes_per_sec:"#f472b6"};
+  const labels={network_receive_bytes_per_sec:"Network RX", network_transmit_bytes_per_sec:"Network TX"};
+  const values=Object.keys(colors).flatMap(key=>points.map(p=>p.host && p.host[key] || 0));
+  const max=Math.max(1, ...values);
+  const x=i=>left+(points.length<2?0:i*(width-left-right)/(points.length-1));
+  const y=v=>top+(max-v)*(height-top-bottom)/max;
+  const lines=Object.keys(colors).map(key=>{
+    const path=points.map((p,i)=>`${i?"L":"M"} ${x(i).toFixed(1)} ${y(p.host && p.host[key] || 0).toFixed(1)}`).join(" ");
+    const dots=points.map((p,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(p.host && p.host[key] || 0).toFixed(1)}" r="4" fill="${colors[key]}" data-index="${i}" data-key="${key}"/>`).join("");
+    return `<path d="${path}" fill="none" stroke="${colors[key]}" stroke-width="2"/>${dots}`;
+  }).join("");
+  const legend=Object.keys(colors).map(key=>`<span style="color:${colors[key]}">● ${labels[key]}</span>`).join(" ");
+  const ticks=timeTicks(points, x, width, height, left, right, bottom);
+  return `<div class="chart-legend">${legend}</div><div class="chart-wrap"><div class="chart-tooltip"></div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host network receive and transmit trend">
+    <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#526078"/>
+    <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#526078"/>
+    <text x="4" y="${top+4}" class="chart-label">${fmtRate(max)}</text><text x="26" y="${height-bottom+4}" class="chart-label">0/s</text>
+    ${lines}${ticks}</svg></div>`;
+}
+
+function timeTicks(points, x, width, height, left, right, bottom){
+  if(!points.length) return "";
+  const count=Math.min(5, points.length);
+  return Array.from({length:count}, (_,n)=>{
+    const index=count===1 ? 0 : Math.round(n*(points.length-1)/(count-1));
+    const ts=points[index].generated_at;
+    const label=new Date(ts*1000).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+    return `<text x="${x(index).toFixed(1)}" y="${height-7}" text-anchor="middle" class="chart-label">${label}</text>`;
+  }).join("");
+}
+
+function installHealthChartTooltips(){
+  document.querySelectorAll(".chart-wrap").forEach(wrap=>{
+    const svg=wrap.querySelector("svg"), tooltip=wrap.querySelector(".chart-tooltip");
+    const dots=wrap.querySelectorAll("circle[data-index]");
+    dots.forEach(dot=>dot.addEventListener("mouseenter", ()=>{
+      const index=parseInt(dot.dataset.index), point=window.healthChartPoints[index] || {};
+      const host=point.host || {};
+      const time=new Date((point.generated_at||0)*1000).toLocaleString();
+      tooltip.innerHTML=`<b>${time}</b><br>CPU: ${host.cpu_pct == null ? "–" : host.cpu_pct.toFixed(1)+"%"} · Memory: ${host.memory_pct == null ? "–" : host.memory_pct.toFixed(1)+"%"} · Disk: ${host.disk_pct == null ? "–" : host.disk_pct.toFixed(1)+"%"}<br>RX: ${fmtRate(host.network_receive_bytes_per_sec||0)} · TX: ${fmtRate(host.network_transmit_bytes_per_sec||0)}`;
+      tooltip.style.display="block";
+      const r=svg.getBoundingClientRect(), d=dot.getBoundingClientRect();
+      tooltip.style.left=Math.max(0, d.left-r.left+8)+"px";
+      tooltip.style.top=Math.max(0, d.top-r.top-44)+"px";
+    }));
+    dots.forEach(dot=>dot.addEventListener("mouseleave", ()=>{ tooltip.style.display="none"; }));
+  });
 }
 
 function monitorRender(d){

@@ -51,6 +51,8 @@
   .pill.delta{color:var(--accent2);border-color:var(--accent2)}
   .pill.iceberg{color:var(--warn);border-color:var(--warn)}
   .err{color:var(--err)}
+  .health-healthy{color:var(--accent2)} .health-warning{color:var(--warn)} .health-critical{color:var(--err)}
+  .alerts{padding:10px 14px}.alert{padding:7px 0;border-bottom:1px solid #20262f}.alert:last-child{border:0}
   .warnrow td{background:rgba(239,68,68,.06)}
   .bar{height:12px;border-radius:3px;background:var(--panel2);overflow:hidden;display:flex;min-width:120px}
   .bar > span{display:block;height:100%}
@@ -100,6 +102,7 @@
 
 <main>
   <div class="cards" id="cards"></div>
+  <div class="panel alerts" id="healthPanel"><span class="muted">Loading cluster health…</span></div>
 
   <h2>Per-table read &amp; query statistics</h2>
   <div class="panel">
@@ -154,16 +157,21 @@ async function poll(){
     const r = await fetch("/_monitor/api/summary", {cache:"no-store"});
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d = await r.json();
+    const h = await (await fetch("/_monitor/api/health", {cache:"no-store"})).json();
     $("err").textContent = "";
     $("livedot").classList.add("live");
-    render(d);
+    render(d, h);
   }catch(e){
     $("err").textContent = "✗ "+e.message;
     $("livedot").classList.remove("live");
   }
 }
 
-function render(d){
+function render(d, h){
+  const hc = (h.status||"Warning").toLowerCase();
+  const alerts = h.alerts||[];
+  $("healthPanel").innerHTML = `<div class="card"><div class="k">Cluster health</div><div class="v health-${hc}">${h.status||"Unknown"}</div><div class="sub">${(h.agents||[]).length} agents · ${alerts.length} active alerts</div></div>`
+    + (alerts.length ? alerts.map(a=>`<div class="alert ${a.severity==='Critical'?'err':''}"><b>${a.severity}</b> ${a.message}<div class="muted">${a.remediation}</div></div>`).join("") : '<div class="muted">No active alerts</div>');
   $("uptime").textContent = d.uptime_seconds!=null ? "up "+fmtMs(d.uptime_seconds*1000).replace('ms','s') : "";
   const fmt = (d.table_format||'iceberg');
   const isDelta = fmt==='delta';

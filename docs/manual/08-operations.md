@@ -39,10 +39,13 @@ console is at `/_manager`.
 
 ## 8.3 Monitoring
 
-Enable the read-only monitor with `ENABLE_MONITOR=1` and open `/_monitor/`. It shows
+Enable the read-only monitor with `ENABLE_MONITOR=1`. In Enterprise, open the
+authenticated `/_manager` console and select **Monitor**. Lite mode opens
+`/_monitor/`. The dashboard shows
 per-table read and request stats, Fabric-side gaps, per-request query lag (Fabric → SQL →
 Parquet → out), current snapshot and version per table, cache occupancy including pinned
-splits, and process and SQL metrics.
+splits, process and SQL metrics, active cluster alerts, and health history over a
+selectable 1-hour, 5-hour, or 24-hour window.
 
 For a metrics pipeline, scrape `/metrics`. The request timeline (`REQUEST_TRACE=1`, on by
 default) powers `/_admin/timeline` and the monitor. Use `/_admin/objects` to diagnose

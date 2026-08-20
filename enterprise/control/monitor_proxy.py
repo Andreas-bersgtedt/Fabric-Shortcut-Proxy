@@ -52,12 +52,13 @@ def _agent_base_urls(supervisors) -> list[str]:
     return urls
 
 
-def create_monitor_proxy_router(supervisors) -> APIRouter:
+def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str = "") -> APIRouter:
     router = APIRouter(prefix="/_monitor")
 
     async def _scrape(client: httpx.AsyncClient, base: str, path: str, method: str = "GET"):
         try:
-            r = await client.request(method, base + path)
+            headers = {"X-FSP-Internal-Monitor": monitor_token} if monitor_token else {}
+            r = await client.request(method, base + path, headers=headers)
             if r.status_code == 200:
                 return r.json() if method == "GET" else True
         except Exception as exc:  # noqa: BLE001 - a down/slow Agent must not fail the console
@@ -83,6 +84,16 @@ def create_monitor_proxy_router(supervisors) -> APIRouter:
         merged = merge_summaries(summaries)
         merged["agents_total"] = len(bases)
         return JSONResponse(merged)
+
+    @router.get("/api/health")
+    async def health() -> JSONResponse:
+        from enterprise.control.cluster_health import aggregate_health
+        return JSONResponse(aggregate_health(registry, supervisors))
+
+    @router.get("/api/health/history")
+    async def health_history(limit: int = 60) -> JSONResponse:
+        from enterprise.control.cluster_health import health_history
+        return JSONResponse({"history": health_history(limit)})
 
     @router.get("/api/open-mirror")
     async def open_mirror(include_landing_zone_count: bool = False) -> JSONResponse:

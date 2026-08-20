@@ -316,8 +316,11 @@ _ADMIN_HTML = r"""<!doctype html>
   .healthy { color: #4ade80; } .warning { color: #fcd34d; } .critical { color: #f87171; }
   .alert { padding: 10px 12px; border-bottom: 1px solid #2a3344; }
   .alert:last-child { border-bottom: 0; } .trend { display: flex; gap: 3px; padding: 12px; }
-  .trend span { width: 18px; height: 18px; border-radius: 3px; color: #111827;
-    text-align: center; font-size: 11px; line-height: 18px; }
+  .trend span { display: inline-block; width: 18px; height: 18px; border-radius: 3px;
+    color: #111827; text-align: center; font-size: 11px; line-height: 18px; }
+  .trend span.healthy { background: #4ade80; }
+  .trend span.warning { background: #fcd34d; }
+  .trend span.critical { background: #f87171; }
   .logbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #232a3a; flex-wrap: wrap; }
   .logbar .grow { flex: 1; min-width: 160px; }
   .logbar input[type=text] { width: 100%; }

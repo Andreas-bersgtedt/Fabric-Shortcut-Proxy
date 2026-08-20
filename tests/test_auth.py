@@ -22,6 +22,8 @@ import config
 config.DB_URL = f"sqlite+aiosqlite:///{_DB.as_posix()}"
 config.NUM_SPLITS = 4
 config.BUCKET_NAME = "auth-bucket"
+config.ACCESS_KEY_ID = "test-access-key"
+config.SECRET_ACCESS_KEY = "test-secret-key"
 
 from s3.auth import verify_signature, SigV4Error
 

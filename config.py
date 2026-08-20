@@ -42,6 +42,7 @@ from system_config import (
     # Open Mirroring publisher
     OPEN_MIRROR_PUBLISH, OPEN_MIRROR_INTERVAL_SECONDS, OPEN_MIRROR_MODE,
     OPEN_MIRROR_STATE_DIR, OPEN_MIRROR_MAX_ROWS,
+    OPEN_MIRROR_ENCRYPT_STATE,
     OPEN_MIRROR_MAX_PAGES_PER_CYCLE, OPEN_MIRROR_MAX_ROWS_PER_CYCLE,
     OPEN_MIRROR_SELF_HEALING, OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS,
     OPEN_MIRROR_START_COOLDOWN_SECONDS, OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS,
@@ -179,6 +180,7 @@ _register("OPEN_MIRROR_PUBLISH", "open_mirror_publish", "bool", OPEN_MIRROR_PUBL
 _register("OPEN_MIRROR_INTERVAL_SECONDS", "open_mirror_interval_seconds", "int", OPEN_MIRROR_INTERVAL_SECONDS)
 _register("OPEN_MIRROR_MODE", "open_mirror_mode", "str", OPEN_MIRROR_MODE)
 _register("OPEN_MIRROR_STATE_DIR", "open_mirror_state_dir", "str", OPEN_MIRROR_STATE_DIR)
+_register("OPEN_MIRROR_ENCRYPT_STATE", "open_mirror_encrypt_state", "bool", OPEN_MIRROR_ENCRYPT_STATE)
 _register("OPEN_MIRROR_MAX_ROWS", "open_mirror_max_rows", "int", OPEN_MIRROR_MAX_ROWS)
 _register("OPEN_MIRROR_MAX_PAGES_PER_CYCLE", "open_mirror_max_pages_per_cycle", "int", OPEN_MIRROR_MAX_PAGES_PER_CYCLE)
 _register("OPEN_MIRROR_MAX_ROWS_PER_CYCLE", "open_mirror_max_rows_per_cycle", "int", OPEN_MIRROR_MAX_ROWS_PER_CYCLE)
@@ -461,39 +463,45 @@ class TableDef:
         return max(effective_query_max_rows(self.connection_id), self.effective_split_target_rows)
 
 
+def column_defs_from_json(raw_schema, *, context: str = "Column") -> list[ColumnDef]:
+    """Parse a JSON column list using the shared transform contract."""
+    if not isinstance(raw_schema, list):
+        raise TypeError(f"{context} schema must be a list")
+
+    def _transform(c: dict) -> ColumnTransform | None:
+        raw = c.get("transform")
+        if not raw:
+            return None
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"{context} {c.get('name')!r} transform must be an object"
+            )
+        return ColumnTransform(
+            kind=str(raw.get("kind", "")).strip().lower(),
+            key_ref=(str(raw["key_ref"]).strip() if raw.get("key_ref") else None),
+            domain=(str(raw["domain"]) if raw.get("domain") is not None else None),
+            normalization=str(raw.get("normalization", "none")).strip().lower(),
+        )
+
+    return [
+        ColumnDef(
+            field_id=int(c["field_id"]),
+            name=c["name"],
+            iceberg_type=c.get("type") or c.get("iceberg_type"),
+            nullable=bool(c.get("nullable", True)),
+            source=(str(c["source"]) if c.get("source") else None),
+            transform=_transform(c),
+        )
+        for c in raw_schema
+    ]
+
+
 def _tabledef_from_json(d: dict) -> "TableDef":
     """Build a TableDef from a JSON ``tables`` entry."""
     source_table = str(d.get("source_table", ""))
     name = d.get("name") or (source_table.rsplit(".", 1)[-1] if source_table else "table")
     raw_schema = d.get("schema")
-    schema = None
-    if raw_schema:
-        def _transform(c: dict) -> ColumnTransform | None:
-            raw = c.get("transform")
-            if not raw:
-                return None
-            if not isinstance(raw, dict):
-                raise ValueError(
-                    f"Column {c.get('name')!r} transform must be an object"
-                )
-            return ColumnTransform(
-                kind=str(raw.get("kind", "")).strip().lower(),
-                key_ref=(str(raw["key_ref"]).strip() if raw.get("key_ref") else None),
-                domain=(str(raw["domain"]) if raw.get("domain") is not None else None),
-                normalization=str(raw.get("normalization", "none")).strip().lower(),
-            )
-
-        schema = [
-            ColumnDef(
-                field_id=int(c["field_id"]),
-                name=c["name"],
-                iceberg_type=c.get("type") or c.get("iceberg_type"),
-                nullable=bool(c.get("nullable", True)),
-                source=(str(c["source"]) if c.get("source") else None),
-                transform=_transform(c),
-            )
-            for c in raw_schema
-        ]
+    schema = column_defs_from_json(raw_schema, context="Column") if raw_schema else None
     return TableDef(
         name=str(name),
         source_table=source_table,
@@ -731,6 +739,57 @@ def validate_config() -> None:
                         "content-based auto-refresh."
                     )
 
+    # Open Mirror projection policies use the same dialect capability and key
+    # resolution rules as shortcut table projections.
+    try:
+        from open_mirror.config import _load_raw, target_from_dict
+        from db.capabilities import capabilities_for_db_url
+
+        raw_open_mirror = _load_raw()
+        section = (
+            raw_open_mirror.get("open_mirror", raw_open_mirror)
+            if isinstance(raw_open_mirror.get("open_mirror"), dict)
+            else raw_open_mirror
+        )
+        raw_targets = section.get("open_mirror_targets", []) if isinstance(section, dict) else []
+        for raw_target in raw_targets if isinstance(raw_targets, list) else []:
+            if not isinstance(raw_target, dict):
+                continue
+            try:
+                target = target_from_dict(raw_target)
+            except (TypeError, ValueError) as exc:
+                problems.append(f"Open Mirror target {raw_target.get('id', '?')!r}: {exc}")
+                continue
+            connection_id = target.connection_id
+            if connection_id not in CONNECTIONS:
+                continue
+            capabilities = capabilities_for_db_url(effective_db_url(connection_id))
+            for table in target.tables:
+                for column in table.columns or ():
+                    transform = column.transform
+                    if transform is None:
+                        continue
+                    if transform.kind == "deterministic_hash":
+                        if not capabilities.supports_deterministic_tokenization:
+                            problems.append(
+                                f"Open Mirror table {table.name!r}: deterministic_hash "
+                                f"is not supported for dialect {capabilities.flavor!r}."
+                            )
+                        try:
+                            resolve_tokenization_key(transform.key_ref)
+                        except ValueError as exc:
+                            problems.append(f"Open Mirror table {table.name!r}: {exc}")
+                    elif (
+                        transform.kind == "random_token"
+                        and not capabilities.supports_random_tokenization
+                    ):
+                        problems.append(
+                            f"Open Mirror table {table.name!r}: random_token is not "
+                            f"supported for dialect {capabilities.flavor!r}."
+                        )
+    except Exception as exc:  # noqa: BLE001 - report malformed optional target config
+        problems.append(f"Open Mirror configuration validation failed: {exc}")
+
     for cid, conn in CONNECTIONS.items():
         url = DB_URL if cid == "default" else conn.db_url
         if not url:
@@ -817,6 +876,7 @@ SETTINGS_META: dict[str, dict] = {
     "open_mirror_interval_seconds": {"cat": "Admin & observability", "help": "Seconds between Open Mirroring publish cycles when the loop is enabled."},
     "open_mirror_mode": {"cat": "Admin & observability", "help": "Open Mirroring publish mode: 'incremental' (diff against the last snapshot via __rowMarker__) or 'initial' (always a full insert batch).", "choices": ["incremental", "initial"]},
     "open_mirror_state_dir": {"cat": "Admin & observability", "help": "Directory for Open Mirroring incremental change-tracking state (kept OUTSIDE the landing zone). Gitignored."},
+    "open_mirror_encrypt_state": {"cat": "Admin & observability", "help": "Encrypt Open Mirroring cursors, snapshot keys, and pending metadata with the credential-store cipher."},
     "open_mirror_max_rows": {"cat": "Admin & observability", "help": "Open Mirroring per-table row cap per cycle (0 = the connection's query_max_rows default)."},
     "request_trace": {"cat": "Admin & observability", "help": "Record the Fabric request timeline."},
     "trace_buffer_size": {"cat": "Admin & observability", "help": "Max request-trace records kept in memory."},
@@ -1027,6 +1087,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "open_mirror_interval_seconds": "config.system.json",
     "open_mirror_mode": "config.system.json",
     "open_mirror_state_dir": "config.system.json",
+    "open_mirror_encrypt_state": "config.system.json",
     "open_mirror_max_rows": "config.system.json",
     "tls_cert_file": "config.system.json",
     "tls_key_file": "config.system.json",
@@ -1400,6 +1461,41 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                                     "watermark_column"
                                 )
                                 ok = False
+                            if table.get("columns") is not None:
+                                try:
+                                    from open_mirror.config import _table_from_dict
+                                    parsed_table = _table_from_dict(table)
+                                    from db.capabilities import capabilities_for_db_url
+                                    capabilities = capabilities_for_db_url(
+                                        effective_db_url(conn)
+                                    )
+                                    for column in parsed_table.columns or ():
+                                        transform = column.transform
+                                        if transform is None:
+                                            continue
+                                        if (
+                                            transform.kind == "deterministic_hash"
+                                            and not capabilities.supports_deterministic_tokenization
+                                        ):
+                                            raise ValueError(
+                                                f"deterministic_hash is not supported for "
+                                                f"dialect {capabilities.flavor!r}"
+                                            )
+                                        if (
+                                            transform.kind == "random_token"
+                                            and not capabilities.supports_random_tokenization
+                                        ):
+                                            raise ValueError(
+                                                f"random_token is not supported for "
+                                                f"dialect {capabilities.flavor!r}"
+                                            )
+                                        if transform.kind == "deterministic_hash":
+                                            resolve_tokenization_key(transform.key_ref)
+                                except (TypeError, ValueError) as exc:
+                                    errors.append(
+                                        f"{k}[{i}].tables[{j}]: {exc}"
+                                    )
+                                    ok = False
             if ok:
                 clean[k] = v
             continue

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import base64
 import hashlib
 import json
 import os
@@ -12,6 +13,57 @@ from open_mirror.config import OpenMirrorTableTarget, OpenMirrorTarget
 
 DEFAULT_STATE_DIR = "./.open_mirror_state"
 STATE_VERSION = 2
+
+
+def _state_encryption_enabled() -> bool:
+    try:
+        import config
+        if bool(getattr(config, "OPEN_MIRROR_ENCRYPT_STATE", False)):
+            return True
+    except (ImportError, AttributeError):
+        pass
+    return (os.environ.get("OPEN_MIRROR_ENCRYPT_STATE") or "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def _encrypt_sensitive_state(data: dict) -> dict:
+    from security.credential_store import CredentialStore
+
+    sensitive = {
+        key: data.pop(key)
+        for key in ("committed", "pending", "keys")
+        if key in data
+    }
+    store = CredentialStore()
+    ciphertext = store.encrypt_blob(
+        json.dumps(sensitive, separators=(",", ":")).encode("utf-8")
+    )
+    data["encrypted_sensitive_state"] = {
+        "version": 1,
+        "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+    }
+    return data
+
+
+def _decrypt_sensitive_state(data: dict) -> dict:
+    envelope = data.get("encrypted_sensitive_state")
+    if envelope is None:
+        return data
+    if not isinstance(envelope, dict) or envelope.get("version") != 1:
+        raise ValueError("encrypted sensitive state envelope is invalid")
+    try:
+        ciphertext = base64.b64decode(str(envelope["ciphertext"]).encode("ascii"))
+        from security.credential_store import CredentialStore
+        sensitive = json.loads(CredentialStore().decrypt_blob(ciphertext).decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - normalize cipher/JSON failures
+        raise ValueError(f"could not decrypt sensitive Open Mirror state: {exc}") from exc
+    if not isinstance(sensitive, dict):
+        raise ValueError("decrypted sensitive Open Mirror state must be an object")
+    restored = dict(data)
+    restored.pop("encrypted_sensitive_state", None)
+    restored.update(sensitive)
+    return restored
 
 
 def encode_watermark(value):
@@ -111,6 +163,7 @@ class PendingBatch:
     content_hash: str
     initial: bool = False
     snapshot_keys: dict[str, dict] | None = None
+    payload_path: str | None = None
 
     def to_json(self) -> dict:
         return {
@@ -121,6 +174,7 @@ class PendingBatch:
             "content_hash": self.content_hash,
             "initial": self.initial,
             "snapshot_keys": self.snapshot_keys,
+            "payload_path": self.payload_path,
         }
 
     @classmethod
@@ -134,6 +188,7 @@ class PendingBatch:
         row_count = data.get("row_count")
         next_cursor = CommittedCursor.from_json(data.get("next"))
         snapshot_keys = data.get("snapshot_keys")
+        payload_path = data.get("payload_path")
         if (
             not isinstance(path, str)
             or not path
@@ -143,6 +198,7 @@ class PendingBatch:
             or row_count < 0
             or next_cursor is None
             or (snapshot_keys is not None and not isinstance(snapshot_keys, dict))
+            or (payload_path is not None and (not isinstance(payload_path, str) or not payload_path))
         ):
             raise ValueError("pending batch metadata is invalid")
         return cls(
@@ -153,6 +209,7 @@ class PendingBatch:
             content_hash=content_hash,
             initial=bool(data.get("initial", False)),
             snapshot_keys=snapshot_keys,
+            payload_path=payload_path,
         )
 
 
@@ -161,6 +218,7 @@ class PublishState:
     """Version 2 table state; ``keys`` remains the snapshot-diff row map."""
 
     strategy: str = "snapshot"
+    projection_fingerprint: str | None = None
     initialized: bool = False
     committed: CommittedCursor | None = None
     pending: PendingBatch | None = None
@@ -181,6 +239,7 @@ class PublishState:
         return {
             "version": STATE_VERSION,
             "strategy": self.strategy,
+            "projection_fingerprint": self.projection_fingerprint,
             "initialized": self.initialized,
             "committed": self.committed.to_json() if self.committed else None,
             "pending": self.pending.to_json() if self.pending else None,
@@ -213,6 +272,12 @@ class PublishState:
         if strategy not in {"watermark", "snapshot", "initial"}:
             raise ValueError(f"unsupported state strategy {strategy!r}")
         keys = data.get("keys", {})
+        projection_fingerprint = data.get("projection_fingerprint")
+        if projection_fingerprint is not None and (
+            not isinstance(projection_fingerprint, str)
+            or len(projection_fingerprint) != 64
+        ):
+            raise ValueError("projection fingerprint is invalid")
         if not isinstance(data.get("initialized"), bool) or not isinstance(keys, dict):
             raise TypeError("state initialized/keys fields are invalid")
         published_rows_total = data.get("published_rows_total", 0)
@@ -226,6 +291,7 @@ class PublishState:
             raise ValueError("published row metrics are invalid")
         return cls(
             strategy=strategy,
+            projection_fingerprint=projection_fingerprint,
             initialized=data["initialized"],
             committed=CommittedCursor.from_json(data.get("committed")),
             pending=PendingBatch.from_json(data.get("pending")),
@@ -264,6 +330,38 @@ def row_hash(row: dict, columns) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
 
+def projection_fingerprint(columns) -> str:
+    """Identify a published projection without including token key material."""
+    policy = []
+    for column in columns:
+        transform = column.transform
+        key_digest = None
+        if transform and transform.kind == "deterministic_hash":
+            try:
+                import config
+                key_digest = hashlib.sha256(
+                    config.resolve_tokenization_key(transform.key_ref).encode("utf-8")
+                ).hexdigest()
+            except (AttributeError, ValueError):
+                key_digest = None
+        policy.append({
+            "field_id": column.field_id,
+            "name": column.name,
+            "source": column.source_name,
+            "type": column.iceberg_type,
+            "nullable": column.nullable,
+            "key_digest": key_digest,
+            "transform": ({
+                "kind": transform.kind,
+                "key_ref": transform.key_ref,
+                "domain": transform.domain,
+                "normalization": transform.normalization,
+            } if transform else None),
+        })
+    encoded = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def key_string(row: dict, key_columns: list[str]) -> str:
     return "|".join(_canon(row.get(k)) for k in key_columns)
 
@@ -292,6 +390,7 @@ def load_state(
     except OSError as exc:
         return StateLoadResult("unreadable", path, error=str(exc))
     try:
+        data = _decrypt_sensitive_state(data)
         return StateLoadResult("valid", path, PublishState.from_json(data))
     except (TypeError, ValueError) as exc:
         status: StateStatus = "incompatible" if "unsupported" in str(exc) else "corrupt"
@@ -305,7 +404,10 @@ def save_state(
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(state.to_json(), fh, default=str)
+        data = state.to_json()
+        if _state_encryption_enabled():
+            data = _encrypt_sensitive_state(data)
+        json.dump(data, fh, default=str)
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)

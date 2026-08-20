@@ -7,6 +7,7 @@ quarantine, dry-run, and the background scheduler's one-shot cycle.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
@@ -71,6 +72,30 @@ def test_compute_changes_default_upsert():
     prev = PublishState()
     batch = compute_changes(prev, [_row(1, "a")], _COLUMNS, ["id"], default_upsert=True)
     assert batch.markers == [RowMarker.UPSERT]
+
+
+def test_open_mirror_state_can_encrypt_sensitive_cursors(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography", reason="encrypted state requires cryptography")
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("OPEN_MIRROR_ENCRYPT_STATE", "1")
+    monkeypatch.setenv("FSP_CRED_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("CREDENTIAL_STORE_PATH", str(tmp_path / "credentials.json"))
+    target = _target(tmp_path / "lz")
+    table = target.tables[0]
+    state_dir = str(tmp_path / "state")
+    state = PublishState(
+        strategy="watermark",
+        initialized=True,
+        committed=CommittedCursor(watermark=encode_watermark("sensitive-wm")),
+    )
+
+    save_state(state_dir, target, table, state)
+    raw = json.loads(pathlib.Path(state_file_path(state_dir, target, table)).read_text())
+    assert "committed" not in raw
+    assert "encrypted_sensitive_state" in raw
+    loaded = load_state(state_dir, target, table).state
+    assert decode_watermark(loaded.committed.watermark) == "sensitive-wm"
 
 
 # --- publisher: rowMarker + drop -------------------------------------------
@@ -232,6 +257,54 @@ async def sqlite_src(tmp_path, monkeypatch):
     executor._sync_engine = None
     yield tmp_path, db
     await executor.dispose_engines()
+
+
+async def test_projection_change_requires_explicit_reset(sqlite_src):
+    tmp_path, _ = sqlite_src
+    landing = tmp_path / "lz"
+    base = target_from_dict({
+        "id": "t1",
+        "connection": "default",
+        "landing_zone_root": str(landing),
+        "tables": [{
+            "name": "sales",
+            "source_table": "sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "columns": [
+                {"field_id": 1, "name": "id", "type": "long", "nullable": False},
+                {"field_id": 2, "name": "name", "type": "string"},
+            ],
+        }],
+    })
+    first = await om_source.publish_table(base, base.tables[0], mode="snapshot")
+    assert first.action == "initial"
+    state = load_state(str(tmp_path / "state"), base, base.tables[0]).state
+    assert state.projection_fingerprint
+
+    changed = target_from_dict({
+        "id": "t1",
+        "connection": "default",
+        "landing_zone_root": str(landing),
+        "tables": [{
+            "name": "sales",
+            "source_table": "sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "columns": [
+                {"field_id": 1, "name": "id", "type": "long", "nullable": False},
+                {"field_id": 2, "name": "name_alias", "source": "name", "type": "string"},
+            ],
+        }],
+    })
+
+    with pytest.raises(om_source.StateSafetyError, match="projection changed"):
+        await om_source.publish_table(changed, changed.tables[0], mode="snapshot")
+
+    reset = await om_source.publish_table(changed, changed.tables[0], mode="initial")
+    assert reset.action == "initial"
+    reset_state = load_state(str(tmp_path / "state"), changed, changed.tables[0]).state
+    assert reset_state.projection_fingerprint != state.projection_fingerprint
 
 
 async def test_incremental_cycle_initial_then_diff(sqlite_src):
@@ -435,6 +508,35 @@ async def test_watermark_initial_then_incremental_upserts(sqlite_wm):
     assert decode_watermark(load_state(state_dir, target, table).watermark) == 11
 
 
+async def test_watermark_can_be_private_when_omitted_from_projection(sqlite_wm):
+    tmp_path, _ = sqlite_wm
+    target = target_from_dict({
+        "id": "private-wm",
+        "connection": "default",
+        "landing_zone_root": str(tmp_path / "lz"),
+        "tables": [{
+            "name": "sales",
+            "source_table": "sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "watermark_column": "ver",
+            "mode": "watermark",
+            "schema": "dbo",
+            "columns": [
+                {"field_id": 1, "name": "id", "type": "long", "nullable": False},
+                {"field_id": 2, "name": "name", "type": "string"},
+            ],
+        }],
+    })
+
+    result = await om_source.publish_table(target, target.tables[0])
+    table = pq.read_table(tmp_path / "lz" / "dbo.schema" / "sales" / "00000000000000000001.parquet")
+
+    assert result.action == "initial"
+    assert table.schema.names == ["id", "name"]
+    assert "ver" not in table.schema.names
+
+
 async def test_watermark_no_new_rows_is_noop(sqlite_wm):
     tmp_path, db = sqlite_wm
     landing = tmp_path / "lz"
@@ -555,6 +657,43 @@ async def test_restart_finalizes_uploaded_pending_batch(sqlite_wm, monkeypatch):
     assert recovered.action == "recovery"
     assert recovered.recovery == "finalized_existing_file"
     assert len(list((tmp_path / "lz" / "dbo.schema" / "sales").glob("*.parquet"))) == 1
+    assert load_state(str(tmp_path / "state"), target, table).pending is None
+
+
+async def test_restart_replays_prepared_pending_payload(sqlite_wm):
+    tmp_path, _ = sqlite_wm
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+    payload = b"prepared-tokenized-parquet"
+    pending_path = "dbo.schema/sales/00000000000000000001.parquet"
+    sidecar = om_source._pending_payload_path(str(tmp_path / "state"), target, table)
+    pathlib.Path(sidecar).parent.mkdir(parents=True, exist_ok=True)
+    pathlib.Path(sidecar).write_bytes(payload)
+    prior = CommittedCursor(
+        watermark=encode_watermark(1), keys=[encode_watermark(1)]
+    )
+    state = PublishState(
+        strategy="watermark",
+        initialized=True,
+        committed=prior,
+        pending=PendingBatch(
+            prior=prior,
+            next=CommittedCursor(
+                watermark=encode_watermark(2), keys=[encode_watermark(2)]
+            ),
+            path=pending_path,
+            row_count=1,
+            content_hash=hashlib.sha256(payload).hexdigest(),
+            payload_path=sidecar,
+        ),
+    )
+    save_state(str(tmp_path / "state"), target, table, state)
+
+    recovered = await om_source.publish_table(target, table)
+
+    assert recovered.recovery == "replayed_prepared_payload"
+    assert (tmp_path / "lz" / "dbo.schema" / "sales" / "00000000000000000001.parquet").read_bytes() == payload
+    assert not pathlib.Path(sidecar).exists()
     assert load_state(str(tmp_path / "state"), target, table).pending is None
 
 

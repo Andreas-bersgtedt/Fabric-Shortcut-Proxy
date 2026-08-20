@@ -17,12 +17,18 @@ from sqlalchemy import create_engine, text
 
 import config
 import db.executor as executor
+from config import ColumnDef, ColumnTransform
 from open_mirror import target_from_dict
 from open_mirror.source import (
     _select_all_sql,
+    _control_columns,
+    _configured_columns,
+    _render_projection,
+    _validate_projection_strategy,
     publish_initial_load,
     publish_target_initial_load,
 )
+from open_mirror.state import projection_fingerprint
 from planner.dialects import _MSSQL, _ORACLE, _SQLITE, _TERADATA
 
 
@@ -72,6 +78,124 @@ def test_select_all_sql_per_dialect():
     assert _select_all_sql(_MSSQL, "[id]", "[sales]") == "SELECT TOP (:max_rows) [id] FROM [sales]"
     assert "FETCH FIRST :max_rows ROWS ONLY" in _select_all_sql(_ORACLE, '"id"', '"sales"')
     assert "QUALIFY ROW_NUMBER()" in _select_all_sql(_TERADATA, '"id"', '"sales"')
+
+
+def test_open_mirror_columns_reuse_tokenization_projection(monkeypatch):
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "secret-value")
+    columns = [
+        ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
+        ColumnDef(
+            field_id=2,
+            name="email_token",
+            source="email",
+            iceberg_type="string",
+            transform=ColumnTransform(
+                kind="deterministic_hash",
+                key_ref="customer-pii-v1",
+                domain="customer-email",
+                normalization="trim_lower",
+            ),
+        ),
+    ]
+
+    projected, params = _render_projection(_MSSQL, columns)
+
+    assert "HASHBYTES('SHA2_256'" in projected
+    assert "[email_token]" in projected
+    assert "secret-value" not in projected
+    assert params["fsp_token_key_om_2"] == "secret-value"
+    assert params["fsp_token_domain_om_2"] == "customer-email"
+
+
+def test_omitted_watermark_uses_private_control_alias(tmp_path):
+    target = target_from_dict({
+        "id": "fabric-sales",
+        "connection": "default",
+        "landing_zone_root": str(tmp_path),
+        "tables": [{
+            "name": "sales",
+            "source_table": "sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "watermark_column": "ModifiedDate",
+            "mode": "watermark",
+            "columns": [{"field_id": 1, "name": "id", "type": "long", "nullable": False}],
+        }],
+    })
+    reflected = [
+        ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
+        ColumnDef(field_id=2, name="ModifiedDate", iceberg_type="timestamp"),
+    ]
+    published = _configured_columns(target.tables[0], reflected)
+    internal, aliases = _control_columns(target.tables[0], reflected, published)
+    projected, _ = _render_projection(_MSSQL, published, internal)
+
+    assert aliases == {"ModifiedDate": "__om_control_0"}
+    assert "[ModifiedDate] AS [__om_control_0]" in projected
+    assert "ModifiedDate" not in [column.name for column in published]
+
+
+def test_projection_fingerprint_changes_when_token_key_rotates(monkeypatch):
+    columns = [
+        ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
+        ColumnDef(
+            field_id=2,
+            name="email_token",
+            source="email",
+            iceberg_type="string",
+            transform=ColumnTransform(
+                kind="deterministic_hash",
+                key_ref="customer-pii-v1",
+            ),
+        ),
+    ]
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "first-key")
+    first = projection_fingerprint(columns)
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "second-key")
+    second = projection_fingerprint(columns)
+
+    assert first != second
+    assert "first-key" not in first and "second-key" not in second
+
+
+def test_open_mirror_columns_require_pass_through_control_columns(tmp_path):
+    with pytest.raises(ValueError, match="control column 'id' must be pass-through"):
+        target_from_dict({
+            "id": "fabric-sales",
+            "connection": "default",
+            "landing_zone_root": str(tmp_path),
+            "tables": [{
+                "name": "sales",
+                "source_table": "sales",
+                "target_table": "sales",
+                "key_column": "id",
+                "columns": [{
+                    "field_id": 1,
+                    "name": "id_token",
+                    "source": "id",
+                    "type": "string",
+                    "transform": {
+                        "kind": "deterministic_hash",
+                        "key_ref": "customer-pii-v1",
+                    },
+                }],
+            }],
+        })
+
+
+def test_open_mirror_random_tokens_are_allowed_with_prepared_recovery():
+    columns = [
+        ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
+        ColumnDef(
+            field_id=2,
+            name="note_token",
+            source="note",
+            iceberg_type="string",
+            transform=ColumnTransform(kind="random_token"),
+        ),
+    ]
+
+    _validate_projection_strategy(columns, "snapshot")
 
 
 # --- end-to-end publish from a live source ---------------------------------

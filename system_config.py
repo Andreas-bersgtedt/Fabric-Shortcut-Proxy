@@ -196,6 +196,11 @@ _OPEN_MIRROR_STATE_DEFAULT = _open_mirror_state_default()
 OPEN_MIRROR_STATE_DIR: str = _get_str(
     "OPEN_MIRROR_STATE_DIR", "open_mirror_state_dir", _OPEN_MIRROR_STATE_DEFAULT
 )
+# Encrypt cursor, snapshot-key, and pending-state values with the credential-store
+# cipher before writing state files. Disabled by default for backward compatibility.
+OPEN_MIRROR_ENCRYPT_STATE: bool = _get_bool(
+    "OPEN_MIRROR_ENCRYPT_STATE", "open_mirror_encrypt_state", False
+)
 # Per-table row cap per cycle (0 = the connection's query_max_rows default).
 OPEN_MIRROR_MAX_ROWS: int = _get_int("OPEN_MIRROR_MAX_ROWS", "open_mirror_max_rows", 0)
 # Optional safety bounds for draining watermark pages (0 = unlimited this cycle).

@@ -417,6 +417,24 @@ def _open_mirror_targets_payload() -> list[dict]:
     except Exception as exc:  # noqa: BLE001 - the tab must load even if the file is bad
         log.warning("open_mirror_bootstrap_failed", error=str(exc))
         return []
+
+    def _column_payload(column) -> dict:
+        payload = {
+            "field_id": column.field_id,
+            "name": column.name,
+            "source": column.source,
+            "type": column.iceberg_type,
+            "nullable": column.nullable,
+        }
+        if column.transform:
+            payload["transform"] = {
+                "kind": column.transform.kind,
+                "key_ref": column.transform.key_ref,
+                "domain": column.transform.domain,
+                "normalization": column.transform.normalization,
+            }
+        return payload
+
     out: list[dict] = []
     for t in targets:
         out.append({
@@ -440,6 +458,10 @@ def _open_mirror_targets_payload() -> list[dict]:
                 "mode": tb.mode,
                 "watermark_column": tb.watermark_column,
                 "enabled": tb.enabled,
+                "columns": (
+                    [_column_payload(column) for column in tb.columns]
+                    if tb.columns is not None else None
+                ),
             } for tb in t.tables],
         })
     return out

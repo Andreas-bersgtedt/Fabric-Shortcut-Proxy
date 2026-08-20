@@ -73,7 +73,12 @@ def test_non_identity_modes_raise_value_error(mode):
 
 
 def test_missing_sdk_raises_install_hint():
-    # azure-identity is not installed in the test env, so no fake is injected.
+    try:
+        __import__("azure.identity")
+    except ImportError:
+        pass
+    else:
+        pytest.skip("azure-identity is installed")
     with pytest.raises(RuntimeError, match="azure-identity"):
         azure_credential.get_credential("default")
 

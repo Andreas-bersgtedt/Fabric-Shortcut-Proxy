@@ -201,8 +201,12 @@ and start operations.
 - Migrate one bounded step at a time; preserve `--answers`, `--resume`, `--check`, and
   `--dry-run` behavior during each migration.
 - Keep secrets out of the C++ process arguments, logs, checkpoints, and frontend output.
-- The first migration slice is answers-file contract validation in the C++ frontend.
+- The first migration slice is answers-file contract validation and interactive
+  answer collection in the C++ frontend.
 - A failed C++ validation must stop before the shell installer starts.
+- The default Start setup wizard must not expose the shell installer's prompts. It may
+  invoke the shell backend non-interactively through a protected answers file until
+  provisioning logic has parity tests in C++.
 - Each later slice must include a Linux build check, shell parity tests, and an explicit
   fallback to the shell implementation until the C++ path is accepted.
 

@@ -9,9 +9,12 @@
 #include <iostream>
 #include <set>
 #include <string>
+#include <stdexcept>
 #include <termios.h>
 #include <unistd.h>
 #include <vector>
+#include <sys/stat.h>
+#include <sys/wait.h>
 
 namespace {
 
@@ -174,6 +177,157 @@ int run_shell_installer(
     return 127;
 }
 
+std::string prompt(const std::string& label, const std::string& default_value = {}) {
+    std::cout << label;
+    if (!default_value.empty()) {
+        std::cout << " [" << default_value << "]";
+    }
+    std::cout << ": " << std::flush;
+    std::string value;
+    if (!std::getline(std::cin, value)) {
+        throw std::runtime_error("input closed");
+    }
+    return value.empty() ? default_value : value;
+}
+
+std::string choice(
+    const std::string& label,
+    const std::string& default_value,
+    const std::set<std::string>& allowed) {
+    while (true) {
+        const auto value = prompt(label, default_value);
+        if (allowed.find(value) != allowed.end()) {
+            return value;
+        }
+        std::cerr << "Invalid value. Choose one of:";
+        for (const auto& item : allowed) {
+            std::cerr << ' ' << item;
+        }
+        std::cerr << '\n';
+    }
+}
+
+std::filesystem::path write_cpp_answers() {
+    std::string install_dir = prompt("Installation directory", "/opt/fabric-shortcut-proxy");
+    std::string service_user = prompt("Service user", "fsp");
+    std::string service_group = prompt("Service group", "fsp");
+    std::string unit_name = prompt("systemd unit name", "fabric-shortcut-proxy.service");
+    std::string identity_mode = choice(
+        "Identity (managed_identity, service_principal, default)",
+        "managed_identity", {"default", "managed_identity", "service_principal"});
+    std::string tenant_id;
+    std::string client_id;
+    std::string client_secret_reference;
+    if (identity_mode == "service_principal") {
+        tenant_id = prompt("Tenant ID");
+        client_id = prompt("Client/application ID");
+        client_secret_reference = prompt("Client secret reference (env:NAME or file:/path)");
+    }
+    std::string keyvault_mode = choice(
+        "Key Vault mode (disabled, read-through, write-back, required)",
+        "disabled", {"disabled", "read-through", "required", "write-back"});
+    std::string keyvault_uri;
+    if (keyvault_mode != "disabled") {
+        keyvault_uri = prompt("Key Vault URI");
+    }
+    std::string secret_backend = choice(
+        "Secret backend (keyvault, env-file)",
+        keyvault_mode == "disabled" ? "env-file" : "keyvault",
+        {"env-file", "keyvault"});
+    std::string manager_auth_username = prompt("Manager auth username", "operator");
+    std::string generate_admin = choice(
+        "Generate admin token and password (yes/no)", "yes", {"no", "yes"});
+    std::string generate_s3 = choice(
+        "Generate S3 access credentials (yes/no)", "yes", {"no", "yes"});
+    std::string generate_agent = choice(
+        "Generate unused AGENT_TOKEN placeholder (yes/no)", "no", {"no", "yes"});
+    std::string tls_mode = choice(
+        "TLS mode (disabled, nginx, direct)", "disabled", {"disabled", "direct", "nginx"});
+    std::string tls_hostname;
+    std::string tls_cert_file;
+    std::string tls_key_file;
+    if (tls_mode != "disabled") {
+        tls_hostname = prompt("DNS hostname");
+        tls_cert_file = prompt("Certificate/full-chain path");
+        tls_key_file = prompt("Private-key path");
+    }
+    std::string start_service = choice(
+        "Start and enable the systemd service (yes/no)", "no", {"no", "yes"});
+
+    char template_path[] = "/tmp/fsp-installer-answers-XXXXXX";
+    const int descriptor = mkstemp(template_path);
+    if (descriptor < 0) {
+        throw std::runtime_error("could not create protected answers file");
+    }
+    if (fchmod(descriptor, S_IRUSR | S_IWUSR) != 0) {
+        close(descriptor);
+        unlink(template_path);
+        throw std::runtime_error("could not protect answers file");
+    }
+    std::ofstream answers(template_path);
+    if (!answers) {
+        close(descriptor);
+        unlink(template_path);
+        throw std::runtime_error("could not open protected answers file");
+    }
+    answers << "APPLY=APPLY\n"
+            << "install_dir=" << install_dir << '\n'
+            << "service_user=" << service_user << '\n'
+            << "service_group=" << service_group << '\n'
+            << "unit_name=" << unit_name << '\n'
+            << "identity_mode=" << identity_mode << '\n';
+    if (!tenant_id.empty()) {
+        answers << "tenant_id=" << tenant_id << '\n'
+                << "client_id=" << client_id << '\n'
+                << "client_secret_reference=" << client_secret_reference << '\n';
+    }
+    answers << "keyvault_mode=" << keyvault_mode << '\n';
+    if (!keyvault_uri.empty()) {
+        answers << "keyvault_uri=" << keyvault_uri << '\n';
+    }
+    answers << "secret_backend=" << secret_backend << '\n'
+            << "manager_auth_username=" << manager_auth_username << '\n'
+            << "generate_admin_credentials=" << generate_admin << '\n'
+            << "generate_s3_credentials=" << generate_s3 << '\n'
+            << "generate_agent_token=" << generate_agent << '\n'
+            << "tls_mode=" << tls_mode << '\n';
+    if (!tls_hostname.empty()) {
+        answers << "tls_hostname=" << tls_hostname << '\n'
+                << "tls_cert_file=" << tls_cert_file << '\n'
+                << "tls_key_file=" << tls_key_file << '\n';
+    }
+    answers << "start_service=" << start_service << '\n';
+    answers.close();
+    close(descriptor);
+    return template_path;
+}
+
+int run_cpp_wizard(const std::filesystem::path& script) {
+    try {
+        std::cout << "\nC++ setup wizard\n"
+                  << "The shell backend will apply these reviewed answers without prompting.\n\n";
+        const auto answers = write_cpp_answers();
+        const std::vector<std::string> arguments = {
+            "--no-color", "--answers", answers.string()};
+        const pid_t child = fork();
+        if (child < 0) {
+            unlink(answers.c_str());
+            throw std::runtime_error("could not start provisioning backend");
+        }
+        if (child == 0) {
+            run_shell_installer(script, arguments);
+            _exit(127);
+        }
+        int status = 0;
+        waitpid(child, &status, 0);
+        unlink(answers.c_str());
+        return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    } catch (const std::exception& error) {
+        std::cerr << "C++ setup cancelled: " << error.what() << '\n';
+        return 1;
+    }
+}
+
 bool ansi_enabled() {
     const char* term = std::getenv("TERM");
     return isatty(STDOUT_FILENO) && term != nullptr && std::strcmp(term, "dumb") != 0;
@@ -187,11 +341,11 @@ void clear_screen() {
 
 void draw_menu(std::size_t selected) {
     static const char* const entries[] = {
-        "Start setup wizard",
+        "Start setup wizard (C++)",
         "Resume setup wizard",
         "Preview setup (dry-run)",
         "Run read-only checks",
-        "Use line-based installer",
+        "Use line-based installer fallback",
         "Quit",
     };
     clear_screen();
@@ -252,7 +406,7 @@ int interactive(const std::filesystem::path& script) {
                 return run_shell_installer(script, {"--resume"});
             }
             terminal.restore();
-            return run_shell_installer(script, {});
+            return run_cpp_wizard(script);
         }
         if (key == '\033') {
             char sequence[2];

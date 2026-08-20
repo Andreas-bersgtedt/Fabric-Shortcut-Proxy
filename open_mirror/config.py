@@ -125,6 +125,23 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
     columns = None
     if raw_columns is not None:
         columns = tuple(column_defs_from_json(raw_columns, context="Open Mirror column"))
+        output_names = [column.name for column in columns]
+        if len(set(output_names)) != len(output_names):
+            raise ValueError(f"open mirror table {name!r}: column names must be unique")
+        for control_name in [*key_column.split(","), *( [watermark_column] if watermark_column else [])]:
+            control_name = control_name.strip()
+            matches = [column for column in columns if column.source_name == control_name]
+            if not matches:
+                raise ValueError(
+                    f"open mirror table {name!r}: control column {control_name!r} "
+                    "must be present in columns"
+                )
+            control = matches[0]
+            if control.name != control_name or control.transform:
+                raise ValueError(
+                    f"open mirror table {name!r}: control column {control_name!r} "
+                    "must be pass-through"
+                )
     return OpenMirrorTableTarget(
         name=name,
         source_table=source_table,

@@ -8,6 +8,8 @@ preservation, dialect SQL reuse, and projection-state safety are implemented.
 write and replays that sidecar after an interrupted publish.
 Sidecar paths are constrained to the deterministic state-file location, and an explicit
 `initial` load replaces a changed projection fingerprint.
+Config Builder and startup validation now reject invalid control columns, duplicate
+output names, missing deterministic key references, and unsupported source dialects.
 
 ## Goal
 

@@ -106,33 +106,28 @@ def test_open_mirror_columns_reuse_tokenization_projection(monkeypatch):
 
 
 def test_open_mirror_columns_require_pass_through_control_columns(tmp_path):
-    target = target_from_dict({
-        "id": "fabric-sales",
-        "connection": "default",
-        "landing_zone_root": str(tmp_path),
-        "tables": [{
-            "name": "sales",
-            "source_table": "sales",
-            "target_table": "sales",
-            "key_column": "id",
-            "columns": [{
-                "field_id": 1,
-                "name": "id_token",
-                "source": "id",
-                "type": "string",
-                "transform": {
-                    "kind": "deterministic_hash",
-                    "key_ref": "customer-pii-v1",
-                },
-            }],
-        }],
-    })
-
     with pytest.raises(ValueError, match="control column 'id' must be pass-through"):
-        _configured_columns(
-            target.tables[0],
-            [ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False)],
-        )
+        target_from_dict({
+            "id": "fabric-sales",
+            "connection": "default",
+            "landing_zone_root": str(tmp_path),
+            "tables": [{
+                "name": "sales",
+                "source_table": "sales",
+                "target_table": "sales",
+                "key_column": "id",
+                "columns": [{
+                    "field_id": 1,
+                    "name": "id_token",
+                    "source": "id",
+                    "type": "string",
+                    "transform": {
+                        "kind": "deterministic_hash",
+                        "key_ref": "customer-pii-v1",
+                    },
+                }],
+            }],
+        })
 
 
 def test_open_mirror_random_tokens_are_allowed_with_prepared_recovery():

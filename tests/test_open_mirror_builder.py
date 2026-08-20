@@ -167,6 +167,56 @@ async def test_save_rejects_unknown_tracking_mode(app, tmp_path, monkeypatch):
     assert "unsupported mode" in " ".join(r.json()["errors"])
 
 
+async def test_save_rejects_transformed_key_column(app, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target = _target()
+    target["tables"][0]["columns"] = [{
+        "field_id": 1,
+        "name": "id_token",
+        "source": "id",
+        "type": "string",
+        "transform": {
+            "kind": "deterministic_hash",
+            "key_ref": "customer-pii-v1",
+        },
+    }]
+    async with _client(app) as c:
+        r = await c.post(
+            "/_config/api/open-mirror/save",
+            json={"open_mirror_targets": [target]},
+        )
+
+    assert r.status_code == 400
+    assert "control column 'id' must be pass-through" in " ".join(r.json()["errors"])
+
+
+async def test_save_rejects_missing_token_key(app, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://user:pass@host/db", raising=False)
+    target = _target()
+    target["tables"][0]["columns"] = [
+        {"field_id": 1, "name": "id", "type": "long", "nullable": False},
+        {
+            "field_id": 2,
+            "name": "email_token",
+            "source": "email",
+            "type": "string",
+            "transform": {
+                "kind": "deterministic_hash",
+                "key_ref": "missing-key",
+            },
+        },
+    ]
+    async with _client(app) as c:
+        r = await c.post(
+            "/_config/api/open-mirror/save",
+            json={"open_mirror_targets": [target]},
+        )
+
+    assert r.status_code == 400
+    assert "missing-key" in " ".join(r.json()["errors"])
+
+
 async def test_reset_requires_confirmation_and_is_table_scoped(
     app, tmp_path, monkeypatch
 ):

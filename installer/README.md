@@ -1,9 +1,10 @@
 # C++ installer
 
-The C++ frontend provides SSH-safe arrow-key navigation. It does not duplicate
-the provisioning logic yet. Selecting a setup action delegates to the root
-`installer/install.sh`, which remains the source of truth for checkpointing, secret
-handling, TLS validation, and systemd setup.
+The C++ frontend provides SSH-safe arrow-key navigation and validates the
+non-secret answers-file contract before delegation. It does not duplicate the
+provisioning logic yet. Selecting a setup action delegates to the root
+`installer/install.sh`, which remains the source of truth for checkpointing,
+secret handling, TLS validation, and systemd setup.
 
 The root dispatcher always rebuilds the C++ binary before launching it. A failed
 build stops the installer instead of running a stale binary. Build directly on Linux:
@@ -23,8 +24,14 @@ Run the already-built binary directly:
 
 The binary falls back to `installer/install.sh` when stdin is not a terminal. Command-line
 arguments are passed through to the shell installer, so `--answers`, `--resume`,
-`--check`, and `--dry-run` retain their existing behavior.
+`--check`, and `--dry-run` retain their existing behavior. When `--answers FILE` is
+supplied, the frontend rejects missing files, duplicate keys, unknown keys, and malformed
+lines before starting the shell installer. Secret values remain references such as
+`env:NAME` or `file:/absolute/path`; the frontend never reads or prints their contents.
 
 The interactive menu exposes the same common actions: start or resume setup, preview
 the setup with a dry run, run read-only checks, or open the line-based installer.
 Actions can be selected with the arrow keys or numeric shortcuts `1` through `6`.
+
+This is the first migration slice for point 10. Further provisioning steps must keep the
+shell parity tests passing before moving their implementation into C++.

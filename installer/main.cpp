@@ -1,10 +1,13 @@
 #include <cerrno>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
+#include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
 #include <termios.h>
 #include <unistd.h>
@@ -55,6 +58,86 @@ std::filesystem::path script_path(const char* argv0) {
         return executable.parent_path() / "install.sh";
     }
     return std::filesystem::path(argv0).parent_path() / "install.sh";
+}
+
+bool valid_answer_key(const std::string& key) {
+    static const std::set<std::string> keys = {
+        "APPLY", "install_dir", "service_user", "service_group", "unit_name",
+        "identity_mode", "tenant_id", "client_id", "client_secret_reference",
+        "keyvault_mode", "keyvault_uri", "secret_backend", "manager_auth_username",
+        "generate_admin_credentials", "generate_s3_credentials", "generate_agent_token",
+        "tls_mode", "tls_hostname", "tls_cert_file", "tls_key_file", "start_service",
+    };
+    return keys.find(key) != keys.end();
+}
+
+bool valid_key_name(const std::string& key) {
+    if (key.empty() || !(std::isalpha(static_cast<unsigned char>(key.front())) ||
+                         key.front() == '_')) {
+        return false;
+    }
+    for (const char character : key) {
+        if (!(std::isalnum(static_cast<unsigned char>(character)) || character == '_')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_answers_file(const std::filesystem::path& path) {
+    std::ifstream answers(path);
+    if (!answers) {
+        std::cerr << "Error: answers file could not be opened: " << path << '\n';
+        return false;
+    }
+    std::set<std::string> seen;
+    std::string line;
+    std::size_t line_number = 0;
+    while (std::getline(answers, line)) {
+        ++line_number;
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == '#') {
+            continue;
+        }
+        const auto equals = line.find('=', first);
+        if (equals == std::string::npos) {
+            std::cerr << "Error: answers line " << line_number << " has no '='\n";
+            return false;
+        }
+        auto key = line.substr(first, equals - first);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) {
+            key.pop_back();
+        }
+        if (!valid_key_name(key) || !valid_answer_key(key)) {
+            std::cerr << "Error: unknown or invalid answers key on line "
+                      << line_number << ": " << key << '\n';
+            return false;
+        }
+        if (!seen.insert(key).second) {
+            std::cerr << "Error: duplicate answers key on line "
+                      << line_number << ": " << key << '\n';
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_forwarded_arguments(const std::vector<std::string>& arguments) {
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments[index];
+        if (argument == "--answers") {
+            if (index + 1 >= arguments.size() ||
+                !validate_answers_file(arguments[index + 1])) {
+                return false;
+            }
+            ++index;
+        } else if (argument.rfind("--answers=", 0) == 0) {
+            if (!validate_answers_file(argument.substr(10))) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 int run_shell_installer(
@@ -193,6 +276,9 @@ int main(int argc, char** argv) {
         arguments.reserve(static_cast<std::size_t>(argc - 1));
         for (int index = 1; index < argc; ++index) {
             arguments.emplace_back(argv[index]);
+        }
+        if (!validate_forwarded_arguments(arguments)) {
+            return 2;
         }
         return run_shell_installer(script, arguments);
     }

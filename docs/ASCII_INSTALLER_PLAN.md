@@ -195,6 +195,17 @@ and start operations.
 - Print `journalctl -u ...` and the existing Linux troubleshooting guide when checks fail.
 - Offer to leave the service stopped after installation for manual review.
 
+### 10. C++ provisioning migration
+
+- Keep `installer/install.sh` as the provisioning authority until a step has parity tests.
+- Migrate one bounded step at a time; preserve `--answers`, `--resume`, `--check`, and
+  `--dry-run` behavior during each migration.
+- Keep secrets out of the C++ process arguments, logs, checkpoints, and frontend output.
+- The first migration slice is answers-file contract validation in the C++ frontend.
+- A failed C++ validation must stop before the shell installer starts.
+- Each later slice must include a Linux build check, shell parity tests, and an explicit
+  fallback to the shell implementation until the C++ path is accepted.
+
 ## SSH and terminal safety
 
 - Use POSIX shell and standard utilities. Do not require `dialog`, `whiptail`, `fzf`,

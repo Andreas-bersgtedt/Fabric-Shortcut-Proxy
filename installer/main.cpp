@@ -447,6 +447,12 @@ int interactive(const std::filesystem::path& script) {
 int main(int argc, char** argv) {
     const auto script = script_path(argv[0]);
     std::vector<std::string> arguments;
+    for (int index = 1; index < argc; ++index) {
+        if (std::string(argv[index]) == "--version") {
+            std::cout << "Fabric Shortcut Proxy installer 2026.08.20\n";
+            return 0;
+        }
+    }
     if (argc > 1) {
         arguments.reserve(static_cast<std::size_t>(argc - 1));
         for (int index = 1; index < argc; ++index) {

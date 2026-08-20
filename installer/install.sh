@@ -8,6 +8,7 @@
 set -eu
 
 NO_COLOR=0
+INSTALLER_VERSION=2026.08.20
 DRY_RUN=0
 CHECK_ONLY=0
 RESUME=0
@@ -72,6 +73,7 @@ Options:
   --restart       Restart the service after resetting the password.
   --no-color     Disable ANSI color output.
   --help         Show this help.
+  --version      Show installer version.
 
 Secret values must be supplied through protected files or environment
 variables referenced by the answers file. They are never checkpointed.
@@ -784,6 +786,7 @@ main() {
             --reset-admin-password) RESET_ADMIN_PASSWORD=1 ;;
             --restart) RESTART_AFTER_RESET=yes ;;
             --no-color) NO_COLOR=1 ;;
+            --version) printf '%s\n' "Fabric Shortcut Proxy installer $INSTALLER_VERSION"; exit 0 ;;
             --help|-h) usage; exit 0 ;;
             *) die "unknown option: $1" ;;
         esac
@@ -803,7 +806,8 @@ main() {
     if [ "$RESET_ADMIN_PASSWORD" -eq 1 ]; then
         if [ -f "$STATE_FILE" ]; then
             load_state
-        else
+        fi
+        if [ -z "$SECRET_BACKEND" ]; then
             recover_existing_configuration
         fi
         reset_admin_password

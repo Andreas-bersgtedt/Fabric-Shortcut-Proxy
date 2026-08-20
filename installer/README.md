@@ -15,6 +15,9 @@ build stops the installer instead of running a stale binary. Build directly on L
 ./installer/build.sh
 ```
 
+Confirm the deployed cutover with `sudo ./installer.sh --version`. The version must be
+`2026.08.20` or newer before using the admin-password reset recovery path.
+
 The build requires `make` and a C++17 compiler. Set `CXX` when the compiler is
 not named `c++`, for example `CXX=g++ ./installer/build.sh`.
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import base64
 import hashlib
 import json
 import os
@@ -12,6 +13,57 @@ from open_mirror.config import OpenMirrorTableTarget, OpenMirrorTarget
 
 DEFAULT_STATE_DIR = "./.open_mirror_state"
 STATE_VERSION = 2
+
+
+def _state_encryption_enabled() -> bool:
+    try:
+        import config
+        if bool(getattr(config, "OPEN_MIRROR_ENCRYPT_STATE", False)):
+            return True
+    except (ImportError, AttributeError):
+        pass
+    return (os.environ.get("OPEN_MIRROR_ENCRYPT_STATE") or "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def _encrypt_sensitive_state(data: dict) -> dict:
+    from security.credential_store import CredentialStore
+
+    sensitive = {
+        key: data.pop(key)
+        for key in ("committed", "pending", "keys")
+        if key in data
+    }
+    store = CredentialStore()
+    ciphertext = store.encrypt_blob(
+        json.dumps(sensitive, separators=(",", ":")).encode("utf-8")
+    )
+    data["encrypted_sensitive_state"] = {
+        "version": 1,
+        "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+    }
+    return data
+
+
+def _decrypt_sensitive_state(data: dict) -> dict:
+    envelope = data.get("encrypted_sensitive_state")
+    if envelope is None:
+        return data
+    if not isinstance(envelope, dict) or envelope.get("version") != 1:
+        raise ValueError("encrypted sensitive state envelope is invalid")
+    try:
+        ciphertext = base64.b64decode(str(envelope["ciphertext"]).encode("ascii"))
+        from security.credential_store import CredentialStore
+        sensitive = json.loads(CredentialStore().decrypt_blob(ciphertext).decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - normalize cipher/JSON failures
+        raise ValueError(f"could not decrypt sensitive Open Mirror state: {exc}") from exc
+    if not isinstance(sensitive, dict):
+        raise ValueError("decrypted sensitive Open Mirror state must be an object")
+    restored = dict(data)
+    restored.pop("encrypted_sensitive_state", None)
+    restored.update(sensitive)
+    return restored
 
 
 def encode_watermark(value):
@@ -283,12 +335,22 @@ def projection_fingerprint(columns) -> str:
     policy = []
     for column in columns:
         transform = column.transform
+        key_digest = None
+        if transform and transform.kind == "deterministic_hash":
+            try:
+                import config
+                key_digest = hashlib.sha256(
+                    config.resolve_tokenization_key(transform.key_ref).encode("utf-8")
+                ).hexdigest()
+            except (AttributeError, ValueError):
+                key_digest = None
         policy.append({
             "field_id": column.field_id,
             "name": column.name,
             "source": column.source_name,
             "type": column.iceberg_type,
             "nullable": column.nullable,
+            "key_digest": key_digest,
             "transform": ({
                 "kind": transform.kind,
                 "key_ref": transform.key_ref,
@@ -328,6 +390,7 @@ def load_state(
     except OSError as exc:
         return StateLoadResult("unreadable", path, error=str(exc))
     try:
+        data = _decrypt_sensitive_state(data)
         return StateLoadResult("valid", path, PublishState.from_json(data))
     except (TypeError, ValueError) as exc:
         status: StateStatus = "incompatible" if "unsupported" in str(exc) else "corrupt"
@@ -341,7 +404,10 @@ def save_state(
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(state.to_json(), fh, default=str)
+        data = state.to_json()
+        if _state_encryption_enabled():
+            data = _encrypt_sensitive_state(data)
+        json.dump(data, fh, default=str)
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)

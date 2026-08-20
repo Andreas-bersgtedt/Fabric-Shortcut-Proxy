@@ -74,6 +74,29 @@ def test_compute_changes_default_upsert():
     assert batch.markers == [RowMarker.UPSERT]
 
 
+def test_open_mirror_state_can_encrypt_sensitive_cursors(tmp_path, monkeypatch):
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("OPEN_MIRROR_ENCRYPT_STATE", "1")
+    monkeypatch.setenv("FSP_CRED_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("CREDENTIAL_STORE_PATH", str(tmp_path / "credentials.json"))
+    target = _target(tmp_path / "lz")
+    table = target.tables[0]
+    state_dir = str(tmp_path / "state")
+    state = PublishState(
+        strategy="watermark",
+        initialized=True,
+        committed=CommittedCursor(watermark=encode_watermark("sensitive-wm")),
+    )
+
+    save_state(state_dir, target, table, state)
+    raw = json.loads(pathlib.Path(state_file_path(state_dir, target, table)).read_text())
+    assert "committed" not in raw
+    assert "encrypted_sensitive_state" in raw
+    loaded = load_state(state_dir, target, table).state
+    assert decode_watermark(loaded.committed.watermark) == "sensitive-wm"
+
+
 # --- publisher: rowMarker + drop -------------------------------------------
 
 def _target(root):
@@ -482,6 +505,35 @@ async def test_watermark_initial_then_incremental_upserts(sqlite_wm):
     assert change.schema.names[-1] == ROW_MARKER_COLUMN
     assert set(change.column(ROW_MARKER_COLUMN).to_pylist()) == {RowMarker.UPSERT}
     assert decode_watermark(load_state(state_dir, target, table).watermark) == 11
+
+
+async def test_watermark_can_be_private_when_omitted_from_projection(sqlite_wm):
+    tmp_path, _ = sqlite_wm
+    target = target_from_dict({
+        "id": "private-wm",
+        "connection": "default",
+        "landing_zone_root": str(tmp_path / "lz"),
+        "tables": [{
+            "name": "sales",
+            "source_table": "sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "watermark_column": "ver",
+            "mode": "watermark",
+            "schema": "dbo",
+            "columns": [
+                {"field_id": 1, "name": "id", "type": "long", "nullable": False},
+                {"field_id": 2, "name": "name", "type": "string"},
+            ],
+        }],
+    })
+
+    result = await om_source.publish_table(target, target.tables[0])
+    table = pq.read_table(tmp_path / "lz" / "dbo.schema" / "sales" / "00000000000000000001.parquet")
+
+    assert result.action == "initial"
+    assert table.schema.names == ["id", "name"]
+    assert "ver" not in table.schema.names
 
 
 async def test_watermark_no_new_rows_is_noop(sqlite_wm):

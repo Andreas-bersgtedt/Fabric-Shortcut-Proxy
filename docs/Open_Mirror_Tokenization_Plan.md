@@ -10,6 +10,10 @@ Sidecar paths are constrained to the deterministic state-file location, and an e
 `initial` load replaces a changed projection fingerprint.
 Config Builder and startup validation now reject invalid control columns, duplicate
 output names, missing deterministic key references, and unsupported source dialects.
+The Config Builder can edit column policies, omitted watermarks use private SQL aliases,
+and sensitive cursors can use the existing credential-store encryption with
+`OPEN_MIRROR_ENCRYPT_STATE=1`. Projection identity includes a digest of the resolved
+deterministic key so same-reference key rotation requires an explicit initial load.
 
 ## Goal
 
@@ -36,9 +40,10 @@ Shortcut tokenization is already implemented as a `ColumnDef` projection policy:
 - `db.executor` redacts token parameters from diagnostics; and
 - `parquet/generator.py` consumes rows by output column alias.
 
-Open Mirror currently derives a reflected schema, constructs its own source `SELECT`
-lists in `open_mirror/source.py`, and passes the returned column names directly to
-`open_mirror/publisher.py`. Its target model has no output projection policy yet.
+Open Mirror now accepts an optional `columns` projection, renders it through the shared
+dialect adapters, and passes only published columns to `open_mirror/publisher.py`.
+Omitted watermark controls are selected under private `__om_control_*` aliases for
+cursoring and restored only in memory.
 
 The implementation should reuse the existing `ColumnDef` and dialect projection
 contract instead of adding a second tokenizer or hashing rows in Python.
@@ -102,9 +107,9 @@ Rules for the first implementation:
 
 1. Refactor Open Mirror source reads to build projections through the selected dialect's
    `render_projection()` API.
-2. Keep raw source expressions for key and watermark control values in private aliases
-   when they are not published. Ensure cursor ordering and predicates use quoted source
-   identifiers, not token aliases.
+2. Keep raw source expressions for omitted watermark controls in private aliases.
+   Key columns remain published pass-through. Cursor ordering and predicates use quoted
+   source identifiers, not token aliases.
 3. Return the published `ColumnDef` list and control-column values separately so the
    publisher never receives accidental plaintext columns.
 4. Make initial, watermark, and snapshot reads use the same projection builder, including
@@ -130,7 +135,8 @@ Rules for the first implementation:
 ### Phase 4: testing and rollout
 
 1. Add parser/config-builder tests for pass-through, deterministic, random, omitted,
-   missing-key, invalid-type, and unsupported-policy cases.
+   missing-key, invalid-type, and unsupported-policy cases. The parser and builder
+   coverage is now in place.
 2. Add dialect SQL tests for SQL Server, PostgreSQL, Oracle, and Databricks. Assert that
    token keys and domains are bind parameters and never appear in SQL text or logs.
 3. Add Open Mirror tests covering initial load, watermark pagination, snapshot diff,
@@ -138,8 +144,8 @@ Rules for the first implementation:
 4. Assert that source plaintext is absent from generated Parquet, pending state, state
    hashes, exceptions, and structured logs when the source field is transformed or
    omitted.
-5. Add deterministic stability tests across pages and repeated runs. Add explicit random
-   token tests only after the recovery contract is implemented.
+5. Add deterministic stability tests across pages and repeated runs. Prepared-payload
+   random-token recovery and key-rotation identity tests are now covered.
 6. Run the existing tokenization UAT for each supported dialect, then add a Fabric Open
    Mirror landing-zone verification using a disposable mirrored database.
 
@@ -192,5 +198,6 @@ fail closed with actionable diagnostics.
 
 - [TOKENIZATION_PUSHDOWN.md](TOKENIZATION_PUSHDOWN.md)
 - [TOKENIZATION_MULTI_DIALECT_UAT.md](TOKENIZATION_MULTI_DIALECT_UAT.md)
+- [TOKENIZATION_OPEN_MIRROR_UAT.md](TOKENIZATION_OPEN_MIRROR_UAT.md)
 - [UsecasesAndScenarios.md](UsecasesAndScenarios.md)
 - [Open Mirror configuration](../config.open_mirror.example.json)

@@ -2439,7 +2439,7 @@ async function removeAccessKey(id){
 // ---- Open Mirroring targets (config.open_mirror.json) ----
 if(!state.om) state.om = { targets: [], editing: null };
 function omEsc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"", cleanup_retention_days:null }; }
+function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"", cleanup_retention_days:null, columns:null, _sourceColumns:[] }; }
 function omNewTarget(){ return { id:"", connection:"default", landing_zone_root:"", workspace_id:"",
   mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, self_healing:null, cleanup_retention_days:7, fabric_retention_days:null, tables:[ omNewTable() ] }; }
 
@@ -2498,6 +2498,7 @@ function omRenderTableRows(){
       + `<option value="snapshot"${tb.mode==="snapshot"?" selected":""}>Snapshot (full-source scan every cycle)</option></select>`
       + `<label>Cleanup retention override (days) <span class="hint">(blank uses target value)</span></label>`
       + `<input type="number" min="0" step="1" data-i="${i}" data-f="cleanup_retention_days" value="${tb.cleanup_retention_days==null?"":omEsc(tb.cleanup_retention_days)}" placeholder="Target default" />`
+      + omPolicyEditor(tb,i)
       + `<div style="display:flex;justify-content:flex-end;gap:6px;"><button class="iconbtn" data-reset="${i}" title="Delete the saved cursor and require a new initial load">Reset saved state</button>`
       + `<button class="iconbtn" data-del="${i}" title="Remove table">✕ remove</button></div>`;
     box.appendChild(row);
@@ -2512,6 +2513,15 @@ function omRenderTableRows(){
   box.querySelectorAll("select.ommode").forEach(sel=>{
     sel.onchange = ()=>{ const i=parseInt(sel.dataset.i); if(state.om.editing.tables[i]) state.om.editing.tables[i].mode=sel.value; };
   });
+  box.querySelectorAll("select.om-policy-kind").forEach(sel=>{
+    sel.onchange = ()=>omUpdatePolicy(parseInt(sel.dataset.i), sel.dataset.source, sel.value);
+  });
+  box.querySelectorAll(".om-policy-name").forEach(inp=>{
+    inp.oninput = ()=>omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, "name", inp.value);
+  });
+  box.querySelectorAll(".om-policy-key,.om-policy-domain,.om-policy-normalization").forEach(inp=>{
+    inp.oninput = inp.onchange = ()=>omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, inp.dataset.p, inp.value);
+  });
   box.querySelectorAll("[data-del]").forEach(b=>{
     b.onclick = ()=>{ const i=parseInt(b.dataset.del); state.om.editing.tables.splice(i,1);
       if(!state.om.editing.tables.length) state.om.editing.tables=[omNewTable()]; omRenderTableRows(); };
@@ -2519,6 +2529,77 @@ function omRenderTableRows(){
   box.querySelectorAll("[data-reset]").forEach(b=>{
     b.onclick = ()=>omResetTable(parseInt(b.dataset.reset));
   });
+}
+
+function omPolicyColumns(tb){
+  const source = Array.isArray(tb._sourceColumns) ? tb._sourceColumns : [];
+  const configured = Array.isArray(tb.columns) ? tb.columns : [];
+  const names = new Set(source.map(c=>String(c.name||"")));
+  const out = source.map((c,index)=>({
+    field_id:c.field_id||index+1, name:c.name, type:c.type||c.iceberg_type||"string",
+    nullable:c.nullable!==false,
+  }));
+  configured.forEach(c=>{
+    const src=String(c.source||c.name||"");
+    if(!names.has(src)) out.push({field_id:c.field_id||out.length+1,name:c.name,source:src,type:c.type||c.iceberg_type||"string",nullable:c.nullable!==false,transform:c.transform});
+    else Object.assign(out.find(x=>String(x.name)===src), c);
+  });
+  return out;
+}
+
+function omPolicyKind(column){
+  if(!column) return "remove";
+  return column.transform ? String(column.transform.kind||"keep") : "keep";
+}
+
+function omPolicyEditor(tb,index){
+  const columns=omPolicyColumns(tb);
+  if(!columns.length) return `<div class="hint" style="margin-top:10px;">Load or inspect the source table to configure column policies.</div>`;
+  const keySet=new Set(String(tb.key_column||"").split(",").map(x=>x.trim()).filter(Boolean));
+  const watermark=String(tb.watermark_column||"").trim();
+  const rows=columns.map((c,j)=>{
+    const source=String(c.source||c.name||"");
+    const control=keySet.has(source)||watermark===source;
+    const kind=control?"keep":omPolicyKind(c);
+    const tr=c.transform||{};
+    const options=[
+      ["keep","Keep"],["remove","Remove"],["deterministic_hash","Deterministic hash"],["random_token","Random token"]
+    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${control&&value!=="keep"?" disabled":""}>${label}</option>`).join("");
+    const alias=kind==="keep"?String(c.name||source):String(c.name||source+"_token");
+    const details=(kind==="deterministic_hash")
+      ? `<input class="om-policy-key" data-i="${index}" data-source="${omEsc(source)}" data-p="key_ref" value="${omEsc(tr.key_ref||"")}" placeholder="key reference" title="Environment key reference" />`
+        + `<input class="om-policy-domain" data-i="${index}" data-source="${omEsc(source)}" data-p="domain" value="${omEsc(tr.domain||"")}" placeholder="domain" />`
+        + `<select class="om-policy-normalization" data-i="${index}" data-source="${omEsc(source)}" data-p="normalization"><option value="none"${(tr.normalization||"none")==="none"?" selected":""}>none</option><option value="trim"${tr.normalization==="trim"?" selected":""}>trim</option><option value="trim_lower"${tr.normalization==="trim_lower"?" selected":""}>trim + lower</option></select>`
+      : (kind==="random_token" ? `<span class="hint">Fresh value per extraction; pending recovery is preserved.</span>` : "");
+    return `<div class="row om-policy-row"><div><label>${omEsc(source)}${control?" <span class=\"hint\">(control)</span>":""}</label><select class="om-policy-kind" data-i="${index}" data-source="${omEsc(source)}"${control?" disabled":""}>${options}</select></div>`
+      + `<div><label>Output name</label><input class="om-policy-name" data-i="${index}" data-source="${omEsc(source)}" value="${omEsc(alias)}"${kind==="remove"||control?" disabled":""} /></div>`
+      + `<div class="om-policy-details">${details}</div></div>`;
+  }).join("");
+  return `<div class="panel" style="margin-top:10px;padding:8px;"><b>Column policies</b><div class="hint">Control columns stay pass-through. Removed columns are omitted from the landing-zone schema.</div>${rows}</div>`;
+}
+
+function omUpdatePolicy(i,source,kind){
+  const tb=state.om.editing.tables[i]; if(!tb) return;
+  const sourceCol=omPolicyColumns(tb).find(c=>String(c.source||c.name||"")===source)||{field_id:1,name:source,type:"string",nullable:true};
+  if(kind==="remove"){
+    tb.columns=omPolicyColumns(tb).filter(c=>String(c.source||c.name||"")!==source).map(c=>{ const x={...c}; delete x._sourceColumns; return x; });
+  }else{
+    const next={...sourceCol,source:kind==="keep"?undefined:source,name:kind==="keep"?source:(sourceCol.name&&sourceCol.name!==source?sourceCol.name:source+"_token")};
+    if(kind==="keep") delete next.transform;
+    else next.transform={kind,...(kind==="deterministic_hash"?{key_ref:"",domain:source,normalization:"none"}:{})};
+    const existing=omPolicyColumns(tb).filter(c=>String(c.source||c.name||"")!==source);
+    tb.columns=[...existing,next];
+  }
+  omRenderTableRows();
+}
+
+function omUpdatePolicyField(i,source,field,value){
+  const tb=state.om.editing.tables[i]; if(!tb) return;
+  const col=omPolicyColumns(tb).find(c=>String(c.source||c.name||"")===source); if(!col) return;
+  const next={...col};
+  if(field==="name") next.name=value;
+  else next.transform={...(next.transform||{kind:"deterministic_hash"}),[field]:value};
+  tb.columns=omPolicyColumns(tb).map(c=>String(c.source||c.name||"")===source?next:c);
 }
 
 async function omResetTable(i){
@@ -2642,6 +2723,7 @@ async function omPickTable(i, value){
     const r = await fetch("/_config/api/open-mirror/inspect-table",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({connection:conn, schema:picked.schema, name:picked.name})});
     const d = await r.json();
     if(r.ok && d.ok){
+      row._sourceColumns = d.columns||[];
       row._cols = (d.columns||[]).map(c=>c.name);
       if(!row.watermark_column){ const wm = omGuessWatermark(d.columns||[]); if(wm) row.watermark_column = wm; }
       if(d.detected_key){ row.key_column = d.detected_key; s.className="status ok"; s.textContent="Key for "+picked.name+": "+d.detected_key+(row.watermark_column?("  · watermark: "+row.watermark_column):""); }

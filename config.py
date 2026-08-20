@@ -42,6 +42,7 @@ from system_config import (
     # Open Mirroring publisher
     OPEN_MIRROR_PUBLISH, OPEN_MIRROR_INTERVAL_SECONDS, OPEN_MIRROR_MODE,
     OPEN_MIRROR_STATE_DIR, OPEN_MIRROR_MAX_ROWS,
+    OPEN_MIRROR_ENCRYPT_STATE,
     OPEN_MIRROR_MAX_PAGES_PER_CYCLE, OPEN_MIRROR_MAX_ROWS_PER_CYCLE,
     OPEN_MIRROR_SELF_HEALING, OPEN_MIRROR_PREFLIGHT_TIMEOUT_SECONDS,
     OPEN_MIRROR_START_COOLDOWN_SECONDS, OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS,
@@ -179,6 +180,7 @@ _register("OPEN_MIRROR_PUBLISH", "open_mirror_publish", "bool", OPEN_MIRROR_PUBL
 _register("OPEN_MIRROR_INTERVAL_SECONDS", "open_mirror_interval_seconds", "int", OPEN_MIRROR_INTERVAL_SECONDS)
 _register("OPEN_MIRROR_MODE", "open_mirror_mode", "str", OPEN_MIRROR_MODE)
 _register("OPEN_MIRROR_STATE_DIR", "open_mirror_state_dir", "str", OPEN_MIRROR_STATE_DIR)
+_register("OPEN_MIRROR_ENCRYPT_STATE", "open_mirror_encrypt_state", "bool", OPEN_MIRROR_ENCRYPT_STATE)
 _register("OPEN_MIRROR_MAX_ROWS", "open_mirror_max_rows", "int", OPEN_MIRROR_MAX_ROWS)
 _register("OPEN_MIRROR_MAX_PAGES_PER_CYCLE", "open_mirror_max_pages_per_cycle", "int", OPEN_MIRROR_MAX_PAGES_PER_CYCLE)
 _register("OPEN_MIRROR_MAX_ROWS_PER_CYCLE", "open_mirror_max_rows_per_cycle", "int", OPEN_MIRROR_MAX_ROWS_PER_CYCLE)
@@ -874,6 +876,7 @@ SETTINGS_META: dict[str, dict] = {
     "open_mirror_interval_seconds": {"cat": "Admin & observability", "help": "Seconds between Open Mirroring publish cycles when the loop is enabled."},
     "open_mirror_mode": {"cat": "Admin & observability", "help": "Open Mirroring publish mode: 'incremental' (diff against the last snapshot via __rowMarker__) or 'initial' (always a full insert batch).", "choices": ["incremental", "initial"]},
     "open_mirror_state_dir": {"cat": "Admin & observability", "help": "Directory for Open Mirroring incremental change-tracking state (kept OUTSIDE the landing zone). Gitignored."},
+    "open_mirror_encrypt_state": {"cat": "Admin & observability", "help": "Encrypt Open Mirroring cursors, snapshot keys, and pending metadata with the credential-store cipher."},
     "open_mirror_max_rows": {"cat": "Admin & observability", "help": "Open Mirroring per-table row cap per cycle (0 = the connection's query_max_rows default)."},
     "request_trace": {"cat": "Admin & observability", "help": "Record the Fabric request timeline."},
     "trace_buffer_size": {"cat": "Admin & observability", "help": "Max request-trace records kept in memory."},
@@ -1084,6 +1087,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "open_mirror_interval_seconds": "config.system.json",
     "open_mirror_mode": "config.system.json",
     "open_mirror_state_dir": "config.system.json",
+    "open_mirror_encrypt_state": "config.system.json",
     "open_mirror_max_rows": "config.system.json",
     "tls_cert_file": "config.system.json",
     "tls_key_file": "config.system.json",

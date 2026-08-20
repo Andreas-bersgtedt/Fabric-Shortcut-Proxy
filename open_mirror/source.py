@@ -166,9 +166,13 @@ async def _read_rows_watermark(
     key_columns: list[str] | None = None,
     last_keys: list | None = None,
     max_rows: int | None = None,
+    control_columns: list[config.ColumnDef] | None = None,
+    control_aliases: dict[str, str] | None = None,
 ) -> list[dict]:
     dialect = get_dialect(config.effective_db_url(connection))
-    projected, projection_params = _render_projection(dialect, columns)
+    projected, projection_params = _render_projection(
+        dialect, columns, control_columns or []
+    )
     source = dialect.quote_qualified(source_table)
     order_col = dialect.quote(watermark_column)
     key_cols = [dialect.quote(col) for col in (key_columns or [])]
@@ -188,7 +192,8 @@ async def _read_rows_watermark(
         )
         params = {_MAX_ROWS_PARAM: limit, "wm": last_watermark, **projection_params}
         params.update({f"key{i}": value for i, value in enumerate(last_keys or [])})
-    return await execute_split_query(sql, params, split_index=0, connection=connection)
+    rows = await execute_split_query(sql, params, split_index=0, connection=connection)
+    return _restore_control_values(rows, control_aliases or {})
 
 
 def _max_watermark(rows, watermark_column: str):
@@ -199,15 +204,26 @@ def _max_watermark(rows, watermark_column: str):
         return vals[-1] if vals else None
 
 
-async def _read_source_rows(source_table, columns, connection, *, max_rows=None):
+async def _read_source_rows(
+    source_table,
+    columns,
+    connection,
+    *,
+    max_rows=None,
+    control_columns: list[config.ColumnDef] | None = None,
+    control_aliases: dict[str, str] | None = None,
+):
     dialect = get_dialect(config.effective_db_url(connection))
-    projected, projection_params = _render_projection(dialect, columns)
+    projected, projection_params = _render_projection(
+        dialect, columns, control_columns or []
+    )
     source = dialect.quote_qualified(source_table)
     sql = _select_all_sql(dialect, projected, source)
     limit = max_rows if max_rows is not None else config.effective_query_max_rows(connection)
-    return await execute_split_query(
+    rows = await execute_split_query(
         sql, {_MAX_ROWS_PARAM: limit, **projection_params}, split_index=0, connection=connection
     )
+    return _restore_control_values(rows, control_aliases or {})
 
 
 def _state_dir() -> str:
@@ -242,10 +258,7 @@ def _configured_columns(table: OpenMirrorTableTarget, reflected) -> list[config.
             f"Open Mirror columns are not present in source {table.source_table!r}: {missing}"
         )
 
-    control_names = [*table.key_columns]
-    if table.watermark_column:
-        control_names.append(table.watermark_column)
-    for control_name in control_names:
+    for control_name in table.key_columns:
         matches = [column for column in configured if column.source_name == control_name]
         if not matches:
             raise ValueError(
@@ -256,14 +269,68 @@ def _configured_columns(table: OpenMirrorTableTarget, reflected) -> list[config.
             raise ValueError(
                 f"Open Mirror control column {control_name!r} must be pass-through"
             )
+    if table.watermark_column:
+        matches = [
+            column for column in configured
+            if column.source_name == table.watermark_column
+        ]
+        if matches and (matches[0].name != table.watermark_column or matches[0].transform):
+            raise ValueError(
+                f"Open Mirror watermark column {table.watermark_column!r} must be "
+                "pass-through when published"
+            )
     return list(configured)
 
 
-def _render_projection(dialect, columns) -> tuple[str, dict]:
+def _control_columns(
+    table: OpenMirrorTableTarget,
+    reflected: list[config.ColumnDef],
+    published: list[config.ColumnDef],
+) -> tuple[list[config.ColumnDef], dict[str, str]]:
+    """Build private projections for controls omitted from the published schema."""
+    published_sources = {column.source_name for column in published}
+    reflected_by_name = {column.name: column for column in reflected}
+    internal: list[config.ColumnDef] = []
+    aliases: dict[str, str] = {}
+    controls = [*table.key_columns]
+    if table.watermark_column:
+        controls.append(table.watermark_column)
+    for control_name in controls:
+        if control_name in published_sources:
+            continue
+        source_column = reflected_by_name.get(control_name)
+        if source_column is None:
+            raise ValueError(
+                f"Open Mirror control column {control_name!r} is not present in source"
+            )
+        if control_name in table.key_columns:
+            raise ValueError(
+                f"Open Mirror key column {control_name!r} must be published pass-through"
+            )
+        alias = f"__om_control_{len(internal)}"
+        internal.append(config.ColumnDef(
+            field_id=source_column.field_id,
+            name=alias,
+            iceberg_type=source_column.iceberg_type,
+            nullable=source_column.nullable,
+            source=control_name,
+        ))
+        aliases[control_name] = alias
+    return internal, aliases
+
+
+def _restore_control_values(rows: list[dict], aliases: dict[str, str]) -> list[dict]:
+    for row in rows:
+        for source_name, alias in aliases.items():
+            row[source_name] = row.get(alias)
+    return rows
+
+
+def _render_projection(dialect, columns, control_columns=()) -> tuple[str, dict]:
     """Render an Open Mirror projection using the shared dialect policy."""
     expressions = []
     params: dict = {}
-    for index, column in enumerate(columns, start=1):
+    for index, column in enumerate([*columns, *control_columns], start=1):
         expression, _output, column_params = dialect.render_projection(
             column, f"om_{index}"
         )
@@ -468,6 +535,7 @@ async def publish_table(
 
     reflected_columns = await derive_table_schema(table.source_table, target.connection_id)
     columns = _configured_columns(table, reflected_columns)
+    control_columns, control_aliases = _control_columns(table, reflected_columns, columns)
     _validate_projection_strategy(columns, strategy)
     current_fingerprint = projection_fingerprint(columns)
     if state is None:
@@ -488,19 +556,25 @@ async def publish_table(
         return await _publish_watermark(
             target, table, columns, publisher, state, loaded, reason=reason,
             dry_run=dry_run, max_rows=max_rows, state_dir=state_dir,
+            control_columns=control_columns, control_aliases=control_aliases,
         )
     return await _publish_snapshot(
         target, table, columns, publisher, state, loaded, reason=reason,
         dry_run=dry_run, max_rows=max_rows, state_dir=state_dir,
+        control_columns=control_columns, control_aliases=control_aliases,
     )
 
 
 async def _publish_watermark(
     target, table, columns, publisher, state, loaded, *,
-    reason, dry_run, max_rows, state_dir,
+    reason, dry_run, max_rows, state_dir, control_columns, control_aliases,
 ) -> PublishResult:
     wm_col = table.watermark_column
-    column_names = {column.name for column in columns}
+    column_names = {
+        column.name for column in columns
+    } | {
+        column.source_name for column in control_columns
+    }
     if not wm_col or wm_col not in column_names:
         raise ValueError(
             f"watermark_column {wm_col!r} is not a column of {table.source_table!r}"
@@ -526,6 +600,7 @@ async def _publish_watermark(
         rows = await _read_rows_watermark(
             table.source_table, columns, target.connection_id, wm_col, watermark,
             key_columns=table.key_columns, last_keys=keys, max_rows=page_size,
+            control_columns=control_columns, control_aliases=control_aliases,
         )
         pages += 1
         scanned += len(rows)
@@ -610,10 +685,11 @@ async def _publish_watermark(
 
 async def _publish_snapshot(
     target, table, columns, publisher, state, loaded, *,
-    reason, dry_run, max_rows, state_dir,
+    reason, dry_run, max_rows, state_dir, control_columns, control_aliases,
 ) -> PublishResult:
     rows = await _read_source_rows(
-        table.source_table, columns, target.connection_id, max_rows=max_rows
+        table.source_table, columns, target.connection_id, max_rows=max_rows,
+        control_columns=control_columns, control_aliases=control_aliases,
     )
     initial = not state.initialized
     if initial:

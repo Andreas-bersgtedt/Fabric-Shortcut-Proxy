@@ -219,6 +219,18 @@ class CredentialStore:
     def backend_name(self) -> str:
         return self._cipher.name if self._cipher is not None else "unavailable"
 
+    def encrypt_blob(self, payload: bytes) -> bytes:
+        """Encrypt an opaque application blob with the store's existing cipher."""
+        if self._cipher is None:
+            raise RuntimeError("credential store encryption is unavailable")
+        return self._cipher.encrypt(payload)
+
+    def decrypt_blob(self, payload: bytes) -> bytes:
+        """Decrypt an opaque application blob with the store's existing cipher."""
+        if self._cipher is None:
+            raise RuntimeError("credential store encryption is unavailable")
+        return self._cipher.decrypt(payload)
+
     # -- file io ----------------------------------------------------------
     def _load(self) -> dict:
         try:

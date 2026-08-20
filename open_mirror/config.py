@@ -128,7 +128,7 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
         output_names = [column.name for column in columns]
         if len(set(output_names)) != len(output_names):
             raise ValueError(f"open mirror table {name!r}: column names must be unique")
-        for control_name in [*key_column.split(","), *( [watermark_column] if watermark_column else [])]:
+        for control_name in key_column.split(","):
             control_name = control_name.strip()
             matches = [column for column in columns if column.source_name == control_name]
             if not matches:
@@ -141,6 +141,13 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
                 raise ValueError(
                     f"open mirror table {name!r}: control column {control_name!r} "
                     "must be pass-through"
+                )
+        if watermark_column:
+            matches = [column for column in columns if column.source_name == watermark_column]
+            if matches and (matches[0].name != watermark_column or matches[0].transform):
+                raise ValueError(
+                    f"open mirror table {name!r}: control column {watermark_column!r} "
+                    "must be pass-through when published"
                 )
     return OpenMirrorTableTarget(
         name=name,

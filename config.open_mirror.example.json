@@ -25,12 +25,11 @@
             "mode": "incremental",
             "_comment_watermark": "Set 'watermark_column' to a non-null monotonic id, timestamp, or rowversion for source-incremental upserts. Omit it for a full-source snapshot scan that also detects deletes.",
             "watermark_column": "ModifiedDate",
-            "_comment_columns": "Optional. Use the same ColumnDef projection contract as config.tables.json. Key and watermark columns must remain pass-through. This example assumes the source also has an email column.",
+            "_comment_columns": "Optional. Use the same ColumnDef projection contract as config.tables.json. Key columns must remain pass-through. The watermark may be omitted from published output and is carried through a private query alias. This example assumes the source also has an email column.",
             "columns": [
               {"field_id": 1, "name": "id", "type": "long", "nullable": false},
-              {"field_id": 2, "name": "ModifiedDate", "type": "timestamp"},
               {
-                "field_id": 3,
+                "field_id": 2,
                 "name": "email_token",
                 "source": "email",
                 "type": "string",

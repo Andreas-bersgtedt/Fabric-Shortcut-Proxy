@@ -100,6 +100,11 @@ curl -X POST http://localhost:9200/_config/api/open-mirror/reset \
 The reset endpoint requires all three fields. It preserves invalid state until this explicit
 action, so a corrupt or unreadable state file never becomes an accidental full load.
 
+For tokenized Open Mirror targets, use the dedicated
+[Open Mirror tokenization UAT](../TOKENIZATION_OPEN_MIRROR_UAT.md) before production use.
+It covers deterministic tokens, omitted watermark controls, encrypted state, random-token
+pending recovery, and key rotation.
+
 ## 8.6 Caching
 
 Generated Parquet is cached in memory, and optionally on disk for warm restarts:

@@ -57,12 +57,14 @@ std::filesystem::path script_path(const char* argv0) {
     return std::filesystem::path(argv0).parent_path() / "install.sh";
 }
 
-int run_shell_installer(const std::filesystem::path& script, int argc, char** argv) {
+int run_shell_installer(
+    const std::filesystem::path& script,
+    const std::vector<std::string>& extra_arguments) {
     std::vector<std::string> arguments;
     arguments.emplace_back("/bin/sh");
     arguments.emplace_back(script.string());
-    for (int index = 1; index < argc; ++index) {
-        arguments.emplace_back(argv[index]);
+    for (const auto& argument : extra_arguments) {
+        arguments.emplace_back(argument);
     }
     std::vector<char*> command;
     command.reserve(arguments.size() + 1);
@@ -89,8 +91,15 @@ int run_shell_installer(const std::filesystem::path& script, int argc, char** ar
     return 127;
 }
 
+bool ansi_enabled() {
+    const char* term = std::getenv("TERM");
+    return isatty(STDOUT_FILENO) && term != nullptr && std::strcmp(term, "dumb") != 0;
+}
+
 void clear_screen() {
-    std::cout << "\033[2J\033[H";
+    if (ansi_enabled()) {
+        std::cout << "\033[2J\033[H";
+    }
 }
 
 void draw_menu(std::size_t selected) {
@@ -103,8 +112,12 @@ void draw_menu(std::size_t selected) {
         "Quit",
     };
     clear_screen();
-    std::cout << "\033[3m  FSP\033[0m\n"
-              << "  FABRIC SHORTCUT PROXY\n"
+    if (ansi_enabled()) {
+        std::cout << "\033[3m  FSP\033[0m\n";
+    } else {
+        std::cout << "  FSP\n";
+    }
+    std::cout << "  FABRIC SHORTCUT PROXY\n"
               << "========================================\n\n"
               << "  SSH-safe installer\n\n";
     for (std::size_t index = 0; index < 6; ++index) {
@@ -118,7 +131,7 @@ int interactive(const std::filesystem::path& script) {
     TerminalMode terminal;
     if (!terminal.enable()) {
         std::cerr << "Interactive terminal input is unavailable; using the shell installer.\n";
-        return run_shell_installer(script, 1, nullptr);
+        return run_shell_installer(script, {});
     }
 
     std::size_t selected = 0;
@@ -141,25 +154,22 @@ int interactive(const std::filesystem::path& script) {
             }
             if (selected == 4) {
                 terminal.restore();
-                return run_shell_installer(script, 1, nullptr);
+                return run_shell_installer(script, {});
             }
             if (selected == 3) {
                 terminal.restore();
-                const char* check_args[] = {"install.sh", "--check", nullptr};
-                return run_shell_installer(script, 2, const_cast<char**>(check_args));
+                return run_shell_installer(script, {"--check"});
             }
             if (selected == 2) {
                 terminal.restore();
-                const char* dry_run_args[] = {"install.sh", "--dry-run", nullptr};
-                return run_shell_installer(script, 2, const_cast<char**>(dry_run_args));
+                return run_shell_installer(script, {"--dry-run"});
             }
             if (selected == 1) {
                 terminal.restore();
-                const char* resume_args[] = {"install.sh", "--resume", nullptr};
-                return run_shell_installer(script, 2, const_cast<char**>(resume_args));
+                return run_shell_installer(script, {"--resume"});
             }
             terminal.restore();
-            return run_shell_installer(script, 1, nullptr);
+            return run_shell_installer(script, {});
         }
         if (key == '\033') {
             char sequence[2];
@@ -178,8 +188,13 @@ int interactive(const std::filesystem::path& script) {
 
 int main(int argc, char** argv) {
     const auto script = script_path(argv[0]);
+    std::vector<std::string> arguments;
     if (argc > 1) {
-        return run_shell_installer(script, argc, argv);
+        arguments.reserve(static_cast<std::size_t>(argc - 1));
+        for (int index = 1; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        return run_shell_installer(script, arguments);
     }
     return interactive(script);
 }

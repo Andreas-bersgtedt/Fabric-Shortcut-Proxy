@@ -51,6 +51,7 @@ S3_SECRET_KEY_VALUE=
 APPLY_REQUESTED=0
 RESET_ADMIN_PASSWORD=0
 RESTART_AFTER_RESET=no
+ADMIN_PASSWORD_FILE=
 
 usage() {
     cat <<'EOF'
@@ -71,6 +72,8 @@ Options:
   --reset-admin-password
                   Generate and store a new Manager admin password.
   --restart       Restart the service after resetting the password.
+  --admin-password-file FILE
+                  Read the reset password from a protected temporary file.
   --no-color     Disable ANSI color output.
   --help         Show this help.
   --version      Show installer version.
@@ -732,9 +735,24 @@ reset_admin_password() {
     [ "$RESET_ADMIN_PASSWORD" -eq 1 ] || return 0
     [ "$(id -u)" -eq 0 ] || die 'admin password reset requires root; rerun with sudo'
     [ -n "$SECRET_BACKEND" ] || die 'no saved installer configuration; run the setup wizard first'
-    command -v openssl >/dev/null 2>&1 || die 'openssl is required to reset the admin password'
-    MANAGER_AUTH_PASSWORD_VALUE=$(openssl rand -base64 32 2>/dev/null | tr -d '\n' | cut -c1-32)
-    [ -n "$MANAGER_AUTH_PASSWORD_VALUE" ] || die 'failed to generate manager password'
+    if [ -z "$MANAGER_AUTH_PASSWORD_VALUE" ] && [ -t 0 ]; then
+        printf '%s' 'New password: '
+        stty -echo
+        IFS= read -r MANAGER_AUTH_PASSWORD_VALUE
+        stty echo
+        printf '\n%s' 'Confirm password: '
+        stty -echo
+        IFS= read -r password_confirmation
+        stty echo
+        printf '\n'
+        [ -n "$MANAGER_AUTH_PASSWORD_VALUE" ] || die 'admin password must not be empty'
+        [ "$MANAGER_AUTH_PASSWORD_VALUE" = "$password_confirmation" ] ||
+            die 'admin passwords do not match'
+    elif [ -z "$MANAGER_AUTH_PASSWORD_VALUE" ]; then
+        command -v openssl >/dev/null 2>&1 || die 'openssl is required to reset the admin password'
+        MANAGER_AUTH_PASSWORD_VALUE=$(openssl rand -base64 32 2>/dev/null | tr -d '\n' | cut -c1-32)
+        [ -n "$MANAGER_AUTH_PASSWORD_VALUE" ] || die 'failed to generate manager password'
+    fi
 
     if [ "$SECRET_BACKEND" = keyvault ]; then
         [ "$KEYVAULT_MODE" != disabled ] || die 'saved Key Vault mode is disabled'
@@ -785,6 +803,7 @@ main() {
             --dry-run) DRY_RUN=1 ;;
             --reset-admin-password) RESET_ADMIN_PASSWORD=1 ;;
             --restart) RESTART_AFTER_RESET=yes ;;
+            --admin-password-file) shift; [ "$#" -gt 0 ] || die '--admin-password-file requires a file'; ADMIN_PASSWORD_FILE=$1 ;;
             --no-color) NO_COLOR=1 ;;
             --version) printf '%s\n' "Fabric Shortcut Proxy installer $INSTALLER_VERSION"; exit 0 ;;
             --help|-h) usage; exit 0 ;;
@@ -792,6 +811,13 @@ main() {
         esac
         shift
     done
+    if [ -n "$ADMIN_PASSWORD_FILE" ]; then
+        [ -r "$ADMIN_PASSWORD_FILE" ] || die 'admin password file could not be read'
+        MANAGER_AUTH_PASSWORD_VALUE=$(cat "$ADMIN_PASSWORD_FILE")
+        rm -f "$ADMIN_PASSWORD_FILE"
+        ADMIN_PASSWORD_FILE=
+        [ -n "$MANAGER_AUTH_PASSWORD_VALUE" ] || die 'admin password must not be empty'
+    fi
 
     STATE_FILE=$STATE_DIR/installer-state
     validate_answers

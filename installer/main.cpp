@@ -63,6 +63,46 @@ std::filesystem::path script_path(const char* argv0) {
     return std::filesystem::path(argv0).parent_path() / "install.sh";
 }
 
+std::string prompt_secret(const std::string& label) {
+    std::cout << label << ": " << std::flush;
+    termios original{};
+    if (tcgetattr(STDIN_FILENO, &original) != 0) {
+        throw std::runtime_error("could not read terminal settings");
+    }
+    termios hidden = original;
+    hidden.c_lflag &= static_cast<tcflag_t>(~ECHO);
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &hidden) != 0) {
+        throw std::runtime_error("could not disable password echo");
+    }
+    std::string value;
+    const bool read_success = static_cast<bool>(std::getline(std::cin, value));
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &original);
+    std::cout << '\n';
+    if (!read_success || value.empty()) {
+        throw std::runtime_error("password must not be empty");
+    }
+    return value;
+}
+
+std::filesystem::path write_secret_file(const std::string& password) {
+    char template_path[] = "/tmp/fsp-admin-password-XXXXXX";
+    const int descriptor = mkstemp(template_path);
+    if (descriptor < 0 || fchmod(descriptor, S_IRUSR | S_IWUSR) != 0) {
+        if (descriptor >= 0) {
+            close(descriptor);
+            unlink(template_path);
+        }
+        throw std::runtime_error("could not create protected password file");
+    }
+    const ssize_t written = write(descriptor, password.data(), password.size());
+    close(descriptor);
+    if (written != static_cast<ssize_t>(password.size())) {
+        unlink(template_path);
+        throw std::runtime_error("could not write protected password file");
+    }
+    return template_path;
+}
+
 bool valid_answer_key(const std::string& key) {
     static const std::set<std::string> keys = {
         "APPLY", "install_dir", "service_user", "service_group", "unit_name",
@@ -393,22 +433,33 @@ int interactive(const std::filesystem::path& script) {
             if (selected == 5) {
                 terminal.restore();
                 std::cout << "\nReset Manager admin password\n"
-                          << "A new password will be generated and stored in the configured backend.\n"
-                          << "The password is never printed. Restart the service now? [yes/no] [no]: "
-                          << std::flush;
+                          << "Enter a new password. It will not be displayed.\n";
+                const auto password = prompt_secret("New password");
+                const auto confirmation = prompt_secret("Confirm password");
+                if (password != confirmation) {
+                    std::cerr << "Passwords do not match.\n";
+                    return 2;
+                }
+                const auto password_file = write_secret_file(password);
+                std::cout << "Restart the service now? [yes/no] [no]: " << std::flush;
                 std::string restart;
                 if (!std::getline(std::cin, restart)) {
+                    unlink(password_file.c_str());
                     return 1;
                 }
                 if (restart.empty()) {
                     restart = "no";
                 }
                 if (restart != "yes" && restart != "no") {
+                    unlink(password_file.c_str());
                     std::cerr << "Invalid choice; use yes or no.\n";
                     return 2;
                 }
-                return run_shell_installer(
-                    script, {"--reset-admin-password", restart == "yes" ? "--restart" : "--no-color"});
+                const int result = run_shell_installer(
+                    script, {"--reset-admin-password", "--admin-password-file",
+                             password_file.string(), restart == "yes" ? "--restart" : "--no-color"});
+                unlink(password_file.c_str());
+                return result;
             }
             if (selected == 4) {
                 terminal.restore();

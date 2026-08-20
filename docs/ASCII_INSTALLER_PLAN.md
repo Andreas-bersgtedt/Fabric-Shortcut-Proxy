@@ -237,13 +237,15 @@ The first shell implementation uses a strict `KEY=VALUE` answers file documented
 `docs/ASCII_INSTALLER_ANSWERS.example`. Secrets are provided through environment-variable
 names or protected file references, not inline values.
 
-The current foundation implements the host, identity selection, Key Vault settings, local
-or Key Vault credential provisioning, TLS file checks, systemd unit rendering, and read-only
-health checks. `ADMIN_TOKEN`, `MANAGER_AUTH_PASSWORD`, and S3 credentials are generated only
-after `APPLY`; generated values are written to the selected protected backend and never to
-installer state. The current application has no separate `AGENT_TOKEN` setting, so the wizard
-labels that optional value as unused rather than pretending it authenticates Manager-to-Agent
-traffic.
+The current foundation implements host validation, identity selection, Key Vault settings,
+Key Vault or protected environment-file provisioning, TLS file checks, systemd unit
+rendering, and read-only health checks. Encrypted credential-store provisioning remains
+outside the installer because that store manages database connection URLs, not the
+Manager's generated credentials. `ADMIN_TOKEN`, `MANAGER_AUTH_PASSWORD`, and S3 credentials
+are generated only after `APPLY`; generated values are written to the selected protected
+backend and never to installer state. The current application has no separate
+`AGENT_TOKEN` setting, so the wizard labels that optional value as unused rather than
+pretending it authenticates Manager-to-Agent traffic.
 
 ## Implementation layout
 
@@ -251,10 +253,10 @@ traffic.
 installer.sh              C++ frontend dispatcher with shell fallback
 installer/
   install.sh               Line-based provisioning fallback
- main.cpp                Arrow-key SSH frontend
- Makefile                Linux build
- build.sh                Build wrapper
- README.md               Build and fallback behavior
+ main.cpp                 Arrow-key SSH frontend
+ Makefile                 Linux build
+ build.sh                 Build wrapper
+ README.md                Build and fallback behavior
   test_installer_systemd.py
 ```
 

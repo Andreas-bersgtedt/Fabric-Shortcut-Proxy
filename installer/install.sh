@@ -37,6 +37,7 @@ TLS_KEY_FILE=
 SECRET_BACKEND=
 ENV_FILE=${FSP_ENV_FILE:-/etc/fabric-shortcut-proxy.env}
 START_SERVICE=no
+HEALTH_URL=${FSP_HEALTH_URL:-http://127.0.0.1:9200/healthz}
 MANAGER_AUTH_USERNAME=operator
 GENERATE_AGENT_TOKEN=no
 GENERATE_S3_CREDENTIALS=yes
@@ -167,6 +168,57 @@ answer_value() {
     printf '%s' "$value"
 }
 
+validate_answers() {
+    [ -n "$ANSWERS_FILE" ] || return 0
+    [ -f "$ANSWERS_FILE" ] || die "answers file not found: $ANSWERS_FILE"
+    awk -F= '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        index($0, "=") == 0 { print "line without KEY=VALUE"; exit 1 }
+        {
+          key=$1
+          sub(/^[[:space:]]+/, "", key)
+          sub(/[[:space:]]+$/, "", key)
+          if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) { print "invalid key: " key; exit 1 }
+          if (seen[key]++) { print "duplicate key: " key; exit 1 }
+          if (key != "APPLY" && key != "install_dir" && key != "service_user" &&
+              key != "service_group" && key != "unit_name" && key != "identity_mode" &&
+              key != "tenant_id" && key != "client_id" && key != "client_secret_reference" &&
+              key != "keyvault_mode" && key != "keyvault_uri" && key != "secret_backend" &&
+              key != "manager_auth_username" && key != "generate_admin_credentials" &&
+              key != "generate_s3_credentials" && key != "generate_agent_token" &&
+              key != "tls_mode" && key != "tls_hostname" && key != "tls_cert_file" &&
+              key != "tls_key_file" && key != "start_service") {
+              print "unknown key: " key; exit 1
+          }
+        }
+    ' "$ANSWERS_FILE" || die 'answers file validation failed'
+}
+
+validate_install_dir() {
+    case "$INSTALL_DIR" in
+        ''|/|/etc|/usr|/var|/home|/root|/opt) die "unsafe installation directory: $INSTALL_DIR" ;;
+        /*) ;;
+        *) die 'installation directory must be absolute' ;;
+    esac
+    if [ -e "$INSTALL_DIR" ] && [ ! -d "$INSTALL_DIR" ]; then
+        die "installation path is not a directory: $INSTALL_DIR"
+    fi
+}
+
+atomic_replace() {
+    source=$1
+    target=$2
+    if [ -e "$target" ]; then
+        backup="${target}.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+        cp -p "$target" "$backup" || die "could not back up $target"
+        chmod 600 "$backup" 2>/dev/null || true
+    fi
+    mv "$source" "$target" || die "could not install $target"
+    if command -v sync >/dev/null 2>&1; then
+        sync
+    fi
+}
+
 save_state() {
     [ "$DRY_RUN" -eq 1 ] && return 0
     mkdir -p "$STATE_DIR"
@@ -191,11 +243,20 @@ save_state() {
         printf 'tls_key_file=%s\n' "$TLS_KEY_FILE"
         printf 'secret_backend=%s\n' "$SECRET_BACKEND"
     } > "$tmp"
-    mv "$tmp" "$STATE_FILE"
+    atomic_replace "$tmp" "$STATE_FILE"
 }
 
 load_state() {
     [ -f "$STATE_FILE" ] || return 0
+    state_version=$(awk -F= '$1 == "version" { print $2; exit }' "$STATE_FILE")
+    [ "$state_version" = 1 ] ||
+        die "installer state is corrupt or incompatible: $STATE_FILE; move it aside and rerun without --resume"
+    awk -F= '
+        /^[[:space:]]*$/ { next }
+        NF < 2 { exit 1 }
+        $1 !~ /^[A-Za-z_][A-Za-z0-9_]*$/ { exit 1 }
+    ' "$STATE_FILE" ||
+        die "installer state is unreadable: $STATE_FILE; move it aside and rerun without --resume"
     # State contains only installer-generated, non-secret scalar values.
     while IFS='=' read -r key value; do
         case "$key" in
@@ -253,6 +314,7 @@ run_check() {
             printf '%s\n' 'missing or unreadable'
         fi
     fi
+    printf '  State file:  %s\n' "$STATE_FILE"
 }
 
 welcome() {
@@ -296,8 +358,13 @@ host_step() {
     SERVICE_USER=$(read_answer 'Service user' "$SERVICE_USER" "$SERVICE_USER" service_user)
     SERVICE_GROUP=$(read_answer 'Service group' "$SERVICE_GROUP" "$SERVICE_GROUP" service_group)
     UNIT_NAME=$(read_answer 'systemd unit name' "$UNIT_NAME" "$UNIT_NAME" unit_name)
+    validate_install_dir
     command -v python3 >/dev/null 2>&1 || die 'python3 is required'
     command -v git >/dev/null 2>&1 || die 'git is required'
+    command -v curl >/dev/null 2>&1 || die 'curl is required'
+    command -v systemctl >/dev/null 2>&1 || die 'systemd is required'
+    python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' ||
+        die 'Python 3.11 or newer is required'
     STEP=2
     save_state
 }
@@ -340,10 +407,13 @@ credentials_step() {
     step_header 'Agent and Manager credentials'
     backend_default=env-file
     [ "$KEYVAULT_MODE" != disabled ] && backend_default=keyvault
-    SECRET_BACKEND=$(read_answer 'Secret backend (keyvault, credentials, env-file)' "$backend_default" "$SECRET_BACKEND" secret_backend)
-    case "$SECRET_BACKEND" in keyvault|credentials|env-file) ;; *) die 'unsupported secret backend' ;; esac
+    SECRET_BACKEND=$(read_answer 'Secret backend (keyvault, env-file)' "$backend_default" "$SECRET_BACKEND" secret_backend)
+    case "$SECRET_BACKEND" in keyvault|env-file) ;; *) die 'unsupported secret backend' ;; esac
     if [ "$SECRET_BACKEND" = keyvault ] && [ "$KEYVAULT_MODE" = disabled ]; then
         die 'keyvault secret backend requires an enabled Key Vault mode'
+    fi
+    if [ "$SECRET_BACKEND" = keyvault ] && [ "$IDENTITY_MODE" = service_principal ]; then
+        die 'service-principal identity requires env-file bootstrap; choose env-file or managed_identity'
     fi
     MANAGER_AUTH_USERNAME=$(read_answer 'Manager auth username' 'operator' "$MANAGER_AUTH_USERNAME" manager_auth_username)
     GENERATE_ADMIN_CREDENTIALS=$(read_answer 'Generate admin token and password (yes/no)' 'yes' "$GENERATE_ADMIN_CREDENTIALS" generate_admin_credentials)
@@ -376,6 +446,17 @@ tls_step() {
             command -v openssl >/dev/null 2>&1 || die 'openssl is required for TLS validation'
             openssl x509 -in "$TLS_CERT_FILE" -noout >/dev/null 2>&1 || die 'certificate validation failed'
             openssl x509 -noout -checkend 0 -in "$TLS_CERT_FILE" >/dev/null 2>&1 || die 'certificate is expired'
+            cert_public_key=$(openssl x509 -in "$TLS_CERT_FILE" -pubkey -noout |
+                openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256)
+            key_public_key=$(openssl pkey -in "$TLS_KEY_FILE" -pubout -outform DER 2>/dev/null |
+                openssl sha256)
+            [ -n "$cert_public_key" ] && [ "$cert_public_key" = "$key_public_key" ] ||
+                die 'certificate and private key do not match'
+            openssl x509 -in "$TLS_CERT_FILE" -noout -checkhost "$TLS_HOSTNAME" >/dev/null 2>&1 ||
+                die "certificate does not cover hostname: $TLS_HOSTNAME"
+            if [ "$TLS_MODE" = nginx ]; then
+                command -v nginx >/dev/null 2>&1 || die 'nginx is required for nginx TLS mode'
+            fi
             ;;
         *) die 'unsupported TLS mode' ;;
     esac
@@ -399,11 +480,32 @@ checks_step() {
     printf '    Python:       %s\n' "$(command -v python3 >/dev/null 2>&1 && printf '%s' found || printf '%s' missing)"
     printf '    Git:          %s\n' "$(command -v git >/dev/null 2>&1 && printf '%s' found || printf '%s' missing)"
     printf '    Systemd:      %s\n' "$(command -v systemctl >/dev/null 2>&1 && printf '%s' found || printf '%s' missing)"
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$UNIT_NAME"; then
+        printf '    Service:      active\n'
+        if command -v curl >/dev/null 2>&1; then
+            printf '    Health:       '
+            curl --fail --silent --show-error --max-time 15 "$HEALTH_URL" >/dev/null 2>&1 &&
+                printf '%s\n' 'healthy' ||
+                printf '%s\n' "failed ($HEALTH_URL)"
+        fi
+    else
+        printf '    Service:      inactive\n'
+    fi
     if [ "$TLS_MODE" != disabled ]; then
         printf '    Certificate:  %s\n' "$TLS_CERT_FILE"
         printf '%s\n' '    Private key:  configured (path withheld from logs)'
     else
         printf '%s\n' '    TLS:          disabled'
+    fi
+    if [ "$KEYVAULT_MODE" != disabled ] && [ -n "$KEYVAULT_URI" ]; then
+        printf '    Key Vault:    '
+        vault_name=$(printf '%s' "$KEYVAULT_URI" | awk -F/ '{print $3}' | sed 's/\.vault\.azure\.net$//')
+        if command -v az >/dev/null 2>&1 &&
+            az keyvault secret list --vault-name "$vault_name" --query '[].name' -o tsv >/dev/null 2>&1; then
+            printf '%s\n' 'readable'
+        else
+            printf '%s\n' 'unavailable'
+        fi
     fi
     STEP=9
     save_state
@@ -440,7 +542,9 @@ apply_setup() {
     [ "$(id -u)" -eq 0 ] || die 'apply requires root; rerun with sudo'
     [ -d "$INSTALL_DIR" ] || die "installation directory does not exist: $INSTALL_DIR"
     command -v systemctl >/dev/null 2>&1 || die 'systemctl is required to apply service setup'
-    [ "$SECRET_BACKEND" != credentials ] || die 'encrypted credential-store provisioning is not implemented; choose keyvault or env-file'
+    if [ "$IDENTITY_MODE" = service_principal ]; then
+        command -v az >/dev/null 2>&1 || die 'Azure CLI is required to validate service-principal identity'
+    fi
     if [ "$KEYVAULT_MODE" != disabled ]; then
         command -v az >/dev/null 2>&1 || die 'Azure CLI is required for Key Vault provisioning'
     fi
@@ -478,6 +582,13 @@ apply_setup() {
         esac
         [ -n "$CLIENT_SECRET_VALUE" ] || die 'client secret reference resolved to an empty value'
     fi
+    if [ "$IDENTITY_MODE" = service_principal ]; then
+        AZURE_TENANT_ID=$TENANT_ID AZURE_CLIENT_ID=$CLIENT_ID \
+            AZURE_CLIENT_SECRET=$CLIENT_SECRET_VALUE \
+            az account get-access-token --resource https://api.fabric.microsoft.com \
+            --output none >/dev/null 2>&1 ||
+            die 'service-principal could not obtain a Fabric token; verify tenant, application, secret, and permissions'
+    fi
 
     if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
         groupadd --system "$SERVICE_GROUP"
@@ -512,11 +623,13 @@ apply_setup() {
     } > "$env_tmp"
     chmod 600 "$env_tmp"
     chown "$SERVICE_USER:$SERVICE_GROUP" "$env_tmp"
-    mv "$env_tmp" "$ENV_FILE"
+    atomic_replace "$env_tmp" "$ENV_FILE"
 
     if [ "$SECRET_BACKEND" = keyvault ]; then
         vault_name=$(printf '%s' "$KEYVAULT_URI" | awk -F/ '{print $3}' | sed 's/\.vault\.azure\.net$//')
         [ -n "$vault_name" ] || die 'could not derive Key Vault name'
+        az keyvault secret list --vault-name "$vault_name" --query '[].name' -o tsv >/dev/null ||
+            die 'Key Vault read permission check failed'
         set_keyvault_secret() {
             kv_name=$1
             kv_value=$2
@@ -548,22 +661,34 @@ apply_setup() {
         printf '%s\n' "User=$SERVICE_USER"
         printf '%s\n' "Group=$SERVICE_GROUP"
         printf '%s\n' "WorkingDirectory=$INSTALL_DIR"
-        printf '%s\n' "EnvironmentFile=$ENV_FILE"
+        [ "$SECRET_BACKEND" = env-file ] && printf '%s\n' "EnvironmentFile=$ENV_FILE"
         printf '%s\n' "ExecStart=/bin/bash $INSTALL_DIR/Manager.sh --admin-ui --config-ui --auto-stash"
         printf '%s\n' 'Restart=on-failure'
         printf '%s\n' 'RestartSec=5'
         printf '%s\n' 'TimeoutStartSec=600'
+        printf '%s\n' 'LimitNOFILE=65536'
+        printf '%s\n' 'NoNewPrivileges=true'
+        printf '%s\n' 'PrivateTmp=true'
+        printf '%s\n' 'ProtectSystem=full'
+        printf '%s\n' 'ProtectHome=true'
         printf '%s\n' 'KillMode=control-group'
         printf '%s\n' ''
         printf '%s\n' '[Install]'
         printf '%s\n' 'WantedBy=multi-user.target'
     } > "$unit_tmp"
     chmod 644 "$unit_tmp"
-    mv "$unit_tmp" "/etc/systemd/system/$UNIT_NAME"
+    atomic_replace "$unit_tmp" "/etc/systemd/system/$UNIT_NAME"
     systemd-analyze verify "/etc/systemd/system/$UNIT_NAME"
     systemctl daemon-reload
     if [ "$START_SERVICE" = yes ]; then
-        systemctl enable --now "$UNIT_NAME"
+        systemctl enable "$UNIT_NAME"
+        systemctl start "$UNIT_NAME"
+        systemctl is-active --quiet "$UNIT_NAME" ||
+            die "service did not become active; inspect journalctl -u $UNIT_NAME"
+        if command -v curl >/dev/null 2>&1; then
+            curl --fail --silent --show-error --max-time 15 "$HEALTH_URL" >/dev/null ||
+                die "health check failed at $HEALTH_URL; inspect journalctl -u $UNIT_NAME"
+        fi
     fi
     printf '%s\n' "  Applied service unit: /etc/systemd/system/$UNIT_NAME"
     printf '%s\n' "  Environment file: $ENV_FILE (mode 0600)"
@@ -584,7 +709,11 @@ main() {
     done
 
     STATE_FILE=$STATE_DIR/installer-state
+    validate_answers
     [ "$RESUME" -eq 1 ] && load_state
+    if [ "$CHECK_ONLY" -eq 1 ] && [ -f "$STATE_FILE" ]; then
+        load_state
+    fi
     if [ "$CHECK_ONLY" -eq 1 ]; then
         run_check
         exit 0

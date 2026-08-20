@@ -75,6 +75,7 @@ def test_compute_changes_default_upsert():
 
 
 def test_open_mirror_state_can_encrypt_sensitive_cursors(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography", reason="encrypted state requires cryptography")
     from cryptography.fernet import Fernet
 
     monkeypatch.setenv("OPEN_MIRROR_ENCRYPT_STATE", "1")

@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fcntl.h>
 #include <iostream>
 #include <string>
 #include <termios.h>
@@ -20,7 +21,7 @@ public:
             return false;
         }
         termios raw = original_;
-        raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+        raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO | ISIG));
         raw.c_cc[VMIN] = 1;
         raw.c_cc[VTIME] = 0;
         if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) {
@@ -30,11 +31,16 @@ public:
         return true;
     }
 
-    ~TerminalMode() {
+    void restore() {
         if (active_) {
             tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_);
             std::cout << "\033[0m\033[?25h" << std::flush;
+            active_ = false;
         }
+    }
+
+    ~TerminalMode() {
+        restore();
     }
 
 private:
@@ -53,6 +59,7 @@ std::filesystem::path script_path(const char* argv0) {
 
 int run_shell_installer(const std::filesystem::path& script, int argc, char** argv) {
     std::vector<std::string> arguments;
+    arguments.emplace_back("/bin/sh");
     arguments.emplace_back(script.string());
     for (int index = 1; index < argc; ++index) {
         arguments.emplace_back(argv[index]);
@@ -63,6 +70,20 @@ int run_shell_installer(const std::filesystem::path& script, int argc, char** ar
         command.push_back(argument.data());
     }
     command.push_back(nullptr);
+    if (isatty(STDIN_FILENO)) {
+        const int terminal = open("/dev/tty", O_RDWR);
+        if (terminal < 0 || dup2(terminal, STDIN_FILENO) < 0 ||
+            dup2(terminal, STDOUT_FILENO) < 0 || dup2(terminal, STDERR_FILENO) < 0) {
+            if (terminal >= 0) {
+                close(terminal);
+            }
+            std::perror("unable to attach installer to /dev/tty");
+            return 127;
+        }
+        if (terminal > STDERR_FILENO) {
+            close(terminal);
+        }
+    }
     execv(command[0], command.data());
     std::perror("unable to start installer/install.sh");
     return 127;
@@ -112,12 +133,15 @@ int interactive(const std::filesystem::path& script) {
                 return 0;
             }
             if (selected == 2) {
+                terminal.restore();
                 return run_shell_installer(script, 1, nullptr);
             }
             if (selected == 1) {
+                terminal.restore();
                 const char* check_args[] = {"install.sh", "--check", nullptr};
                 return run_shell_installer(script, 2, const_cast<char**>(check_args));
             }
+            terminal.restore();
             return run_shell_installer(script, 1, nullptr);
         }
         if (key == '\033') {

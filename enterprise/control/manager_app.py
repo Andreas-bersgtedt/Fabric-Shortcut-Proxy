@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import os
 import pathlib
+import secrets
 import shlex
 import sys
 
@@ -57,7 +58,8 @@ def _agent_launch_cmd() -> list[str]:
     return [sys.executable, os.path.join(_REPO_ROOT, "main.py")]
 
 
-def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int) -> dict[str, str]:
+def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int,
+               monitor_token: str) -> dict[str, str]:
     manager_url = f"http://{_agent_host_for_link()}:{config.CONTROL_PORT}"
     return {
         "MANAGER_URL": manager_url,
@@ -80,22 +82,24 @@ def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int) 
         # scrape + aggregate it (the console's Monitor tab lives on the Manager).
         "ENABLE_MONITOR": "1" if (config.ENABLE_MONITOR or config.ENABLE_ADMIN_UI)
                           else os.environ.get("ENABLE_MONITOR", "0"),
+        "FSP_INTERNAL_MONITOR_TOKEN": monitor_token,
     }
 
 
-def _build_supervisors() -> list[AgentSupervisor]:
+def _build_supervisors(monitor_token: str = "") -> list[AgentSupervisor]:
     """One supervisor per Agent (count = AGENT_COUNT), each on PORT + i with its
     own materialization shard."""
     count = max(1, config.AGENT_COUNT)
-    return [_make_supervisor(i, count) for i in range(count)]
+    return [_make_supervisor(i, count, monitor_token) for i in range(count)]
 
 
-def _make_supervisor(i: int, count: int) -> AgentSupervisor:
+def _make_supervisor(i: int, count: int, monitor_token: str = "") -> AgentSupervisor:
     """Build a single Agent supervisor for shard ``i`` of ``count`` (PORT + i)."""
     agent_id = f"agent-{i + 1}"
     return AgentSupervisor(
         _agent_launch_cmd(),
-        env=_agent_env(agent_id, port=config.PORT + i, shard_index=i, shard_count=count),
+        env=_agent_env(agent_id, port=config.PORT + i, shard_index=i, shard_count=count,
+                       monitor_token=monitor_token),
         name=agent_id,
         restart_backoff=config.AGENT_RESTART_BACKOFF_SECONDS,
         max_rapid_restarts=config.AGENT_MAX_RAPID_RESTARTS,
@@ -106,6 +110,7 @@ def _make_supervisor(i: int, count: int) -> AgentSupervisor:
 
 
 def create_manager_app() -> FastAPI:
+    monitor_token = secrets.token_urlsafe(32)
     registry = Registry(
         heartbeat_ms=config.HEARTBEAT_MS,
         miss_limit=config.HEARTBEAT_MISS_LIMIT,
@@ -114,7 +119,7 @@ def create_manager_app() -> FastAPI:
         ),
     )
     service = ControlService(registry, tables=[t.name for t in config.TABLES])
-    supervisors = _build_supervisors()
+    supervisors = _build_supervisors(monitor_token)
     gateway = None
     if config.ENABLE_GATEWAY:
         from enterprise.control.gateway import Gateway
@@ -371,7 +376,7 @@ def create_manager_app() -> FastAPI:
     # gateway catch-all (which also reserves /_monitor) so it isn't shadowed.
     if config.ENABLE_ADMIN_UI or config.ENABLE_MONITOR:
         from enterprise.control.monitor_proxy import create_monitor_proxy_router
-        app.include_router(create_monitor_proxy_router(supervisors, registry))
+        app.include_router(create_monitor_proxy_router(supervisors, registry, monitor_token))
 
     # Gateway (LB) MUST be included last: its /{bucket} catch-all would otherwise
     # shadow the control/health routes above.

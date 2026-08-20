@@ -592,6 +592,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 _AUTH_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/favicon.ico")
 _AUTH_REQUIRED_PREFIXES = ("/_admin", "/_config", "/_monitor")
+_INTERNAL_MONITOR_HEADER = "x-fsp-internal-monitor"
 
 
 def _bucket_key_from_path(path: str) -> tuple[str, str]:
@@ -609,6 +610,12 @@ async def sigv4_auth_middleware(request, call_next):
         return await call_next(request)
     path = request.url.path
     if any(path == p or path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+    if path.startswith("/_monitor/api/") and (
+        request.headers.get(_INTERNAL_MONITOR_HEADER)
+        and request.headers[_INTERNAL_MONITOR_HEADER]
+        == os.environ.get("FSP_INTERNAL_MONITOR_TOKEN", "")
+    ):
         return await call_next(request)
 
     from s3.xml_responses import error_response

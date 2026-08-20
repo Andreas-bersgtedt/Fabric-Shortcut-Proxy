@@ -52,12 +52,13 @@ def _agent_base_urls(supervisors) -> list[str]:
     return urls
 
 
-def create_monitor_proxy_router(supervisors, registry=None) -> APIRouter:
+def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str = "") -> APIRouter:
     router = APIRouter(prefix="/_monitor")
 
     async def _scrape(client: httpx.AsyncClient, base: str, path: str, method: str = "GET"):
         try:
-            r = await client.request(method, base + path)
+            headers = {"X-FSP-Internal-Monitor": monitor_token} if monitor_token else {}
+            r = await client.request(method, base + path, headers=headers)
             if r.status_code == 200:
                 return r.json() if method == "GET" else True
         except Exception as exc:  # noqa: BLE001 - a down/slow Agent must not fail the console

@@ -14,6 +14,7 @@ Agent; heartbeats retry and re‑register on a stale lease.
 from __future__ import annotations
 
 import asyncio
+import os
 import platform
 import socket
 from typing import Callable
@@ -22,6 +23,11 @@ import config
 from enterprise.control.contract import RegisterRequest, HeartbeatRequest, AgentHealth
 from enterprise.control.transport import ControlClient, RestControlClient, StaleLeaseError
 from observability.logging import get_logger
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - enterprise dependencies include psutil
+    psutil = None
 
 log = get_logger(__name__)
 
@@ -55,6 +61,17 @@ def _serving_state() -> tuple[list[str], dict[str, int]]:
         return sorted(epochs), epochs
     except Exception:
         return [], {}
+
+
+def _agent_health() -> AgentHealth:
+    """Return current process resource usage for the Manager heartbeat."""
+    if psutil is None:
+        return AgentHealth()
+    process = psutil.Process(os.getpid())
+    return AgentHealth(
+        cpu_pct=float(process.cpu_percent(interval=None)),
+        mem_bytes=int(process.memory_info().rss),
+    )
 
 
 class AgentLink:
@@ -134,7 +151,7 @@ class AgentLink:
                     tables, epochs = _serving_state()
                     hb = HeartbeatRequest(
                         agent_id=self.agent_id, lease_id=self._lease_id,
-                        health=AgentHealth(), serving_tables=tables, epochs=epochs,
+                        health=_agent_health(), serving_tables=tables, epochs=epochs,
                     )
                     cmds = await self._client.heartbeat(hb)
                     for cmd in cmds:

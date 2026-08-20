@@ -159,7 +159,46 @@ the full matrix.
 | Schema | Reflected from the source | None (opaque bytes) |
 | Auth | SigV4 (optional unless enforced) | SigV4 forced by default |
 
-## 2.9 Next
+## 2.9 Open Mirroring: publishing into Fabric
+
+Open Mirror is a separate publishing path from shortcut serving. Instead of exposing
+source data through the proxy's S3 front door, the publisher reads configured source
+tables and writes Microsoft Fabric Open Mirroring files into a landing zone. Fabric's
+mirroring service consumes those files and materializes the mirrored database.
+
+Each target binds to an existing source connection and a landing-zone root. The root can
+be a OneLake DFS URI for a Fabric mirrored database or a local/UNC directory for staging.
+Each table is written below its target table path, optionally under a
+`<schema>.schema/<table>` folder, with:
+
+- `_metadata.json`, which declares the table key columns and optional upsert/file-detection
+  behavior.
+- Numbered Parquet files, using monotonically increasing 20-digit names. Incremental files
+  include the `__rowMarker__` column that tells Fabric whether a row is an insert, update,
+  or delete.
+- `_partnerEvents.json` at the mirrored-database level when partner/source information is
+  configured.
+
+The publisher supports two change-tracking strategies:
+
+- **Watermark tracking.** A monotonic `watermark_column` reads rows after the committed
+  cursor and orders ties by the configured key columns. This is efficient for append or
+  update streams, but it cannot detect deletes or changes that do not advance the watermark.
+- **Snapshot diffing.** Without a watermark column, each cycle reads the source and compares
+  row hashes with local state. It detects inserts, updates, and deletes, at the cost of a full
+  source scan.
+
+State is kept outside the landing zone so a restart can resume or recover a pending batch.
+The publisher commits state only after the corresponding landing-zone files are written.
+For OneLake targets, the Manager can preflight and self-heal the Fabric mirroring operation
+before extraction; this starts mirroring, not Fabric capacity.
+
+Open Mirror is opt-in (`OPEN_MIRROR_PUBLISH`) and does not replace warehouse snapshots or
+mounted-bucket passthrough. Configure it in `config.open_mirror.json`; the detailed settings
+and operating procedures are in [Chapter 5, section 5.11](05-configuration.md) and
+[Chapter 8, section 8.5](08-operations.md).
+
+## 2.10 Next
 
 Continue to [Chapter 3: Architecture](03-architecture.md) to see how these concepts map
 to processes and modules, or skip to [Chapter 4: Installation](04-installation.md) to

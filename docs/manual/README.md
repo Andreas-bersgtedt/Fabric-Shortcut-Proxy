@@ -1,6 +1,6 @@
 # Fabric Shortcut Proxy — User Manual
 
-Version 2.5.2
+Version 2.4.0
 
 This manual is the end-to-end guide to installing, configuring, and operating the
 Fabric Shortcut Proxy. It is organized into chapters (files) that each cover one
@@ -26,8 +26,8 @@ duplicating it.
 | # | Chapter | What it covers |
 |---|---|---|
 | 1 | [Introduction](01-introduction.md) | What the proxy does, the two serving modes, editions, and where it fits |
-| 2 | [Core concepts](02-concepts.md) | S3 front door, warehouse vs mount, Iceberg/Delta output, splits, snapshots, freshness, dialects |
-| 3 | [Architecture](03-architecture.md) | Request lifecycle, module map, data plane vs control plane, Manager/Agent |
+| 2 | [Core concepts](02-concepts.md) | S3 front door, warehouse vs mount, Iceberg/Delta output, Open Mirroring, splits, snapshots, freshness, dialects |
+| 3 | [Architecture](03-architecture.md) | Request lifecycle, Open Mirror publishing path, module map, data plane vs control plane, Manager/Agent |
 | 4 | [Installation](04-installation.md) | Prerequisites, getting the code, virtual environment, drivers, Lite vs cluster |
 | 5 | [Configuration](05-configuration.md) | Settings model, the config files, the table registry, multi-connection sources |
 | 6 | [Connecting Microsoft Fabric](06-connectivity.md) | Shortcut setup, OPDG and public patterns, storage-proxy mounts |

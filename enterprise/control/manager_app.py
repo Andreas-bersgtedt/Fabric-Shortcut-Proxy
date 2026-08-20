@@ -106,7 +106,13 @@ def _make_supervisor(i: int, count: int) -> AgentSupervisor:
 
 
 def create_manager_app() -> FastAPI:
-    registry = Registry(heartbeat_ms=config.HEARTBEAT_MS, miss_limit=config.HEARTBEAT_MISS_LIMIT)
+    registry = Registry(
+        heartbeat_ms=config.HEARTBEAT_MS,
+        miss_limit=config.HEARTBEAT_MISS_LIMIT,
+        allowed_hosts=tuple(
+            item.strip() for item in config.AGENT_HOST_ALLOWLIST.split(",") if item.strip()
+        ),
+    )
     service = ControlService(registry, tables=[t.name for t in config.TABLES])
     supervisors = _build_supervisors()
     gateway = None
@@ -173,7 +179,7 @@ def create_manager_app() -> FastAPI:
                  tables=[t.name for t in config.TABLES])
         if config.MANAGER_AUTH_ENABLED and not config.MANAGER_AUTH_PASSWORD:
             log.warning("manager_auth_enabled_without_password",
-                        hint="set MANAGER_AUTH_PASSWORD to activate the Basic auth gate; running open")
+                        hint="set MANAGER_AUTH_PASSWORD before exposing the Manager")
         ha_task = None
         if lease is not None:
             app.state.is_leader = False
@@ -208,13 +214,13 @@ def create_manager_app() -> FastAPI:
         if gateway is not None:
             await gateway.aclose()
 
-    app = FastAPI(title="Fabric Shortcut Proxy — Manager", version="2.5.1", lifespan=lifespan)
+    app = FastAPI(title="Fabric Shortcut Proxy — Manager", version="2.5.2", lifespan=lifespan)
     app.state.registry = registry
     app.state.supervisors = supervisors
     app.state.lease = lease
     app.state.is_leader = not config.MANAGER_HA
-    # Standalone HTTP Basic gate over the operator surface (opt-in; leaves
-    # /control + health probes open so the fleet and LBs keep working).
+    # Standalone HTTP Basic gate over the operator surface. Health probes remain
+    # open; authenticated Agent credentials are sent for internal control calls.
     app.add_middleware(ManagerAuthMiddleware)
     app.include_router(create_control_router(service))
 

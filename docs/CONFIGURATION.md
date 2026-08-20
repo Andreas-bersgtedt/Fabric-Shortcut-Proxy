@@ -86,6 +86,12 @@ Enter host / user / password → pick tables (key column auto-detected, overrida
 → **Download config.json**. It's **off by default** and accepts DB credentials, so
 run it locally only. The Manager bootstrap installs all supported Python database drivers.
 
+The Manager console and configuration UI require HTTP Basic authentication when
+`MANAGER_AUTH_ENABLED=1` (the default). Use the configured
+`MANAGER_AUTH_USERNAME` and `MANAGER_AUTH_PASSWORD`. If the UI is embedded in a
+different website, add that website's exact origin to `CORS_ALLOWED_ORIGINS`;
+same-origin browser access does not need a CORS entry.
+
 ---
 
 ## 2. Prerequisites (drivers)
@@ -543,7 +549,9 @@ Create one Fabric shortcut per table.
 | `S3_BUCKET` | `fabric-iceberg-poc` | Bucket Fabric connects to |
 | `PORT` | `9000` | HTTP listen port |
 | `VALIDATE_SOURCE_SCHEMA` | `1` | Validate declared columns exist (no-op for reflected schemas) |
-| `REQUIRE_SIGV4` | `0` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
+| `REQUIRE_SIGV4` | `1` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
+| `AGENT_HOST_ALLOWLIST` | `127.0.0.1,0.0.0.0,::1,::,localhost` | Hosts or CIDRs accepted in Manager agent registration |
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |
@@ -772,7 +780,8 @@ allowed buckets/prefixes:
 |---|---|---|
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounts even when `REQUIRE_SIGV4=0` |
-| `REQUIRE_SIGV4` | `0` | Enforce SigV4 on **all** buckets |
+| `REQUIRE_SIGV4` | `1` | Enforce SigV4 on **all** buckets |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access |
 | `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |
@@ -780,4 +789,3 @@ allowed buckets/prefixes:
 Manage keys in the config-builder **Storage → Access keys** panel (create returns
 the secret once; rotate/delete supported). The legacy single key stays a wildcard
 until the first access key is created. Full security model: [SECURITY.md](SECURITY.md).
-

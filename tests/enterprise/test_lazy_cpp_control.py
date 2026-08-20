@@ -134,13 +134,17 @@ async def test_control_materialize_endpoint(tmp_path, monkeypatch):
     store = tmp_path / "store"
     await _seed_and_configure(monkeypatch, db, store, "iceberg")
     monkeypatch.setattr(config, "ENABLE_GATEWAY", False, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator", raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "s3cret", raising=False)
 
     snap = build_snapshot(table_name="sales", num_splits=4, bucket="cpp-bucket",
                           warehouse_prefix=config.WAREHOUSE_PREFIX)
 
     app = create_manager_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
-                                 base_url="http://mgr") as c:
+                                 base_url="http://mgr",
+                                 auth=("operator", "s3cret")) as c:
         r = await c.post("/control/materialize", json={"key": snap.metadata_key})
         assert r.status_code == 200
         assert r.json()["ok"] is True

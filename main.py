@@ -569,26 +569,29 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fabric Shortcut Proxy (POC)",
     description="Virtual Iceberg-over-S3 proxy that serves SQL pushdown as Parquet",
-    version="2.5.1",
+    version="2.5.2",
     lifespan=lifespan,
 )
 
-# Allow CORS for any local tooling
+# Cross-origin access is opt-in. Credentials and administrative APIs are not
+# exposed to arbitrary browser origins by default.
+_cors_origins = [origin.strip() for origin in config.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "HEAD", "PUT", "DELETE", "POST"],
     allow_headers=["*"],
 )
 
 
 # ---------------------------------------------------------------------------
-# SigV4 authentication (H3) — opt-in via REQUIRE_SIGV4. Health/metrics/admin
-# endpoints and CORS preflight (OPTIONS) are exempt. /_manager and /favicon.ico
+# SigV4 authentication (H3). Health/readiness/metrics and CORS preflight
+# remain public. Administrative and configuration routes require authentication.
 # are exempt too: the console lives on the Manager, and an Agent bounces /_manager
 # there (see below) instead of rejecting it with a confusing SigV4 403.
 # ---------------------------------------------------------------------------
-_AUTH_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/_admin", "/_config", "/_monitor", "/_manager", "/favicon.ico")
+_AUTH_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/favicon.ico")
+_AUTH_REQUIRED_PREFIXES = ("/_admin", "/_config", "/_monitor")
 
 
 def _bucket_key_from_path(path: str) -> tuple[str, str]:
@@ -621,7 +624,7 @@ async def sigv4_auth_middleware(request, call_next):
         except Exception:  # noqa: BLE001 - proxy lookup must never break the front door
             mounted = False
 
-    # A secured proxy forces auth on mounted buckets even if the global flag is off.
+    # REQUIRE_SIGV4 controls both object and administrative request signing.
     require = config.REQUIRE_SIGV4 or (mounted and config.ENFORCE_MOUNT_AUTH)
     if require:
         try:
@@ -660,7 +663,7 @@ async def sigv4_auth_middleware(request, call_next):
 # Request tracing (capture the Fabric read/convert timeline). Outermost
 # middleware so it measures total handling time incl. auth. Skips ops paths.
 # ---------------------------------------------------------------------------
-_TRACE_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/_admin", "/_config", "/_monitor", "/_manager", "/favicon.ico")
+_TRACE_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/favicon.ico")
 
 
 @app.middleware("http")

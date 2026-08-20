@@ -43,7 +43,7 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `QUERY_TIMEOUT` | `query_timeout_seconds` | `30` | SQL query timeout (seconds) |
 | `BUCKET_NAME` | `bucket` | `fabric-iceberg-poc` | Warehouse bucket name |
 | `PORT` | `port` | `9000` | Agent data-plane port |
-| `REQUIRE_SIGV4` | `require_sigv4` | `0` | Enforce SigV4 on all buckets |
+| `REQUIRE_SIGV4` | `require_sigv4` | `1` | Enforce SigV4 on all buckets |
 | `ENABLE_STORAGE_PROXY` | `enable_storage_proxy` | `0` | Serve mounted buckets |
 | `ENFORCE_MOUNT_AUTH` | `enforce_mount_auth` | `1` | Force auth on mounts even if SigV4 is off |
 | `ENABLE_AUDIT_LOG` | `enable_audit_log` | `1` | Log mounted-object access |
@@ -141,7 +141,7 @@ launcher uses `--kebab-case`.
 | `/_admin/timeline`, `/_admin/trace`, `/_admin/objects`, `/_admin/schemas` | Diagnostics |
 | `/_admin/refresh`, `/_admin/gc`, `/_admin/publish-image` | Snapshot, GC, and image actions |
 | `/_config/api/keyvault`, `/_config/api/keyvault/test` | Key Vault status and a live connectivity test |
-| `/_config`, `/_monitor`, `/_manager` | Config builder, monitor, admin console |
+| `/_config`, `/_monitor`, `/_manager` | Config builder, monitor, admin console; Manager Basic auth required |
 
 Chapter 8 has the full table with methods and query parameters.
 

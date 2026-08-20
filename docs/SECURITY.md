@@ -266,6 +266,21 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
   confidentiality** over plain HTTP, enable TLS before turning on auth. The proxy
   logs a startup warning when auth/mounts are on but TLS is not configured.
 
+### Manager and browser access
+
+The Manager operator surfaces require HTTP Basic authentication when
+`MANAGER_AUTH_ENABLED=1` (the default). Configure `MANAGER_AUTH_USERNAME` and
+`MANAGER_AUTH_PASSWORD` in the systemd environment file or another protected
+secret source. This protects `/_manager`, `/_config`, `/_monitor`, `/agents`, and
+the Manager control routes. Health and readiness probes remain unauthenticated so
+service monitors and supervised Agents can check liveness.
+
+Browser requests from another origin are blocked unless that origin is listed in
+`CORS_ALLOWED_ORIGINS` as a comma-separated list, for example
+`https://admin.example.com`. CORS does not replace Basic authentication. Direct
+same-origin access to `http://<manager-host>:9200/_manager` and `/_config` does
+not require a CORS entry, but it still requires Manager credentials.
+
 ### Audit logging
 
 - With `ENABLE_AUDIT_LOG=1` (default), every mounted-object access emits a
@@ -281,7 +296,9 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
 |---|---|---|
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets as passthrough |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounts even if `REQUIRE_SIGV4=0` |
-| `REQUIRE_SIGV4` | `0` | Enforce SigV4 on **all** buckets |
+| `REQUIRE_SIGV4` | `1` | Enforce SigV4 on **all** buckets |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Disable cross-origin browser access unless explicitly configured |
+| `AGENT_HOST_ALLOWLIST` | `127.0.0.1,0.0.0.0,::1,::,localhost` | Restrict registered Agent bind and advertised hosts |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access |
 | `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |

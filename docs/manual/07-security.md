@@ -65,7 +65,20 @@ Turn on enforcement with `REQUIRE_SIGV4=1`. Mounted buckets are a special case: 
 authenticated even when `REQUIRE_SIGV4=0`, because `ENFORCE_MOUNT_AUTH` defaults on. A
 secured mount is never served anonymously.
 
-## 7.4 Upstream credential mediation
+## 7.4 Manager and browser access
+
+The Manager operator surfaces use HTTP Basic authentication when
+`MANAGER_AUTH_ENABLED=1`, which is the default. Configure
+`MANAGER_AUTH_USERNAME` and `MANAGER_AUTH_PASSWORD` in a protected environment
+file or secret store. This covers `/_manager`, `/_config`, `/_monitor`, `/agents`,
+and Manager control routes. Health and readiness probes remain open.
+
+Cross-origin browser requests are disabled by default. Set
+`CORS_ALLOWED_ORIGINS` to a comma-separated list of exact origins when serving a
+UI from another host, port, or protocol. CORS only permits the browser request;
+it does not bypass HTTP Basic authentication.
+
+## 7.5 Upstream credential mediation
 
 Outbound secrets for storage-proxy mounts are held encrypted and resolved by id, never
 exposed to clients or written into `config.mounts.json`. The store uses DPAPI on Windows and
@@ -83,20 +96,20 @@ Supported outbound auth modes:
 A credential-less mount must declare an explicit `auth` mode (for example `anonymous` or
 `instance` for S3; `default`, `managed_identity`, or `anonymous` for Azure).
 
-## 7.5 Path safety on mounts
+## 7.6 Path safety on mounts
 
 The mount registry normalizes every key and rejects `..` traversal, confining reads to the
 mount `prefix` subtree across all backends. This addresses the OWASP path-traversal and
 broken-access-control classes for the passthrough path. Mounts are read-only.
 
-## 7.6 TLS
+## 7.7 TLS
 
 Terminate HTTPS at the proxy by setting both `TLS_CERT_FILE` and `TLS_KEY_FILE`, for the
 agent and the Manager control plane. Alternatively, terminate TLS at a fronting load
 balancer or reverse proxy and keep the app ports on loopback. The public-internet procedure
 with nginx is in [SSL_Deployment.md](../../SSL_Deployment.md).
 
-## 7.7 Audit
+## 7.8 Audit
 
 With `ENABLE_AUDIT_LOG=1`, every mounted-object access is recorded with the identity,
 bucket, key, and byte count, and mount auth denials are recorded too. Recent events are
@@ -104,7 +117,7 @@ available at `GET /_config/api/audit`; the file is set by `AUDIT_LOG_FILE`. Behi
 load balancer, set `forwarded_allow_ips` so the audit log records the real client IP rather
 than the load balancer's.
 
-## 7.8 Column tokenization
+## 7.9 Column tokenization
 
 Tokenization pushes column minimization into the source engine so plaintext PII never leaves
 the database. It is a projection-time policy per column, not reversible detokenization and

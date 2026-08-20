@@ -53,20 +53,20 @@ def _enable_auth(monkeypatch):
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "s3cret", raising=False)
 
 
-async def test_passthrough_when_disabled(monkeypatch):
+async def test_disabled_auth_fails_closed(monkeypatch):
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "s3cret", raising=False)
     assert manager_auth_active() is False
     async with _client(_app()) as c:
-        assert (await c.get("/_manager/api/fleet")).status_code == 200
+        assert (await c.get("/_manager/api/fleet")).status_code == 503
 
 
-async def test_inactive_when_enabled_without_password(monkeypatch):
+async def test_missing_password_fails_closed(monkeypatch):
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "", raising=False)
-    assert manager_auth_active() is False
+    assert manager_auth_active() is True
     async with _client(_app()) as c:
-        assert (await c.get("/_manager/api/fleet")).status_code == 200
+        assert (await c.get("/_manager/api/fleet")).status_code == 503
 
 
 async def test_protected_requires_credentials(_enable_auth):
@@ -92,7 +92,9 @@ async def test_correct_credentials_pass(_enable_auth):
         assert r.status_code == 200 and r.json() == {"ok": True}
 
 
-async def test_control_and_health_exempt(_enable_auth):
+async def test_health_exempt_control_protected(_enable_auth):
     async with _client(_app()) as c:
         assert (await c.get("/healthz")).status_code == 200
-        assert (await c.post("/control/register")).status_code == 200
+        assert (await c.post("/control/register")).status_code == 401
+        assert (await c.post("/control/register",
+                             headers=_basic("operator", "s3cret"))).status_code == 200

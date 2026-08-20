@@ -10,10 +10,8 @@ so the cluster keeps working:
     console password; this channel is meant to be scoped by the network).
   - ``/healthz`` / ``/readyz`` — load-balancer probes.
 
-Active only when ``MANAGER_AUTH_ENABLED`` is set **and** ``MANAGER_AUTH_PASSWORD``
-is non-empty; otherwise it's a transparent pass-through (prior behavior). Enabling
-it without a password is treated as inactive (fail-open) to avoid a lockout with
-no valid credential — the Manager logs a warning in that case.
+The Manager operator and control-plane surfaces are protected by default. A missing
+password produces a fail-closed 503 response rather than exposing the service.
 """
 from __future__ import annotations
 
@@ -28,14 +26,14 @@ from starlette.responses import JSONResponse, Response
 import config
 
 # Endpoints that must stay reachable without the console password.
-_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/control", "/favicon.ico")
+_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/favicon.ico")
 
 _REALM = "Fabric Shortcut Proxy Manager"
 
 
 def manager_auth_active() -> bool:
-    """True when Basic auth should be enforced (enabled AND a password is set)."""
-    return bool(config.MANAGER_AUTH_ENABLED and config.MANAGER_AUTH_PASSWORD)
+    """True when Manager authentication is enabled."""
+    return bool(config.MANAGER_AUTH_ENABLED)
 
 
 def _unauthorized() -> Response:
@@ -44,6 +42,10 @@ def _unauthorized() -> Response:
         status_code=401,
         headers={"WWW-Authenticate": f'Basic realm="{_REALM}"'},
     )
+
+
+def _misconfigured() -> Response:
+    return JSONResponse({"detail": "manager authentication is not configured"}, status_code=503)
 
 
 def _credentials_ok(header: str) -> bool:
@@ -68,9 +70,11 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if not manager_auth_active():
-            return await call_next(request)
+            return _misconfigured()
         if request.url.path.startswith(_EXEMPT_PREFIXES):
             return await call_next(request)
+        if not config.MANAGER_AUTH_PASSWORD:
+            return _misconfigured()
         if not _credentials_ok(request.headers.get("authorization", "")):
             return _unauthorized()
         return await call_next(request)

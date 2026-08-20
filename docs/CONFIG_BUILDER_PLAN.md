@@ -72,7 +72,8 @@ class SchemaReflector:
 ### 3.2 New: `/_config` API router (mounted only when enabled)
 
 `configbuilder/router.py` (an `APIRouter`), included in [main.py](../main.py) only when
-`config.ENABLE_CONFIG_BUILDER` is true, and added to the SigV4 `_AUTH_EXEMPT_PREFIXES`.
+`config.ENABLE_CONFIG_BUILDER` is true. Config-builder routes require SigV4
+authentication and are not part of the public endpoint allowlist.
 
 | Route | Body | Returns |
 |---|---|---|

@@ -514,7 +514,7 @@ explicit reset.
 | `DB_MAX_RETRIES`      | `2`                                      | Retries on transient source-DB errors |
 | `DB_RETRY_BACKOFF`    | `0.5`                                    | Linear backoff base (seconds) between retries |
 | `VALIDATE_SOURCE_SCHEMA` | `1`                                   | Fail fast at startup if a declared column is missing |
-| `REQUIRE_SIGV4`       | `0`                                      | Enforce AWS SigV4 request signatures (403 on mismatch) |
+| `REQUIRE_SIGV4`       | `1`                                      | Enforce AWS SigV4 request signatures (403 on mismatch) |
 | `ENABLE_STORAGE_PROXY` | `0`                                     | Serve mounted buckets (`config.mounts.json`) as read-only byte passthrough (local / s3 / azure) |
 | `ENFORCE_MOUNT_AUTH`  | `1`                                      | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` (a secured mount is never anonymous) |
 | `ENABLE_AUDIT_LOG`    | `1`                                      | Emit a structured audit event per mounted-object access (identity, bucket, key, bytes) |

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fabric-shortcut-proxy"
-version = "2.5.1"
+version = "2.5.2"
 description = "Fabric Shortcut Proxy for Microsoft Fabric (POC)"
 requires-python = ">=3.11"
 dependencies = [

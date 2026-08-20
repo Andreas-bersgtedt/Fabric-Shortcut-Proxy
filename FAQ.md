@@ -266,7 +266,7 @@ ExpressRoute/VPN). See [docs/UsecasesAndScenarios.md](docs/UsecasesAndScenarios.
 
 **How does SigV4 auth work?** The proxy verifies the AWS SigV4 signature against either the
 legacy single key (`S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`) or **scoped access keys** stored
-encrypted. Gated by `REQUIRE_SIGV4` (default off for POC parity); when on, unsigned/mis‑signed
+encrypted. Gated by `REQUIRE_SIGV4` (default on); unsigned or mis-signed
 requests get `403`. See [docs/SECURITY.md](docs/SECURITY.md).
 
 **What are scoped access keys?** Per‑key records with `allowed_buckets`, optional per‑bucket
@@ -284,13 +284,15 @@ credentials, and access keys — encrypted at rest.
 **How do I protect the operator console (:9200)?**
 - **`MANAGER_AUTH_ENABLED` + `MANAGER_AUTH_USERNAME` + `MANAGER_AUTH_PASSWORD`** — an HTTP Basic
   gate over the whole control surface (`/_manager`, `/_config`, `/_monitor`, `/agents`). Active
-  only when a non‑empty password is set; run it over TLS. Settable in the `/_config` Advanced
-  tab or the env file.
+  when enabled with a non-empty password; run it over TLS. Settable in the `/_config`
+  Advanced tab or the env file.
 - **`ADMIN_TOKEN`** — required (`X-Admin-Token` header or `?token=`) for *mutating* `/_manager`
   actions (start/stop/restart/drain/scale). Generate with `openssl rand -hex 24`.
 
-Both are independent layers; the machine/liveness endpoints (`/control`, `/healthz`, `/readyz`)
-stay open so agents keep registering. See [docs/SECURITY.md](docs/SECURITY.md).
+Both are independent layers. Health and readiness endpoints stay open for probes.
+Agent control calls authenticate with the configured Manager credentials. Browser
+calls from another origin also require that origin in `CORS_ALLOWED_ORIGINS`.
+See [docs/SECURITY.md](docs/SECURITY.md).
 
 **How do I add TLS?** Terminate at **nginx** in front (recommended for the fleet — see
 [SSL_Deployment.md](SSL_Deployment.md)) or serve HTTPS in‑process by setting `TLS_CERT_FILE` +

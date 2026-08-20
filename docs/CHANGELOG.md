@@ -13,6 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fabric's `_FilesReadyToDelete` folders, applies per-target or per-table retention, defaults to
   dry-run inspection, and deletes only eligible processed folders after explicit confirmation.
 
+## [2.5.2]: 2026-08-20
+
+### Security
+- Manager operator, configuration, monitoring, Agent registration, and control routes
+  now fail closed behind HTTP Basic authentication when Manager auth is enabled.
+- Agent administrative and configuration routes no longer bypass SigV4, which is enabled
+  by default. Missing S3 credentials now stop startup instead of silently exposing the API.
+- Agent registration validates ports and restricts bind and advertised hosts to the configured
+  `AGENT_HOST_ALLOWLIST`, reducing gateway target injection and SSRF risk.
+- Cross-origin browser access is disabled by default and requires explicit
+  `CORS_ALLOWED_ORIGINS` entries.
+
+### Changed
+- Release metadata and runtime API version strings now report `2.5.2`.
+- The installer stores Manager, Agent, and S3 secrets in the protected environment file or
+  configured Key Vault backend. Admin password reset accepts a hidden, confirmed password.
+
 ## [2.5.1]: 2026-08-19
 
 ### Added
@@ -373,6 +390,7 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
+[2.5.2]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.1...2.5.2
 [2.5.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.0...2.5.1
 [2.5.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.4.0...2.5.0
 [2.4.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.3.0...2.4.0

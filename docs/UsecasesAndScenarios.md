@@ -1,7 +1,7 @@
 # Use Cases & Scenarios: Private-Infrastructure Connectivity
 
 How to surface data into Microsoft Fabric through the Fabric Shortcut Proxy **without
-using the public internet**: across on-premises, Azure vNet, and other-cloud (AWS/GCP)
+exposing the data endpoint to the public internet**: across on-premises, Azure vNet, and other-cloud (AWS/GCP)
 private infrastructure. Scenarios are split by consumption style (**Fabric shortcuts**
 vs **Fabric Spark**) because each reaches a private endpoint through a different Fabric
 mechanism.
@@ -24,7 +24,7 @@ Grounded in the Fabric connectivity mechanisms documented at:
 
 ## The two connectivity primitives
 
-Everything below rests on two Fabric features that keep traffic off the public internet, one per consumption style.
+Everything below rests on two Fabric features that keep source and data-plane traffic on a private route, one per consumption style. Fabric service connectivity is still required.
 
 **Shortcut path → On-premises data gateway (OPDG).** OneLake S3-compatible shortcuts can
 target a gateway installed inside your private network. The gateway bridges OneLake to
@@ -121,7 +121,7 @@ governed front door.
 
 ---
 
-## Why the proxy fits "private infra, no public internet"
+## Why the proxy fits "private infrastructure without a public data endpoint"
 
 - **Credential mediation**: upstream S3/Azure/DB secrets are held encrypted (DPAPI/Fernet)
   and resolved by id; Fabric only presents SigV4. Cross-cloud keys never leave the private
@@ -141,6 +141,6 @@ governed front door.
 | **Shortcuts** | On-premises data gateway (OPDG) | On-prem, AWS/GCP VPCs, firewall/network-restricted |
 | **Spark** | Managed Private Endpoint → Private Link Service | In-VNet (trivial); on-prem/other-cloud via a forwarding VM + ExpressRoute/VPN |
 
-Shortcuts reach private endpoints natively cross-cloud through OPDG; Spark reaches them
+Shortcuts reach private endpoints cross-cloud through OPDG; Spark reaches them
 through an Azure-fronted PLS, which is trivial in-VNet and needs a forwarding VM for
 on-prem or other-cloud sources.

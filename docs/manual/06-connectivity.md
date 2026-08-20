@@ -47,8 +47,9 @@ flowchart TB
 
 ## 6.3 Pattern A: OneLake shortcut via OPDG
 
-Use this for OneLake shortcuts reaching a proxy with no public exposure. The On-Premises
-Data Gateway is the bridge; Fabric never touches the public internet.
+Use this for OneLake shortcuts reaching a proxy with no public data endpoint. The On-Premises
+Data Gateway carries source and data-plane traffic to the private proxy; Fabric service
+connectivity is still required.
 
 1. **Install and register the OPDG** (standard mode) on a Windows host that can reach the
    proxy on the same LAN or VNet. Sign in with your Fabric account and register it to your

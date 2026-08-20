@@ -46,7 +46,7 @@ The proxy publishes versioned Iceberg snapshots or Delta commits. Data is divide
 
 Refresh can be manual or automatic. Automatic refresh can use database-specific change indicators where available; otherwise, detecting in-place updates requires rereading and hashing source data. This means freshness is bounded by the configured polling interval plus any Fabric shortcut or endpoint synchronization delay.
 
-This is snapshot-level change detection, not a replacement for a source-native CDC stream. The current scale roadmap identifies watermark- or CDC-based incremental refresh as future work.
+This is snapshot-level change detection, not a replacement for a source-native CDC stream. The shortcut materialization refresh path does not provide source-watermark or CDC ingestion. The separate Open Mirroring publisher supports snapshot-diff and source-watermark incremental publishing.
 
 ## How does this compare with Open Mirroring?
 
@@ -61,7 +61,7 @@ Open Mirroring and this proxy solve different problems:
 | Storage | Source remains authoritative; proxy artifacts may be cached or materialized | A durable copy is maintained in OneLake |
 | Operations | Customer-managed open-source service | Fabric-managed capability, with source-side integration still required |
 
-Use Open Mirroring when a supported, durable replication path and incremental freshness are the priority. The proxy is more relevant when the requirement is to expose an existing relational source through a Fabric shortcut without first building a conventional ingestion or replication pipeline.
+Use Open Mirroring when a supported, durable replication path and incremental freshness are the priority. The proxy is more relevant when the requirement is to expose an existing relational source through a Fabric shortcut without first building a conventional ingestion or replication pipeline. The two refresh systems are separate: shortcut refresh updates virtualized table artifacts, while Open Mirroring publishes landing-zone files and committed source cursors.
 
 > Since 2.5.1 the proxy also ships an **Open Mirroring publisher** (the `open_mirror` module and the config-builder **Open Mirror** tab), so a single deployment can both virtualize a source through a shortcut *and* push selected tables into a Fabric Open Mirroring landing zone. The publisher reuses the same source connectors and the proxy's Entra identity (for OneLake), supports snapshot-diff or source-watermark incremental change tracking, and can browse Fabric workspaces/mirrored databases so no OneLake URL is pasted by hand.
 
@@ -75,7 +75,7 @@ The key distinction is therefore not simply whether SQL is pushed to the source.
 
 ## Where should the agent run in a production-grade setup?
 
-There is not yet a fully supported production deployment profile. A production design should run the service in customer-managed compute with network access to both Fabric and the source database.
+There is not yet a fully supported production deployment profile. A production design should run the service in customer-managed compute with network access to both Fabric and the source database. Keep the data endpoint private where required, but allow the outbound connectivity needed by the Fabric gateway, managed private endpoint, identity, and control-plane services.
 
 The target architecture separates the Manager control plane from stateless Agents. Agents should run behind a load balancer or reverse proxy, use a shared artifact store, and scale horizontally. The Manager owns configuration, published table state, refresh orchestration, and agent supervision.
 
@@ -87,7 +87,7 @@ A production deployment would also need, at minimum:
 - A durable shared artifact and state store.
 - Monitoring, capacity limits, backups, upgrade procedures, and high-availability planning.
 
-The repository contains pieces of this architecture, but its roadmap still lists production transport security, incremental refresh at scale, and additional control-plane hardening as ongoing or future work. Production use therefore requires an owning engineering team to validate, operate, secure, and support it.
+The repository contains pieces of this architecture, but production use still requires an owning engineering team to validate, operate, secure, and support the deployment. In particular, validate the chosen private connectivity path, durable artifact/state storage, TLS termination, identity permissions, and failure recovery.
 
 ## What is the current overall position?
 

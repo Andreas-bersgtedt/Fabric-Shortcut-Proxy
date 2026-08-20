@@ -45,8 +45,9 @@ Two data paths from that one endpoint (choose per bucket):
 
 ## 1. Pattern A — Shortcut via On‑Premises Data Gateway (private)
 
-Use for **OneLake shortcuts** reaching a proxy with **no public exposure** (on‑prem, VPC‑private,
-firewall‑restricted). The OPDG is the bridge; Fabric never touches the public internet.
+Use for **OneLake shortcuts** reaching a proxy with **no public data endpoint** (on‑prem,
+VPC‑private, firewall‑restricted). The OPDG is the bridge for source and data-plane traffic;
+Fabric service connectivity is still required.
 
 **A1. Install + register the OPDG** on a Windows host that can reach the proxy on the same
 LAN/VNet/VPC:
@@ -82,7 +83,8 @@ Only the queried rows traverse the gateway. Ref:
 ## 2. Pattern B — Spark via Managed Private Endpoint + Private Link Service (in‑VNet)
 
 Use for **Fabric Spark** notebooks / Spark Job Definitions reading the proxy that runs in an
-**Azure VNet**. Spark reaches it over the Microsoft backbone via an MPE→PLS, no public exposure.
+**Azure VNet**. Spark reaches it over the Microsoft backbone via an MPE→PLS, with no public
+data endpoint.
 
 ```
 Fabric Spark (Managed VNet) ─ MPE ─▶ Private Link Service ─▶ internal Std LB ─▶ proxy :9000
@@ -139,8 +141,11 @@ df = spark.read.format("delta").load(
     "s3a://fabric-iceberg-poc/db/<server>/<database>/<schema>/<table>")
 df.show()
 ```
-If the Spark runtime lacks the `hadoop-aws` S3A connector, use **boto3** (always present) to
-fetch objects instead. `path.style.access=true` is mandatory (the bucket rides in the path).
+For production, use an HTTPS endpoint and set
+`spark.hadoop.fs.s3a.connection.ssl.enabled` to `true`. The HTTP example is only suitable for
+a private test network. If the Spark runtime lacks the `hadoop-aws` S3A connector, install or
+enable **boto3** in that runtime before using it to fetch objects. `path.style.access=true` is
+mandatory (the bucket rides in the path).
 
 ---
 

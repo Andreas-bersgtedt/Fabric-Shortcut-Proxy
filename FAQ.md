@@ -197,8 +197,10 @@ Data plane on **:9000** (Fabric connects here), control plane on **:9200** (admi
 | `Manager.ps1 -Gateway` / `--gateway` | Manager fronts the fleet with a built‑in S3 gateway | 9000 via Manager, 9200 |
 
 **Manager vs Agent?** The **Manager** (control plane, :9200) owns config, the snapshot
-registry, refresh orchestration, agent supervision, and the `/_manager` / `/_config` /
-`/_monitor` UIs. Each **Agent** (data plane, :9000, :9001, …) is a stateless S3 endpoint that
+registry, refresh orchestration, agent supervision, and the authenticated `/_manager` and
+`/_config` UIs. In Enterprise mode, cluster health and historical host-resource trends are
+shown in the Manager's **Monitor** tab. Lite mode continues to expose the standalone
+`/_monitor/` UI. Each **Agent** (data plane, :9000, :9001, …) is a stateless S3 endpoint that
 runs SQL and serves Parquet. `AGENT_COUNT` (default 1) sets how many agents the Manager spawns,
 each on `PORT + i`. See [docs/SCALE_ARCHITECTURE_PLAN.md](docs/SCALE_ARCHITECTURE_PLAN.md).
 
@@ -241,7 +243,7 @@ deploys. See [docs/LINUX_MANAGER_TROUBLESHOOTING.md](docs/LINUX_MANAGER_TROUBLES
 
 | Pattern | Path | Public exposure | When |
 |---|---|---|---|
-| **Private (recommended)** | Fabric → **OPDG** → `http://<proxy-private-ip>:9000` | none | on‑prem / VNet / VPC |
+| **Private (recommended)** | Fabric → **OPDG** → `http://<proxy-private-ip>:9000` | no public data endpoint | on‑prem / VNet / VPC |
 | **Public internet** | Fabric → **directly** to `https://<fqdn>` (nginx TLS) — **no OPDG** | 443 only | cloud‑native, no private path |
 
 **What is the OPDG and when is it needed?** The On‑Premises Data Gateway is a Microsoft Windows
@@ -256,9 +258,10 @@ dropdown. A **public** HTTPS endpoint needs **no** OPDG (set *Data gateway* = *N
 - **Data gateway**: your OPDG (private) or *None* (public).
 - Browse to the bucket (`fabric-iceberg-poc`) and select the table folder(s).
 
-**Can Spark read it, not just shortcuts?** Yes — Fabric Spark reads via `s3a://` / `boto3`
-behind a **Managed Private Endpoint + Private Link Service** (on‑prem via a forwarding VM over
-ExpressRoute/VPN). See [docs/UsecasesAndScenarios.md](docs/UsecasesAndScenarios.md).
+**Can Spark read it, not just shortcuts?** Yes. Fabric Spark can read via `s3a://` or an
+installed boto3 client behind a **Managed Private Endpoint + Private Link Service** (on-prem via
+a forwarding VM over ExpressRoute/VPN). Use HTTPS for production traffic. See
+[docs/UsecasesAndScenarios.md](docs/UsecasesAndScenarios.md).
 
 ---
 
@@ -322,7 +325,8 @@ the snapshot id is a root hash that changes iff some chunk changed. See
 
 **How does the poller work?** With `AUTO_REFRESH=1`, every `REFRESH_POLL_SECONDS` (default 600 =
 10 min) it runs the `REFRESH_STRATEGY` cascade and publishes a new snapshot only when content
-actually changed.
+actually changed. This poller is separate from the Open Mirroring publisher, which can use
+snapshot-diff or source-watermark cursors for landing-zone publishing.
 
 **Freshness settings:**
 
@@ -473,8 +477,9 @@ real secret. Follow logs with `journalctl -u fabric-shortcut-proxy.service -f`.
 **Delivered:** single‑node Lite proxy; Manager/Agent cluster; Iceberg **and** Delta output;
 storage proxy (local/S3/Azure) with per‑key ACLs, credential mediation, and audit; SigV4;
 multi‑table; content‑addressed refresh (`AUTO_REFRESH`); disk cache; snapshot history;
-config‑builder + monitor UIs; Oracle & Databricks (limited); TLS at the proxy or a fronting LB;
-`MANAGER_AUTH` gate. See [docs/PLANNING.md](docs/PLANNING.md),
+config-builder + monitor UIs; authenticated Manager health cards and historical host-resource
+trends; Open Mirroring publishing; Oracle & Databricks (limited); TLS at the proxy or a fronting
+LB; `MANAGER_AUTH` gate. See [docs/PLANNING.md](docs/PLANNING.md),
 [docs/Roadmap.md](docs/Roadmap.md), [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **In progress / planned:** split‑planner enhancements (row‑target sizing, richer range/date/auto

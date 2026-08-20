@@ -47,7 +47,7 @@ Pick the connectivity pattern that matches your network:
 
 | Pattern | When | Fabric → proxy path | Public exposure |
 |---|---|---|---|
-| **A. Private (recommended)** | Fabric must reach a proxy that has no public exposure | **OPDG** dials the proxy's **private IP** `http://10.x.x.x:9000` | **None** — proxy has no public listener |
+| **A. Private (recommended)** | Fabric must reach a proxy with no public data endpoint | **OPDG** dials the proxy's **private IP** `http://10.x.x.x:9000` | **None** — proxy has no public data listener |
 | **B. Public internet (Linux)** | You want Fabric to reach the proxy directly, no gateway | Fabric connects **directly** to a **public `https://` FQDN** terminated by nginx — **no OPDG** | 443 only, TLS + auth (see [SSL_Deployment.md](../../SSL_Deployment.md)) |
 
 Both keep the source database credentials **inside the proxy** (credential mediation):

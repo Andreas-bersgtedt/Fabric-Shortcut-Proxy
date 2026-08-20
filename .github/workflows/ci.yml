@@ -66,9 +66,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REQUIRE_SIGV4: "0"
-      # Manager authentication has dedicated tests; other control-plane tests
-      # use unsigned, unauthenticated ASGI requests.
-      MANAGER_AUTH_ENABLED: "0"
     strategy:
       fail-fast: false
       matrix:

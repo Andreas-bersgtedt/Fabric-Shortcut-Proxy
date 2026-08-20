@@ -324,6 +324,10 @@ _ADMIN_HTML = r"""<!doctype html>
   .health-chart { width: 100%; height: 220px; display: block; }
   .chart-label { fill: #8a93a6; font-size: 11px; }
   .chart-legend { display: flex; gap: 16px; padding: 10px 12px 0; font-size: 12px; }
+  .chart-wrap { position: relative; }
+  .chart-tooltip { position: absolute; display: none; pointer-events: none; z-index: 2;
+    background: #0b1220; border: 1px solid #526078; border-radius: 4px;
+    padding: 7px 9px; color: #e5e7eb; font-size: 11px; white-space: nowrap; }
   .logbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #232a3a; flex-wrap: wrap; }
   .logbar .grow { flex: 1; min-width: 160px; }
   .logbar input[type=text] { width: 100%; }
@@ -666,9 +670,11 @@ function renderHealth(h, history){
     ? alerts.map(a=>`<div class="alert ${a.severity.toLowerCase()}"><b>${a.severity}</b> ${a.message}<div class="sub">${a.remediation}</div></div>`).join("")
     : '<div class="empty">No active cluster alerts.</div>';
   const points = history.slice().reverse();
+  window.healthChartPoints = points;
   $("healthTrend").innerHTML = points.length
     ? `<div class="sub">Host resource trend, ${points.length} samples</div>${healthChart(points)}${networkChart(points)}`
     : '<div class="empty">No health history collected yet.</div>';
+  if(points.length) installHealthChartTooltips();
 }
 
 function fmtRate(bytes){ return fmtBytes(bytes)+"/s"; }
@@ -686,14 +692,19 @@ function healthChart(points){
       const value=p.host && p.host[key];
       return value==null ? null : `${i?"L":"M"} ${x(i).toFixed(1)} ${y(value).toFixed(1)}`;
     }).filter(Boolean).join(" ");
-    return `<path d="${path}" fill="none" stroke="${colors[key]}" stroke-width="2"/>`;
+    const dots=points.map((p,i)=>{
+      const value=p.host && p.host[key];
+      return value==null ? "" : `<circle cx="${x(i).toFixed(1)}" cy="${y(value).toFixed(1)}" r="4" fill="${colors[key]}" data-index="${i}" data-key="${key}"/>`;
+    }).join("");
+    return `<path d="${path}" fill="none" stroke="${colors[key]}" stroke-width="2"/>${dots}`;
   }).join("");
   const legend=Object.keys(colors).map(key=>`<span style="color:${colors[key]}">● ${labels[key]}</span>`).join(" ");
-  return `<div class="chart-legend">${legend}</div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host CPU, memory, and disk usage trend">
+  const ticks=timeTicks(points, x, width, height, left, right, bottom);
+  return `<div class="chart-legend">${legend}</div><div class="chart-wrap"><div class="chart-tooltip"></div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host CPU, memory, and disk usage trend">
     <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#526078"/>
     <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#526078"/>
     <text x="8" y="${top+4}" class="chart-label">100%</text><text x="18" y="${height-bottom+4}" class="chart-label">0%</text>
-    ${lines}</svg>`;
+    ${lines}${ticks}</svg></div>`;
 }
 
 function networkChart(points){
@@ -706,14 +717,45 @@ function networkChart(points){
   const y=v=>top+(max-v)*(height-top-bottom)/max;
   const lines=Object.keys(colors).map(key=>{
     const path=points.map((p,i)=>`${i?"L":"M"} ${x(i).toFixed(1)} ${y(p.host && p.host[key] || 0).toFixed(1)}`).join(" ");
-    return `<path d="${path}" fill="none" stroke="${colors[key]}" stroke-width="2"/>`;
+    const dots=points.map((p,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(p.host && p.host[key] || 0).toFixed(1)}" r="4" fill="${colors[key]}" data-index="${i}" data-key="${key}"/>`).join("");
+    return `<path d="${path}" fill="none" stroke="${colors[key]}" stroke-width="2"/>${dots}`;
   }).join("");
   const legend=Object.keys(colors).map(key=>`<span style="color:${colors[key]}">● ${labels[key]}</span>`).join(" ");
-  return `<div class="chart-legend">${legend}</div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host network receive and transmit trend">
+  const ticks=timeTicks(points, x, width, height, left, right, bottom);
+  return `<div class="chart-legend">${legend}</div><div class="chart-wrap"><div class="chart-tooltip"></div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host network receive and transmit trend">
     <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#526078"/>
     <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#526078"/>
     <text x="4" y="${top+4}" class="chart-label">${fmtRate(max)}</text><text x="26" y="${height-bottom+4}" class="chart-label">0/s</text>
-    ${lines}</svg>`;
+    ${lines}${ticks}</svg></div>`;
+}
+
+function timeTicks(points, x, width, height, left, right, bottom){
+  if(!points.length) return "";
+  const count=Math.min(5, points.length);
+  return Array.from({length:count}, (_,n)=>{
+    const index=count===1 ? 0 : Math.round(n*(points.length-1)/(count-1));
+    const ts=points[index].generated_at;
+    const label=new Date(ts*1000).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+    return `<text x="${x(index).toFixed(1)}" y="${height-7}" text-anchor="middle" class="chart-label">${label}</text>`;
+  }).join("");
+}
+
+function installHealthChartTooltips(){
+  document.querySelectorAll(".chart-wrap").forEach(wrap=>{
+    const svg=wrap.querySelector("svg"), tooltip=wrap.querySelector(".chart-tooltip");
+    const dots=wrap.querySelectorAll("circle[data-index]");
+    dots.forEach(dot=>dot.addEventListener("mouseenter", ()=>{
+      const index=parseInt(dot.dataset.index), point=window.healthChartPoints[index] || {};
+      const host=point.host || {};
+      const time=new Date((point.generated_at||0)*1000).toLocaleString();
+      tooltip.innerHTML=`<b>${time}</b><br>CPU: ${host.cpu_pct == null ? "–" : host.cpu_pct.toFixed(1)+"%"} · Memory: ${host.memory_pct == null ? "–" : host.memory_pct.toFixed(1)+"%"} · Disk: ${host.disk_pct == null ? "–" : host.disk_pct.toFixed(1)+"%"}<br>RX: ${fmtRate(host.network_receive_bytes_per_sec||0)} · TX: ${fmtRate(host.network_transmit_bytes_per_sec||0)}`;
+      tooltip.style.display="block";
+      const r=svg.getBoundingClientRect(), d=dot.getBoundingClientRect();
+      tooltip.style.left=Math.max(0, d.left-r.left+8)+"px";
+      tooltip.style.top=Math.max(0, d.top-r.top-44)+"px";
+    }));
+    dots.forEach(dot=>dot.addEventListener("mouseleave", ()=>{ tooltip.style.display="none"; }));
+  });
 }
 
 function monitorRender(d){

@@ -371,7 +371,7 @@ def create_manager_app() -> FastAPI:
     # gateway catch-all (which also reserves /_monitor) so it isn't shadowed.
     if config.ENABLE_ADMIN_UI or config.ENABLE_MONITOR:
         from enterprise.control.monitor_proxy import create_monitor_proxy_router
-        app.include_router(create_monitor_proxy_router(supervisors))
+        app.include_router(create_monitor_proxy_router(supervisors, registry))
 
     # Gateway (LB) MUST be included last: its /{bucket} catch-all would otherwise
     # shadow the control/health routes above.

@@ -58,6 +58,7 @@ class AgentRecord:
             "version": self.version,
             "serving_tables": list(self.serving_tables),
             "epochs": dict(self.epochs),
+            "health": self.health.to_dict(),
             "age_seconds": round(_now() - self.registered_at, 1),
             "seconds_since_heartbeat": round(_now() - self.last_seen, 1),
             "pending_commands": len(self.commands),

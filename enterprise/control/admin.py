@@ -136,6 +136,16 @@ def create_admin_router(
     async def fleet() -> dict:
         return fleet_snapshot(registry, supervisors, gateway=gateway, token_required=token_required)
 
+    @router.get("/_manager/api/health")
+    async def health() -> dict:
+        from enterprise.control.cluster_health import aggregate_health
+        return aggregate_health(registry, supervisors)
+
+    @router.get("/_manager/api/health/history")
+    async def health_history(limit: int = 60) -> dict:
+        from enterprise.control.cluster_health import health_history
+        return {"history": health_history(limit)}
+
     @router.get("/_manager/api/memory-history/{name}")
     async def memory_history(name: str) -> dict:
         """Get memory history (RSS samples in MB) for a specific agent."""
@@ -303,6 +313,11 @@ _ADMIN_HTML = r"""<!doctype html>
   .warnrow td { background: rgba(239,68,68,.06); }
   .monitor-controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
   .monitor-controls label { color: #8a93a6; font-size: 12px; }
+  .healthy { color: #4ade80; } .warning { color: #fcd34d; } .critical { color: #f87171; }
+  .alert { padding: 10px 12px; border-bottom: 1px solid #2a3344; }
+  .alert:last-child { border-bottom: 0; } .trend { display: flex; gap: 3px; padding: 12px; }
+  .trend span { width: 18px; height: 18px; border-radius: 3px; color: #111827;
+    text-align: center; font-size: 11px; line-height: 18px; }
   .logbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #232a3a; flex-wrap: wrap; }
   .logbar .grow { flex: 1; min-width: 160px; }
   .logbar input[type=text] { width: 100%; }
@@ -383,6 +398,19 @@ _ADMIN_HTML = r"""<!doctype html>
       <button onclick="pollOpenMirror(true)">Count landing-zone rows</button>
     </div>
     <div class="cards" id="monitorCards"></div>
+    <div class="section">
+      <h3>Cluster health</h3>
+      <div class="cards" id="healthCards"></div>
+      <div id="healthAlerts" class="panel"></div>
+      <label>History window
+        <select id="healthHistoryLimit" onchange="monitorRefresh()">
+          <option value="12">1 hour</option>
+          <option value="60" selected>5 hours</option>
+          <option value="288">24 hours</option>
+        </select>
+      </label>
+      <div class="panel" id="healthTrend"></div>
+    </div>
     <details class="section">
     <summary>Open Mirror publishing and mirroring</summary>
     <div class="cards" id="mirrorCards"></div>
@@ -595,11 +623,36 @@ async function monitorRefresh(){
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d = await r.json();
     monitorRender(d);
+    const h = await (await fetch("/_manager/api/health", {cache:"no-store"})).json();
+    const limit = $("healthHistoryLimit").value;
+    const history = await (await fetch("/_manager/api/health/history?limit="+limit,
+      {cache:"no-store"})).json();
+    renderHealth(h, history.history || []);
   }catch(e){
     console.error("Monitor error:", e);
   }
   pollOpenMirror();
   pollLogs();
+}
+
+function renderHealth(h, history){
+  const status = h.status || "Unknown";
+  const alerts = h.alerts || [];
+  $("healthCards").innerHTML = [
+    ["Status", `<span class="${status.toLowerCase()}">${status}</span>`, `${(h.agents||[]).length} agents`],
+    ["CPU", h.resources && h.resources.cpu_pct != null ? h.resources.cpu_pct.toFixed(1)+"%" : "–", "fleet average"],
+    ["Memory", h.resources && h.resources.memory_bytes != null ? fmtBytes(h.resources.memory_bytes) : "–", "reported Agent memory"],
+    ["Alerts", fmtNum(alerts.length), alerts.length ? "attention required" : "none active"],
+  ].map(([k,v,s])=>`<div class="card"><div class="l">${k}</div><div class="n">${v}</div><div class="sub">${s}</div></div>`).join("");
+  $("healthAlerts").innerHTML = alerts.length
+    ? alerts.map(a=>`<div class="alert ${a.severity.toLowerCase()}"><b>${a.severity}</b> ${a.message}<div class="sub">${a.remediation}</div></div>`).join("")
+    : '<div class="empty">No active cluster alerts.</div>';
+  const points = history.slice().reverse();
+  $("healthTrend").innerHTML = points.length
+    ? `<div class="sub">Health trend, newest ${points.length} samples</div><div class="trend">${
+        points.map(p=>`<span class="${(p.status||"warning").toLowerCase()}" title="${new Date(p.generated_at*1000).toLocaleString()}">${p.status[0]}</span>`).join("")
+      }</div>`
+    : '<div class="empty">No health history collected yet.</div>';
 }
 
 function monitorRender(d){

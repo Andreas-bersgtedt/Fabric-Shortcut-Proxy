@@ -346,7 +346,8 @@ credential store, and per-key authorization / TLS / audit.
 - Folder browse uses a one-level directory listing instead of a recursive walk
   (no hang on large shares).
 - Mounted buckets are advertised in `ListBuckets` (`GET /`).
-- Monitor dashboard is served on the Manager (`/_monitor` operator console tab).
+- Monitor dashboard is available in the authenticated Manager console
+  (`/_manager` operator console tab), with selectable cluster health history.
 - Supervisor no longer crash-loops on permanent source-DB configuration errors;
   startup emits a clear, redacted message when a source DB connection fails.
 - Config builder: prevents duplicate table names and undefined-connection

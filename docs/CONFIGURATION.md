@@ -619,12 +619,16 @@ Diagnostics: `GET /readyz`, `GET /_admin/stats`, and `validate_pyiceberg.py`
 
 Toggle with `REQUEST_TRACE=0`; buffer size via `TRACE_BUFFER_SIZE` (default 5000).
 
-**Monitoring dashboard** (`ENABLE_MONITOR=1`, default off): a read-only web UI at
-`/_monitor/` (served like `/_config/`) with per-table read/query statistics,
+**Monitoring dashboard** (`ENABLE_MONITOR=1`, default off): in Enterprise, open the
+authenticated Manager console at `/_manager` and select **Monitor**. Lite mode
+continues to serve the standalone UI at `/_monitor/`. The Manager view includes
+per-table read/query statistics,
 snapshot version, cache/pinned occupancy, and the **query lag** breakdown
 (Fabric request → SQL execution → Parquet generation → bytes returned) per data
-request. Data comes from `GET /_monitor/api/summary`; `POST /_monitor/api/reset`
-clears the buffers before a fresh Fabric run. Run it locally, don't expose publicly.
+request. Cluster health includes active alerts and a selectable history window of
+1 hour, 5 hours, or 24 hours. The Manager health endpoints are
+`GET /_manager/api/health` and `GET /_manager/api/health/history`. Run it locally,
+don't expose publicly.
 
 ---
 

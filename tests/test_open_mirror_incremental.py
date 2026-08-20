@@ -7,6 +7,7 @@ quarantine, dry-run, and the background scheduler's one-shot cycle.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
@@ -598,6 +599,43 @@ async def test_restart_finalizes_uploaded_pending_batch(sqlite_wm, monkeypatch):
     assert recovered.action == "recovery"
     assert recovered.recovery == "finalized_existing_file"
     assert len(list((tmp_path / "lz" / "dbo.schema" / "sales").glob("*.parquet"))) == 1
+    assert load_state(str(tmp_path / "state"), target, table).pending is None
+
+
+async def test_restart_replays_prepared_pending_payload(sqlite_wm):
+    tmp_path, _ = sqlite_wm
+    target = _wm_target(tmp_path / "lz")
+    table = target.tables[0]
+    payload = b"prepared-tokenized-parquet"
+    pending_path = "dbo.schema/sales/00000000000000000001.parquet"
+    sidecar = om_source._pending_payload_path(str(tmp_path / "state"), target, table)
+    pathlib.Path(sidecar).parent.mkdir(parents=True, exist_ok=True)
+    pathlib.Path(sidecar).write_bytes(payload)
+    prior = CommittedCursor(
+        watermark=encode_watermark(1), keys=[encode_watermark(1)]
+    )
+    state = PublishState(
+        strategy="watermark",
+        initialized=True,
+        committed=prior,
+        pending=PendingBatch(
+            prior=prior,
+            next=CommittedCursor(
+                watermark=encode_watermark(2), keys=[encode_watermark(2)]
+            ),
+            path=pending_path,
+            row_count=1,
+            content_hash=hashlib.sha256(payload).hexdigest(),
+            payload_path=sidecar,
+        ),
+    )
+    save_state(str(tmp_path / "state"), target, table, state)
+
+    recovered = await om_source.publish_table(target, table)
+
+    assert recovered.recovery == "replayed_prepared_payload"
+    assert (tmp_path / "lz" / "dbo.schema" / "sales" / "00000000000000000001.parquet").read_bytes() == payload
+    assert not pathlib.Path(sidecar).exists()
     assert load_state(str(tmp_path / "state"), target, table).pending is None
 
 

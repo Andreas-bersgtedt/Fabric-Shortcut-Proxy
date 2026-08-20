@@ -4,8 +4,8 @@ Branch: `Open-Mirror-Tokenizer`
 
 Current kickoff status: deterministic projections, column omission, builder
 preservation, dialect SQL reuse, and projection-state safety are implemented.
-`random_token` is fail-closed for Open Mirror until prepared-payload recovery is
-designed and tested.
+`random_token` recovery now persists a prepared Parquet sidecar before the landing-zone
+write and replays that sidecar after an interrupted publish.
 
 ## Goal
 
@@ -75,12 +75,12 @@ Rules for the first implementation:
    used only in quoted SQL expressions and validation.
 4. Deterministic hashing is supported for watermark and snapshot modes. It must use
    the existing dialect capability checks and bound key/domain parameters.
-5. `random_token` is fail-closed for all Open Mirror modes in the first implementation.
-   Snapshot rereads would create a change on every cycle, and watermark retries can
-   regenerate different values for the same pending source page.
-6. Pending-batch recovery must remain deterministic. Random-token support requires
-   either durable prepared-payload recovery or a deterministic per-row seed before it
-   is enabled. Do not weaken the current pending-state safety check.
+5. `random_token` is supported only with prepared-payload recovery. Snapshot rereads
+   would create a change on every cycle, and watermark retries can regenerate different
+   values for the same pending source page.
+6. Pending-batch recovery remains deterministic: the prepared Parquet payload is stored
+   as a sidecar, verified by its SHA-256 digest, replayed if needed, and deleted only
+   after the state commit succeeds. A missing or corrupt sidecar still fails closed.
 
 ## Implementation phases
 
@@ -120,8 +120,8 @@ Rules for the first implementation:
    state/policy fingerprint. This fingerprint is now persisted without secret key
    material; a policy change requires an explicit initial/reset load rather than silently
    comparing old and new token values.
-6. Keep pending-batch digest and recovery behavior fail-closed. Random-token recovery
-   remains the next design task before enabling that policy for Open Mirror targets.
+6. Keep pending-batch digest and recovery behavior fail-closed. The prepared-payload
+   sidecar now provides the recovery contract for random-token batches.
 
 ### Phase 4: testing and rollout
 
@@ -164,11 +164,10 @@ full plaintext exclusion.
 
 ### Random-token recovery
 
-Random tokens intentionally change on extraction. Open Mirror's pending-batch protocol
-retries source extraction and compares payload digests, so random output cannot safely
-share that path without persisting a prepared payload or using a deterministic per-row
-seed. The first release should either limit random tokens to a fully specified mode or
-reject them with an actionable error.
+Random tokens intentionally change on extraction. Open Mirror now persists the prepared
+Parquet payload in a state-directory sidecar before recording the pending batch. Recovery
+replays and verifies that sidecar instead of re-extracting the source page. Sidecar
+permissions and state-directory durability remain deployment responsibilities.
 
 ### Key rotation and Fabric history
 

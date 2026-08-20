@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
+import os
 from dataclasses import dataclass, field
 
 import config
@@ -24,6 +26,7 @@ from open_mirror.state import (
     projection_fingerprint,
     save_published_tables,
     save_state,
+    state_file_path,
 )
 from planner.dialects import get_dialect
 
@@ -270,15 +273,42 @@ def _render_projection(dialect, columns) -> tuple[str, dict]:
 
 
 def _validate_projection_strategy(columns, strategy: str) -> None:
-    """Reject projection policies whose semantics cannot survive the strategy."""
-    if any(
+    """Validate projection policies whose semantics depend on the tracking strategy."""
+    # Random tokens are safe only when the prepared payload is persisted before the
+    # landing-zone write. The publisher enables that sidecar in the pending path.
+    del strategy
+
+
+def _has_random_tokens(columns) -> bool:
+    return any(
         column.transform and column.transform.kind == "random_token"
         for column in columns
-    ):
-        raise ValueError(
-            "Open Mirror random_token columns are disabled until pending-batch recovery "
-            "can preserve a prepared tokenized payload"
+    )
+
+
+def _pending_payload_path(state_dir, target, table) -> str:
+    return f"{state_file_path(state_dir, target, table)}.pending.parquet"
+
+
+def _write_pending_payload(path: str, payload: bytes) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temporary = f"{path}.tmp"
+    with open(temporary, "wb") as fh:
+        fh.write(payload)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temporary, path)
+
+
+def _read_pending_payload(path: str, expected_digest: str) -> bytes:
+    with open(path, "rb") as fh:
+        payload = fh.read()
+    actual_digest = hashlib.sha256(payload).hexdigest()
+    if actual_digest != expected_digest:
+        raise PendingStateError(
+            f"prepared Open Mirror payload at {path!r} does not match pending digest"
         )
+    return payload
 
 
 def _effective_mode(table: OpenMirrorTableTarget, invocation: str | None) -> str:
@@ -350,6 +380,11 @@ def _finalize_pending(state_dir, target, table, state: PublishState) -> None:
         state.keys = pending.snapshot_keys
     state.pending = None
     save_state(state_dir, target, table, state)
+    if pending.payload_path:
+        try:
+            os.remove(pending.payload_path)
+        except FileNotFoundError:
+            pass
 
 
 async def publish_table(
@@ -399,17 +434,30 @@ async def publish_table(
         backend = backend or open_landing_zone(target.landing_zone_root)
         publisher = LandingZonePublisher(backend, target)
 
-    if state is not None and state.pending and publisher.backend.exists(state.pending.path):
-        input_cursor = state.pending.prior
-        output_cursor = state.pending.next
-        _finalize_pending(state_dir, target, table, state)
-        return PublishResult(
-            target.id, table.name, action="recovery", rows=0, strategy=strategy,
-            reason="pending_file_found", input_cursor=_cursor_json(input_cursor),
-            output_cursor=_cursor_json(output_cursor), state_status=loaded.status,
-            state_path=loaded.path, recovery="finalized_existing_file",
-            query_mode="watermark" if strategy == "watermark" else "snapshot_full_scan",
-        )
+    if state is not None and state.pending:
+        pending = state.pending
+        input_cursor = pending.prior
+        output_cursor = pending.next
+        if publisher.backend.exists(pending.path):
+            _finalize_pending(state_dir, target, table, state)
+            return PublishResult(
+                target.id, table.name, action="recovery", rows=0, strategy=strategy,
+                reason="pending_file_found", input_cursor=_cursor_json(input_cursor),
+                output_cursor=_cursor_json(output_cursor), state_status=loaded.status,
+                state_path=loaded.path, recovery="finalized_existing_file",
+                query_mode="watermark" if strategy == "watermark" else "snapshot_full_scan",
+            )
+        if pending.payload_path and os.path.exists(pending.payload_path):
+            payload = _read_pending_payload(pending.payload_path, pending.content_hash)
+            publisher.write_batch_at(pending.path, payload)
+            _finalize_pending(state_dir, target, table, state)
+            return PublishResult(
+                target.id, table.name, action="recovery", rows=0, strategy=strategy,
+                reason="pending_payload_found", input_cursor=_cursor_json(input_cursor),
+                output_cursor=_cursor_json(output_cursor), state_status=loaded.status,
+                state_path=loaded.path, recovery="replayed_prepared_payload",
+                query_mode="watermark" if strategy == "watermark" else "snapshot_full_scan",
+            )
     if explicit_initial and (state is None or state.pending is None) or state is None:
         state = PublishState(strategy=strategy)
 
@@ -503,10 +551,17 @@ async def _publish_watermark(
                 path = pending.path
             else:
                 path = publisher.reserve_batch_path(table)
+                payload_path = (
+                    _pending_payload_path(state_dir, target, table)
+                    if _has_random_tokens(columns) else None
+                )
+                if payload_path:
+                    _write_pending_payload(payload_path, payload)
                 state.pending = PendingBatch(
                     prior=cursor, next=next_cursor, path=path,
                     row_count=len(rows), content_hash=digest,
                     initial=initial and published == 0,
+                    payload_path=payload_path,
                 )
                 save_state(state_dir, target, table, state)
             publisher.write_batch_at(path, payload)
@@ -592,10 +647,17 @@ async def _publish_snapshot(
             path = pending.path
         else:
             path = publisher.reserve_batch_path(table)
+            payload_path = (
+                _pending_payload_path(state_dir, target, table)
+                if _has_random_tokens(columns) else None
+            )
+            if payload_path:
+                _write_pending_payload(payload_path, payload)
             state.pending = PendingBatch(
                 prior=state.committed, next=CommittedCursor(), path=path,
                 row_count=len(batch_rows), content_hash=digest, initial=initial,
                 snapshot_keys=output_state.keys,
+                payload_path=payload_path,
             )
             save_state(state_dir, target, table, state)
         publisher.write_batch_at(path, payload)

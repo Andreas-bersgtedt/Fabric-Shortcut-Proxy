@@ -111,6 +111,7 @@ class PendingBatch:
     content_hash: str
     initial: bool = False
     snapshot_keys: dict[str, dict] | None = None
+    payload_path: str | None = None
 
     def to_json(self) -> dict:
         return {
@@ -121,6 +122,7 @@ class PendingBatch:
             "content_hash": self.content_hash,
             "initial": self.initial,
             "snapshot_keys": self.snapshot_keys,
+            "payload_path": self.payload_path,
         }
 
     @classmethod
@@ -134,6 +136,7 @@ class PendingBatch:
         row_count = data.get("row_count")
         next_cursor = CommittedCursor.from_json(data.get("next"))
         snapshot_keys = data.get("snapshot_keys")
+        payload_path = data.get("payload_path")
         if (
             not isinstance(path, str)
             or not path
@@ -143,6 +146,7 @@ class PendingBatch:
             or row_count < 0
             or next_cursor is None
             or (snapshot_keys is not None and not isinstance(snapshot_keys, dict))
+            or (payload_path is not None and (not isinstance(payload_path, str) or not payload_path))
         ):
             raise ValueError("pending batch metadata is invalid")
         return cls(
@@ -153,6 +157,7 @@ class PendingBatch:
             content_hash=content_hash,
             initial=bool(data.get("initial", False)),
             snapshot_keys=snapshot_keys,
+            payload_path=payload_path,
         )
 
 

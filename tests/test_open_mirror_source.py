@@ -135,7 +135,7 @@ def test_open_mirror_columns_require_pass_through_control_columns(tmp_path):
         )
 
 
-def test_open_mirror_random_tokens_reject_snapshot_tracking():
+def test_open_mirror_random_tokens_are_allowed_with_prepared_recovery():
     columns = [
         ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
         ColumnDef(
@@ -147,8 +147,7 @@ def test_open_mirror_random_tokens_reject_snapshot_tracking():
         ),
     ]
 
-    with pytest.raises(ValueError, match="prepared tokenized payload"):
-        _validate_projection_strategy(columns, "snapshot")
+    _validate_projection_strategy(columns, "snapshot")
 
 
 # --- end-to-end publish from a live source ---------------------------------

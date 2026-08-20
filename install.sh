@@ -88,19 +88,12 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 print_logo() {
-    printf '%s\n' \
-        '                 /\\    /\\    /\\    /\\' \
-        '                /  \\  /  \\  /  \\  /  \\' \
-        '               /____\\/____\\/____\\/____\\' \
-        '          .----------------.' \
-        '         /   /\\  /\\  /\\     \\       FFFFFFF   SSSSS   PPPPP' \
-        '        /   /  \\/  \\/  \\     \\      F        S       P    P' \
-        '       /    \\          /      \\     F         SSS    PPPPP' \
-        '       \\     \\________/      /      F             S   P' \
-        '        \\                  /       F        SSSSS   P' \
-        '         \\________________/' \
-        '' \
-        '  FABRIC SHORTCUT PROXY'
+    if [ "$NO_COLOR" -eq 1 ]; then
+        printf '%s\n' '  FSP'
+    else
+        printf '\033[3m%s\033[0m\n' '  FSP'
+    fi
+    printf '%s\n' '  FABRIC SHORTCUT PROXY'
 }
 
 print_rule() {

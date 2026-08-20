@@ -33,7 +33,10 @@ lines before starting the shell installer. Secret values remain references such 
 
 The interactive menu exposes the same common actions: start the C++ setup wizard,
 resume setup, preview the setup with a dry run, run read-only checks, or open the
-line-based installer fallback.
+line-based installer fallback. It also provides **Reset Manager admin password**.
+The reset generates a new password, stores it in the configured Key Vault or
+protected environment file, and never prints the value. The operator can restart
+the service immediately or restart it later.
 Actions can be selected with the arrow keys or numeric shortcuts `1` through `6`.
 
 This is the first migration slice for point 10. Further provisioning steps must keep the

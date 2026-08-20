@@ -48,6 +48,8 @@ MANAGER_AUTH_PASSWORD_VALUE=
 S3_ACCESS_KEY_VALUE=
 S3_SECRET_KEY_VALUE=
 APPLY_REQUESTED=0
+RESET_ADMIN_PASSWORD=0
+RESTART_AFTER_RESET=no
 
 usage() {
     cat <<'EOF'
@@ -65,6 +67,9 @@ Options:
   --answers FILE Read non-secret answers from KEY=VALUE lines.
   --check        Run read-only host checks and exit.
   --dry-run      Run the wizard without changing the host.
+  --reset-admin-password
+                  Generate and store a new Manager admin password.
+  --restart       Restart the service after resetting the password.
   --no-color     Disable ANSI color output.
   --help         Show this help.
 
@@ -242,6 +247,8 @@ save_state() {
         printf 'tls_cert_file=%s\n' "$TLS_CERT_FILE"
         printf 'tls_key_file=%s\n' "$TLS_KEY_FILE"
         printf 'secret_backend=%s\n' "$SECRET_BACKEND"
+        printf 'env_file=%s\n' "$ENV_FILE"
+        printf 'manager_auth_username=%s\n' "$MANAGER_AUTH_USERNAME"
     } > "$tmp"
     atomic_replace "$tmp" "$STATE_FILE"
 }
@@ -276,6 +283,8 @@ load_state() {
             tls_cert_file) TLS_CERT_FILE=$value ;;
             tls_key_file) TLS_KEY_FILE=$value ;;
             secret_backend) SECRET_BACKEND=$value ;;
+            env_file) ENV_FILE=$value ;;
+            manager_auth_username) MANAGER_AUTH_USERNAME=$value ;;
         esac
     done < "$STATE_FILE"
 }
@@ -694,6 +703,54 @@ apply_setup() {
     printf '%s\n' "  Environment file: $ENV_FILE (mode 0600)"
 }
 
+reset_admin_password() {
+    [ "$RESET_ADMIN_PASSWORD" -eq 1 ] || return 0
+    [ "$(id -u)" -eq 0 ] || die 'admin password reset requires root; rerun with sudo'
+    [ -n "$SECRET_BACKEND" ] || die 'no saved installer configuration; run the setup wizard first'
+    command -v openssl >/dev/null 2>&1 || die 'openssl is required to reset the admin password'
+    MANAGER_AUTH_PASSWORD_VALUE=$(openssl rand -base64 32 2>/dev/null | tr -d '\n' | cut -c1-32)
+    [ -n "$MANAGER_AUTH_PASSWORD_VALUE" ] || die 'failed to generate manager password'
+
+    if [ "$SECRET_BACKEND" = keyvault ]; then
+        [ "$KEYVAULT_MODE" != disabled ] || die 'saved Key Vault mode is disabled'
+        command -v az >/dev/null 2>&1 || die 'Azure CLI is required for Key Vault password reset'
+        vault_name=$(printf '%s' "$KEYVAULT_URI" | awk -F/ '{print $3}' | sed 's/\.vault\.azure\.net$//')
+        [ -n "$vault_name" ] || die 'could not derive Key Vault name'
+        kv_tmp="$STATE_DIR/.$$.secret"
+        SECRET_TEMP_PATH=$kv_tmp
+        umask 077
+        printf '%s' "$MANAGER_AUTH_PASSWORD_VALUE" > "$kv_tmp"
+        chmod 600 "$kv_tmp"
+        az keyvault secret set --vault-name "$vault_name" --name manager-auth-password \
+            --file "$kv_tmp" >/dev/null || die 'Key Vault admin password reset failed'
+        rm -f "$kv_tmp"
+        SECRET_TEMP_PATH=
+    else
+        umask 077
+        mkdir -p "$(dirname "$ENV_FILE")"
+        env_tmp="$ENV_FILE.reset.tmp.$$"
+        if [ -f "$ENV_FILE" ]; then
+            cp "$ENV_FILE" "$env_tmp" || die "could not stage $ENV_FILE for password reset"
+        else
+            : > "$env_tmp"
+        fi
+        printf '\nMANAGER_AUTH_ENABLED=1\nMANAGER_AUTH_USERNAME=%s\nMANAGER_AUTH_PASSWORD=%s\n' \
+            "$MANAGER_AUTH_USERNAME" "$MANAGER_AUTH_PASSWORD_VALUE" >> "$env_tmp"
+        chmod 600 "$env_tmp"
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$env_tmp" 2>/dev/null || true
+        atomic_replace "$env_tmp" "$ENV_FILE"
+    fi
+
+    if [ "$RESTART_AFTER_RESET" = yes ]; then
+        command -v systemctl >/dev/null 2>&1 || die 'systemctl is required to restart the service'
+        systemctl restart "$UNIT_NAME"
+        systemctl is-active --quiet "$UNIT_NAME" ||
+            die "service did not become active after password reset; inspect journalctl -u $UNIT_NAME"
+    fi
+    printf '%s\n' "  Manager admin password reset completed using $SECRET_BACKEND."
+    [ "$RESTART_AFTER_RESET" = yes ] || printf '%s\n' "  Restart $UNIT_NAME before using the new password."
+}
+
 main() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -701,6 +758,8 @@ main() {
             --answers) shift; [ "$#" -gt 0 ] || die '--answers requires a file'; ANSWERS_FILE=$1 ;;
             --check) CHECK_ONLY=1 ;;
             --dry-run) DRY_RUN=1 ;;
+            --reset-admin-password) RESET_ADMIN_PASSWORD=1 ;;
+            --restart) RESTART_AFTER_RESET=yes ;;
             --no-color) NO_COLOR=1 ;;
             --help|-h) usage; exit 0 ;;
             *) die "unknown option: $1" ;;
@@ -716,6 +775,12 @@ main() {
     fi
     if [ "$CHECK_ONLY" -eq 1 ]; then
         run_check
+        exit 0
+    fi
+    if [ "$RESET_ADMIN_PASSWORD" -eq 1 ]; then
+        [ -f "$STATE_FILE" ] || die "installer state not found: $STATE_FILE; run setup first"
+        load_state
+        reset_admin_password
         exit 0
     fi
     welcome

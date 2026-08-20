@@ -210,6 +210,10 @@ and start operations.
 - Each later slice must include a Linux build check, shell parity tests, and an explicit
   fallback to the shell implementation until the C++ path is accepted.
 
+The C++ menu also exposes a password-reset action. It generates a new Manager admin
+password in the shell backend, stores it in the configured secret backend, and never
+displays or places the value in process arguments.
+
 ## SSH and terminal safety
 
 - Use POSIX shell and standard utilities. Do not require `dialog`, `whiptail`, `fzf`,

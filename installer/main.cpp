@@ -346,6 +346,7 @@ void draw_menu(std::size_t selected) {
         "Preview setup (dry-run)",
         "Run read-only checks",
         "Use line-based installer fallback",
+        "Reset Manager admin password",
         "Quit",
     };
     clear_screen();
@@ -357,11 +358,11 @@ void draw_menu(std::size_t selected) {
     std::cout << "  FABRIC SHORTCUT PROXY\n"
               << "========================================\n\n"
               << "  SSH-safe installer\n\n";
-    for (std::size_t index = 0; index < 6; ++index) {
+    for (std::size_t index = 0; index < 7; ++index) {
         std::cout << (index == selected ? "  > " : "    ") << (index + 1) << ") "
                   << entries[index] << '\n';
     }
-    std::cout << "\n  Use Up/Down, 1-6, Enter, or Q to quit.\n" << std::flush;
+    std::cout << "\n  Use Up/Down, 1-7, Enter, or Q to quit.\n" << std::flush;
 }
 
 int interactive(const std::filesystem::path& script) {
@@ -381,13 +382,33 @@ int interactive(const std::filesystem::path& script) {
         if (key == 'q' || key == 'Q' || key == 3) {
             return 0;
         }
-        if (key >= '1' && key <= '6') {
+        if (key >= '1' && key <= '7') {
             selected = static_cast<std::size_t>(key - '1');
             key = '\r';
         }
         if (key == '\r' || key == '\n') {
-            if (selected == 5) {
+            if (selected == 6) {
                 return 0;
+            }
+            if (selected == 5) {
+                terminal.restore();
+                std::cout << "\nReset Manager admin password\n"
+                          << "A new password will be generated and stored in the configured backend.\n"
+                          << "The password is never printed. Restart the service now? [yes/no] [no]: "
+                          << std::flush;
+                std::string restart;
+                if (!std::getline(std::cin, restart)) {
+                    return 1;
+                }
+                if (restart.empty()) {
+                    restart = "no";
+                }
+                if (restart != "yes" && restart != "no") {
+                    std::cerr << "Invalid choice; use yes or no.\n";
+                    return 2;
+                }
+                return run_shell_installer(
+                    script, {"--reset-admin-password", restart == "yes" ? "--restart" : "--no-color"});
             }
             if (selected == 4) {
                 terminal.restore();
@@ -413,7 +434,7 @@ int interactive(const std::filesystem::path& script) {
             if (read(STDIN_FILENO, sequence, sizeof(sequence)) == 2 && sequence[0] == '[') {
                 if (sequence[1] == 'A' && selected > 0) {
                     --selected;
-                } else if (sequence[1] == 'B' && selected < 5) {
+                } else if (sequence[1] == 'B' && selected < 6) {
                     ++selected;
                 }
             }

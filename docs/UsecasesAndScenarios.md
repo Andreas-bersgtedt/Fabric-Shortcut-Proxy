@@ -59,6 +59,32 @@ with SigV4 + per-key ACLs, TLS, upstream **credential mediation** (Fabric never 
 source secrets), and two data paths, DB→Iceberg/Delta virtualization *and* file/object
 passthrough (`local` NFS/SMB, `s3`/MinIO, `azure` blob).
 
+## A third delivery mode: Open Mirroring
+
+Open Mirroring is a separate write path from shortcut and Spark consumption. The Manager
+reads selected source tables through the existing database connectors and publishes
+Fabric-compatible metadata and numbered Parquet files into a OneLake mirrored-database
+landing zone. Fabric's mirroring service consumes those files and maintains a durable copy
+in OneLake.
+
+This path does not require Fabric to read the proxy's S3 endpoint. The proxy instead needs
+outbound access to the OneLake landing zone and an Entra identity with the required Fabric
+and storage permissions. Source access remains private to the proxy's network. A local or
+UNC landing-zone root can be used for staging and tests.
+
+Choose the tracking strategy per table:
+
+- **Watermark incremental:** set `watermark_column` for ordered source-incremental upserts.
+  This minimizes source reads but does not detect deletes or changes that do not advance the
+  watermark.
+- **Snapshot diff:** omit `watermark_column` to scan the source and compare row-hash state.
+  This detects inserts, updates, and deletes but reads the source on every cycle.
+
+Open Mirroring can run beside shortcuts. Use a shortcut when consumers need live, governed
+read access without a durable copy; use Open Mirroring when a durable OneLake copy or
+incremental replication is required. The two paths have independent state and refresh
+lifecycle.
+
 ---
 
 ## Use-case matrix
@@ -73,6 +99,9 @@ passthrough (`local` NFS/SMB, `s3`/MinIO, `azure` blob).
 | 6 | **Spark** | On-prem (regulated) | DB→Delta (Oracle) | MPE → PLS on forwarding VM (DNAT) over ExpressRoute |
 | 7 | **Shortcut + Spark** | Multi-cloud mesh | Fleet: many mounts, one endpoint | OPDG per site + MPE for Azure-resident |
 | 8 | **Shortcut** | Cross-tenant/regulated | DB or passthrough | OneLake Private Link (same-tenant) + OPDG |
+| 9 | **Open Mirror** | On-prem / private cloud | Source DB → OneLake landing zone | Proxy outbound Entra identity; source stays private |
+| 10 | **Shortcut + Open Mirror** | Any private environment | Virtual shortcut plus durable mirrored copy | OPDG or MPE for reads; private outbound path for publishing |
+| 11 | **Open Mirror** | Multi-cloud | Watermark or snapshot-diff publishing | Proxy in source VPC/VNet with controlled OneLake egress |
 
 ---
 
@@ -86,6 +115,14 @@ shortcut (bound to a scoped SigV4 key) makes it a Lakehouse table feeding a Dire
 model. Only the queried rows traverse the gateway; nothing lands in a public bucket, and
 shortcut caching absorbs repeat reads. This is the proxy's core DB-virtualization value
 with private connectivity.
+
+### 2: On-prem files as a governed Fabric table, zero copy [Shortcut]
+
+The proxy runs beside an NFS or SMB share and exposes a read-only `local` mount through
+the same S3 endpoint as the warehouse. An OPDG reaches the private proxy, while scoped
+SigV4 access keys restrict each team to its bucket and prefix. Fabric reads the existing
+objects without moving them into a public bucket; TLS and audit logging protect and record
+the access path.
 
 ### 3: Consolidate AWS-resident data into Fabric without public egress [Shortcut]
 
@@ -104,6 +141,15 @@ approval, a Spark notebook does `spark.read.format("delta")` via `s3a`/boto3 aga
 proxy's private FQDN. Heavy distributed joins/transforms run in Spark, the source DB stays
 private, and every object read is audit-logged by the proxy.
 
+### 5: Private Azure storage for Spark without public storage access [Spark]
+
+The proxy runs in an Azure VNet and exposes a private ADLS Gen2 container or MinIO bucket
+through an `azure` or `s3` mount. An internal Standard LB and PLS provide the private
+endpoint for the Fabric workspace MPE. Spark reads the mounted objects with ranged S3
+requests, while the storage credential stays in the proxy's encrypted credential store.
+This pattern is useful when the storage account cannot expose a public endpoint and the
+workspace should not receive its account key or SAS token.
+
 ### 6: Air-gapped / regulated Spark ETL against on-prem Oracle [Spark]
 
 Where policy forbids any public path, front the on-prem proxy with the "Direct Connect"
@@ -119,6 +165,40 @@ domain team to its buckets/prefixes (read-only). Domains that just browse files 
 shortcuts via OPDG; domains doing transforms use Spark via MPE, all against the same
 governed front door.
 
+### 8: Cross-tenant or regulated shortcut access [Shortcut]
+
+For a same-tenant OneLake Private Link deployment, place the proxy behind the approved
+private endpoint and keep the OPDG path for sources that remain on-premises or in another
+cloud. Use separate scoped SigV4 keys and bucket/prefix ACLs for each tenant or regulated
+domain. This keeps the data endpoint private while allowing Fabric shortcuts to reach
+different virtual tables or mounts through one governed service.
+
+### 9: Replicate an on-prem source into OneLake [Open Mirror]
+
+Run the Manager beside the private SQL Server or Oracle source and configure an Open Mirror
+target whose landing-zone root is the destination mirrored database in OneLake. The Manager
+uses the proxy's Entra identity to write table metadata and numbered Parquet batches; Fabric
+consumes those files without connecting to the source database. Use a `watermark_column` for
+source-incremental upserts when the source has a suitable monotonic value, or snapshot diff
+when delete detection is required.
+
+### 10: Serve a live shortcut and a durable copy together [Shortcut + Open Mirror]
+
+Expose a source table through a private shortcut for low-latency or selective reads, while
+the Open Mirror publisher sends the same or a curated table set into OneLake for durable
+analytics and downstream workloads. Shortcut refresh and mirror publishing are independent:
+one can continue serving the source while the other catches up, and each has its own state,
+retention, and operational monitoring.
+
+### 11: Replicate multi-cloud sources with controlled egress [Open Mirror]
+
+Place an agent or Manager inside the source VPC or VNet, bind targets to the existing AWS,
+Azure, or other supported source connections, and allow only the required outbound OneLake
+traffic. Use watermark tracking for high-volume ordered changes; use snapshot diff for
+tables where updates and deletes must be detected without a reliable watermark. Fabric
+receives a durable copy while source credentials and private network access remain inside
+the customer-controlled environment.
+
 ---
 
 ## Why the proxy fits "private infrastructure without a public data endpoint"
@@ -129,8 +209,9 @@ governed front door.
 - **Per-key ACL + forced mount auth**: a secured mount is never anonymous, even with
   `REQUIRE_SIGV4=0`.
 - **TLS at the proxy or fronting LB**, plus an audit log per mounted-object access.
-- **Two paths from one endpoint**: live SQL pushdown *and* file passthrough, so the same
-  private deployment serves warehouse tables and legacy file estates.
+- **Three delivery modes**: live SQL pushdown and file passthrough through shortcuts, plus
+  optional Open Mirror publishing into OneLake, so one private deployment can serve and
+  replicate governed data.
 
 ---
 
@@ -140,7 +221,10 @@ governed front door.
 |---|---|---|
 | **Shortcuts** | On-premises data gateway (OPDG) | On-prem, AWS/GCP VPCs, firewall/network-restricted |
 | **Spark** | Managed Private Endpoint → Private Link Service | In-VNet (trivial); on-prem/other-cloud via a forwarding VM + ExpressRoute/VPN |
+| **Open Mirror** | Proxy outbound OneLake/Entra path | Durable replication from a private source; watermark or snapshot-diff publishing |
 
 Shortcuts reach private endpoints cross-cloud through OPDG; Spark reaches them
 through an Azure-fronted PLS, which is trivial in-VNet and needs a forwarding VM for
-on-prem or other-cloud sources.
+on-prem or other-cloud sources. Open Mirror is different: Fabric consumes files from
+OneLake after the proxy publishes them, so its private-network requirement is source access
+plus controlled outbound access from the proxy to the landing zone.

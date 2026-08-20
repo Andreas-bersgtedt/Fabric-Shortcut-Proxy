@@ -167,7 +167,37 @@ jobs:
           exit 1
 
       - name: Publish serving image
-        run: curl -sf -X POST http://127.0.0.1:9011/_admin/publish-image
+        run: |
+          python - <<'PY'
+          import os
+          import urllib.request
+          from botocore.auth import S3SigV4Auth
+          from botocore.awsrequest import AWSRequest
+          from botocore.credentials import Credentials
+
+          url = "http://127.0.0.1:9011/_admin/publish-image"
+          request = AWSRequest(
+              method="POST",
+              url=url,
+              headers={"host": "127.0.0.1:9011"},
+          )
+          S3SigV4Auth(
+              Credentials(
+                  os.environ["S3_ACCESS_KEY_ID"],
+                  os.environ["S3_SECRET_ACCESS_KEY"],
+              ),
+              "s3",
+              "us-east-1",
+          ).add_auth(request)
+          signed = urllib.request.Request(
+              url,
+              method="POST",
+              headers=dict(request.headers),
+          )
+          with urllib.request.urlopen(signed) as response:
+              if response.status >= 400:
+                  raise RuntimeError(f"publish-image failed with HTTP {response.status}")
+          PY
 
       - name: Stop Python publisher
         if: always()

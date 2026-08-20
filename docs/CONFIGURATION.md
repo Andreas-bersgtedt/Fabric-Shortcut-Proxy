@@ -86,6 +86,12 @@ Enter host / user / password → pick tables (key column auto-detected, overrida
 → **Download config.json**. It's **off by default** and accepts DB credentials, so
 run it locally only. The Manager bootstrap installs all supported Python database drivers.
 
+The Manager console and configuration UI require HTTP Basic authentication when
+`MANAGER_AUTH_ENABLED=1` (the default). Use the configured
+`MANAGER_AUTH_USERNAME` and `MANAGER_AUTH_PASSWORD`. If the UI is embedded in a
+different website, add that website's exact origin to `CORS_ALLOWED_ORIGINS`;
+same-origin browser access does not need a CORS entry.
+
 ---
 
 ## 2. Prerequisites (drivers)

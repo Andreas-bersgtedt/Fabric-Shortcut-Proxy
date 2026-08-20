@@ -41,7 +41,7 @@ Companion documents:
 | LRU cache (metadata + Parquet) | ✅ |
 | Structured logging + quiet expected-404s | ✅ |
 | Metrics / health endpoints | ✅ (H1/H2, `/metrics`, `/_admin/stats`, `/healthz`, `/readyz`) |
-| Auth (SigV4 verification) | ✅ (H3, behind `REQUIRE_SIGV4`, default off) |
+| Auth (SigV4 verification) | ✅ (H3, behind `REQUIRE_SIGV4`, default on) |
 | Resource guards for large scans | ✅ (H4, concurrency semaphore + `QUERY_MAX_ROWS`) |
 | Retry / resilience | ✅ (H5, backoff retries → 503) |
 | Schema-drift handling | ✅ (H6, startup source-column validation) |
@@ -90,7 +90,7 @@ regressing the working Fabric path.
 ### H3: SigV4 authentication verification  ·  effort L · risk med  ·  ✅ DONE
 - **Delivered:** [s3/auth.py](../s3/auth.py) verifies `AWS4-HMAC-SHA256` header auth
   (canonical request → string-to-sign → HMAC signing-key chain), and a middleware
-  in [main.py](../main.py) enforces it when `REQUIRE_SIGV4=1` (default off); health/
+  in [main.py](../main.py) enforces it when `REQUIRE_SIGV4=1` (default on); health/
   metrics/admin endpoints and CORS preflight are exempt. Failures return
   `403` with `AccessDenied` / `InvalidAccessKeyId` / `SignatureDoesNotMatch`.
 - **Acceptance:** ✅ tests sign with **botocore** (the real S3 signer) and assert

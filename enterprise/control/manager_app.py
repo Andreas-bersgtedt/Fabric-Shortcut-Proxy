@@ -214,13 +214,13 @@ def create_manager_app() -> FastAPI:
         if gateway is not None:
             await gateway.aclose()
 
-    app = FastAPI(title="Fabric Shortcut Proxy — Manager", version="2.5.1", lifespan=lifespan)
+    app = FastAPI(title="Fabric Shortcut Proxy — Manager", version="2.5.2", lifespan=lifespan)
     app.state.registry = registry
     app.state.supervisors = supervisors
     app.state.lease = lease
     app.state.is_leader = not config.MANAGER_HA
-    # Standalone HTTP Basic gate over the operator surface (opt-in; leaves
-    # /control + health probes open so the fleet and LBs keep working).
+    # Standalone HTTP Basic gate over the operator surface. Health probes remain
+    # open; authenticated Agent credentials are sent for internal control calls.
     app.add_middleware(ManagerAuthMiddleware)
     app.include_router(create_control_router(service))
 

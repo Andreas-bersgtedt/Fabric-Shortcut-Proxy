@@ -164,7 +164,7 @@ async def _read_rows_watermark(
     max_rows: int | None = None,
 ) -> list[dict]:
     dialect = get_dialect(config.effective_db_url(connection))
-    projected = ", ".join(dialect.quote(col.name) for col in columns)
+    projected, projection_params = _render_projection(dialect, columns)
     source = dialect.quote_qualified(source_table)
     order_col = dialect.quote(watermark_column)
     key_cols = [dialect.quote(col) for col in (key_columns or [])]
@@ -173,7 +173,7 @@ async def _read_rows_watermark(
         sql = _select_ordered_sql(
             dialect, projected, source, order_col, key_cols=key_cols
         )
-        params = {_MAX_ROWS_PARAM: limit}
+        params = {_MAX_ROWS_PARAM: limit, **projection_params}
     else:
         predicate_keys = (
             key_cols if len(last_keys or []) == len(key_cols) else []
@@ -182,7 +182,7 @@ async def _read_rows_watermark(
             dialect, projected, source, order_col, wm_param="wm",
             key_cols=predicate_keys, order_key_cols=key_cols,
         )
-        params = {_MAX_ROWS_PARAM: limit, "wm": last_watermark}
+        params = {_MAX_ROWS_PARAM: limit, "wm": last_watermark, **projection_params}
         params.update({f"key{i}": value for i, value in enumerate(last_keys or [])})
     return await execute_split_query(sql, params, split_index=0, connection=connection)
 
@@ -197,12 +197,12 @@ def _max_watermark(rows, watermark_column: str):
 
 async def _read_source_rows(source_table, columns, connection, *, max_rows=None):
     dialect = get_dialect(config.effective_db_url(connection))
-    projected = ", ".join(dialect.quote(col.name) for col in columns)
+    projected, projection_params = _render_projection(dialect, columns)
     source = dialect.quote_qualified(source_table)
     sql = _select_all_sql(dialect, projected, source)
     limit = max_rows if max_rows is not None else config.effective_query_max_rows(connection)
     return await execute_split_query(
-        sql, {_MAX_ROWS_PARAM: limit}, split_index=0, connection=connection
+        sql, {_MAX_ROWS_PARAM: limit, **projection_params}, split_index=0, connection=connection
     )
 
 
@@ -219,6 +219,64 @@ def _effective_max_rows(max_rows):
         return max_rows
     configured = int(getattr(config, "OPEN_MIRROR_MAX_ROWS", 0) or 0)
     return configured or None
+
+
+def _configured_columns(table: OpenMirrorTableTarget, reflected) -> list[config.ColumnDef]:
+    """Resolve published columns and protect Open Mirror control columns."""
+    configured = table.columns
+    if configured is None:
+        return list(reflected)
+
+    reflected_names = {column.name for column in reflected}
+    missing = [
+        column.source_name
+        for column in configured
+        if column.source_name not in reflected_names
+    ]
+    if missing:
+        raise ValueError(
+            f"Open Mirror columns are not present in source {table.source_table!r}: {missing}"
+        )
+
+    control_names = [*table.key_columns]
+    if table.watermark_column:
+        control_names.append(table.watermark_column)
+    for control_name in control_names:
+        matches = [column for column in configured if column.source_name == control_name]
+        if not matches:
+            raise ValueError(
+                f"Open Mirror control column {control_name!r} must be present in columns"
+            )
+        column = matches[0]
+        if column.name != control_name or column.transform:
+            raise ValueError(
+                f"Open Mirror control column {control_name!r} must be pass-through"
+            )
+    return list(configured)
+
+
+def _render_projection(dialect, columns) -> tuple[str, dict]:
+    """Render an Open Mirror projection using the shared dialect policy."""
+    expressions = []
+    params: dict = {}
+    for index, column in enumerate(columns, start=1):
+        expression, _output, column_params = dialect.render_projection(
+            column, f"om_{index}"
+        )
+        expressions.append(expression)
+        params.update(column_params)
+    return ", ".join(expressions), params
+
+
+def _validate_projection_strategy(columns, strategy: str) -> None:
+    """Reject projection policies whose semantics cannot survive the strategy."""
+    if strategy == "snapshot" and any(
+        column.transform and column.transform.kind == "random_token"
+        for column in columns
+    ):
+        raise ValueError(
+            "Open Mirror random_token columns are incompatible with snapshot tracking"
+        )
 
 
 def _effective_mode(table: OpenMirrorTableTarget, invocation: str | None) -> str:
@@ -335,7 +393,9 @@ async def publish_table(
     if explicit_initial and (state is None or state.pending is None) or state is None:
         state = PublishState(strategy=strategy)
 
-    columns = await derive_table_schema(table.source_table, target.connection_id)
+    reflected_columns = await derive_table_schema(table.source_table, target.connection_id)
+    columns = _configured_columns(table, reflected_columns)
+    _validate_projection_strategy(columns, strategy)
     if strategy == "watermark":
         return await _publish_watermark(
             target, table, columns, publisher, state, loaded, reason=reason,

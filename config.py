@@ -461,39 +461,45 @@ class TableDef:
         return max(effective_query_max_rows(self.connection_id), self.effective_split_target_rows)
 
 
+def column_defs_from_json(raw_schema, *, context: str = "Column") -> list[ColumnDef]:
+    """Parse a JSON column list using the shared transform contract."""
+    if not isinstance(raw_schema, list):
+        raise TypeError(f"{context} schema must be a list")
+
+    def _transform(c: dict) -> ColumnTransform | None:
+        raw = c.get("transform")
+        if not raw:
+            return None
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"{context} {c.get('name')!r} transform must be an object"
+            )
+        return ColumnTransform(
+            kind=str(raw.get("kind", "")).strip().lower(),
+            key_ref=(str(raw["key_ref"]).strip() if raw.get("key_ref") else None),
+            domain=(str(raw["domain"]) if raw.get("domain") is not None else None),
+            normalization=str(raw.get("normalization", "none")).strip().lower(),
+        )
+
+    return [
+        ColumnDef(
+            field_id=int(c["field_id"]),
+            name=c["name"],
+            iceberg_type=c.get("type") or c.get("iceberg_type"),
+            nullable=bool(c.get("nullable", True)),
+            source=(str(c["source"]) if c.get("source") else None),
+            transform=_transform(c),
+        )
+        for c in raw_schema
+    ]
+
+
 def _tabledef_from_json(d: dict) -> "TableDef":
     """Build a TableDef from a JSON ``tables`` entry."""
     source_table = str(d.get("source_table", ""))
     name = d.get("name") or (source_table.rsplit(".", 1)[-1] if source_table else "table")
     raw_schema = d.get("schema")
-    schema = None
-    if raw_schema:
-        def _transform(c: dict) -> ColumnTransform | None:
-            raw = c.get("transform")
-            if not raw:
-                return None
-            if not isinstance(raw, dict):
-                raise ValueError(
-                    f"Column {c.get('name')!r} transform must be an object"
-                )
-            return ColumnTransform(
-                kind=str(raw.get("kind", "")).strip().lower(),
-                key_ref=(str(raw["key_ref"]).strip() if raw.get("key_ref") else None),
-                domain=(str(raw["domain"]) if raw.get("domain") is not None else None),
-                normalization=str(raw.get("normalization", "none")).strip().lower(),
-            )
-
-        schema = [
-            ColumnDef(
-                field_id=int(c["field_id"]),
-                name=c["name"],
-                iceberg_type=c.get("type") or c.get("iceberg_type"),
-                nullable=bool(c.get("nullable", True)),
-                source=(str(c["source"]) if c.get("source") else None),
-                transform=_transform(c),
-            )
-            for c in raw_schema
-        ]
+    schema = column_defs_from_json(raw_schema, context="Column") if raw_schema else None
     return TableDef(
         name=str(name),
         source_table=source_table,

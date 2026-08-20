@@ -17,9 +17,13 @@ from sqlalchemy import create_engine, text
 
 import config
 import db.executor as executor
+from config import ColumnDef, ColumnTransform
 from open_mirror import target_from_dict
 from open_mirror.source import (
     _select_all_sql,
+    _configured_columns,
+    _render_projection,
+    _validate_projection_strategy,
     publish_initial_load,
     publish_target_initial_load,
 )
@@ -72,6 +76,79 @@ def test_select_all_sql_per_dialect():
     assert _select_all_sql(_MSSQL, "[id]", "[sales]") == "SELECT TOP (:max_rows) [id] FROM [sales]"
     assert "FETCH FIRST :max_rows ROWS ONLY" in _select_all_sql(_ORACLE, '"id"', '"sales"')
     assert "QUALIFY ROW_NUMBER()" in _select_all_sql(_TERADATA, '"id"', '"sales"')
+
+
+def test_open_mirror_columns_reuse_tokenization_projection(monkeypatch):
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "secret-value")
+    columns = [
+        ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
+        ColumnDef(
+            field_id=2,
+            name="email_token",
+            source="email",
+            iceberg_type="string",
+            transform=ColumnTransform(
+                kind="deterministic_hash",
+                key_ref="customer-pii-v1",
+                domain="customer-email",
+                normalization="trim_lower",
+            ),
+        ),
+    ]
+
+    projected, params = _render_projection(_MSSQL, columns)
+
+    assert "HASHBYTES('SHA2_256'" in projected
+    assert "[email_token]" in projected
+    assert "secret-value" not in projected
+    assert params["fsp_token_key_om_2"] == "secret-value"
+    assert params["fsp_token_domain_om_2"] == "customer-email"
+
+
+def test_open_mirror_columns_require_pass_through_control_columns(tmp_path):
+    target = target_from_dict({
+        "id": "fabric-sales",
+        "connection": "default",
+        "landing_zone_root": str(tmp_path),
+        "tables": [{
+            "name": "sales",
+            "source_table": "sales",
+            "target_table": "sales",
+            "key_column": "id",
+            "columns": [{
+                "field_id": 1,
+                "name": "id_token",
+                "source": "id",
+                "type": "string",
+                "transform": {
+                    "kind": "deterministic_hash",
+                    "key_ref": "customer-pii-v1",
+                },
+            }],
+        }],
+    })
+
+    with pytest.raises(ValueError, match="control column 'id' must be pass-through"):
+        _configured_columns(
+            target.tables[0],
+            [ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False)],
+        )
+
+
+def test_open_mirror_random_tokens_reject_snapshot_tracking():
+    columns = [
+        ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
+        ColumnDef(
+            field_id=2,
+            name="note_token",
+            source="note",
+            iceberg_type="string",
+            transform=ColumnTransform(kind="random_token"),
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="incompatible with snapshot tracking"):
+        _validate_projection_strategy(columns, "snapshot")
 
 
 # --- end-to-end publish from a live source ---------------------------------

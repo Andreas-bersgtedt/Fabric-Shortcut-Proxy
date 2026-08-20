@@ -2705,6 +2705,7 @@ function omReadForm(){
     schema:(tb.schema||"").trim() || null,
     mode:(tb.mode||"incremental").trim(),
     watermark_column:(tb.watermark_column||"").trim() || null,
+    columns:Array.isArray(tb.columns) ? tb.columns : null,
     cleanup_retention_days:(tb.cleanup_retention_days==null || String(tb.cleanup_retention_days).trim()==="")
       ? null : Number(tb.cleanup_retention_days),
   })).filter(tb=>tb.name||tb.source_table);

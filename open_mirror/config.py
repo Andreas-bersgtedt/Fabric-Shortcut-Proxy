@@ -34,6 +34,8 @@ import json
 import sys
 from dataclasses import dataclass
 
+from config import ColumnDef, column_defs_from_json
+
 _CONFIG_FILE = "config.open_mirror.json"
 
 DEFAULT_PARTNER_NAME = "FabricShortcutProxy"
@@ -53,6 +55,7 @@ class OpenMirrorTableTarget:
     watermark_column: str | None = None
     enabled: bool = True
     cleanup_retention_days: int | None = None
+    columns: tuple[ColumnDef, ...] | None = None
 
     @property
     def key_columns(self) -> list[str]:
@@ -118,6 +121,10 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
         not isinstance(cleanup_retention_days, int) or cleanup_retention_days < 0
     ):
         raise ValueError(f"open mirror table {name!r}: cleanup_retention_days must be >= 0")
+    raw_columns = d.get("columns")
+    columns = None
+    if raw_columns is not None:
+        columns = tuple(column_defs_from_json(raw_columns, context="Open Mirror column"))
     return OpenMirrorTableTarget(
         name=name,
         source_table=source_table,
@@ -131,6 +138,7 @@ def _table_from_dict(d: dict) -> OpenMirrorTableTarget:
             cleanup_retention_days
             if cleanup_retention_days is not None else None
         ),
+        columns=columns,
     )
 
 

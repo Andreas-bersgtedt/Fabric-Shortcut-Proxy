@@ -321,10 +321,10 @@ _ADMIN_HTML = r"""<!doctype html>
   .trend span.healthy { background: #4ade80; }
   .trend span.warning { background: #fcd34d; }
   .trend span.critical { background: #f87171; }
-  .health-chart { width: 100%; height: 220px; display: block; }
+  .chart-wrap { position: relative; width: 100%; }
+  .health-chart { width: 100%; height: auto; aspect-ratio: 760 / 220; display: block; }
   .chart-label { fill: #8a93a6; font-size: 11px; }
   .chart-legend { display: flex; gap: 16px; padding: 10px 12px 0; font-size: 12px; }
-  .chart-wrap { position: relative; }
   .chart-tooltip { position: absolute; display: none; pointer-events: none; z-index: 2;
     background: #0b1220; border: 1px solid #526078; border-radius: 4px;
     padding: 7px 9px; color: #e5e7eb; font-size: 11px; white-space: nowrap; }
@@ -680,7 +680,7 @@ function renderHealth(h, history){
 function fmtRate(bytes){ return fmtBytes(bytes)+"/s"; }
 
 function healthChart(points){
-  const width=760, height=220, left=42, right=16, top=18, bottom=30;
+  const width=760, height=220, left=58, right=16, top=18, bottom=30;
   const colors={cpu_pct:"#38bdf8", memory_pct:"#a78bfa", disk_pct:"#4ade80"};
   const labels={cpu_pct:"CPU", memory_pct:"Memory", disk_pct:"Disk"};
   const x=i=>left+(points.length<2?0:i*(width-left-right)/(points.length-1));
@@ -703,12 +703,12 @@ function healthChart(points){
   return `<div class="chart-legend">${legend}</div><div class="chart-wrap"><div class="chart-tooltip"></div><svg class="health-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Host CPU, memory, and disk usage trend">
     <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#526078"/>
     <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#526078"/>
-    <text x="8" y="${top+4}" class="chart-label">100%</text><text x="18" y="${height-bottom+4}" class="chart-label">0%</text>
+    <text x="18" y="${top+4}" class="chart-label">100%</text><text x="28" y="${height-bottom+4}" class="chart-label">0%</text>
     ${lines}${ticks}</svg></div>`;
 }
 
 function networkChart(points){
-  const width=760, height=180, left=58, right=16, top=18, bottom=30;
+  const width=760, height=220, left=58, right=16, top=18, bottom=30;
   const colors={network_receive_bytes_per_sec:"#f59e0b", network_transmit_bytes_per_sec:"#f472b6"};
   const labels={network_receive_bytes_per_sec:"Network RX", network_transmit_bytes_per_sec:"Network TX"};
   const values=Object.keys(colors).flatMap(key=>points.map(p=>p.host && p.host[key] || 0));

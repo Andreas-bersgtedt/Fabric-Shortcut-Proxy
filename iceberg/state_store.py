@@ -171,7 +171,14 @@ def build_table_snapshot(table: "config.TableDef", bucket: str, warehouse_prefix
     table_path = active_table_path(table, warehouse_prefix)
     legacy_path = legacy_table_path(table, warehouse_prefix)
 
-    seed = f"{bucket}/{table_path}"
+    seed = (
+        f"{bucket}/{table_path}"
+        f"|source={table.source_table}"
+        f"|key={table.key_column or ''}"
+        f"|splits={table.num_splits}"
+        f"|strategy={table.effective_split_strategy}"
+        f"|target={table.effective_split_target_rows}"
+    )
     digest = hashlib.sha256(seed.encode()).hexdigest()
     snap_id = int(digest[:15], 16)                 # stable positive long (< 2**60)
     snap_uuid = digest[:32]

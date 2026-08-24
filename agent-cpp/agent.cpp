@@ -432,8 +432,18 @@ static void handle_list(SocketHandle s, const std::string& prefix, bool head_onl
     std::vector<std::pair<std::string, uintmax_t>> hits;
     std::error_code ec;
     fs::path root(CFG.store_dir);
-    if (fs::exists(root, ec)) {
-        for (auto it = fs::recursive_directory_iterator(root, ec);
+    fs::path scan_root = root;
+    size_t last_slash = prefix.find_last_of('/');
+    if (last_slash != std::string::npos) {
+        fs::path candidate = root / fs::path(prefix.substr(0, last_slash));
+        fs::path canonical_root = canonical_store_root();
+        fs::path canonical_candidate = fs::weakly_canonical(candidate, ec);
+        if (!ec && path_has_prefix(canonical_root, canonical_candidate)) {
+            scan_root = candidate;
+        }
+    }
+    if (fs::exists(scan_root, ec) && fs::is_directory(scan_root, ec)) {
+        for (auto it = fs::recursive_directory_iterator(scan_root, ec);
              it != fs::recursive_directory_iterator(); it.increment(ec)) {
             if (ec) break;
             if (!it->is_regular_file(ec)) continue;
@@ -444,6 +454,8 @@ static void handle_list(SocketHandle s, const std::string& prefix, bool head_onl
         }
     }
     std::sort(hits.begin(), hits.end());
+    bool truncated = hits.size() > 1000;
+    if (truncated) hits.resize(1000);
 
     std::ostringstream x;
     x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -451,7 +463,7 @@ static void handle_list(SocketHandle s, const std::string& prefix, bool head_onl
       << "<Name>" << xml_escape(CFG.bucket) << "</Name>"
       << "<Prefix>" << xml_escape(prefix) << "</Prefix>"
       << "<KeyCount>" << hits.size() << "</KeyCount>"
-      << "<MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>";
+    << "<MaxKeys>1000</MaxKeys><IsTruncated>" << (truncated ? "true" : "false") << "</IsTruncated>";
     std::string now = iso_now();
     for (auto& h : hits) {
         x << "<Contents><Key>" << xml_escape(h.first) << "</Key>"
@@ -704,7 +716,13 @@ static void handle_connection(SocketHandle client) {
     size_t slash = p.find('/');
     std::string bucket = slash == std::string::npos ? p : p.substr(0, slash);
     std::string key = slash == std::string::npos ? "" : p.substr(slash + 1);
-    (void)bucket;
+    if (bucket != CFG.bucket) {
+        send_fixed_response(client, 404, "Not Found", "application/xml",
+                            s3_error_xml("NoSuchBucket", "The specified bucket does not exist.", "/" + bucket),
+                            head_only);
+        close_socket(client);
+        return;
+    }
 
     if (key.empty()) {
         handle_list(client, query_param(req.query, "prefix"), head_only);

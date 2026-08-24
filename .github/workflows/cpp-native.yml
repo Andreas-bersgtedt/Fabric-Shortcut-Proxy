@@ -34,6 +34,8 @@ jobs:
         run: |
           ./agent-cpp/agent --help
           ./agent-cpp/agent --version
+      - name: Run hardening regression tests
+        run: python -m unittest tests/test_cpp_agent_hardening.py
 
   tier1:
     name: tier1 pure-logic conformance

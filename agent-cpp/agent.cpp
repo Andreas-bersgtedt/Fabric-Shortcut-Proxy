@@ -249,6 +249,7 @@ struct Config {
     // the Manager generates the splits.
     std::string materialize_mode = getenv_str("MATERIALIZE_MODE", "eager");
     int materialize_timeout_ms = parse_int_or(getenv_str("MATERIALIZE_TIMEOUT_MS", "120000"), 120000, 1000, 600000);
+    int index_refresh_seconds = parse_int_or(getenv_str("INDEX_REFRESH_SECONDS", "300"), 300, 0, 86400);
     // On drain: serve /readyz 503, then exit after this window so the LB can
     // deregister and in-flight requests finish.
     int drain_grace_ms = parse_int_or(getenv_str("AGENT_DRAIN_GRACE_SECONDS", "15"), 15, 0, 3600) * 1000;
@@ -518,6 +519,26 @@ static std::string query_param(const std::string& q, const std::string& name) {
     return "";
 }
 
+static bool continuation_token_valid(const std::string& prefix,
+                                     const std::string& token,
+                                     const std::string& delimiter) {
+    if (token.empty() || token.rfind(prefix, 0) != 0) return false;
+
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    auto exact = std::lower_bound(
+        g_object_index.begin(), g_object_index.end(), token,
+        [](const auto& entry, const std::string& key) { return entry.key < key; });
+    if (exact != g_object_index.end() && exact->key == token) return true;
+
+    if (!delimiter.empty() && token.size() >= delimiter.size()
+        && token.compare(token.size() - delimiter.size(), delimiter.size(), delimiter) == 0) {
+        for (const auto& entry : g_object_index) {
+            if (entry.key.rfind(token, 0) == 0) return true;
+        }
+    }
+    return false;
+}
+
 static bool query_has_param(const std::string& q, const std::string& name) {
     size_t pos = 0;
     while (pos <= q.size()) {
@@ -551,6 +572,17 @@ static void handle_list(SocketHandle s,
         auto token_pos = std::upper_bound(
             g_object_index.begin(), g_object_index.end(), continuation_token,
             [](const std::string& key, const auto& entry) { return key < entry.key; });
+        if (!delimiter.empty() && continuation_token.size() >= delimiter.size()
+            && continuation_token.compare(continuation_token.size() - delimiter.size(),
+                                          delimiter.size(), delimiter) == 0) {
+            token_pos = std::lower_bound(
+                g_object_index.begin(), g_object_index.end(), continuation_token,
+                [](const auto& entry, const std::string& key) { return entry.key < key; });
+            while (token_pos != g_object_index.end()
+                   && token_pos->key.rfind(continuation_token, 0) == 0) {
+                ++token_pos;
+            }
+        }
         if (token_pos > first) first = token_pos;
     }
 
@@ -868,9 +900,18 @@ static void handle_connection(SocketHandle client) {
             }
             max_keys = static_cast<int>(parsed_max_keys);
         }
-        handle_list(client, query_param(req.query, "prefix"), max_keys,
-                    query_param(req.query, "continuation-token"),
-                    query_param(req.query, "delimiter"), head_only);
+        std::string prefix = query_param(req.query, "prefix");
+        std::string continuation_token = query_param(req.query, "continuation-token");
+        std::string delimiter = query_param(req.query, "delimiter");
+        if (!continuation_token.empty()
+            && !continuation_token_valid(prefix, continuation_token, delimiter)) {
+            send_fixed_response(client, 400, "Bad Request", "application/xml",
+                                s3_error_xml("InvalidArgument", "invalid continuation-token", req.path),
+                                head_only);
+            close_socket(client);
+            return;
+        }
+        handle_list(client, prefix, max_keys, continuation_token, delimiter, head_only);
     } else {
         handle_get(client, key, req.range, head_only);
     }
@@ -1008,6 +1049,16 @@ static std::mutex g_conn_mu;
 static std::condition_variable g_conn_cv;
 static std::queue<SocketHandle> g_conn_queue;
 
+static void index_refresh_loop() {
+    if (CFG.index_refresh_seconds <= 0) return;
+    while (g_running) {
+        for (int elapsed = 0; elapsed < CFG.index_refresh_seconds && g_running; ++elapsed) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        if (g_running) rebuild_object_index();
+    }
+}
+
 static void worker_loop() {
     while (g_running) {
         SocketHandle client = kInvalidSocket;
@@ -1130,6 +1181,7 @@ static void print_usage(const char* prog) {
         "                                 (POST /control/materialize) to materialize the object's\n"
         "                                 table into the shared store, then serve it.\n"
         "  MATERIALIZE_TIMEOUT_MS (120000) Max wait for a lazy materialize request (ms).\n"
+        "  INDEX_REFRESH_SECONDS (300)    Refresh persisted object index; 0 disables periodic refresh.\n"
         "  AGENT_DRAIN_GRACE_SECONDS (15) Drain grace window before exit (s).\n\n"
         "Endpoints: GET/HEAD /{bucket}/{key} (range-aware), GET /{bucket}?list-type=2,\n"
         "           GET /healthz, GET /readyz (503 while draining).\n\n"
@@ -1137,12 +1189,12 @@ static void print_usage(const char* prog) {
         "  host=%s port=%d store_dir=%s bucket=%s\n"
         "  agent_id=%s manager_url=%s\n"
         "  materialize_mode=%s materialize_timeout_ms=%d\n"
-        "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d drain_grace_ms=%d\n",
+        "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d index_refresh_seconds=%d drain_grace_ms=%d\n",
         APP_VERSION, prog,
         CFG.host.c_str(), CFG.port, CFG.store_dir.c_str(), CFG.bucket.c_str(),
         CFG.agent_id.c_str(), CFG.manager_url.empty() ? "(standalone)" : CFG.manager_url.c_str(),
         CFG.materialize_mode.c_str(), CFG.materialize_timeout_ms,
-        CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.drain_grace_ms);
+        CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.index_refresh_seconds, CFG.drain_grace_ms);
 }
 
 int main(int argc, char** argv) {
@@ -1199,6 +1251,8 @@ int main(int argc, char** argv) {
         ctl = std::thread(control_loop);
     }
 
+    std::thread index_refresher(index_refresh_loop);
+
     const int worker_count = std::max(1, std::min(CFG.max_inflight, 32));
     std::vector<std::thread> workers;
     workers.reserve((size_t)worker_count);
@@ -1239,6 +1293,7 @@ int main(int argc, char** argv) {
         if (worker.joinable()) worker.join();
     }
     if (ctl.joinable()) ctl.join();
+    if (index_refresher.joinable()) index_refresher.join();
     close_socket(srv);
     net_cleanup();
     return 0;

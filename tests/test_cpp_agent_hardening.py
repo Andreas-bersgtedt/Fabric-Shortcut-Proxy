@@ -120,6 +120,18 @@ class CppAgentHardeningTests(unittest.TestCase):
         self.assertIn(b"<CommonPrefixes><Prefix>nested/</Prefix></CommonPrefixes>", body)
         self.assertIn(b"<KeyCount>3</KeyCount>", body)
 
+        status, body = self.request(
+            f"/{BUCKET}/?list-type=2&prefix=&delimiter=/&max-keys=1&continuation-token=many%2F"
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn(b"<CommonPrefixes><Prefix>many/</Prefix></CommonPrefixes>", body)
+
+        status, body = self.request(
+            f"/{BUCKET}/?list-type=2&prefix=many/&continuation-token=other/item.txt"
+        )
+        self.assertEqual(status, 400)
+        self.assertIn(b"InvalidArgument", body)
+
         for value in ("bad", "-1", "1001"):
             with self.subTest(value=value):
                 status, body = self.request(f"/{BUCKET}/?list-type=2&max-keys={value}")

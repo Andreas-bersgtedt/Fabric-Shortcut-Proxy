@@ -429,7 +429,11 @@ static std::string query_param(const std::string& q, const std::string& name) {
     return "";
 }
 
-static void handle_list(SocketHandle s, const std::string& prefix, bool head_only) {
+static void handle_list(SocketHandle s,
+                        const std::string& prefix,
+                        int max_keys,
+                        const std::string& continuation_token,
+                        bool head_only) {
     std::vector<std::pair<std::string, uintmax_t>> hits;
     std::error_code ec;
     fs::path root(CFG.store_dir);
@@ -455,18 +459,33 @@ static void handle_list(SocketHandle s, const std::string& prefix, bool head_onl
         }
     }
     std::sort(hits.begin(), hits.end());
-    bool truncated = hits.size() > 1000;
-    if (truncated) hits.resize(1000);
+
+    auto first = hits.begin();
+    if (!continuation_token.empty()) {
+        first = std::upper_bound(
+            hits.begin(), hits.end(),
+            std::make_pair(continuation_token, uintmax_t{0}),
+            [](const auto& key, const auto& hit) { return key.first < hit.first; });
+    }
+    size_t remaining = static_cast<size_t>(std::distance(first, hits.end()));
+    size_t page_size = static_cast<size_t>(max_keys);
+    bool truncated = remaining > page_size;
+    auto page_end = first + std::min(remaining, page_size);
 
     std::ostringstream x;
     x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
       << "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
       << "<Name>" << xml_escape(CFG.bucket) << "</Name>"
       << "<Prefix>" << xml_escape(prefix) << "</Prefix>"
-      << "<KeyCount>" << hits.size() << "</KeyCount>"
-    << "<MaxKeys>1000</MaxKeys><IsTruncated>" << (truncated ? "true" : "false") << "</IsTruncated>";
+    << "<KeyCount>" << (page_end - first) << "</KeyCount>"
+            << "<MaxKeys>" << max_keys << "</MaxKeys><IsTruncated>" << (truncated ? "true" : "false") << "</IsTruncated>";
+        if (truncated && page_end != first) {
+                x << "<NextContinuationToken>" << xml_escape((page_end - 1)->first)
+                    << "</NextContinuationToken>";
+        }
     std::string now = iso_now();
-    for (auto& h : hits) {
+        for (auto it = first; it != page_end; ++it) {
+                auto& h = *it;
         x << "<Contents><Key>" << xml_escape(h.first) << "</Key>"
           << "<LastModified>" << now << "</LastModified>"
           << "<ETag>\"" << etag_for(h.first) << "\"</ETag>"
@@ -726,7 +745,9 @@ static void handle_connection(SocketHandle client) {
     }
 
     if (key.empty()) {
-        handle_list(client, query_param(req.query, "prefix"), head_only);
+        int max_keys = parse_int_or(query_param(req.query, "max-keys"), 1000, 0, 1000);
+        handle_list(client, query_param(req.query, "prefix"), max_keys,
+                    query_param(req.query, "continuation-token"), head_only);
     } else {
         handle_get(client, key, req.range, head_only);
     }

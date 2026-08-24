@@ -105,6 +105,14 @@ class CppAgentHardeningTests(unittest.TestCase):
         self.assertIn(b"<IsTruncated>true</IsTruncated>", body)
         self.assertNotIn(b"item-1000.txt", body)
 
+        status, body = self.request(
+            f"/{BUCKET}/?list-type=2&prefix=many/&continuation-token=many%2Fitem-0999.txt"
+        )
+        self.assertEqual(status, 200)
+        self.assertIn(b"<KeyCount>1</KeyCount>", body)
+        self.assertIn(b"many/item-1000.txt", body)
+        self.assertIn(b"<IsTruncated>false</IsTruncated>", body)
+
     def test_large_object_is_streamed(self):
         before = read_hwm_kib(self.process.pid)
         status, body = self.request(f"/{BUCKET}/large.bin")

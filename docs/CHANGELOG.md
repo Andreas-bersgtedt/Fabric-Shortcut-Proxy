@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dry-run inspection, and deletes only eligible processed folders after explicit confirmation.
 - The C++ serving agent now persists a sorted object index, supports ListObjectsV2 continuation
   tokens and delimiter prefixes, refreshes the index after lazy materialization, and rejects
-  invalid `max-keys` values.
+  invalid `max-keys` values. The index also refreshes every five minutes by default and rejects
+  continuation tokens that do not match the requested prefix.
 
 ## [2.5.2]: 2026-08-20
 

@@ -79,7 +79,7 @@ The main remaining concerns are:
 - Impact: slower directory/list operations as data volume increases.
 - Current status: prefix-scoped walking and 1,000-key ListObjectsV2 pagination are implemented. A persisted sorted object index now serves list pages without a per-request filesystem walk or full-set sort.
 - Benchmark result: at 100,000 objects, p95 first-page latency fell from 961.6 ms and 180 MiB RSS growth to 1.5 ms and 6.7 MiB RSS growth. Eight concurrent lists fell from 3.7 s to 45 ms.
-- Operational behavior: the index is rebuilt at agent startup and refreshed after successful lazy materialization. External store mutations still require an agent restart before those files appear in ListObjectsV2 results.
+- Operational behavior: the index is rebuilt at agent startup, refreshed after successful lazy materialization, and periodically refreshed every 300 seconds by default. Set `INDEX_REFRESH_SECONDS=0` to disable periodic refresh. External store mutations can therefore take up to the configured interval to appear in ListObjectsV2 results.
 
 ### Low Severity
 
@@ -177,6 +177,7 @@ The C++ review actions are implemented and covered by Linux CI:
 - ListObjectsV2 pagination with continuation tokens: done
 - delimiter/CommonPrefixes listing: done
 - strict `max-keys` validation: done
+- continuation-token prefix and delimiter validation: done
 - large-object chunked streaming smoke test: done
 - persistent large-store index: done; validated at 100,000 objects
 

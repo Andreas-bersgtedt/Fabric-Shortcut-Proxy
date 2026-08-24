@@ -9,7 +9,6 @@ import http.client
 import os
 import pathlib
 import shutil
-import statistics
 import subprocess
 import tempfile
 import time

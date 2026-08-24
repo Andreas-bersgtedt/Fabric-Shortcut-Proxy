@@ -79,7 +79,7 @@ The main remaining concerns are:
 - Impact: slower directory/list operations as data volume increases.
 - Current status: prefix-scoped walking and 1,000-key ListObjectsV2 pagination are implemented. A persisted sorted object index now serves list pages without a per-request filesystem walk or full-set sort.
 - Benchmark result: at 100,000 objects, p95 first-page latency fell from 961.6 ms and 180 MiB RSS growth to 1.5 ms and 6.7 MiB RSS growth. Eight concurrent lists fell from 3.7 s to 45 ms.
-- Operational constraint: the index is rebuilt at agent startup and is not yet refreshed automatically after external store mutations. Lazy materialization that adds new files therefore requires an index refresh or agent restart before those files appear in ListObjectsV2 results.
+- Operational behavior: the index is rebuilt at agent startup and refreshed after successful lazy materialization. External store mutations still require an agent restart before those files appear in ListObjectsV2 results.
 
 ### Low Severity
 
@@ -175,10 +175,12 @@ The C++ review actions are implemented and covered by Linux CI:
 - request-header and range validation: done
 - configured bucket enforcement: done
 - ListObjectsV2 pagination with continuation tokens: done
+- delimiter/CommonPrefixes listing: done
+- strict `max-keys` validation: done
 - large-object chunked streaming smoke test: done
 - persistent large-store index: done; validated at 100,000 objects
 
-The benchmark harness at `tests/benchmark_cpp_agent_list.py` measures first-page and continuation-page latency, process high-water RSS, and concurrent list requests. Results justify the persisted index for large stores. Automatic refresh on materialization remains a follow-up.
+The benchmark harness at `tests/benchmark_cpp_agent_list.py` measures first-page and continuation-page latency, process high-water RSS, and concurrent list requests. Results justify the persisted index for large stores. The indexed 1,000,000-object run remains a validation follow-up.
 
 ## 8. Linux Deployment Alignment
 

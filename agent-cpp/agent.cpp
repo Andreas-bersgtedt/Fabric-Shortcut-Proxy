@@ -27,6 +27,7 @@
 #include <mutex>
 #include <queue>
 #include <sstream>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -517,10 +518,30 @@ static std::string query_param(const std::string& q, const std::string& name) {
     return "";
 }
 
+static bool query_has_param(const std::string& q, const std::string& name) {
+    size_t pos = 0;
+    while (pos <= q.size()) {
+        size_t amp = q.find('&', pos);
+        std::string part = q.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+        size_t equal = part.find('=');
+        if (part.substr(0, equal) == name) return true;
+        if (amp == std::string::npos) break;
+        pos = amp + 1;
+    }
+    return false;
+}
+
+struct ListItem {
+    std::string value;
+    uintmax_t size = 0;
+    bool common_prefix = false;
+};
+
 static void handle_list(SocketHandle s,
                         const std::string& prefix,
                         int max_keys,
                         const std::string& continuation_token,
+                        const std::string& delimiter,
                         bool head_only) {
     std::lock_guard<std::mutex> lock(g_object_index_mu);
     auto first = std::lower_bound(
@@ -534,30 +555,51 @@ static void handle_list(SocketHandle s,
     }
 
     size_t page_size = static_cast<size_t>(max_keys);
-    auto page_end = first;
-    for (size_t count = 0; page_end != g_object_index.end() && count < page_size; ++count, ++page_end) {
-        if (page_end->key.rfind(prefix, 0) != 0) break;
+    std::vector<ListItem> page;
+    std::set<std::string> emitted_prefixes;
+    auto scan = first;
+    while (scan != g_object_index.end() && page.size() < page_size) {
+        if (scan->key.rfind(prefix, 0) != 0) break;
+        if (delimiter.empty()) {
+            page.push_back({scan->key, scan->size, false});
+        } else {
+            std::string remainder = scan->key.substr(prefix.size());
+            size_t delimiter_pos = remainder.find(delimiter);
+            if (delimiter_pos == std::string::npos) {
+                page.push_back({scan->key, scan->size, false});
+            } else {
+                std::string common = prefix + remainder.substr(0, delimiter_pos + delimiter.size());
+                if (emitted_prefixes.insert(common).second) {
+                    page.push_back({common, 0, true});
+                }
+            }
+        }
+        ++scan;
     }
-    bool truncated = page_end != g_object_index.end() && page_end->key.rfind(prefix, 0) == 0;
+    bool truncated = scan != g_object_index.end() && scan->key.rfind(prefix, 0) == 0;
 
     std::ostringstream x;
     x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
       << "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
       << "<Name>" << xml_escape(CFG.bucket) << "</Name>"
       << "<Prefix>" << xml_escape(prefix) << "</Prefix>"
-    << "<KeyCount>" << (page_end - first) << "</KeyCount>"
+      << "<KeyCount>" << page.size() << "</KeyCount>"
             << "<MaxKeys>" << max_keys << "</MaxKeys><IsTruncated>" << (truncated ? "true" : "false") << "</IsTruncated>";
-        if (truncated && page_end != first) {
-                x << "<NextContinuationToken>" << xml_escape((page_end - 1)->key)
+        if (truncated && !page.empty()) {
+                x << "<NextContinuationToken>" << xml_escape(page.back().value)
                     << "</NextContinuationToken>";
         }
+    if (!delimiter.empty()) x << "<Delimiter>" << xml_escape(delimiter) << "</Delimiter>";
     std::string now = iso_now();
-        for (auto it = first; it != page_end; ++it) {
-                const auto& h = *it;
-                x << "<Contents><Key>" << xml_escape(h.key) << "</Key>"
+        for (const auto& item : page) {
+            if (item.common_prefix) {
+                x << "<CommonPrefixes><Prefix>" << xml_escape(item.value) << "</Prefix></CommonPrefixes>";
+                continue;
+            }
+                x << "<Contents><Key>" << xml_escape(item.value) << "</Key>"
           << "<LastModified>" << now << "</LastModified>"
-                    << "<ETag>\"" << etag_for(h.key) << "\"</ETag>"
-                    << "<Size>" << h.size << "</Size>"
+                    << "<ETag>\"" << etag_for(item.value) << "\"</ETag>"
+                    << "<Size>" << item.size << "</Size>"
           << "<StorageClass>STANDARD</StorageClass></Contents>";
     }
     x << "</ListBucketResult>";
@@ -813,9 +855,22 @@ static void handle_connection(SocketHandle client) {
     }
 
     if (key.empty()) {
-        int max_keys = parse_int_or(query_param(req.query, "max-keys"), 1000, 0, 1000);
+        std::string max_keys_value = query_param(req.query, "max-keys");
+        int max_keys = 1000;
+        if (query_has_param(req.query, "max-keys")) {
+            long long parsed_max_keys = 0;
+            if (!parse_i64(max_keys_value, parsed_max_keys) || parsed_max_keys < 0 || parsed_max_keys > 1000) {
+                send_fixed_response(client, 400, "Bad Request", "application/xml",
+                                    s3_error_xml("InvalidArgument", "invalid max-keys", req.path),
+                                    head_only);
+                close_socket(client);
+                return;
+            }
+            max_keys = static_cast<int>(parsed_max_keys);
+        }
         handle_list(client, query_param(req.query, "prefix"), max_keys,
-                    query_param(req.query, "continuation-token"), head_only);
+                    query_param(req.query, "continuation-token"),
+                    query_param(req.query, "delimiter"), head_only);
     } else {
         handle_get(client, key, req.range, head_only);
     }
@@ -941,6 +996,8 @@ static bool try_manager_materialize(const std::string& key) {
                               || rb.find("\"ok\": true") != std::string::npos);
     if (!ok) {
         log_line("materialize request key=" + key + " status=" + std::to_string(st));
+    } else {
+        rebuild_object_index();
     }
     return ok;
 }

@@ -113,6 +113,19 @@ class CppAgentHardeningTests(unittest.TestCase):
         self.assertIn(b"many/item-1000.txt", body)
         self.assertIn(b"<IsTruncated>false</IsTruncated>", body)
 
+    def test_list_delimiter_and_invalid_max_keys(self):
+        status, body = self.request(f"/{BUCKET}/?list-type=2&prefix=&delimiter=/&max-keys=3")
+        self.assertEqual(status, 200)
+        self.assertIn(b"<CommonPrefixes><Prefix>many/</Prefix></CommonPrefixes>", body)
+        self.assertIn(b"<CommonPrefixes><Prefix>nested/</Prefix></CommonPrefixes>", body)
+        self.assertIn(b"<KeyCount>3</KeyCount>", body)
+
+        for value in ("bad", "-1", "1001"):
+            with self.subTest(value=value):
+                status, body = self.request(f"/{BUCKET}/?list-type=2&max-keys={value}")
+                self.assertEqual(status, 400)
+                self.assertIn(b"InvalidArgument", body)
+
     def test_large_object_is_streamed(self):
         before = read_hwm_kib(self.process.pid)
         status, body = self.request(f"/{BUCKET}/large.bin")

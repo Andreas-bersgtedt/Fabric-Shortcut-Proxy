@@ -291,6 +291,7 @@ static fs::path canonical_store_root() {
 
 static bool resolve_key_path(const std::string& raw_key, fs::path& out_path) {
     if (!key_is_basic_safe(raw_key)) return false;
+    if (raw_key.front() == '/' || raw_key.front() == '\\') return false;
 
     std::string key = raw_key;
     std::replace(key.begin(), key.end(), '\\', '/');

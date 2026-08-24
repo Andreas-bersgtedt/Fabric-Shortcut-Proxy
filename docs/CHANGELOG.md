@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   invalid `max-keys` values. The index also refreshes every five minutes by default and rejects
   continuation tokens that do not match the requested prefix.
 
+## [2.5.3]: 2026-08-24
+
+### Added
+- The C++ serving agent now enforces bucket routing, rejects traversal and malformed request
+  inputs, uses bounded worker concurrency, and supports Linux build and smoke-test validation.
+- C++ ListObjectsV2 now supports pagination, delimiter prefixes, continuation-token validation,
+  and a persisted sorted object index with configurable periodic refresh.
+
+### Performance
+- Large-store listing now reads pages from the persisted index instead of walking and sorting the
+  filesystem for every request.
+
 ## [2.5.2]: 2026-08-20
 
 ### Security
@@ -395,6 +407,7 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
+[2.5.3]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.2...2.5.3
 [2.5.2]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.1...2.5.2
 [2.5.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.0...2.5.1
 [2.5.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.4.0...2.5.0

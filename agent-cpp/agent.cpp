@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -22,6 +23,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <queue>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -787,6 +790,27 @@ static bool try_manager_materialize(const std::string& key) {
 
 static std::atomic<bool> g_running{true};
 static std::atomic<int> g_inflight{0};
+static std::mutex g_conn_mu;
+static std::condition_variable g_conn_cv;
+static std::queue<SocketHandle> g_conn_queue;
+
+static void worker_loop() {
+    while (g_running) {
+        SocketHandle client = kInvalidSocket;
+        {
+            std::unique_lock<std::mutex> lock(g_conn_mu);
+            g_conn_cv.wait(lock, [] { return !g_conn_queue.empty() || !g_running.load(); });
+            if (!g_running.load() && g_conn_queue.empty()) break;
+            if (g_conn_queue.empty()) continue;
+            client = g_conn_queue.front();
+            g_conn_queue.pop();
+        }
+
+        if (client == kInvalidSocket) continue;
+        handle_connection(client);
+        g_inflight.fetch_sub(1);
+    }
+}
 
 static void control_loop() {
     std::string host, base;
@@ -959,6 +983,13 @@ int main(int argc, char** argv) {
         ctl = std::thread(control_loop);
     }
 
+    const int worker_count = std::max(1, std::min(CFG.max_inflight, 32));
+    std::vector<std::thread> workers;
+    workers.reserve((size_t)worker_count);
+    for (int i = 0; i < worker_count; ++i) {
+        workers.emplace_back(worker_loop);
+    }
+
     while (g_running) {
         sockaddr_in caddr;
 #ifdef _WIN32
@@ -979,13 +1010,18 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        std::thread([client]() {
-            handle_connection(client);
-            g_inflight.fetch_sub(1);
-        }).detach();
+        {
+            std::lock_guard<std::mutex> lock(g_conn_mu);
+            g_conn_queue.push(client);
+        }
+        g_conn_cv.notify_one();
     }
 
     g_running = false;
+    g_conn_cv.notify_all();
+    for (auto& worker : workers) {
+        if (worker.joinable()) worker.join();
+    }
     if (ctl.joinable()) ctl.join();
     close_socket(srv);
     net_cleanup();

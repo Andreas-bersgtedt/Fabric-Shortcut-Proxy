@@ -77,6 +77,8 @@ The main remaining concerns are:
 - Issue: full recursive walk plus sort on each request.
 - Risk: O(n log n) processing overhead at larger object counts.
 - Impact: slower directory/list operations as data volume increases.
+- Current status: prefix-scoped walking and 1,000-key ListObjectsV2 pagination are implemented. The agent still walks and sorts all matching keys before selecting a page.
+- Follow-up: run `tests/benchmark_cpp_agent_list.py` at representative object counts before adding a persistent index.
 
 ### Low Severity
 
@@ -162,7 +164,22 @@ The project documentation also records a substantial set of high-value feature a
 - Request tracing, timeline metrics, and admin diagnostics are available.
 - Status: done
 
-## 7. Linux Deployment Alignment
+## 7. Review Action Status
+
+The C++ review actions are implemented and covered by Linux CI:
+
+- canonical root and encoded absolute-path rejection: done
+- non-throwing numeric parsing: done
+- bounded worker queue: done
+- request-header and range validation: done
+- configured bucket enforcement: done
+- ListObjectsV2 pagination with continuation tokens: done
+- large-object chunked streaming smoke test: done
+- persistent large-store index: deferred pending benchmark results
+
+The benchmark harness at `tests/benchmark_cpp_agent_list.py` measures first-page and continuation-page latency, process high-water RSS, and concurrent list requests. Use its output to decide whether an index is warranted.
+
+## 8. Linux Deployment Alignment
 
 The C++ serving agent is only partially aligned with the Linux deployment goal.
 
@@ -176,7 +193,7 @@ Conclusion:
 - The current implementation is operationally Windows-only in practice.
 - Full Linux readiness requires a portable socket abstraction and a Linux build/test pipeline.
 
-## 8. Recommended Next Slice
+## 9. Recommended Next Slice
 
 To address the remaining material risk, the next slice should focus on the following sequence:
 
@@ -189,7 +206,7 @@ To address the remaining material risk, the next slice should focus on the follo
 7. Add socket timeouts and request-size limits
 8. Add Linux CI coverage and a smoke-test parity job
 
-## 9. Overall Assessment
+## 10. Overall Assessment
 
 This project is no longer a speculative prototype; it is a validated system with a known-good Fabric compatibility path and a strong hardening baseline. The main risks that remain are not about feature correctness but about defensive coding, portability, and operational scaling.
 

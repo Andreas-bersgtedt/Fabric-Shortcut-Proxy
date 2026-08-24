@@ -23,6 +23,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <mutex>
 #include <queue>
 #include <sstream>
@@ -320,6 +321,93 @@ static bool resolve_key_path(const std::string& raw_key, fs::path& out_path) {
     return true;
 }
 
+struct IndexedObject {
+    std::string key;
+    uintmax_t size = 0;
+};
+
+static std::vector<IndexedObject> g_object_index;
+static std::mutex g_object_index_mu;
+static const char* kObjectIndexFile = ".cpp-agent-index";
+
+static fs::path object_index_path() {
+    return canonical_store_root() / kObjectIndexFile;
+}
+
+static bool write_object_index(const std::vector<IndexedObject>& entries) {
+    fs::path path = object_index_path();
+    fs::path tmp = path;
+    tmp += ".tmp";
+    std::ofstream out(tmp, std::ios::trunc);
+    if (!out) return false;
+    out << "cpp-agent-index-v1\n";
+    for (const auto& entry : entries) {
+        out << std::quoted(entry.key) << " " << entry.size << "\n";
+    }
+    out.close();
+    if (!out) return false;
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {
+        fs::remove(path, ec);
+        ec.clear();
+        fs::rename(tmp, path, ec);
+    }
+    return !ec;
+}
+
+static bool load_object_index(std::vector<IndexedObject>& entries) {
+    std::ifstream in(object_index_path());
+    std::string header;
+    if (!in || !std::getline(in, header) || header != "cpp-agent-index-v1") return false;
+
+    IndexedObject entry;
+    while (in >> std::quoted(entry.key) >> entry.size) {
+        if (entry.key.empty() || entry.key == kObjectIndexFile) return false;
+        entries.push_back(entry);
+    }
+    if (!in.eof()) return false;
+    return std::is_sorted(entries.begin(), entries.end(),
+                          [](const auto& left, const auto& right) { return left.key < right.key; });
+}
+
+static void rebuild_object_index() {
+    std::vector<IndexedObject> entries;
+    std::error_code ec;
+    fs::path root = canonical_store_root();
+    if (fs::exists(root, ec)) {
+        for (auto it = fs::recursive_directory_iterator(root, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (!it->is_regular_file(ec)) continue;
+            fs::path file = fs::weakly_canonical(it->path(), ec);
+            if (ec || !path_has_prefix(root, file)) continue;
+            std::string rel = fs::relative(file, root, ec).generic_string();
+            if (ec || rel.empty() || rel == kObjectIndexFile) continue;
+            entries.push_back({rel, it->file_size(ec)});
+        }
+    }
+    std::sort(entries.begin(), entries.end(),
+              [](const auto& left, const auto& right) { return left.key < right.key; });
+    write_object_index(entries);
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    g_object_index = std::move(entries);
+}
+
+static void initialize_object_index() {
+    std::vector<IndexedObject> entries;
+    if (load_object_index(entries)) {
+        std::lock_guard<std::mutex> lock(g_object_index_mu);
+        g_object_index = std::move(entries);
+        log_line("loaded object index entries=" + std::to_string(g_object_index.size()));
+        return;
+    }
+    log_line("building object index");
+    rebuild_object_index();
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    log_line("built object index entries=" + std::to_string(g_object_index.size()));
+}
+
 // ---------------------------------------------------------------------------
 // socket send helpers
 // ---------------------------------------------------------------------------
@@ -434,43 +522,23 @@ static void handle_list(SocketHandle s,
                         int max_keys,
                         const std::string& continuation_token,
                         bool head_only) {
-    std::vector<std::pair<std::string, uintmax_t>> hits;
-    std::error_code ec;
-    fs::path root(CFG.store_dir);
-    fs::path scan_root = root;
-    size_t last_slash = prefix.find_last_of('/');
-    if (last_slash != std::string::npos) {
-        fs::path candidate = root / fs::path(prefix.substr(0, last_slash));
-        fs::path canonical_root = canonical_store_root();
-        fs::path canonical_candidate = fs::weakly_canonical(candidate, ec);
-        if (!ec && path_has_prefix(canonical_root, canonical_candidate)) {
-            scan_root = candidate;
-        }
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    auto first = std::lower_bound(
+        g_object_index.begin(), g_object_index.end(), prefix,
+        [](const auto& entry, const std::string& key) { return entry.key < key; });
+    if (!continuation_token.empty() && first != g_object_index.end()) {
+        auto token_pos = std::upper_bound(
+            g_object_index.begin(), g_object_index.end(), continuation_token,
+            [](const std::string& key, const auto& entry) { return key < entry.key; });
+        if (token_pos > first) first = token_pos;
     }
-    if (fs::exists(scan_root, ec) && fs::is_directory(scan_root, ec)) {
-        for (auto it = fs::recursive_directory_iterator(scan_root, ec);
-             it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (ec) break;
-            if (!it->is_regular_file(ec)) continue;
-            std::string rel = fs::relative(it->path(), root, ec).generic_string();
-            if (rel.empty()) continue;
-            if (rel.rfind(prefix, 0) != 0) continue;
-            hits.push_back({rel, it->file_size(ec)});
-        }
-    }
-    std::sort(hits.begin(), hits.end());
 
-    auto first = hits.begin();
-    if (!continuation_token.empty()) {
-        first = std::upper_bound(
-            hits.begin(), hits.end(),
-            std::make_pair(continuation_token, uintmax_t{0}),
-            [](const auto& key, const auto& hit) { return key.first < hit.first; });
-    }
-    size_t remaining = static_cast<size_t>(std::distance(first, hits.end()));
     size_t page_size = static_cast<size_t>(max_keys);
-    bool truncated = remaining > page_size;
-    auto page_end = first + std::min(remaining, page_size);
+    auto page_end = first;
+    for (size_t count = 0; page_end != g_object_index.end() && count < page_size; ++count, ++page_end) {
+        if (page_end->key.rfind(prefix, 0) != 0) break;
+    }
+    bool truncated = page_end != g_object_index.end() && page_end->key.rfind(prefix, 0) == 0;
 
     std::ostringstream x;
     x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -485,11 +553,11 @@ static void handle_list(SocketHandle s,
         }
     std::string now = iso_now();
         for (auto it = first; it != page_end; ++it) {
-                auto& h = *it;
-        x << "<Contents><Key>" << xml_escape(h.first) << "</Key>"
+                const auto& h = *it;
+                x << "<Contents><Key>" << xml_escape(h.key) << "</Key>"
           << "<LastModified>" << now << "</LastModified>"
-          << "<ETag>\"" << etag_for(h.first) << "\"</ETag>"
-          << "<Size>" << h.second << "</Size>"
+                    << "<ETag>\"" << etag_for(h.key) << "\"</ETag>"
+                    << "<Size>" << h.size << "</Size>"
           << "<StorageClass>STANDARD</StorageClass></Contents>";
     }
     x << "</ListBucketResult>";
@@ -1033,6 +1101,8 @@ int main(int argc, char** argv) {
         log_line("network init failed");
         return 1;
     }
+
+    initialize_object_index();
 
     SocketHandle srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (srv == kInvalidSocket) {

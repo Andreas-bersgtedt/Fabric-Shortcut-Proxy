@@ -111,6 +111,7 @@ static std::string getenv_str(const char* name, const std::string& def) {
 
 static bool parse_i64(const std::string& s, long long& out) {
     if (s.empty()) return false;
+
     size_t i = 0;
     bool neg = false;
     if (s[0] == '+' || s[0] == '-') {
@@ -118,15 +119,30 @@ static bool parse_i64(const std::string& s, long long& out) {
         i = 1;
         if (i == s.size()) return false;
     }
-    long long val = 0;
+
+    unsigned long long acc = 0ULL;
+    unsigned long long limit = neg ? (unsigned long long)LLONG_MAX + 1ULL : (unsigned long long)LLONG_MAX;
     for (; i < s.size(); ++i) {
         char c = s[i];
         if (c < '0' || c > '9') return false;
         int d = c - '0';
-        if (val > (LLONG_MAX - d) / 10) return false;
-        val = val * 10 + d;
+        if (acc > limit / 10ULL || (acc == limit / 10ULL && (unsigned long long)d > limit % 10ULL)) {
+            return false;
+        }
+        acc = acc * 10ULL + (unsigned long long)d;
     }
-    out = neg ? -val : val;
+
+    if (neg) {
+        if (acc == (unsigned long long)LLONG_MAX + 1ULL) {
+            out = LLONG_MIN;
+            return true;
+        }
+        out = -static_cast<long long>(acc);
+        return true;
+    }
+
+    if (acc > (unsigned long long)LLONG_MAX) return false;
+    out = static_cast<long long>(acc);
     return true;
 }
 
@@ -261,6 +277,8 @@ static bool path_has_prefix(const fs::path& base, const fs::path& p) {
 static bool key_is_basic_safe(const std::string& key) {
     if (key.empty()) return false;
     if (key.find('\0') != std::string::npos) return false;
+    if (key.size() >= 2 && std::isalpha((unsigned char)key[0]) && key[1] == ':') return false;
+    if (key.rfind("//", 0) == 0 || key.rfind("\\\\", 0) == 0) return false;
     return true;
 }
 
@@ -277,7 +295,17 @@ static bool resolve_key_path(const std::string& raw_key, fs::path& out_path) {
     std::string key = raw_key;
     std::replace(key.begin(), key.end(), '\\', '/');
     while (!key.empty() && key.front() == '/') key.erase(key.begin());
+    while (!key.empty() && key.back() == '/') key.pop_back();
     if (key.empty()) return false;
+
+    size_t pos = 0;
+    while (pos <= key.size()) {
+        size_t next = key.find('/', pos);
+        std::string seg = (next == std::string::npos) ? key.substr(pos) : key.substr(pos, next - pos);
+        if (seg.empty() || seg == "." || seg == "..") return false;
+        if (next == std::string::npos) break;
+        pos = next + 1;
+    }
 
     fs::path rel(key);
     if (rel.is_absolute()) return false;

@@ -548,7 +548,7 @@ static void handle_list(SocketHandle s,
     << "<KeyCount>" << (page_end - first) << "</KeyCount>"
             << "<MaxKeys>" << max_keys << "</MaxKeys><IsTruncated>" << (truncated ? "true" : "false") << "</IsTruncated>";
         if (truncated && page_end != first) {
-                x << "<NextContinuationToken>" << xml_escape((page_end - 1)->first)
+                x << "<NextContinuationToken>" << xml_escape((page_end - 1)->key)
                     << "</NextContinuationToken>";
         }
     std::string now = iso_now();

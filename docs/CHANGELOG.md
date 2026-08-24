@@ -12,14 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Manager Monitor now includes a Data File Manager for Open Mirror cleanup. It inspects
   Fabric's `_FilesReadyToDelete` folders, applies per-target or per-table retention, defaults to
   dry-run inspection, and deletes only eligible processed folders after explicit confirmation.
-- The C++ serving agent now persists a sorted object index, supports ListObjectsV2 continuation
-  tokens and delimiter prefixes, refreshes the index after lazy materialization, and rejects
-  invalid `max-keys` values. The index also refreshes every five minutes by default and rejects
-  continuation tokens that do not match the requested prefix.
 
 ## [2.5.3]: 2026-08-24
 
-### Added
+### C++ serving agent
 - The C++ serving agent now enforces bucket routing, rejects traversal and malformed request
   inputs, uses bounded worker concurrency, and supports Linux build and smoke-test validation.
 - C++ ListObjectsV2 now supports pagination, delimiter prefixes, continuation-token validation,

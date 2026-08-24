@@ -6,7 +6,7 @@ name: C++ native
 # source via range-split queries.
 on:
   push:
-    branches: [ main, cpprefactor ]
+    branches: [ main, cpprefactor, fix/cpp-agent-hardening-portability ]
     paths:
       - 'agent-cpp/**'
       - 'validate_pyiceberg.py'
@@ -23,6 +23,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  serving-agent:
+    name: serving agent Linux smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build serving agent
+        run: bash agent-cpp/build.sh
+      - name: Validate command-line smoke checks
+        run: |
+          ./agent-cpp/agent --help
+          ./agent-cpp/agent --version
+
   tier1:
     name: tier1 pure-logic conformance
     runs-on: ubuntu-latest

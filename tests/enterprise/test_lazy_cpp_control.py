@@ -21,6 +21,7 @@ import config
 async def _seed_and_configure(monkeypatch, db_path: pathlib.Path, store_dir: pathlib.Path,
                               table_format: str = "iceberg"):
     import db.executor as _executor
+    import runtime.artifact_store as artifact_store
     import runtime.materializer as materializer
     from enterprise.control import materialize_service
     from iceberg.state_store import _snapshots, _history
@@ -38,6 +39,7 @@ async def _seed_and_configure(monkeypatch, db_path: pathlib.Path, store_dir: pat
     monkeypatch.setattr(config, "TABLES", [config.TableDef(
         name="sales", source_table="sales", schema=config.TABLE_SCHEMA, num_splits=4)])
 
+    artifact_store.reset_default_store()
     await seed_demo_database()
     _executor._engine = None
     materializer._locks.clear()
@@ -59,15 +61,14 @@ def _teardown():
 
 async def test_materialize_service_populates_store_iceberg(tmp_path, monkeypatch):
     from enterprise.control import materialize_service
-    from iceberg.state_store import build_snapshot
+    from iceberg.state_store import get_all_snapshots
 
     db = tmp_path / "src.db"
     store = tmp_path / "store"
     await _seed_and_configure(monkeypatch, db, store, "iceberg")
 
-    # Deterministic keys (the service rebuilds the same registry internally).
-    snap = build_snapshot(table_name="sales", num_splits=4, bucket="cpp-bucket",
-                          warehouse_prefix=config.WAREHOUSE_PREFIX)
+    await materialize_service._ensure_snapshots()
+    snap = get_all_snapshots()[0]
     data_keys = [s.object_key for s in snap.splits]
 
     result = await materialize_service.materialize_for_key(snap.metadata_key)
@@ -86,14 +87,14 @@ async def test_materialize_service_populates_store_iceberg(tmp_path, monkeypatch
 
 async def test_materialize_service_populates_store_delta(tmp_path, monkeypatch):
     from enterprise.control import materialize_service
-    from iceberg.state_store import build_snapshot
+    from iceberg.state_store import get_all_snapshots
 
     db = tmp_path / "src.db"
     store = tmp_path / "store"
     await _seed_and_configure(monkeypatch, db, store, "delta")
 
-    snap = build_snapshot(table_name="sales", num_splits=4, bucket="cpp-bucket",
-                          warehouse_prefix=config.WAREHOUSE_PREFIX)
+    await materialize_service._ensure_snapshots()
+    snap = get_all_snapshots()[0]
     log_key = f"{snap.table_path}/_delta_log/{0:020d}.json"
 
     result = await materialize_service.materialize_for_key(log_key)
@@ -128,7 +129,7 @@ async def test_materialize_service_unknown_key(tmp_path, monkeypatch):
 
 async def test_control_materialize_endpoint(tmp_path, monkeypatch):
     from enterprise.control.manager_app import create_manager_app
-    from iceberg.state_store import build_snapshot
+    from iceberg.state_store import get_all_snapshots
 
     db = tmp_path / "src.db"
     store = tmp_path / "store"
@@ -138,8 +139,9 @@ async def test_control_materialize_endpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator", raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "s3cret", raising=False)
 
-    snap = build_snapshot(table_name="sales", num_splits=4, bucket="cpp-bucket",
-                          warehouse_prefix=config.WAREHOUSE_PREFIX)
+    from enterprise.control import materialize_service
+    await materialize_service._ensure_snapshots()
+    snap = get_all_snapshots()[0]
 
     app = create_manager_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),

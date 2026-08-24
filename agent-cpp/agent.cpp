@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -22,7 +23,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <mutex>
+#include <queue>
 #include <sstream>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -108,6 +113,7 @@ static std::string getenv_str(const char* name, const std::string& def) {
 
 static bool parse_i64(const std::string& s, long long& out) {
     if (s.empty()) return false;
+
     size_t i = 0;
     bool neg = false;
     if (s[0] == '+' || s[0] == '-') {
@@ -115,15 +121,30 @@ static bool parse_i64(const std::string& s, long long& out) {
         i = 1;
         if (i == s.size()) return false;
     }
-    long long val = 0;
+
+    unsigned long long acc = 0ULL;
+    unsigned long long limit = neg ? (unsigned long long)LLONG_MAX + 1ULL : (unsigned long long)LLONG_MAX;
     for (; i < s.size(); ++i) {
         char c = s[i];
         if (c < '0' || c > '9') return false;
         int d = c - '0';
-        if (val > (LLONG_MAX - d) / 10) return false;
-        val = val * 10 + d;
+        if (acc > limit / 10ULL || (acc == limit / 10ULL && (unsigned long long)d > limit % 10ULL)) {
+            return false;
+        }
+        acc = acc * 10ULL + (unsigned long long)d;
     }
-    out = neg ? -val : val;
+
+    if (neg) {
+        if (acc == (unsigned long long)LLONG_MAX + 1ULL) {
+            out = LLONG_MIN;
+            return true;
+        }
+        out = -static_cast<long long>(acc);
+        return true;
+    }
+
+    if (acc > (unsigned long long)LLONG_MAX) return false;
+    out = static_cast<long long>(acc);
     return true;
 }
 
@@ -228,6 +249,7 @@ struct Config {
     // the Manager generates the splits.
     std::string materialize_mode = getenv_str("MATERIALIZE_MODE", "eager");
     int materialize_timeout_ms = parse_int_or(getenv_str("MATERIALIZE_TIMEOUT_MS", "120000"), 120000, 1000, 600000);
+    int index_refresh_seconds = parse_int_or(getenv_str("INDEX_REFRESH_SECONDS", "300"), 300, 0, 86400);
     // On drain: serve /readyz 503, then exit after this window so the LB can
     // deregister and in-flight requests finish.
     int drain_grace_ms = parse_int_or(getenv_str("AGENT_DRAIN_GRACE_SECONDS", "15"), 15, 0, 3600) * 1000;
@@ -258,6 +280,8 @@ static bool path_has_prefix(const fs::path& base, const fs::path& p) {
 static bool key_is_basic_safe(const std::string& key) {
     if (key.empty()) return false;
     if (key.find('\0') != std::string::npos) return false;
+    if (key.size() >= 2 && std::isalpha((unsigned char)key[0]) && key[1] == ':') return false;
+    if (key.rfind("//", 0) == 0 || key.rfind("\\\\", 0) == 0) return false;
     return true;
 }
 
@@ -270,11 +294,22 @@ static fs::path canonical_store_root() {
 
 static bool resolve_key_path(const std::string& raw_key, fs::path& out_path) {
     if (!key_is_basic_safe(raw_key)) return false;
+    if (raw_key.front() == '/' || raw_key.front() == '\\') return false;
 
     std::string key = raw_key;
     std::replace(key.begin(), key.end(), '\\', '/');
     while (!key.empty() && key.front() == '/') key.erase(key.begin());
+    while (!key.empty() && key.back() == '/') key.pop_back();
     if (key.empty()) return false;
+
+    size_t pos = 0;
+    while (pos <= key.size()) {
+        size_t next = key.find('/', pos);
+        std::string seg = (next == std::string::npos) ? key.substr(pos) : key.substr(pos, next - pos);
+        if (seg.empty() || seg == "." || seg == "..") return false;
+        if (next == std::string::npos) break;
+        pos = next + 1;
+    }
 
     fs::path rel(key);
     if (rel.is_absolute()) return false;
@@ -286,6 +321,93 @@ static bool resolve_key_path(const std::string& raw_key, fs::path& out_path) {
     if (!path_has_prefix(root, cand)) return false;
     out_path = cand;
     return true;
+}
+
+struct IndexedObject {
+    std::string key;
+    uintmax_t size = 0;
+};
+
+static std::vector<IndexedObject> g_object_index;
+static std::mutex g_object_index_mu;
+static const char* kObjectIndexFile = ".cpp-agent-index";
+
+static fs::path object_index_path() {
+    return canonical_store_root() / kObjectIndexFile;
+}
+
+static bool write_object_index(const std::vector<IndexedObject>& entries) {
+    fs::path path = object_index_path();
+    fs::path tmp = path;
+    tmp += ".tmp";
+    std::ofstream out(tmp, std::ios::trunc);
+    if (!out) return false;
+    out << "cpp-agent-index-v1\n";
+    for (const auto& entry : entries) {
+        out << std::quoted(entry.key) << " " << entry.size << "\n";
+    }
+    out.close();
+    if (!out) return false;
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {
+        fs::remove(path, ec);
+        ec.clear();
+        fs::rename(tmp, path, ec);
+    }
+    return !ec;
+}
+
+static bool load_object_index(std::vector<IndexedObject>& entries) {
+    std::ifstream in(object_index_path());
+    std::string header;
+    if (!in || !std::getline(in, header) || header != "cpp-agent-index-v1") return false;
+
+    IndexedObject entry;
+    while (in >> std::quoted(entry.key) >> entry.size) {
+        if (entry.key.empty() || entry.key == kObjectIndexFile) return false;
+        entries.push_back(entry);
+    }
+    if (!in.eof()) return false;
+    return std::is_sorted(entries.begin(), entries.end(),
+                          [](const auto& left, const auto& right) { return left.key < right.key; });
+}
+
+static void rebuild_object_index() {
+    std::vector<IndexedObject> entries;
+    std::error_code ec;
+    fs::path root = canonical_store_root();
+    if (fs::exists(root, ec)) {
+        for (auto it = fs::recursive_directory_iterator(root, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (!it->is_regular_file(ec)) continue;
+            fs::path file = fs::weakly_canonical(it->path(), ec);
+            if (ec || !path_has_prefix(root, file)) continue;
+            std::string rel = fs::relative(file, root, ec).generic_string();
+            if (ec || rel.empty() || rel == kObjectIndexFile) continue;
+            entries.push_back({rel, it->file_size(ec)});
+        }
+    }
+    std::sort(entries.begin(), entries.end(),
+              [](const auto& left, const auto& right) { return left.key < right.key; });
+    write_object_index(entries);
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    g_object_index = std::move(entries);
+}
+
+static void initialize_object_index() {
+    std::vector<IndexedObject> entries;
+    if (load_object_index(entries)) {
+        std::lock_guard<std::mutex> lock(g_object_index_mu);
+        g_object_index = std::move(entries);
+        log_line("loaded object index entries=" + std::to_string(g_object_index.size()));
+        return;
+    }
+    log_line("building object index");
+    rebuild_object_index();
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    log_line("built object index entries=" + std::to_string(g_object_index.size()));
 }
 
 // ---------------------------------------------------------------------------
@@ -397,36 +519,119 @@ static std::string query_param(const std::string& q, const std::string& name) {
     return "";
 }
 
-static void handle_list(SocketHandle s, const std::string& prefix, bool head_only) {
-    std::vector<std::pair<std::string, uintmax_t>> hits;
-    std::error_code ec;
-    fs::path root(CFG.store_dir);
-    if (fs::exists(root, ec)) {
-        for (auto it = fs::recursive_directory_iterator(root, ec);
-             it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (ec) break;
-            if (!it->is_regular_file(ec)) continue;
-            std::string rel = fs::relative(it->path(), root, ec).generic_string();
-            if (rel.empty()) continue;
-            if (rel.rfind(prefix, 0) != 0) continue;
-            hits.push_back({rel, it->file_size(ec)});
+static bool continuation_token_valid(const std::string& prefix,
+                                     const std::string& token,
+                                     const std::string& delimiter) {
+    if (token.empty() || token.rfind(prefix, 0) != 0) return false;
+
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    auto exact = std::lower_bound(
+        g_object_index.begin(), g_object_index.end(), token,
+        [](const auto& entry, const std::string& key) { return entry.key < key; });
+    if (exact != g_object_index.end() && exact->key == token) return true;
+
+    if (!delimiter.empty() && token.size() >= delimiter.size()
+        && token.compare(token.size() - delimiter.size(), delimiter.size(), delimiter) == 0) {
+        for (const auto& entry : g_object_index) {
+            if (entry.key.rfind(token, 0) == 0) return true;
         }
     }
-    std::sort(hits.begin(), hits.end());
+    return false;
+}
+
+static bool query_has_param(const std::string& q, const std::string& name) {
+    size_t pos = 0;
+    while (pos <= q.size()) {
+        size_t amp = q.find('&', pos);
+        std::string part = q.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+        size_t equal = part.find('=');
+        if (part.substr(0, equal) == name) return true;
+        if (amp == std::string::npos) break;
+        pos = amp + 1;
+    }
+    return false;
+}
+
+struct ListItem {
+    std::string value;
+    uintmax_t size = 0;
+    bool common_prefix = false;
+};
+
+static void handle_list(SocketHandle s,
+                        const std::string& prefix,
+                        int max_keys,
+                        const std::string& continuation_token,
+                        const std::string& delimiter,
+                        bool head_only) {
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    auto first = std::lower_bound(
+        g_object_index.begin(), g_object_index.end(), prefix,
+        [](const auto& entry, const std::string& key) { return entry.key < key; });
+    if (!continuation_token.empty() && first != g_object_index.end()) {
+        auto token_pos = std::upper_bound(
+            g_object_index.begin(), g_object_index.end(), continuation_token,
+            [](const std::string& key, const auto& entry) { return key < entry.key; });
+        if (!delimiter.empty() && continuation_token.size() >= delimiter.size()
+            && continuation_token.compare(continuation_token.size() - delimiter.size(),
+                                          delimiter.size(), delimiter) == 0) {
+            token_pos = std::lower_bound(
+                g_object_index.begin(), g_object_index.end(), continuation_token,
+                [](const auto& entry, const std::string& key) { return entry.key < key; });
+            while (token_pos != g_object_index.end()
+                   && token_pos->key.rfind(continuation_token, 0) == 0) {
+                ++token_pos;
+            }
+        }
+        if (token_pos > first) first = token_pos;
+    }
+
+    size_t page_size = static_cast<size_t>(max_keys);
+    std::vector<ListItem> page;
+    std::set<std::string> emitted_prefixes;
+    auto scan = first;
+    while (scan != g_object_index.end() && page.size() < page_size) {
+        if (scan->key.rfind(prefix, 0) != 0) break;
+        if (delimiter.empty()) {
+            page.push_back({scan->key, scan->size, false});
+        } else {
+            std::string remainder = scan->key.substr(prefix.size());
+            size_t delimiter_pos = remainder.find(delimiter);
+            if (delimiter_pos == std::string::npos) {
+                page.push_back({scan->key, scan->size, false});
+            } else {
+                std::string common = prefix + remainder.substr(0, delimiter_pos + delimiter.size());
+                if (emitted_prefixes.insert(common).second) {
+                    page.push_back({common, 0, true});
+                }
+            }
+        }
+        ++scan;
+    }
+    bool truncated = scan != g_object_index.end() && scan->key.rfind(prefix, 0) == 0;
 
     std::ostringstream x;
     x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
       << "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
       << "<Name>" << xml_escape(CFG.bucket) << "</Name>"
       << "<Prefix>" << xml_escape(prefix) << "</Prefix>"
-      << "<KeyCount>" << hits.size() << "</KeyCount>"
-      << "<MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>";
+      << "<KeyCount>" << page.size() << "</KeyCount>"
+            << "<MaxKeys>" << max_keys << "</MaxKeys><IsTruncated>" << (truncated ? "true" : "false") << "</IsTruncated>";
+        if (truncated && !page.empty()) {
+                x << "<NextContinuationToken>" << xml_escape(page.back().value)
+                    << "</NextContinuationToken>";
+        }
+    if (!delimiter.empty()) x << "<Delimiter>" << xml_escape(delimiter) << "</Delimiter>";
     std::string now = iso_now();
-    for (auto& h : hits) {
-        x << "<Contents><Key>" << xml_escape(h.first) << "</Key>"
+        for (const auto& item : page) {
+            if (item.common_prefix) {
+                x << "<CommonPrefixes><Prefix>" << xml_escape(item.value) << "</Prefix></CommonPrefixes>";
+                continue;
+            }
+                x << "<Contents><Key>" << xml_escape(item.value) << "</Key>"
           << "<LastModified>" << now << "</LastModified>"
-          << "<ETag>\"" << etag_for(h.first) << "\"</ETag>"
-          << "<Size>" << h.second << "</Size>"
+                    << "<ETag>\"" << etag_for(item.value) << "\"</ETag>"
+                    << "<Size>" << item.size << "</Size>"
           << "<StorageClass>STANDARD</StorageClass></Contents>";
     }
     x << "</ListBucketResult>";
@@ -436,6 +641,7 @@ static void handle_list(SocketHandle s, const std::string& prefix, bool head_onl
 struct RangeResult {
     bool is_partial = false;
     bool unsat = false;
+    bool invalid = false;
     long long start = 0;
     long long end = -1;
 };
@@ -444,21 +650,30 @@ static RangeResult parse_range_header(const std::string& range, long long total)
     RangeResult rr;
     rr.start = 0;
     rr.end = total - 1;
-    if (range.empty() || range.rfind("bytes=", 0) != 0 || total < 0) return rr;
+    if (range.empty()) return rr;
+    if (range.rfind("bytes=", 0) != 0 || total < 0) {
+        rr.invalid = true;
+        return rr;
+    }
 
     std::string spec = range.substr(6);
     size_t comma = spec.find(',');
     if (comma != std::string::npos) spec = spec.substr(0, comma);
     size_t dash = spec.find('-');
-    if (dash == std::string::npos) return rr;
+    if (dash == std::string::npos) {
+        rr.invalid = true;
+        return rr;
+    }
 
     std::string a = spec.substr(0, dash);
     std::string b = spec.substr(dash + 1);
 
     if (a.empty()) {
         long long n = 0;
-        if (!parse_i64(b, n)) return rr;
-        if (n <= 0) return rr;
+        if (!parse_i64(b, n) || n <= 0) {
+            rr.invalid = true;
+            return rr;
+        }
         if (n > total) n = total;
         rr.start = total - n;
         rr.end = total - 1;
@@ -467,11 +682,16 @@ static RangeResult parse_range_header(const std::string& range, long long total)
     }
 
     long long start = 0;
-    if (!parse_i64(a, start)) return rr;
-    if (start < 0) return rr;
+    if (!parse_i64(a, start) || start < 0) {
+        rr.invalid = true;
+        return rr;
+    }
     long long end = total - 1;
     if (!b.empty()) {
-        if (!parse_i64(b, end)) return rr;
+        if (!parse_i64(b, end) || end < 0) {
+            rr.invalid = true;
+            return rr;
+        }
     }
     if (start >= total) {
         rr.unsat = true;
@@ -521,6 +741,11 @@ static void handle_get(SocketHandle s, const std::string& key, const std::string
 
     std::string ct = content_type_for(key);
     RangeResult rr = parse_range_header(range, total);
+    if (rr.invalid) {
+        std::string body = s3_error_xml("InvalidRange", "malformed range", "/" + key);
+        send_fixed_response(s, 416, "Range Not Satisfiable", "application/xml", body, head_only);
+        return;
+    }
     if (rr.unsat) {
         std::string body = s3_error_xml("InvalidRange", "range not satisfiable", "/" + key);
         send_fixed_response(s, 416, "Range Not Satisfiable", "application/xml", body, head_only);
@@ -559,6 +784,7 @@ static bool parse_request_line(const std::string& line, std::string& method, std
 }
 
 static void handle_connection(SocketHandle client) {
+    static const size_t kMaxRequestHeaders = 64 * 1024;
     std::string buf;
     char tmp[8192];
     for (int i = 0; i < 64; ++i) {
@@ -569,7 +795,7 @@ static void handle_connection(SocketHandle client) {
 #endif
         if (n <= 0) break;
         buf.append(tmp, (size_t)n);
-        if (buf.size() > (size_t)512 * 1024) {
+        if (buf.size() > kMaxRequestHeaders) {
             send_fixed_response(client, 413, "Payload Too Large", "text/plain", "", true);
             close_socket(client);
             return;
@@ -652,10 +878,40 @@ static void handle_connection(SocketHandle client) {
     size_t slash = p.find('/');
     std::string bucket = slash == std::string::npos ? p : p.substr(0, slash);
     std::string key = slash == std::string::npos ? "" : p.substr(slash + 1);
-    (void)bucket;
+    if (bucket != CFG.bucket) {
+        send_fixed_response(client, 404, "Not Found", "application/xml",
+                            s3_error_xml("NoSuchBucket", "The specified bucket does not exist.", "/" + bucket),
+                            head_only);
+        close_socket(client);
+        return;
+    }
 
     if (key.empty()) {
-        handle_list(client, query_param(req.query, "prefix"), head_only);
+        std::string max_keys_value = query_param(req.query, "max-keys");
+        int max_keys = 1000;
+        if (query_has_param(req.query, "max-keys")) {
+            long long parsed_max_keys = 0;
+            if (!parse_i64(max_keys_value, parsed_max_keys) || parsed_max_keys < 0 || parsed_max_keys > 1000) {
+                send_fixed_response(client, 400, "Bad Request", "application/xml",
+                                    s3_error_xml("InvalidArgument", "invalid max-keys", req.path),
+                                    head_only);
+                close_socket(client);
+                return;
+            }
+            max_keys = static_cast<int>(parsed_max_keys);
+        }
+        std::string prefix = query_param(req.query, "prefix");
+        std::string continuation_token = query_param(req.query, "continuation-token");
+        std::string delimiter = query_param(req.query, "delimiter");
+        if (!continuation_token.empty()
+            && !continuation_token_valid(prefix, continuation_token, delimiter)) {
+            send_fixed_response(client, 400, "Bad Request", "application/xml",
+                                s3_error_xml("InvalidArgument", "invalid continuation-token", req.path),
+                                head_only);
+            close_socket(client);
+            return;
+        }
+        handle_list(client, prefix, max_keys, continuation_token, delimiter, head_only);
     } else {
         handle_get(client, key, req.range, head_only);
     }
@@ -781,12 +1037,45 @@ static bool try_manager_materialize(const std::string& key) {
                               || rb.find("\"ok\": true") != std::string::npos);
     if (!ok) {
         log_line("materialize request key=" + key + " status=" + std::to_string(st));
+    } else {
+        rebuild_object_index();
     }
     return ok;
 }
 
 static std::atomic<bool> g_running{true};
 static std::atomic<int> g_inflight{0};
+static std::mutex g_conn_mu;
+static std::condition_variable g_conn_cv;
+static std::queue<SocketHandle> g_conn_queue;
+
+static void index_refresh_loop() {
+    if (CFG.index_refresh_seconds <= 0) return;
+    while (g_running) {
+        for (int elapsed = 0; elapsed < CFG.index_refresh_seconds && g_running; ++elapsed) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        if (g_running) rebuild_object_index();
+    }
+}
+
+static void worker_loop() {
+    while (g_running) {
+        SocketHandle client = kInvalidSocket;
+        {
+            std::unique_lock<std::mutex> lock(g_conn_mu);
+            g_conn_cv.wait(lock, [] { return !g_conn_queue.empty() || !g_running.load(); });
+            if (!g_running.load() && g_conn_queue.empty()) break;
+            if (g_conn_queue.empty()) continue;
+            client = g_conn_queue.front();
+            g_conn_queue.pop();
+        }
+
+        if (client == kInvalidSocket) continue;
+        handle_connection(client);
+        g_inflight.fetch_sub(1);
+    }
+}
 
 static void control_loop() {
     std::string host, base;
@@ -892,6 +1181,7 @@ static void print_usage(const char* prog) {
         "                                 (POST /control/materialize) to materialize the object's\n"
         "                                 table into the shared store, then serve it.\n"
         "  MATERIALIZE_TIMEOUT_MS (120000) Max wait for a lazy materialize request (ms).\n"
+        "  INDEX_REFRESH_SECONDS (300)    Refresh persisted object index; 0 disables periodic refresh.\n"
         "  AGENT_DRAIN_GRACE_SECONDS (15) Drain grace window before exit (s).\n\n"
         "Endpoints: GET/HEAD /{bucket}/{key} (range-aware), GET /{bucket}?list-type=2,\n"
         "           GET /healthz, GET /readyz (503 while draining).\n\n"
@@ -899,12 +1189,12 @@ static void print_usage(const char* prog) {
         "  host=%s port=%d store_dir=%s bucket=%s\n"
         "  agent_id=%s manager_url=%s\n"
         "  materialize_mode=%s materialize_timeout_ms=%d\n"
-        "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d drain_grace_ms=%d\n",
+        "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d index_refresh_seconds=%d drain_grace_ms=%d\n",
         APP_VERSION, prog,
         CFG.host.c_str(), CFG.port, CFG.store_dir.c_str(), CFG.bucket.c_str(),
         CFG.agent_id.c_str(), CFG.manager_url.empty() ? "(standalone)" : CFG.manager_url.c_str(),
         CFG.materialize_mode.c_str(), CFG.materialize_timeout_ms,
-        CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.drain_grace_ms);
+        CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.index_refresh_seconds, CFG.drain_grace_ms);
 }
 
 int main(int argc, char** argv) {
@@ -920,6 +1210,8 @@ int main(int argc, char** argv) {
         log_line("network init failed");
         return 1;
     }
+
+    initialize_object_index();
 
     SocketHandle srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (srv == kInvalidSocket) {
@@ -959,6 +1251,15 @@ int main(int argc, char** argv) {
         ctl = std::thread(control_loop);
     }
 
+    std::thread index_refresher(index_refresh_loop);
+
+    const int worker_count = std::max(1, std::min(CFG.max_inflight, 32));
+    std::vector<std::thread> workers;
+    workers.reserve((size_t)worker_count);
+    for (int i = 0; i < worker_count; ++i) {
+        workers.emplace_back(worker_loop);
+    }
+
     while (g_running) {
         sockaddr_in caddr;
 #ifdef _WIN32
@@ -979,14 +1280,20 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        std::thread([client]() {
-            handle_connection(client);
-            g_inflight.fetch_sub(1);
-        }).detach();
+        {
+            std::lock_guard<std::mutex> lock(g_conn_mu);
+            g_conn_queue.push(client);
+        }
+        g_conn_cv.notify_one();
     }
 
     g_running = false;
+    g_conn_cv.notify_all();
+    for (auto& worker : workers) {
+        if (worker.joinable()) worker.join();
+    }
     if (ctl.joinable()) ctl.join();
+    if (index_refresher.joinable()) index_refresher.join();
     close_socket(srv);
     net_cleanup();
     return 0;

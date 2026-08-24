@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - enterprise dependencies include psutil
 
 log = get_logger(__name__)
 
-_APP_VERSION = "2.5.2"
+_APP_VERSION = "2.5.3"
 
 
 def _default_agent_id() -> str:

@@ -77,8 +77,9 @@ The main remaining concerns are:
 - Issue: full recursive walk plus sort on each request.
 - Risk: O(n log n) processing overhead at larger object counts.
 - Impact: slower directory/list operations as data volume increases.
-- Current status: prefix-scoped walking and 1,000-key ListObjectsV2 pagination are implemented. The agent still walks and sorts all matching keys before selecting a page.
-- Follow-up: run `tests/benchmark_cpp_agent_list.py` at representative object counts before adding a persistent index.
+- Current status: prefix-scoped walking and 1,000-key ListObjectsV2 pagination are implemented. A persisted sorted object index now serves list pages without a per-request filesystem walk or full-set sort.
+- Benchmark result: at 100,000 objects, p95 first-page latency fell from 961.6 ms and 180 MiB RSS growth to 1.5 ms and 6.7 MiB RSS growth. Eight concurrent lists fell from 3.7 s to 45 ms.
+- Operational constraint: the index is rebuilt at agent startup and is not yet refreshed automatically after external store mutations. Lazy materialization that adds new files therefore requires an index refresh or agent restart before those files appear in ListObjectsV2 results.
 
 ### Low Severity
 
@@ -175,9 +176,9 @@ The C++ review actions are implemented and covered by Linux CI:
 - configured bucket enforcement: done
 - ListObjectsV2 pagination with continuation tokens: done
 - large-object chunked streaming smoke test: done
-- persistent large-store index: deferred pending benchmark results
+- persistent large-store index: done; validated at 100,000 objects
 
-The benchmark harness at `tests/benchmark_cpp_agent_list.py` measures first-page and continuation-page latency, process high-water RSS, and concurrent list requests. Use its output to decide whether an index is warranted.
+The benchmark harness at `tests/benchmark_cpp_agent_list.py` measures first-page and continuation-page latency, process high-water RSS, and concurrent list requests. Results justify the persisted index for large stores. Automatic refresh on materialization remains a follow-up.
 
 ## 8. Linux Deployment Alignment
 

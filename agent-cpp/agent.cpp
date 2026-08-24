@@ -467,6 +467,7 @@ static void handle_list(SocketHandle s, const std::string& prefix, bool head_onl
 struct RangeResult {
     bool is_partial = false;
     bool unsat = false;
+    bool invalid = false;
     long long start = 0;
     long long end = -1;
 };
@@ -475,21 +476,30 @@ static RangeResult parse_range_header(const std::string& range, long long total)
     RangeResult rr;
     rr.start = 0;
     rr.end = total - 1;
-    if (range.empty() || range.rfind("bytes=", 0) != 0 || total < 0) return rr;
+    if (range.empty()) return rr;
+    if (range.rfind("bytes=", 0) != 0 || total < 0) {
+        rr.invalid = true;
+        return rr;
+    }
 
     std::string spec = range.substr(6);
     size_t comma = spec.find(',');
     if (comma != std::string::npos) spec = spec.substr(0, comma);
     size_t dash = spec.find('-');
-    if (dash == std::string::npos) return rr;
+    if (dash == std::string::npos) {
+        rr.invalid = true;
+        return rr;
+    }
 
     std::string a = spec.substr(0, dash);
     std::string b = spec.substr(dash + 1);
 
     if (a.empty()) {
         long long n = 0;
-        if (!parse_i64(b, n)) return rr;
-        if (n <= 0) return rr;
+        if (!parse_i64(b, n) || n <= 0) {
+            rr.invalid = true;
+            return rr;
+        }
         if (n > total) n = total;
         rr.start = total - n;
         rr.end = total - 1;
@@ -498,11 +508,16 @@ static RangeResult parse_range_header(const std::string& range, long long total)
     }
 
     long long start = 0;
-    if (!parse_i64(a, start)) return rr;
-    if (start < 0) return rr;
+    if (!parse_i64(a, start) || start < 0) {
+        rr.invalid = true;
+        return rr;
+    }
     long long end = total - 1;
     if (!b.empty()) {
-        if (!parse_i64(b, end)) return rr;
+        if (!parse_i64(b, end) || end < 0) {
+            rr.invalid = true;
+            return rr;
+        }
     }
     if (start >= total) {
         rr.unsat = true;
@@ -552,6 +567,11 @@ static void handle_get(SocketHandle s, const std::string& key, const std::string
 
     std::string ct = content_type_for(key);
     RangeResult rr = parse_range_header(range, total);
+    if (rr.invalid) {
+        std::string body = s3_error_xml("InvalidRange", "malformed range", "/" + key);
+        send_fixed_response(s, 416, "Range Not Satisfiable", "application/xml", body, head_only);
+        return;
+    }
     if (rr.unsat) {
         std::string body = s3_error_xml("InvalidRange", "range not satisfiable", "/" + key);
         send_fixed_response(s, 416, "Range Not Satisfiable", "application/xml", body, head_only);
@@ -590,6 +610,7 @@ static bool parse_request_line(const std::string& line, std::string& method, std
 }
 
 static void handle_connection(SocketHandle client) {
+    static const size_t kMaxRequestHeaders = 64 * 1024;
     std::string buf;
     char tmp[8192];
     for (int i = 0; i < 64; ++i) {
@@ -600,7 +621,7 @@ static void handle_connection(SocketHandle client) {
 #endif
         if (n <= 0) break;
         buf.append(tmp, (size_t)n);
-        if (buf.size() > (size_t)512 * 1024) {
+        if (buf.size() > kMaxRequestHeaders) {
             send_fixed_response(client, 413, "Payload Too Large", "text/plain", "", true);
             close_socket(client);
             return;

@@ -1553,7 +1553,8 @@ function policyErrors(entry){
   const errors = [];
   const kept = entry.columns.filter(column=>column.policy!=="remove");
   const names = kept.map(column=>column.name.trim());
-  if(!kept.some(column=>column.source===entry.key_column)) errors.push("The split key must be kept.");
+  const splitKey = entry.columns.find(column=>column.source===entry.key_column);
+  if(splitKey && splitKey.policy!=="keep") errors.push("The split key must be kept.");
   if(names.some(name=>!name)) errors.push("Every kept column needs an output name.");
   if(new Set(names).size!==names.length) errors.push("Output names must be unique.");
   for(const column of kept){

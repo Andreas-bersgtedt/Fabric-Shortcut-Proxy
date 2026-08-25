@@ -296,6 +296,9 @@ async def test_index_serves_html(app):
     assert 'kind:"deterministic_hash"' in r.text
     assert 'kind:"random_token"' in r.text
     assert 'column.policy!=="remove"' in r.text
+    assert 'const splitKey = entry.columns.find(column=>column.source===entry.key_column);' in r.text
+    assert 'if(splitKey && splitKey.policy!=="keep")' in r.text
+    assert '!kept.some(column=>column.source===entry.key_column)' not in r.text
     assert '["mssql", "postgresql", "postgres", "oracle", "databricks"]' in r.text
     assert 'id="materializeMode"' in r.text
     assert 'data-tab="sources"' in r.text

@@ -574,7 +574,7 @@
 <div id="settings-tab" class="tab-content">
   <div class="card">
     <h2>Global Settings</h2>
-    <div class="hint" style="margin-bottom:14px;">Refresh settings apply instantly via <b>Apply now</b>. Bucket, table format, and auth settings require <b>Download + restart</b> to take effect.</div>
+    <div class="hint" style="margin-bottom:14px;">Refresh settings apply instantly via <b>Apply now</b>. Bucket, table format, and auth settings require <b>Save to config.json + restart</b> to take effect.</div>
     <div class="row">
       <div><label>Bucket</label><input id="bucket" value="fabric-iceberg-poc" /></div>
       <div><label>Default splits</label><input id="numSplits" value="8" /></div>
@@ -604,13 +604,8 @@
       so unread tables cost nothing. <b>lazy</b> pins the bytes (works with iceberg and delta;
       multi-agent needs a shared artifact store). <b>virtual</b> keeps zero bytes at rest and
       regenerates each split deterministically per request — for snapshot-isolated / immutable
-      sources only. Neither is for auto-refresh. Requires <b>Download + restart</b>.</div>
+      sources only. Neither is for auto-refresh. Requires <b>Save to config.json + restart</b>.</div>
     <div class="checkbox"><input type="checkbox" id="requireSigv4" /><span>require_sigv4</span></div>
-    <div class="checkbox"><input type="checkbox" id="includePassword" checked />
-      <span>Include password in db_url</span></div>
-    <div class="hint" id="pwHint" style="display:none;">
-      Password omitted — set <code>DB_URL</code> as an environment variable at runtime.</div>
-
     <div class="checkbox" style="margin-top:6px;"><input type="checkbox" id="autoRefresh" />
       <span>auto_refresh — re-read source &amp; publish new snapshots on change</span></div>
     <div id="refreshOpts" style="display:none;">
@@ -633,13 +628,9 @@
         <span>refresh_allow_full_pull (auto: full read when probe unavailable)</span></div>
     </div>
 
-    <label style="margin-top:14px;">config.json preview</label>
-    <pre id="preview">{}</pre>
     <div class="actions">
       <button class="btn primary" id="btnApplySettings">⚡ Apply now</button>
       <button class="btn ghost" id="btnSaveSettings">Save to config.json</button>
-      <button class="btn ghost" id="btnDownload">Download config.json</button>
-      <button class="btn ghost" id="btnCopy">Copy</button>
     </div>
     <div class="status" id="buildStatus"></div>
   </div>
@@ -889,7 +880,7 @@ function clearConnTables(id){
   if(!n){ const s=$("connStatus"); s.className="status"; s.textContent="No tables are assigned to '"+id+"'."; return; }
   if(!confirm(`Remove all ${n} table(s) from '${id}'?`)) return;
   for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
-  renderConnList(); renderSelected(); updatePreview();
+  renderConnList(); renderSelected();
 }
 function removeConn(id){
   const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
@@ -903,7 +894,7 @@ function removeConn(id){
   const c = state.connections.get(state.activeConnId);
   state.db_url = c.db_url; state.db_url_masked = c.db_url_masked;
   writeFormFromConn(c);
-  renderConnList(); renderSelected(); updatePreview(); persistConns();
+  renderConnList(); renderSelected(); persistConns();
 }
 function renameActive(newId){
   newId = (newId||"").trim();
@@ -924,7 +915,7 @@ function renameActive(newId){
   }
   state.activeConnId = newId;
   writeFormFromConn(c);
-  renderConnList(); renderSelected(); updatePreview(); persistConns();
+  renderConnList(); renderSelected(); persistConns();
 }
 function renderConnList(){
   const wrap = $("connList"); wrap.innerHTML = "";
@@ -1048,10 +1039,6 @@ function applyBootstrap(builder){
 
   const active = state.connections.get(state.activeConnId);
   state.db_url = active.db_url || ""; state.db_url_masked = active.db_url_masked || "";
-  if(builder.has_db_url){
-    $("includePassword").checked = false;
-    $("pwHint").style.display = "block";
-  }
   $("refreshOpts").style.display = $("autoRefresh").checked ? "block" : "none";
   $("fmtHint").style.display = $("tableFormat").value === "delta" ? "block" : "none";
   $("matHint").style.display = $("materializeMode").value !== "eager" ? "block" : "none";
@@ -1605,7 +1592,7 @@ function tokenizationKeyOptionHtml(currentReference){
 
 function renderPolicyEditor(entry, opts){
   opts = opts || {};
-  const onEdit = opts.onEdit || updatePreview;
+  const onEdit = opts.onEdit || (()=>{});
   const rerender = opts.rerender || renderSelected;
   const editor = document.createElement("div"); editor.className="policy-editor";
   const head = document.createElement("div"); head.className="policy-head";
@@ -1732,7 +1719,7 @@ function renderSelected(){
     const dscb = document.createElement("input"); dscb.type="checkbox";
     dscb.checked = _allOn; dscb.indeterminate = _anyOn && !_allOn;
     dscb.onclick = (e)=> e.stopPropagation();
-    dscb.onchange = ()=>{ for(const s of list) s.enabled = dscb.checked; renderSelected(); updatePreview(); persistConns(); };
+    dscb.onchange = ()=>{ for(const s of list) s.enabled = dscb.checked; renderSelected(); persistConns(); };
     dsEnable.append(dscb, document.createTextNode("enabled"));
     head.appendChild(dsEnable);
     head.onclick = ()=>{
@@ -1784,7 +1771,7 @@ function renderSelected(){
         const o=document.createElement("option"); o.value=val; o.textContent=label;
         if(val===(s.split_balance||"")) o.selected=true; bal.appendChild(o);
       }
-      bal.onchange = ()=>{ s.split_balance = bal.value||null; updatePreview(); };
+      bal.onchange = ()=>{ s.split_balance = bal.value||null; };
 
       const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
       splits.title="Requested split count. Used only as a FALLBACK when 'target rows' > 0 (the row-target planner then derives the count and this value applies only if the row estimate is unavailable). Authoritative when 'target rows' = 0. Blank = global default.";
@@ -1801,21 +1788,21 @@ function renderSelected(){
         splitInfo.title = info.title;
       };
       strat.onchange = ()=>{ s.split_strategy = strat.value||null; renderSelected(); persistConns(); };
-      splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; refreshBadge(); updatePreview(); };
-      target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; refreshBadge(); updatePreview(); };
+      splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; refreshBadge(); };
+      target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; refreshBadge(); };
       refreshBadge();
       src.appendChild(document.createElement("br")); src.appendChild(splitInfo);
 
       const enable = document.createElement("label"); enable.className="enrow";
       enable.title="Serve this table. Unchecked = disabled (enabled:false): the agent skips it and won't fail if its source is unreachable.";
       const encb = document.createElement("input"); encb.type="checkbox"; encb.checked = s.enabled !== false;
-      encb.onchange = ()=>{ s.enabled = encb.checked; renderSelected(); updatePreview(); persistConns(); };
+      encb.onchange = ()=>{ s.enabled = encb.checked; renderSelected(); persistConns(); };
       enable.append(encb, document.createTextNode("on"));
 
       const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
       rm.onclick = ()=>{
         state.selected.delete(key);
-        renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
+        renderSelected(); renderConnList(); renderTables(); persistConns();
       };
 
       row.append(src, keysel, strat, bal, splits, target, enable, rm); table.appendChild(row);
@@ -1833,10 +1820,9 @@ function renderSelected(){
 
     grp.append(head, body); wrap.appendChild(grp);
   }
-  updatePreview();
 }
 
-// ---- config assembly + preview ----
+// ---- table config assembly ----
 function tableConfig(entry){
   const table = {name:entry.name, source_table:entry.source_table, key_column:entry.key_column};
   if(entry.num_splits) table.num_splits=parseInt(entry.num_splits);
@@ -1864,79 +1850,12 @@ function tableConfig(entry){
   return table;
 }
 
-function buildConfig(){
-  const cfg = {};
-  const withPw = $("includePassword").checked;
-  // Never emit the "user:***@host" masked form (it also trips the security gate);
-  // when a password is excluded OR the url is masked, strip it to a credential-free URL.
-  const urlOf = (c) => {
-    const full = c.db_url || c.db_url_masked || "";
-    if(looksMasked(full)) return stripPw(full);   // masked = no real password to include
-    return withPw ? full : stripPw(full);
-  };
-  const dflt = state.connections.get("default");
-  cfg.db_url = dflt ? urlOf(dflt) : (withPw ? state.db_url : stripPw(state.db_url || state.db_url_masked));
-  // Named sources -> connections[] (the reserved 'default' stays as db_url).
-  const named = [...state.connections.values()].filter(c=>c.id!=="default");
-  if(named.length) cfg.connections = named.map(c=>({ id:c.id, db_url: urlOf(c) }));
-  const ns = parseInt($("numSplits").value)||8; cfg.num_splits = ns;
-  const bucket = $("bucket").value.trim();
-  if(bucket && bucket!=="fabric-iceberg-poc") cfg.bucket = bucket;
-  const fmt = $("tableFormat").value;
-  if(fmt && fmt!=="iceberg") cfg.table_format = fmt;
-  const mm = $("materializeMode").value;
-  if(mm && mm!=="eager") cfg.materialize_mode = mm;
-  if($("requireSigv4").checked) cfg.require_sigv4 = true;
-  if($("autoRefresh").checked){
-    cfg.auto_refresh = true;
-    const poll = parseInt($("refreshPoll").value);
-    if(poll && poll!==600) cfg.refresh_poll_seconds = poll;
-    const strat = $("refreshStrategy").value;
-    if(strat && strat!=="auto") cfg.refresh_strategy = strat;
-    if($("refreshFullPull").checked) cfg.refresh_allow_full_pull = true;
-    const ttl = parseInt($("refreshTtl").value);
-    if(ttl && ttl!==1200) cfg.refresh_ttl_seconds = ttl;
-  }
-  cfg.tables = [...state.selected.values()].filter(s=>!s.invalid && s.key_column).map(tableConfig);
-  // Advanced overrides (section 4). Only emit values changed from their default.
-  document.querySelectorAll('#allSettings [data-key]').forEach(inp=>{
-    const raw = (inp.value||"").trim();
-    if(raw==="") return;                       // blank => keep default
-    const key = inp.dataset.key, type = inp.dataset.type, def = inp.dataset.default;
-    let val;
-    if(type==="bool") val = (raw==="true");
-    else if(type==="int"){ val = parseInt(raw); if(isNaN(val)) return; }
-    else if(type==="float"){ val = parseFloat(raw); if(isNaN(val)) return; }
-    else val = raw;
-    if(String(val) === String(def)) return;    // equals default => don't write
-    cfg[key] = val;
-  });
-  return cfg;
-}
-function updatePreview(){
-  if(!state.db_url){ $("preview").textContent = "{}"; return; }
-  $("preview").textContent = JSON.stringify(buildConfig(), null, 2);
-}
-["bucket","numSplits","tableFormat","materializeMode","requireSigv4","includePassword","autoRefresh","refreshPoll","refreshStrategy","refreshTtl","refreshFullPull"].forEach(id=>{
-  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; updatePreview(); });
-  $(id).addEventListener("change", ()=>{ if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; updatePreview(); });
+["bucket","numSplits","tableFormat","materializeMode","requireSigv4","autoRefresh","refreshPoll","refreshStrategy","refreshTtl","refreshFullPull"].forEach(id=>{
+  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; });
+  $(id).addEventListener("change", ()=>{ if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; });
 });
 
-// ---- download / copy ----
 $("btnApplyTables").onclick = applyTables;
-$("btnDownload").onclick = () => {
-  if(!state.db_url){ flash("Connect first."); return; }
-  const cfg = buildConfig();
-  if(!cfg.tables.length){ flash("Select at least one table with a valid integer key."); return; }
-  const blob = new Blob([JSON.stringify(cfg, null, 2)], {type:"application/json"});
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-  a.download = "config.json"; a.click(); URL.revokeObjectURL(a.href);
-  flash("✓ Downloaded config.json", true);
-};
-$("btnCopy").onclick = async () => {
-  try{ await navigator.clipboard.writeText($("preview").textContent); flash("✓ Copied", true); }
-  catch(e){ flash("Copy failed"); }
-};
 function flash(msg, ok){ const s=$("buildStatus"); s.className="status "+(ok?"ok":"err"); s.textContent=msg;
   setTimeout(()=>{ s.textContent=""; s.className="status"; }, 4000); }
 
@@ -2168,7 +2087,6 @@ function renderSettings(){
       if(s.type==="bool") inp.value = (eff.value===true || String(eff.value)==="true") ? "true" : "false";
       else inp.value = String(eff.value);
     }
-    inp.addEventListener("input", updatePreview); inp.addEventListener("change", updatePreview);
     const help=document.createElement("div"); help.className="sethelp"; help.textContent=s.help||"";
     row.append(lab, inp, help); wrap.appendChild(row);
   }

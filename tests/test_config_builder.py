@@ -305,6 +305,10 @@ async def test_index_serves_html(app):
     assert 'id="btnAddTable"' in r.text
     assert 'id="tableSource"' in r.text
     assert 'data-tab="storage"' not in r.text
+    assert 'id="includePassword"' not in r.text
+    assert 'id="preview"' not in r.text
+    assert 'id="btnDownload"' not in r.text
+    assert 'id="btnCopy"' not in r.text
 
 
 def test_settings_catalog_has_defaults():

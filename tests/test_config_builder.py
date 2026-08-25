@@ -298,6 +298,10 @@ async def test_index_serves_html(app):
     assert 'column.policy!=="remove"' in r.text
     assert '["mssql", "postgresql", "postgres", "oracle", "databricks"]' in r.text
     assert 'id="materializeMode"' in r.text
+    assert 'data-tab="sources"' in r.text
+    assert 'id="btnAddTable"' in r.text
+    assert 'id="tableSource"' in r.text
+    assert 'data-tab="storage"' not in r.text
 
 
 def test_settings_catalog_has_defaults():
@@ -427,3 +431,51 @@ async def test_inspect_reflects_and_detects_key(app, db_path):
     assert "gadget_id" in t["integer_keys"]
     assert {c["name"] for c in t["columns"]} == {"gadget_id", "label", "price"}
     assert t["approx_rows"] == 3
+
+
+async def test_source_catalog_namespaces_database_and_storage(app, db_path, monkeypatch):
+    import config
+    import storage.mounts as mounts
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setattr(config, "CONNECTIONS", {})
+    monkeypatch.setattr(mounts, "MOUNTS", {
+        "lake": SimpleNamespace(bucket="lake", backend="local", format="delta", credential="")
+    })
+    async with _client(app) as client:
+        response = await client.get("/_config/api/sources")
+
+    assert response.status_code == 200
+    sources = {source["id"]: source for source in response.json()["sources"]}
+    assert sources["database:default"]["label"] == "Primary database"
+    assert sources["storage:lake"]["format"] == "delta"
+    assert "db_url" not in response.text
+    assert db_path not in response.text
+
+
+async def test_saved_source_discovery_and_inspection(app, db_path, monkeypatch):
+    import config
+
+    url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setattr(config, "effective_db_url", lambda connection_id="default": url)
+    async with _client(app) as client:
+        discovered = await client.post("/_config/api/sources/database:default/discover", json={})
+        objects = discovered.json()["objects"]
+        gadget = next(item for item in objects if item["name"] == "gadgets")
+        inspected = await client.post("/_config/api/sources/database:default/inspect", json={
+            "schema": gadget["schema"], "name": gadget["name"],
+        })
+        rejected = await client.post("/_config/api/sources/database:default/inspect", json={
+            "schema": gadget["schema"], "name": "missing",
+        })
+
+    assert discovered.status_code == 200
+    assert "gadgets" in {item["name"] for item in objects}
+    assert inspected.status_code == 200
+    metadata = inspected.json()["object"]
+    assert metadata["source_table"] == "main.gadgets"
+    assert metadata["detected_key"] == "gadget_id"
+    assert {column["name"] for column in metadata["columns"]} == {"gadget_id", "label", "price"}
+    assert rejected.status_code == 400
+    assert "not part of the selected database source" in rejected.json()["error"]

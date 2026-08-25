@@ -30,6 +30,18 @@
   .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
   .tab-content { display:none; padding:24px; }
   .tab-content.active { display:block; }
+  .source-switch { display:inline-flex; gap:2px; padding:3px; margin-bottom:16px;
+                   border:1px solid var(--line); background:#0b1220; border-radius:8px; }
+  .source-switch button { border:0; background:transparent; color:var(--muted); padding:7px 12px;
+                          border-radius:6px; cursor:pointer; font:inherit; font-weight:600; }
+  .source-switch button.active { background:var(--card); color:var(--fg); }
+  .source-kind-view { display:none; }
+  .source-kind-view.active { display:block; }
+  #sourceStorageView { padding:0 24px 24px; }
+  .section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  .section-head h2 { margin:0; }
+  .object-picker { display:grid; grid-template-columns:minmax(220px,320px) 1fr; gap:16px; }
+  .metadata-summary { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
   .card h2 { margin:0 0 12px; font-size:14px; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); }
   label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
@@ -130,6 +142,8 @@
     .policy-head { display:none; }
     .policy-row { grid-template-columns:1fr; }
     .policy-detail { grid-column:1; grid-template-columns:1fr; }
+    .object-picker { grid-template-columns:1fr; }
+    .section-head { align-items:flex-start; flex-direction:column; }
   }
 </style>
 </head>
@@ -137,37 +151,41 @@
 <header>
   <div>
     <h1>Config Builder</h1>
-    <p>Connect to SQL sources, pick tables, download <code>config.json</code>.</p>
+    <p>Define sources, configure tables, and manage proxy settings.</p>
   </div>
   <a class="navbtn" href="/_manager">Back to Manager</a>
 </header>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="connection">Connection</button>
+  <button class="tab-btn active" data-tab="sources">Sources</button>
   <button class="tab-btn" data-tab="tables">Tables</button>
   <button class="tab-btn" data-tab="openmirror">Open Mirror</button>
-  <button class="tab-btn" data-tab="storage">Storage</button>
   <button class="tab-btn" data-tab="settings">Settings</button>
   <button class="tab-btn" data-tab="advanced">Advanced</button>
   <button class="tab-btn" data-tab="operational">Operational</button>
 </div>
 
-<!-- CONNECTION TAB -->
-<div id="connection-tab" class="tab-content active">
+<!-- SOURCES TAB -->
+<div id="sources-tab" class="tab-content active">
+  <div class="source-switch" aria-label="Source type">
+    <button type="button" class="active" data-source-kind="database">Databases</button>
+    <button type="button" data-source-kind="storage">Files &amp; object storage</button>
+  </div>
+  <div id="sourceDatabaseView" class="source-kind-view active">
   <div class="card">
-    <h2>Connections</h2>
-    <div class="hint" style="margin-bottom:12px;">Your <b>default</b> connection is your primary database (saved as <code>db_url</code>) and is <b>always present</b> — configure it with your main source and put your tables on it. Only <b>+ Add connection</b> when you need a <b>second, different</b> database; those extra sources are saved to <code>connections[]</code> and a restart loads them.</div>
+    <h2>Database Sources</h2>
+    <div class="hint" style="margin-bottom:12px;">Primary database is the default source. Add another database source when tables come from a different server or engine.</div>
     <div id="connList" class="connlist"></div>
     <div class="actions" style="margin-top:12px;">
-      <button class="btn ghost" id="btnAddConn">+ Add connection</button>
-      <button class="btn ghost" id="btnSaveConnection">💾 Save all connections to config</button>
+      <button class="btn ghost" id="btnAddConn">+ Add database source</button>
+      <button class="btn ghost" id="btnSaveConnection">Save all database sources</button>
     </div>
   </div>
 
   <div class="card" style="margin-top:16px;">
-    <h2 id="connEditTitle">Edit connection</h2>
-    <div class="hint" style="margin-bottom:14px;">Enter the source details, then <b>Test connection</b> to verify it and list its tables.</div>
+    <h2 id="connEditTitle">Edit database source</h2>
+    <div class="hint" style="margin-bottom:14px;">Enter the source details, then <b>Test connection</b> to verify that it is reachable.</div>
     <label>Connection id</label>
     <input id="connId" value="default" placeholder="default" />
     <div class="hint" id="connIdHint" style="margin:-6px 0 12px;">The <code>default</code> id is the reserved primary source and can't be renamed or deleted. If you only have one database, configure <code>default</code> and skip adding connections. Named sources (e.g. <code>warehouse_pg</code>) are only for additional databases.</div>
@@ -224,42 +242,60 @@
       </div>
     </details>
     <div class="actions">
-      <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
-      <button class="btn ghost" id="btnSaveCred" title="Encrypt this connection's password in the Manager credential store so it survives a restart">🔒 Save credentials to Manager</button>
+      <button class="btn ghost" id="btnConnect">Test connection</button>
+      <button class="btn primary" id="btnSaveSource">Save source</button>
+      <button class="btn ghost" id="btnSaveCred" style="display:none;" tabindex="-1">Save credentials to Manager</button>
     </div>
-    <div class="hint" id="credHint" style="margin-top:8px;">Passwords are never written to config files. <b>Save credentials to Manager</b> encrypts the password (Windows DPAPI / Fernet) so the connection survives a restart — no env var needed.</div>
+    <div class="hint" id="credHint" style="margin-top:8px;">Save source stores non-secret properties in configuration and encrypts its password in the Manager credential store when needed.</div>
     <div class="status" id="connStatus"></div>
+  </div>
   </div>
 </div>
 
 <!-- TABLES TAB -->
 <div id="tables-tab" class="tab-content">
-  <div class="card">
-    <h2>Select Tables</h2>
-    <div class="hint" style="margin-bottom:14px;">Choose which tables to include in the configuration. Once selected, key columns will be auto-detected.</div>
-    <div class="tablebar">
-      <input id="tableSearch" placeholder="Filter tables…" />
-      <button class="btn ghost" id="selAll">All</button>
-      <button class="btn ghost" id="selNone">None</button>
+  <div class="card" id="selectedCard">
+    <div class="section-head">
+      <h2>Configured Tables</h2>
+      <button class="btn primary" id="btnAddTable">+ Add table</button>
     </div>
-    <div class="tables" id="tableList"></div>
-  </div>
-
-  <div class="card" id="selectedCard" style="margin-top:16px; display:none;">
-    <h2>Per-Table Configuration</h2>
-    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Set the key column, split <b>strategy</b> (how each split is sliced), <b>splits</b> (count) and <b>target rows</b> (rows per split), or remove a table with ✕. Precedence: when <b>target rows</b> &gt; 0 (global default 100000) the split count is derived from the row count and overrides <b>splits</b> — which then applies only as a fallback; set target rows to 0 to fix the count at <b>splits</b>. <b>Strategy</b> never changes the count. The badge under each table shows the effective split count. <b>Balance</b> (range/date only): <b>span</b> = equal key/time width; <b>count</b> = equal rows per split (NTILE, balances skew, adds a planning scan).</div>
+    <div class="hint" id="emptyTables">No tables configured.</div>
     <div id="selectedList"></div>
     <div class="actions">
-      <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
+      <button class="btn primary" id="btnApplyTables">Apply table changes</button>
     </div>
     <div class="status" id="tableStatus"></div>
   </div>
+
+  <div class="card" id="addTableCard" style="margin-top:16px; display:none;">
+    <div class="section-head">
+      <h2>Add Table</h2>
+      <button class="btn ghost" id="btnCancelAddTable">Cancel</button>
+    </div>
+    <label>Source</label>
+    <div class="tablebar">
+      <select id="tableSource"></select>
+      <button class="btn primary" id="btnLoadSourceObjects">Load available tables/views</button>
+    </div>
+    <div class="status" id="sourceObjectsStatus"></div>
+    <div id="objectPicker" class="object-picker" style="display:none;">
+      <div>
+        <div class="tablebar"><input id="tableSearch" placeholder="Filter tables and views" /></div>
+        <div class="tables" id="tableList"></div>
+      </div>
+      <div id="tableMetadata"><div class="hint">Select a table or view to inspect its metadata.</div></div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="btnSaveAddedTable" disabled>Save table</button>
+    </div>
+    <div class="status" id="addTableStatus"></div>
+  </div>
 </div>
 
-<!-- STORAGE TAB -->
-<div id="storage-tab" class="tab-content">
+<!-- STORAGE SOURCE VIEW -->
+<div id="sourceStorageView" class="source-kind-view">
   <div class="card">
-    <h2>Storage Proxy <span style="font-weight:400;text-transform:none;">(secured file / object passthrough)</span></h2>
+    <h2>File and Object Storage Sources</h2>
     <div class="hint" style="margin-bottom:12px;">Serve <b>existing files</b> from a storage backend through this proxy's S3 endpoint,
       <b>alongside</b> your database tables. Backends: <code>local</code> — a filesystem path (an
       <b>OS-mounted NFS or SMB share</b>, e.g. <code>\\server\share</code> or <code>/mnt/share</code>);
@@ -274,15 +310,15 @@
 
     <div id="mountList" class="connlist"></div>
     <div class="actions" style="margin-top:12px;">
-      <button class="btn ghost" id="btnAddMount">+ Add mount</button>
-      <button class="btn primary" id="btnSaveMounts">💾 Save mounts to config</button>
+      <button class="btn ghost" id="btnAddMount">+ Add storage source</button>
+      <button class="btn ghost" id="btnSaveMounts">Save all storage sources</button>
     </div>
     <div class="status" id="mountStatus"></div>
   </div>
 
   <div class="card" style="margin-top:16px;">
-    <h2 id="mountEditTitle">Edit mount</h2>
-    <div class="hint" style="margin-bottom:12px;">Fill in the details, <b>Test</b> to verify the backend is reachable, then <b>Add / update</b>.</div>
+    <h2 id="mountEditTitle">Edit storage source</h2>
+    <div class="hint" style="margin-bottom:12px;">Enter the source details. Save source verifies reachability, stores new credentials when needed, and persists the source.</div>
     <label>Bucket <span class="hint">(the S3 bucket name Fabric/clients will use)</span></label>
     <input id="mountBucket" placeholder="secure-nfs" />
     <label>Backend</label>
@@ -326,7 +362,7 @@
       <div id="s3CredBox">
         <label>Credential id <span class="hint">(names the encrypted secret this mount uses)</span></label>
         <input id="mountCredential" placeholder="s3vault" />
-        <div class="hint" style="margin:4px 0 10px;">Enter the upstream secret below and <b>Save S3 credential</b> to store it encrypted in the Manager. The secret is never written to <code>config.mounts.json</code>.</div>
+        <div class="hint" style="margin:4px 0 10px;">Enter a new upstream secret below. Save source stores it encrypted in the Manager; the secret is never written to <code>config.mounts.json</code>.</div>
         <label>Auth type</label>
         <select id="s3AuthMode">
           <option value="static">static — access key + secret</option>
@@ -346,7 +382,7 @@
         <div class="s3f" data-modes="web_identity"><label>Web identity token file</label><input id="s3TokenFile" placeholder="/var/run/secrets/eks.amazonaws.com/serviceaccount/token" /></div>
         <div class="s3f" data-modes="profile sso"><label>Profile</label><input id="s3Profile" placeholder="default" /></div>
         <div class="s3f" data-modes="process"><label>credential_process command</label><input id="s3Process" placeholder="/usr/local/bin/cred-helper --json" /></div>
-        <div class="actions"><button class="btn ghost" id="btnSaveS3Cred">🔒 Save S3 credential</button></div>
+        <div class="actions" style="display:none;"><button class="btn ghost" id="btnSaveS3Cred">Save S3 credential</button></div>
         <div class="status" id="s3CredStatus"></div>
       </div>
     </div>
@@ -372,7 +408,7 @@
       <div id="azCredBox">
         <label>Credential id <span class="hint">(names the encrypted secret this mount uses)</span></label>
         <input id="mountAzCredential" placeholder="blobvault" />
-        <div class="hint" style="margin:4px 0 10px;">Enter the upstream secret below and <b>Save Azure credential</b> to store it encrypted in the Manager. The secret is never written to <code>config.mounts.json</code>.</div>
+        <div class="hint" style="margin:4px 0 10px;">Enter a new upstream secret below. Save source stores it encrypted in the Manager; the secret is never written to <code>config.mounts.json</code>.</div>
         <label>Auth type</label>
         <select id="azAuthMode">
           <option value="account_key">account_key — storage account shared key</option>
@@ -388,7 +424,7 @@
         <div class="azf" data-modes="aad_client_secret"><label>Client id</label><input id="azClientId" placeholder="app (client) id" /></div>
         <div class="azf" data-modes="aad_client_secret"><label>Client secret</label><input id="azClientSecret" type="password" placeholder="client secret value" /></div>
         <div class="azf" data-modes="managed_identity"><label>Client id <span class="hint">(optional — user-assigned MI)</span></label><input id="azMiClientId" placeholder="leave blank for system-assigned" /></div>
-        <div class="actions"><button class="btn ghost" id="btnSaveAzCred">🔒 Save Azure credential</button></div>
+        <div class="actions" style="display:none;"><button class="btn ghost" id="btnSaveAzCred">Save Azure credential</button></div>
         <div class="status" id="azCredStatus"></div>
       </div>
     </div>
@@ -425,7 +461,7 @@
       <span>Read-only</span></div>
     <div class="actions">
       <button class="btn ghost" id="btnTestMount">Test</button>
-      <button class="btn primary" id="btnApplyMount">Add / update mount</button>
+      <button class="btn primary" id="btnApplyMount">Save source</button>
     </div>
     <div class="status" id="mountEditStatus"></div>
   </div>
@@ -689,10 +725,23 @@ function initTabs(){
       const tabName = btn.dataset.tab;
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      $("sourceStorageView").classList.remove("active");
       btn.classList.add('active');
       document.getElementById(tabName + '-tab').classList.add('active');
+      if(tabName === "sources") setSourceKind(activeSourceKind);
     });
   });
+}
+
+let activeSourceKind = "database";
+function setSourceKind(kind){
+  activeSourceKind = kind === "storage" ? "storage" : "database";
+  document.querySelectorAll("[data-source-kind]").forEach(button=>{
+    button.classList.toggle("active", button.dataset.sourceKind === activeSourceKind);
+  });
+  $("sourceDatabaseView").classList.toggle("active", activeSourceKind === "database");
+  const sourcesActive = $("sources-tab").classList.contains("active");
+  $("sourceStorageView").classList.toggle("active", sourcesActive && activeSourceKind === "storage");
 }
 
 const $ = (id) => document.getElementById(id);
@@ -715,6 +764,8 @@ const state = {
   credBackend: "",           // encryption backend the Manager store is using
   credAvailable: false,      // whether the Manager can encrypt/persist credentials
   showHiddenPrimary: false,  // reveal the empty default card even when auto-hidden
+  sourceCatalog: [],
+  addTable: { sourceId:"", objects:[], metadata:null, draft:null },
   globals: { num_splits: 8, split_target_rows: 100000, split_count_min: 1, split_count_max: 256, split_strategy: "modulo" }
 };
 
@@ -737,7 +788,7 @@ function newConn(id){
   return { id, dialect:"postgresql", host:"", port:"", database:"", username:"", password:"",
     driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"",
     auth_method:"sql", client_id:"", client_secret:"",
-    db_url:"", db_url_masked:"", flavor:"", tested:false };
+    db_url:"", db_url_masked:"", flavor:"", tested:false, connection:null, discovered:null };
 }
 
 // ---- persistence (never the password) ----
@@ -770,7 +821,7 @@ function writeFormFromConn(c){
   $("connId").value = c.id;
   $("connId").disabled = (c.id === "default");
   $("port").placeholder = "(default "+DEFAULT_PORTS[c.dialect||"postgresql"]+")";
-  $("connEditTitle").textContent = "Edit connection — " + c.id;
+  $("connEditTitle").textContent = "Edit database source — " + c.id;
   updateAuthUI();
 }
 
@@ -830,7 +881,7 @@ function addConn(){
   writeFormFromConn(state.connections.get(id));
   renderConnList(); persistConns();
   $("connId").focus(); $("connId").select();
-  const s=$("connStatus"); s.className="status"; s.textContent="New connection — set an id + details, then Test connection.";
+  const s=$("connStatus"); s.className="status"; s.textContent="New database source. Set an id and source details, then save it.";
 }
 function clearConnTables(id){
   const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
@@ -1006,6 +1057,7 @@ function applyBootstrap(builder){
   writeFormFromConn(active);
   renderConnList();
   renderSelected();
+  refreshSourceCatalog();
   if(typeof omOnBootstrap === "function") omOnBootstrap(builder);
   saveForm();
   persistConns();
@@ -1030,14 +1082,14 @@ async function api(path, body){
 }
 
 // ---- connect / test ----
-$("btnConnect").onclick = async () => {
+async function testActiveConnection(){
   commitActive();
   const s = $("connStatus"); s.className="status"; s.textContent="Connecting…";
   $("btnConnect").disabled = true;
   const conn = connFields();
   const data = await api("/_config/api/connect", conn);
   $("btnConnect").disabled = false;
-  if(!data.ok){ s.className="status err"; s.textContent="✗ " + (data.error||"connection failed"); return; }
+  if(!data.ok){ s.className="status err"; s.textContent="Connection failed: " + (data.error||"unknown error"); return null; }
   const connId = conn.id || "default";
   state.activeConnId = connId;
   const c = state.connections.get(connId) || newConn(connId);
@@ -1045,18 +1097,53 @@ $("btnConnect").onclick = async () => {
   c.db_url = data.db_url; c.db_url_masked = data.db_url_masked;
   c.flavor = (data.capabilities && data.capabilities.flavor) || conn.dialect; c.tested = true;
   c.capabilities = data.capabilities || null;
+  c.connection = conn;
+  c.discovered = data.tables || [];
   state.connections.set(connId, c);
   state.connection = conn; state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
-  state.tables = data.tables || [];
-  // Re-listing this source: drop only ITS prior selections.
-  for(const k of [...state.selected.keys()]){
-    if(k.startsWith(connId + "::")) state.selected.delete(k);
-  }
   s.className="status ok";
-  s.textContent = `✓ Connected as '${connId}'${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
-  renderConnList(); renderTables(); persistConns();
-  document.querySelector('[data-tab="tables"]').click(); renderSelected();
-};
+  s.textContent = `Connected as '${connId}'${data.server_version?(" (v"+data.server_version+")"):""}.`;
+  renderConnList(); persistConns(); refreshSourceCatalog();
+  return c;
+}
+$("btnConnect").onclick = testActiveConnection;
+
+async function saveActiveSource(){
+  const status=$("connStatus");
+  $("btnSaveSource").disabled=true;
+  const connection=await testActiveConnection();
+  if(!connection){ $("btnSaveSource").disabled=false; return; }
+  if(hasPw(connection.db_url)){
+    if(!state.credAvailable){
+      status.className="status err";
+      status.textContent="This source needs a password, but the Manager credential store is unavailable.";
+      $("btnSaveSource").disabled=false; return;
+    }
+    const credential=await api("/_config/api/credentials",{connection_id:connection.id,db_url:connection.db_url,apply:true});
+    if(!credential.ok){
+      status.className="status err"; status.textContent="Credential save failed: "+(credential.error||"unknown error");
+      $("btnSaveSource").disabled=false; return;
+    }
+  }
+  const settings={};
+  if(connection.id==="default") settings.db_url=stripPw(connection.db_url);
+  else {
+    settings.connections=[...state.connections.values()]
+      .filter(item=>item.id!=="default"&&(item.db_url||item.db_url_masked))
+      .map(item=>({id:item.id,db_url:stripPw(item.db_url||item.db_url_masked)}));
+  }
+  try{
+    const response=await fetch("/_config/api/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings})});
+    const result=await response.json();
+    if(!response.ok){ throw new Error((result.errors&&result.errors.join("; "))||result.error||String(response.status)); }
+    await refreshCredStatus();
+    renderConnList(); refreshSourceCatalog();
+    status.className="status ok";
+    status.textContent="Source saved. Table selection is available from the Tables tab.";
+  }catch(error){ status.className="status err"; status.textContent="Source save failed: "+error.message; }
+  $("btnSaveSource").disabled=false;
+}
+$("btnSaveSource").onclick=saveActiveSource;
 
 // ---- credential store (persist DB passwords in the Manager, encrypted) ----
 async function refreshCredStatus(){
@@ -1069,8 +1156,8 @@ async function refreshCredStatus(){
   const h = $("credHint");
   if(h){
     if(state.credAvailable){
-      h.innerHTML = `Passwords are never written to config files. <b>Save credentials to Manager</b> encrypts the password `
-        + `(<code>${state.credBackend}</code>) so the connection survives a restart — no env var needed.`;
+      h.innerHTML = `Passwords are never written to config files. <b>Save source</b> encrypts the password `
+        + `with <code>${state.credBackend}</code> so the source survives a restart.`;
     } else {
       h.innerHTML = `⚠ The Manager can't encrypt credentials on this host (no backend). Install <code>cryptography</code> `
         + `or set <code>FSP_CRED_KEY</code>, or supply the password via the <code>DB_URL</code> env var.`;
@@ -1162,45 +1249,226 @@ $("btnSaveConnection").onclick = async () => {
   }
 };
 
-// ---- table list ----
-function renderTables(){
-  const q = $("tableSearch").value.toLowerCase();
-  const list = $("tableList"); list.innerHTML="";
-  const groups = {};
-  for(const t of state.tables){
-    const label = (t.schema? t.schema+"." : "") + t.name;
-    if(q && !label.toLowerCase().includes(q)) continue;
-    (groups[t.schema||""] ||= []).push(t);
-  }
-  Object.keys(groups).sort().forEach(schema => {
-    const hdr = document.createElement("div"); hdr.className="schema-hdr";
-    hdr.textContent = schema || "(default)"; list.appendChild(hdr);
-    for(const t of groups[schema]){
-      const key = (t.schema? t.schema+"." : "") + t.name;
-      const row = document.createElement("div"); row.className="trow";
-      const cb = document.createElement("input"); cb.type="checkbox";
-      cb.checked = state.selected.has(selKey(state.activeConnId, key));
-      cb.onchange = () => toggleTable(t, cb.checked);
-      const name = document.createElement("div"); name.className="name"; name.textContent = key;
-      const kind = document.createElement("span"); kind.className="kind"; kind.textContent = t.kind;
-      row.append(cb, name, kind); list.appendChild(row);
+// ---- source-driven table editor ----
+async function refreshSourceCatalog(){
+  let sources = [];
+  try{
+    const response = await fetch("/_config/api/sources", {cache:"no-store"}).then(result=>result.json());
+    if(response.ok) sources = response.sources || [];
+  }catch(e){ /* local tested sources are still usable */ }
+  for(const connection of state.connections.values()){
+    const id = "database:" + connection.id;
+    if(!sources.some(source=>source.id===id)){
+      sources.push({id, runtime_id:connection.id, label:connection.id==="default"?"Primary database":connection.id,
+        kind:"database", type:connection.flavor||connection.dialect});
     }
+  }
+  for(const mount of mountState.mounts){
+    const id = "storage:" + mount.bucket;
+    if(!sources.some(source=>source.id===id)){
+      sources.push({id, runtime_id:mount.bucket, label:mount.bucket, kind:"storage",
+        type:mount.backend, format:mount.format||null});
+    }
+  }
+  state.sourceCatalog = sources;
+  renderTableSourceOptions();
+}
+
+function renderTableSourceOptions(){
+  const select = $("tableSource");
+  if(!select) return;
+  const current = state.addTable.sourceId || select.value;
+  select.innerHTML = "";
+  for(const source of state.sourceCatalog){
+    const option = document.createElement("option");
+    option.value = source.id;
+    option.textContent = `${source.label} · ${source.type}${source.format?(" · "+source.format):""}`;
+    select.appendChild(option);
+  }
+  if(current && state.sourceCatalog.some(source=>source.id===current)) select.value=current;
+  state.addTable.sourceId = select.value || "";
+  $("btnLoadSourceObjects").disabled = !select.value;
+}
+
+function resetAddTableEditor(){
+  state.addTable.objects=[]; state.addTable.metadata=null; state.addTable.draft=null;
+  state.tables=[];
+  $("tableSearch").value="";
+  $("tableList").innerHTML="";
+  $("tableMetadata").innerHTML='<div class="hint">Select a table or view to inspect its metadata.</div>';
+  $("objectPicker").style.display="none";
+  $("btnSaveAddedTable").disabled=true;
+  $("sourceObjectsStatus").textContent="";
+  $("addTableStatus").textContent="";
+}
+
+function openAddTable(){
+  resetAddTableEditor();
+  refreshSourceCatalog();
+  $("addTableCard").style.display="block";
+  $("tableSource").focus();
+}
+
+async function loadSourceObjects(){
+  const sourceId=$("tableSource").value;
+  const source=state.sourceCatalog.find(item=>item.id===sourceId);
+  const status=$("sourceObjectsStatus");
+  state.addTable.sourceId=sourceId;
+  state.addTable.metadata=null; state.addTable.draft=null;
+  status.className="status"; status.textContent="Loading available tables and views…";
+  $("btnLoadSourceObjects").disabled=true;
+  let objects=null;
+  if(source?.kind==="database"){
+    const connection=state.connections.get(source.runtime_id);
+    if(connection?.discovered) objects=connection.discovered;
+  }
+  if(objects===null){
+    const result=await api("/_config/api/sources/"+encodeURIComponent(sourceId)+"/discover", {});
+    if(!result.ok){
+      status.className="status err"; status.textContent="Could not load objects: "+(result.error||"source unavailable");
+      $("btnLoadSourceObjects").disabled=false; return;
+    }
+    objects=result.objects||[];
+  }
+  state.addTable.objects=objects;
+  state.tables=objects;
+  status.className=objects.length?"status ok":"status";
+  status.textContent=objects.length?`Found ${objects.length} table(s) and view(s).`:"No supported tables or views found on this source.";
+  $("objectPicker").style.display=objects.length?"grid":"none";
+  $("btnLoadSourceObjects").disabled=false;
+  renderTables();
+}
+
+function renderTables(){
+  const query=$("tableSearch").value.toLowerCase();
+  const list=$("tableList"); list.innerHTML="";
+  const groups={};
+  for(const object of state.addTable.objects){
+    const label=(object.schema?object.schema+".":"")+object.name;
+    if(query && !label.toLowerCase().includes(query)) continue;
+    (groups[object.schema||""] ||= []).push(object);
+  }
+  for(const schema of Object.keys(groups).sort()){
+    const header=document.createElement("div"); header.className="schema-hdr";
+    header.textContent=schema||"(default)"; list.appendChild(header);
+    for(const object of groups[schema]){
+      const row=document.createElement("button"); row.type="button"; row.className="trow";
+      row.style.cssText="width:100%;background:transparent;color:inherit;border-left:0;border-right:0;border-bottom:0;cursor:pointer;text-align:left;";
+      const name=document.createElement("span"); name.className="name";
+      name.textContent=(object.schema?object.schema+".":"")+object.name;
+      const kind=document.createElement("span"); kind.className="kind"; kind.textContent=object.kind||"table";
+      row.append(name,kind); row.onclick=()=>inspectSourceObject(object); list.appendChild(row);
+    }
+  }
+}
+$("tableSearch").oninput=renderTables;
+
+async function inspectSourceObject(object){
+  const sourceId=state.addTable.sourceId;
+  const source=state.sourceCatalog.find(item=>item.id===sourceId);
+  const status=$("addTableStatus");
+  status.className="status"; status.textContent="Loading metadata…";
+  let metadata=null;
+  if(source?.kind==="database"){
+    const connection=state.connections.get(source.runtime_id);
+    if(connection?.connection){
+      const result=await api("/_config/api/inspect", {connection:connection.connection,
+        tables:[{schema:object.schema||null,name:object.name}]});
+      if(result.ok) metadata=(result.tables||[])[0]||null;
+      else { status.className="status err"; status.textContent=result.error||"Metadata inspection failed."; return; }
+    }
+  }
+  if(metadata===null){
+    const result=await api("/_config/api/sources/"+encodeURIComponent(sourceId)+"/inspect",
+      {schema:object.schema||null,name:object.name});
+    if(!result.ok){ status.className="status err"; status.textContent=result.error||"Metadata inspection failed."; return; }
+    metadata=result.object;
+  }
+  const runtimeId=source.runtime_id;
+  const sourceTable=metadata.source_table||((object.schema?object.schema+".":"")+object.name);
+  state.addTable.metadata=metadata;
+  state.addTable.draft={
+    name:object.name, schema:object.schema||null, source_table:sourceTable,
+    connection:runtimeId, source_kind:source.kind, source_type:source.type,
+    key_column:metadata.detected_key||null, integer_keys:metadata.integer_keys||[],
+    columns:reflectedPolicyColumns(metadata.columns||[]), approx_rows:metadata.approx_rows,
+    num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
+    invalid:!metadata.detected_key, pending:false, policies_open:true, enabled:true,
+  };
+  status.textContent=""; status.className="status";
+  renderAddTableMetadata();
+}
+
+function renderAddTableMetadata(){
+  const draft=state.addTable.draft;
+  const metadata=state.addTable.metadata;
+  if(!draft || !metadata) return;
+  const wrap=$("tableMetadata"); wrap.innerHTML="";
+  const title=document.createElement("h3"); title.style.margin="0 0 4px"; title.textContent=draft.source_table;
+  const summary=document.createElement("div"); summary.className="metadata-summary";
+  for(const text of [draft.source_kind, metadata.format||draft.source_type,
+    metadata.approx_rows!=null?Intl.NumberFormat().format(metadata.approx_rows)+" estimated rows":null,
+    draft.columns.length+" columns"].filter(Boolean)){
+    const badge=document.createElement("span"); badge.className="badge"; badge.textContent=text; summary.appendChild(badge);
+  }
+  const nameLabel=document.createElement("label"); nameLabel.textContent="Exposed table name";
+  const nameInput=document.createElement("input"); nameInput.value=draft.name;
+  nameInput.oninput=()=>{ draft.name=nameInput.value.trim(); $("btnSaveAddedTable").disabled=!draft.name||!draft.key_column; };
+  const keyLabel=document.createElement("label"); keyLabel.textContent="Key / split column";
+  const keySelect=document.createElement("select");
+  const candidates=keyCandidates(draft);
+  if(!draft.key_column){ const option=document.createElement("option"); option.value=""; option.textContent="Choose a key column"; keySelect.appendChild(option); }
+  for(const candidate of candidates){
+    const option=document.createElement("option"); option.value=candidate; option.textContent=candidate;
+    option.selected=candidate===draft.key_column; keySelect.appendChild(option);
+  }
+  keySelect.onchange=()=>{ draft.key_column=keySelect.value||null; draft.invalid=!draft.key_column; renderAddTableMetadata(); };
+  const policyTitle=document.createElement("h3"); policyTitle.textContent="Columns and transforms"; policyTitle.style.margin="16px 0 8px";
+  wrap.append(title,summary,nameLabel,nameInput,keyLabel,keySelect,policyTitle,
+    renderPolicyEditor(draft,{tokenCapable:draft.source_kind==="storage"||connectionSupportsTokens(draft),
+      onEdit:()=>{},rerender:renderAddTableMetadata}));
+  const errors=policyErrors(draft);
+  if(errors.length){ const error=document.createElement("div"); error.className="policy-error"; error.textContent=errors.join(" "); wrap.appendChild(error); }
+  $("btnSaveAddedTable").disabled=!draft.name||!draft.key_column||errors.length>0;
+}
+
+function storagePolicyColumns(draft){
+  return draft.columns.filter(column=>column.policy!=="remove").map(column=>{
+    const transformed=column.policy==="deterministic_hash"||column.policy==="random_token";
+    const item={field_id:column.field_id,name:column.name.trim(),type:transformed?"string":column.type,nullable:column.nullable};
+    if(column.name!==column.source||transformed) item.source=column.source;
+    if(column.policy==="deterministic_hash") item.transform={kind:"deterministic_hash",key_ref:column.key_ref.trim(),domain:column.domain,normalization:column.normalization};
+    else if(column.policy==="random_token") item.transform={kind:"random_token"};
+    return item;
   });
 }
-$("tableSearch").oninput = renderTables;
-$("selAll").onclick = () => bulk(true);
-$("selNone").onclick = () => bulk(false);
-function bulk(on){
-  const q = $("tableSearch").value.toLowerCase();
-  for(const t of state.tables){
-    const label = (t.schema? t.schema+"." : "") + t.name;
-    if(q && !label.toLowerCase().includes(q)) continue;
-    const key = selKey(state.activeConnId, label);
-    if(on && !state.selected.has(key)) state.selected.set(key, stub(t));
-    if(!on) state.selected.delete(key);
+
+async function saveAddedTable(){
+  const draft=state.addTable.draft;
+  const status=$("addTableStatus");
+  if(!draft||!draft.name||!draft.key_column) return;
+  const duplicate=[...state.selected.values()].find(table=>table.name===draft.name && selKey(table.connection,table.source_table)!==selKey(draft.connection,draft.source_table));
+  if(duplicate){ status.className="status err"; status.textContent="A configured table already uses the exposed name '"+draft.name+"'."; return; }
+  $("btnSaveAddedTable").disabled=true;
+  if(draft.source_kind==="storage"){
+    const mount=mountState.mounts.find(item=>item.bucket===draft.connection);
+    if(!mount){ status.className="status err"; status.textContent="The selected storage source is no longer available."; return; }
+    mount.key_column=draft.key_column; mount.columns=storagePolicyColumns(draft);
+    const result=await api("/_config/api/mounts",{mounts:mountState.mounts,enabled:$("storageEnabled").checked});
+    if(!result.ok){ status.className="status err"; status.textContent=(result.errors||[result.error||"Save failed"]).join("; "); $("btnSaveAddedTable").disabled=false; return; }
+    renderMounts();
+  }else{
+    state.selected.set(selKey(draft.connection,draft.source_table),draft);
+    state.expandedGroups.add(draft.connection);
+    renderSelected();
+    await applyTables();
+    if(!$("tableStatus").classList.contains("ok")){ $("btnSaveAddedTable").disabled=false; return; }
   }
-  renderTables(); scheduleInspect(); renderSelected();
+  status.className="status ok"; status.textContent="Table saved.";
+  $("addTableCard").style.display="none";
+  resetAddTableEditor();
 }
+
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
   key_column:null, num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
@@ -1389,7 +1657,8 @@ function keyCandidates(s){
 function renderSelected(){
   const wrap = $("selectedList"); const card = $("selectedCard");
   const items = [...state.selected.values()];
-  card.style.display = items.length? "block":"none";
+  card.style.display = "block";
+  $("emptyTables").style.display = items.length ? "none" : "block";
   wrap.innerHTML="";
 
   // Group the selected tables by their source connection.
@@ -1724,7 +1993,7 @@ async function applyTables(){
   if(notReady.length){
     status.className="status err";
     status.textContent="These sources aren't ready yet: "+notReady.join(", ")
-      +". Open the Connection tab and either Test each one or Save credentials to the Manager, then apply again.";
+      +". Open Sources and either test each one or save its credentials, then apply again.";
     return;
   }
   // Persist the referenced named sources alongside the tables (passwords stripped)
@@ -1934,6 +2203,7 @@ async function loadMounts(){
   }catch(e){ /* keep empty on failure */ }
   populateBackendOptions();
   renderMounts();
+  refreshSourceCatalog();
 }
 
 function populateBackendOptions(){
@@ -2244,11 +2514,11 @@ $("btnAddMount").onclick = () => {
   $("mountTokOn").checked = false; $("tokBody").style.display = "none";
   tokState.columns = []; $("mountTokPolicy").innerHTML = ""; $("mountTokStatus").textContent = "";
   $("mountTokFormat").value = ""; $("mountTokOutput").value = ""; updateTokFormatHint(); $("tokKeyBox").style.display = "none";
-  $("mountEditTitle").textContent = "Add mount";
+  $("mountEditTitle").textContent = "Add storage source";
   $("mountEditStatus").textContent = ""; $("mountBucket").focus();
 };
 
-$("btnApplyMount").onclick = () => {
+$("btnApplyMount").onclick = async () => {
   const m = readMountForm();
   const s = $("mountEditStatus"); s.className = "status";
   if(!m.bucket){ s.className = "status err"; s.textContent = "Bucket is required."; return; }
@@ -2263,7 +2533,7 @@ $("btnApplyMount").onclick = () => {
     if(!m.credential && !m.auth){
       s.className = "status err"; s.textContent = "Choose an authentication source (stored credential, anonymous, or instance)."; return; }
     if(m.credential === "" && $("mountAuthSource").value === "credential"){
-      s.className = "status err"; s.textContent = "Enter a credential id (and Save S3 credential) or pick anonymous/instance."; return; }
+      s.className = "status err"; s.textContent = "Enter a credential id and secret, or pick anonymous/instance."; return; }
   }
   if(m.backend === "azure"){
     if(!m.root){ s.className = "status err"; s.textContent = "Container is required for the azure backend."; return; }
@@ -2273,12 +2543,32 @@ $("btnApplyMount").onclick = () => {
     if(!m.credential && !m.auth){
       s.className = "status err"; s.textContent = "Choose an authentication source (stored credential, default, managed identity, or anonymous)."; return; }
     if(m.credential === "" && $("mountAzAuthSource").value === "credential"){
-      s.className = "status err"; s.textContent = "Enter a credential id (and Save Azure credential) or pick default/managed_identity/anonymous."; return; }
+      s.className = "status err"; s.textContent = "Enter a credential id and secret, or pick default/managed_identity/anonymous."; return; }
   }
+  $("btnApplyMount").disabled=true;
+  const s3CredentialEntered=m.backend==="s3" && ["s3AccessKey","s3SecretKey","s3SessionToken","s3RoleArn","s3ExternalId","s3TokenFile","s3Profile","s3Process"]
+    .some(id=>($(id).value||"").trim());
+  const azureCredentialEntered=m.backend==="azure" && ["azAccountKey","azSasToken","azConnString","azTenantId","azClientId","azClientSecret","azMiClientId"]
+    .some(id=>($(id).value||"").trim());
+  if(s3CredentialEntered){
+    const credential=await api("/_config/api/s3-credentials",{credential_id:m.credential,auth:readS3AuthForm()});
+    if(!credential.ok){ s.className="status err"; s.textContent=(credential.errors||[credential.error||"Credential save failed"]).join("; "); $("btnApplyMount").disabled=false; return; }
+  }
+  if(azureCredentialEntered){
+    const credential=await api("/_config/api/azure-credentials",{credential_id:m.credential,auth:readAzAuthForm()});
+    if(!credential.ok){ s.className="status err"; s.textContent=(credential.errors||[credential.error||"Credential save failed"]).join("; "); $("btnApplyMount").disabled=false; return; }
+  }
+  s.textContent="Testing source…";
+  const test=await api("/_config/api/mounts/test",m);
+  if(!test.ok){ s.className="status err"; s.textContent="Source test failed: "+(test.error||"backend not reachable"); $("btnApplyMount").disabled=false; return; }
   const idx = mountState.mounts.findIndex(x => x.bucket === m.bucket);
   if(idx >= 0) mountState.mounts[idx] = m; else mountState.mounts.push(m);
+  const saved=await api("/_config/api/mounts",{mounts:mountState.mounts,enabled:$("storageEnabled").checked});
+  if(!saved.ok){ s.className="status err"; s.textContent=(saved.errors||[saved.error||"Source save failed"]).join("; "); $("btnApplyMount").disabled=false; return; }
   renderMounts();
-  s.className = "status ok"; s.textContent = `Mount '${m.bucket}' ${idx >= 0 ? "updated" : "added"}. Remember to Save mounts to config.`;
+  refreshSourceCatalog();
+  s.className = "status ok"; s.textContent = `Source '${m.bucket}' ${idx >= 0 ? "updated" : "added"}. Restart to apply.`;
+  $("btnApplyMount").disabled=false;
 };
 
 $("btnSaveS3Cred").onclick = async () => {
@@ -3227,8 +3517,22 @@ $("btnSaveS3Secret").onclick = saveS3Secret;
 $("btnClearS3Secret").onclick = clearS3Secret;
 $("btnApplyAdvanced").onclick = applyAdvanced;
 $("btnSaveAdvanced").onclick = saveAdvanced;
+document.querySelectorAll("[data-source-kind]").forEach(button=>{
+  button.onclick=()=>setSourceKind(button.dataset.sourceKind);
+});
+$("btnAddTable").onclick=openAddTable;
+$("btnCancelAddTable").onclick=()=>{ $("addTableCard").style.display="none"; resetAddTableEditor(); };
+$("btnLoadSourceObjects").onclick=loadSourceObjects;
+$("btnSaveAddedTable").onclick=saveAddedTable;
+$("tableSource").onchange=()=>{
+  const sourceId=$("tableSource").value;
+  resetAddTableEditor();
+  state.addTable.sourceId=sourceId;
+  $("tableSource").value=sourceId;
+};
 loadCurrent();
 initTabs();
+setSourceKind("database");
 </script>
 </body>
 </html>

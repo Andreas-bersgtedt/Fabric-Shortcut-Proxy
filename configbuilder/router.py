@@ -690,6 +690,132 @@ def _connection_url_for(connection_id: str):
     return make_url(config.effective_db_url(connection_id or "default"))
 
 
+def _source_ref(source_id: str) -> tuple[str, str]:
+    """Split a namespaced builder source id into its kind and runtime id."""
+    kind, separator, runtime_id = str(source_id or "").partition(":")
+    if separator and kind in {"database", "storage"} and runtime_id:
+        return kind, runtime_id
+    raise ValueError("source id must be database:<connection> or storage:<mount>")
+
+
+@router.get("/api/sources")
+async def list_sources() -> JSONResponse:
+    """Return saved database connections and storage mounts without secrets."""
+    import storage.mounts as sm
+
+    stored = set()
+    if config.ENABLE_CREDENTIAL_STORE:
+        try:
+            stored = {str(item.get("id")) for item in _store().status().get("connections", [])}
+        except Exception:  # noqa: BLE001 - source listing must survive store failures
+            stored = set()
+
+    sources = [{
+        "id": "database:default",
+        "runtime_id": "default",
+        "label": "Primary database",
+        "kind": "database",
+        "type": _flavor_from_url(config.DB_URL),
+        "credential_stored": "default" in stored,
+    }]
+    for connection_id, connection in config.CONNECTIONS.items():
+        if connection_id == "default":
+            continue
+        sources.append({
+            "id": f"database:{connection_id}",
+            "runtime_id": connection_id,
+            "label": connection_id,
+            "kind": "database",
+            "type": _flavor_from_url(connection.db_url),
+            "credential_stored": connection_id in stored,
+        })
+    for mount in sm.MOUNTS.values():
+        sources.append({
+            "id": f"storage:{mount.bucket}",
+            "runtime_id": mount.bucket,
+            "label": mount.bucket,
+            "kind": "storage",
+            "type": mount.backend,
+            "format": getattr(mount, "format", "") or None,
+            "credential_stored": bool(getattr(mount, "credential", "")),
+        })
+    return JSONResponse({"ok": True, "sources": sources})
+
+
+@router.post("/api/sources/{source_id}/discover")
+async def discover_source_objects(source_id: str) -> JSONResponse:
+    """List selectable objects from one saved source."""
+    import storage.mounts as sm
+
+    try:
+        kind, runtime_id = _source_ref(source_id)
+        if kind == "database":
+            async with SchemaReflector(_connection_url_for(runtime_id)) as reflector:
+                objects = await reflector.list_tables()
+        else:
+            mount = sm.MOUNTS.get(runtime_id)
+            if mount is None:
+                raise ValueError(f"unknown storage source {runtime_id!r}")
+            fmt = getattr(mount, "format", "") or ""
+            objects = ([{"schema": None, "name": mount.bucket, "kind": fmt}]
+                       if fmt in {"delta", "iceberg"} else [])
+    except Exception as exc:  # noqa: BLE001 - return a clean builder error
+        return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "source_id": source_id, "objects": objects})
+
+
+@router.post("/api/sources/{source_id}/inspect")
+async def inspect_source_object(source_id: str, request: Request) -> JSONResponse:
+    """Return normalized metadata for one object in a saved source."""
+    import storage.mounts as sm
+
+    body = await request.json()
+    body = body if isinstance(body, dict) else {}
+    try:
+        kind, runtime_id = _source_ref(source_id)
+        name = str(body.get("name") or "").strip()
+        schema = str(body.get("schema") or "").strip() or None
+        if not name:
+            raise ValueError("name is required")
+        if kind == "database":
+            source_table = f"{schema}.{name}" if schema else name
+            async with SchemaReflector(_connection_url_for(runtime_id)) as reflector:
+                available = await reflector.list_tables()
+                if not any(item.get("name") == name and (item.get("schema") or None) == schema
+                           for item in available):
+                    raise ValueError("object is not part of the selected database source")
+                columns = await reflector.columns(source_table)
+                primary_key = await reflector.primary_key(source_table)
+                detected_key, integer_keys = detect_key_column(columns, primary_key)
+                approx_rows = await reflector.approx_row_count(source_table)
+            result = {
+                "name": name, "schema": schema, "source_table": source_table,
+                "columns": columns, "primary_key": primary_key,
+                "detected_key": detected_key, "integer_keys": integer_keys,
+                "approx_rows": approx_rows,
+            }
+        else:
+            mount = sm.MOUNTS.get(runtime_id)
+            if mount is None or name != runtime_id:
+                raise ValueError("object is not part of the selected storage source")
+            from storage.objectstore_reader import reader_for_mount
+            arrow_schema = reader_for_mount(mount).schema()
+            columns = [{"name": field.name, "type": _arrow_to_iceberg_type(field.type),
+                        "nullable": bool(field.nullable)} for field in arrow_schema]
+            integer_keys = [column["name"] for column in columns
+                            if column["type"] in {"int", "long"}]
+            result = {
+                "name": name, "schema": None, "source_table": name,
+                "columns": columns, "primary_key": [],
+                "detected_key": getattr(mount, "key_column", "") or (integer_keys[0] if integer_keys else None),
+                "integer_keys": integer_keys, "approx_rows": None,
+                "format": getattr(mount, "format", "") or None,
+            }
+    except Exception as exc:  # noqa: BLE001 - return a clean builder error
+        return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "source_id": source_id, "object": result})
+
+
 @router.post("/api/open-mirror/list-tables")
 async def open_mirror_list_tables(request: Request) -> JSONResponse:
     """List tables/views for a SAVED connection id (for the Open Mirror table picker).

@@ -180,6 +180,18 @@ async def keyvault_status() -> JSONResponse:
     return JSONResponse(st)
 
 
+@router.get("/api/tokenization-key-references")
+async def tokenization_key_references() -> JSONResponse:
+    """List configured tokenization key references without returning key values."""
+    prefix = "FSP_TOKENIZATION_KEY_"
+    references = sorted({
+        name[len(prefix):].lower().replace("_", "-")
+        for name, value in os.environ.items()
+        if name.upper().startswith(prefix) and value
+    })
+    return JSONResponse({"ok": True, "references": references})
+
+
 @router.post("/api/keyvault/test")
 async def keyvault_test(request: Request) -> JSONResponse:
     """Live Key Vault connectivity test for the 'Test Key Vault' button.

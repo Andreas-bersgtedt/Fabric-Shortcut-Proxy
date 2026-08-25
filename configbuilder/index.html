@@ -763,6 +763,7 @@ const state = {
   storedCreds: new Set(),    // connection ids with an encrypted credential in the Manager store
   credBackend: "",           // encryption backend the Manager store is using
   credAvailable: false,      // whether the Manager can encrypt/persist credentials
+  tokenizationKeyRefs: [],   // configured FSP_TOKENIZATION_KEY_* references (values are never returned)
   showHiddenPrimary: false,  // reveal the empty default card even when auto-hidden
   sourceCatalog: [],
   addTable: { sourceId:"", objects:[], metadata:null, draft:null },
@@ -1079,6 +1080,16 @@ async function api(path, body){
   let data; try { data = await r.json(); } catch(e){ data = {ok:false, error:"Bad response"}; }
   if(!r.ok && data.ok===undefined) data.ok=false;
   return data;
+}
+
+async function loadTokenizationKeyReferences(){
+  try{
+    const response=await fetch("/_config/api/tokenization-key-references",{cache:"no-store"}).then(result=>result.json());
+    state.tokenizationKeyRefs=response.ok?(response.references||[]):[];
+  }catch(error){ state.tokenizationKeyRefs=[]; }
+  renderSelected();
+  if(state.addTable.draft) renderAddTableMetadata();
+  if(state.om.editing) omRenderTableRows();
 }
 
 // ---- connect / test ----
@@ -1557,6 +1568,40 @@ function policyErrors(entry){
   return errors;
 }
 
+function tokenizationKeySelect(currentReference, onChange){
+  const select=document.createElement("select");
+  select.title="Available references come from configured FSP_TOKENIZATION_KEY_* environment variables; values are never returned";
+  const references=[...state.tokenizationKeyRefs];
+  if(currentReference && !references.includes(currentReference)){
+    const unavailable=document.createElement("option"); unavailable.value=currentReference;
+    unavailable.textContent=currentReference+" (unavailable)"; select.appendChild(unavailable);
+  }
+  const placeholder=document.createElement("option"); placeholder.value="";
+  placeholder.textContent=references.length?"Select key reference":"No configured key references";
+  placeholder.disabled=true; select.appendChild(placeholder);
+  for(const reference of references){
+    const option=document.createElement("option"); option.value=reference; option.textContent=reference;
+    select.appendChild(option);
+  }
+  select.value=currentReference||"";
+  select.disabled=!references.length&&!currentReference;
+  select.onchange=()=>onChange(select.value);
+  return select;
+}
+
+function tokenizationKeyOptionHtml(currentReference){
+  const references=[...state.tokenizationKeyRefs];
+  const options=[];
+  if(currentReference && !references.includes(currentReference)){
+    options.push(`<option value="${omEsc(currentReference)}">${omEsc(currentReference)} (unavailable)</option>`);
+  }
+  options.push(`<option value="" disabled>${references.length?"Select key reference":"No configured key references"}</option>`);
+  for(const reference of references){
+    options.push(`<option value="${omEsc(reference)}"${reference===currentReference?" selected":""}>${omEsc(reference)}</option>`);
+  }
+  return options.join("");
+}
+
 function renderPolicyEditor(entry, opts){
   opts = opts || {};
   const onEdit = opts.onEdit || updatePreview;
@@ -1592,9 +1637,9 @@ function renderPolicyEditor(entry, opts){
     row.append(source, output, policy, type);
     if(column.policy==="deterministic_hash"){
       const detail=document.createElement("div"); detail.className="policy-detail";
-      const keyRef=document.createElement("input"); keyRef.placeholder="Key reference"; keyRef.value=column.key_ref;
-      keyRef.title="Resolves from FSP_TOKENIZATION_KEY_<KEY_REF>; the secret is never stored here";
-      keyRef.oninput=()=>{ column.key_ref=keyRef.value; onEdit(); };
+      const keyRef=tokenizationKeySelect(column.key_ref, value=>{
+        column.key_ref=value; onEdit(); rerender();
+      });
       const domain=document.createElement("input"); domain.placeholder="Domain"; domain.value=column.domain;
       domain.oninput=()=>{ column.domain=domain.value; onEdit(); };
       const normalization=document.createElement("select");
@@ -2857,7 +2902,7 @@ function omPolicyEditor(tb,index){
     ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${control&&value!=="keep"?" disabled":""}>${label}</option>`).join("");
     const alias=kind==="keep"?String(c.name||source):String(c.name||source+"_token");
     const details=(kind==="deterministic_hash")
-      ? `<input class="om-policy-key" data-i="${index}" data-source="${omEsc(source)}" data-p="key_ref" value="${omEsc(tr.key_ref||"")}" placeholder="key reference" title="Environment key reference" />`
+      ? `<select class="om-policy-key" data-i="${index}" data-source="${omEsc(source)}" data-p="key_ref" title="Available references come from configured FSP_TOKENIZATION_KEY_* environment variables; values are never returned"${!state.tokenizationKeyRefs.length&&!tr.key_ref?" disabled":""}>${tokenizationKeyOptionHtml(tr.key_ref||"")}</select>`
         + `<input class="om-policy-domain" data-i="${index}" data-source="${omEsc(source)}" data-p="domain" value="${omEsc(tr.domain||"")}" placeholder="domain" />`
         + `<select class="om-policy-normalization" data-i="${index}" data-source="${omEsc(source)}" data-p="normalization"><option value="none"${(tr.normalization||"none")==="none"?" selected":""}>none</option><option value="trim"${tr.normalization==="trim"?" selected":""}>trim</option><option value="trim_lower"${tr.normalization==="trim_lower"?" selected":""}>trim + lower</option></select>`
       : (kind==="random_token" ? `<span class="hint">Fresh value per extraction; pending recovery is preserved.</span>` : "");
@@ -3199,6 +3244,7 @@ ensureDefaultConn();
 writeFormFromConn(state.connections.get(state.activeConnId));
 renderConnList();
 loadSettings();
+loadTokenizationKeyReferences();
 loadMounts();
 loadAccessKeys();
 omInit();

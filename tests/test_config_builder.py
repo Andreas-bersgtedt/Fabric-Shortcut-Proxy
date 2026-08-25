@@ -330,6 +330,23 @@ async def test_settings_api(app):
     assert {"num_splits", "pin_materialized_splits", "auto_refresh", "require_sigv4"} <= keys
 
 
+async def test_tokenization_key_references_hide_values(app, monkeypatch):
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "super-secret-value")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_ORDER_HASH", "another-secret")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_EMPTY", "")
+
+    async with _client(app) as client:
+        response = await client.get("/_config/api/tokenization-key-references")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "references": ["customer-pii-v1", "order-hash"],
+    }
+    assert "super-secret-value" not in response.text
+    assert "another-secret" not in response.text
+
+
 async def test_bootstrap_api_prefills_running_builder_config(app):
     async with _client(app) as c:
         r = await c.get("/_config/api/bootstrap")

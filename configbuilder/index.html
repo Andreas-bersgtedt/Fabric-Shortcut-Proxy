@@ -20,15 +20,15 @@
   .navbtn:hover { border-color:var(--accent2); color:#dff4ff; }
   .warn-banner { background:#3b2f14; border:1px solid var(--warn); color:#fcd34d;
                  padding:8px 12px; border-radius:8px; margin:12px 24px; font-size:12px; }
-    .tabs { display:flex; gap:0; border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg);
-      max-width:100%; overflow-x:auto; }
+  .tabs { display:grid; grid-template-columns:repeat(6,auto); justify-content:start; gap:0;
+          border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg); }
   .tab-btn { appearance:none; background:none; border:none; color:var(--muted); padding:14px 16px;
             font:inherit; font-weight:600; cursor:pointer; font-size:12px; letter-spacing:.04em;
             text-transform:uppercase; border-bottom:2px solid transparent; margin-bottom:-1px;
             transition:all 0.2s; }
   .tab-btn:hover { color:var(--fg); }
   .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
-  .tab-content { display:none; padding:24px; }
+  .tab-content { display:none; padding:24px; max-width:1240px; margin:0 auto; }
   .tab-content.active { display:block; }
   .source-switch { display:inline-flex; gap:2px; padding:3px; margin-bottom:16px;
                    border:1px solid var(--line); background:#0b1220; border-radius:8px; }
@@ -42,12 +42,15 @@
   .section-head h2 { margin:0; }
   .object-picker { display:grid; grid-template-columns:minmax(220px,320px) 1fr; gap:16px; }
   .metadata-summary { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; }
   .card h2 { margin:0 0 12px; font-size:14px; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); }
-  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
   input, select { width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
                   background:#0b1220; color:var(--fg); font:inherit; }
   input:focus, select:focus { outline:2px solid var(--accent2); border-color:var(--accent2); }
+  button:focus-visible, a:focus-visible, summary:focus-visible, [tabindex="0"]:focus-visible {
+    outline:3px solid var(--accent); outline-offset:3px;
+  }
   .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .btn { cursor:pointer; border:none; border-radius:8px; padding:9px 14px; font:inherit; font-weight:600; }
   .btn.primary { background:var(--accent); color:#04233a; }
@@ -120,7 +123,16 @@
   pre { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:12px;
         overflow:auto; max-height:420px; font-size:12px; }
   .actions { display:flex; gap:8px; margin-top:10px; }
-  .hint { color:var(--muted); font-size:11px; margin-top:6px; }
+  .hint { color:var(--muted); font-size:13px; margin-top:6px; }
+  .overview-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+  .overview-step { border:1px solid var(--line); border-radius:8px; padding:16px; background:var(--card); }
+  .overview-step h2 { margin:0 0 6px; color:var(--fg); font-size:15px; text-transform:none; }
+  .overview-step .step-number { color:var(--accent); font-weight:700; margin-right:6px; }
+  .overview-value { font-size:22px; font-weight:700; margin:12px 0 2px; }
+  .overview-state { color:var(--muted); min-height:42px; }
+  .overview-banner { display:flex; justify-content:space-between; gap:16px; align-items:center;
+                     border:1px solid var(--line); padding:14px 16px; margin-bottom:16px; }
+  .security-stack > * + * { margin-top:16px !important; }
   .checkbox { display:flex; align-items:center; gap:8px; margin-top:10px; }
   .checkbox input { width:auto; }
   .setcat { margin:14px 0 4px; color:var(--muted); font-size:11px; text-transform:uppercase;
@@ -136,7 +148,21 @@
   .setrow input, .setrow select { padding:5px 8px; }
   .setrow .sethelp { color:var(--muted); font-size:11px; }
   .tab-settings { max-height:460px; overflow:auto; }
+  .settings-group { border-top:1px solid var(--line); }
+  .settings-group:first-child { border-top:0; }
+  .settings-group > summary { cursor:pointer; padding:12px 4px; color:var(--fg); font-weight:700;
+                              text-transform:uppercase; font-size:12px; }
+  .settings-group-body { padding-bottom:10px; }
   @media (max-width:760px) {
+    header { align-items:flex-start; }
+    .tabs { grid-template-columns:repeat(3,1fr); padding:0 12px; }
+    .tab-btn { padding:12px 6px; font-size:11px; white-space:normal; }
+    .tab-content { padding:16px 12px; }
+    .overview-grid { grid-template-columns:1fr; }
+    .overview-banner { align-items:flex-start; flex-direction:column; }
+    .row { grid-template-columns:1fr; }
+    .actions { flex-wrap:wrap; }
+    .actions .btn { min-height:44px; }
     .cfgrow { grid-template-columns:1fr auto; }
     .cfgrow .src { grid-column:1 / -1; }
     .policy-head { display:none; }
@@ -157,17 +183,53 @@
 </header>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
 
-<div class="tabs">
-  <button class="tab-btn active" data-tab="sources">Sources</button>
-  <button class="tab-btn" data-tab="tables">Tables</button>
-  <button class="tab-btn" data-tab="openmirror">Open Mirror</button>
-  <button class="tab-btn" data-tab="settings">Settings</button>
-  <button class="tab-btn" data-tab="advanced">Advanced</button>
-  <button class="tab-btn" data-tab="operational">Operational</button>
+<div class="tabs" role="tablist" aria-label="Configuration sections">
+  <button class="tab-btn active" id="tab-overview" role="tab" aria-selected="true" aria-controls="overview-tab" tabindex="0" data-tab="overview">Overview</button>
+  <button class="tab-btn" id="tab-sources" role="tab" aria-selected="false" aria-controls="sources-tab" tabindex="-1" data-tab="sources">Sources</button>
+  <button class="tab-btn" id="tab-tables" role="tab" aria-selected="false" aria-controls="tables-tab" tabindex="-1" data-tab="tables">Tables</button>
+  <button class="tab-btn" id="tab-openmirror" role="tab" aria-selected="false" aria-controls="openmirror-tab" tabindex="-1" data-tab="openmirror">Mirroring</button>
+  <button class="tab-btn" id="tab-security" role="tab" aria-selected="false" aria-controls="security-tab" tabindex="-1" data-tab="security">Security</button>
+  <button class="tab-btn" id="tab-operational" role="tab" aria-selected="false" aria-controls="operational-tab" tabindex="-1" data-tab="operational">System</button>
+</div>
+
+<div id="overview-tab" class="tab-content active" role="tabpanel" aria-labelledby="tab-overview">
+  <div class="overview-banner">
+    <div>
+      <h2 style="margin:0 0 4px;">Configuration readiness</h2>
+      <div class="hint" id="overviewSummary">Checking the running configuration…</div>
+    </div>
+    <button class="btn primary" type="button" data-go-tab="sources">Continue setup</button>
+  </div>
+  <div class="overview-grid">
+    <section class="overview-step">
+      <h2><span class="step-number">1</span>Connect sources</h2>
+      <div class="overview-value" id="overviewSources">0</div>
+      <div class="overview-state" id="overviewSourcesState">No sources configured.</div>
+      <button class="btn ghost" type="button" data-go-tab="sources">Manage sources</button>
+    </section>
+    <section class="overview-step">
+      <h2><span class="step-number">2</span>Select tables</h2>
+      <div class="overview-value" id="overviewTables">0</div>
+      <div class="overview-state" id="overviewTablesState">No tables selected.</div>
+      <button class="btn ghost" type="button" data-go-tab="tables">Manage tables</button>
+    </section>
+    <section class="overview-step">
+      <h2><span class="step-number">3</span>Secure access</h2>
+      <div class="overview-value" id="overviewSecurity">Review</div>
+      <div class="overview-state" id="overviewSecurityState">Check authentication before exposure.</div>
+      <button class="btn ghost" type="button" data-go-tab="security">Review security</button>
+    </section>
+    <section class="overview-step">
+      <h2><span class="step-number">4</span>Apply and verify</h2>
+      <div class="overview-value" id="overviewSystem">Current</div>
+      <div class="overview-state">Review effective values and apply pending changes.</div>
+      <button class="btn ghost" type="button" data-go-tab="operational">Review system</button>
+    </section>
+  </div>
 </div>
 
 <!-- SOURCES TAB -->
-<div id="sources-tab" class="tab-content active">
+<div id="sources-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-sources" hidden>
   <div class="source-switch" aria-label="Source type">
     <button type="button" class="active" data-source-kind="database">Databases</button>
     <button type="button" data-source-kind="storage">Files &amp; object storage</button>
@@ -253,7 +315,7 @@
 </div>
 
 <!-- TABLES TAB -->
-<div id="tables-tab" class="tab-content">
+<div id="tables-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-tables" hidden>
   <div class="card" id="selectedCard">
     <div class="section-head">
       <h2>Configured Tables</h2>
@@ -466,7 +528,7 @@
     <div class="status" id="mountEditStatus"></div>
   </div>
 
-  <div class="card" style="margin-top:16px;">
+  <div class="card" id="securityAccessKeys" style="margin-top:16px;">
     <h2>Access keys <span style="font-weight:400;text-transform:none;">(per-key authorization)</span></h2>
     <div class="hint" style="margin-bottom:12px;">Issue scoped S3 access keys so each client/tenant can reach only the buckets it's allowed.
       Keys are stored <b>encrypted</b> in the Manager; the secret is shown <b>once</b> at creation. When any key exists it governs SigV4 auth
@@ -497,17 +559,26 @@
     </div>
   </div>
 </div>
+<div id="security-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-security" hidden>
+  <div class="section-head">
+    <div>
+      <h2 style="margin:0;">Security and access</h2>
+      <div class="hint">Manage client credentials and verify the authentication currently protecting this endpoint.</div>
+    </div>
+  </div>
+  <div id="securityContent" class="security-stack"></div>
+</div>
 <!-- OPEN MIRROR TAB -->
-<div id="openmirror-tab" class="tab-content">
+<div id="openmirror-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-openmirror" hidden>
   <div class="card">
     <h2>Open Mirroring Targets</h2>
-    <div class="hint" style="margin-bottom:12px;">Push source tables into a Microsoft Fabric <b>Open Mirroring</b> landing zone. Each target reuses an existing <b>source connection</b> (configured on the <b>Connection</b> tab) and writes Parquet data files plus <code>_metadata.json</code> to the mirrored database's landing zone. Saved to <code>config.open_mirror.json</code>; applies on the next restart. See the <a href="https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format" target="_blank" rel="noopener">landing-zone format</a>.</div>
+    <div class="hint" style="margin-bottom:12px;">Push source tables into a Microsoft Fabric <b>Open Mirroring</b> landing zone. Each target reuses a database configured under <b>Sources</b> and writes Parquet data files plus <code>_metadata.json</code> to the mirrored database's landing zone. Saved targets apply after restart. See the <a href="https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format" target="_blank" rel="noopener">landing-zone format</a>.</div>
     <div id="omList" class="connlist"></div>
     <div class="actions" style="margin-top:12px;">
       <button class="btn ghost" id="btnAddOmTarget">+ Add target</button>
-      <button class="btn primary" id="btnSaveOm">💾 Save targets to config</button>
+      <button class="btn primary" id="btnSaveOm">Save targets</button>
       <button class="btn ghost" id="btnDryRunOm" title="Read the source and report the change set without writing">Dry run</button>
-      <button class="btn ghost" id="btnPublishOm" title="Publish saved targets into the landing zone now">▶ Publish now</button>
+      <button class="btn ghost" id="btnPublishOm" title="Publish saved targets into the landing zone now">Publish saved targets</button>
     </div>
     <div class="hint" style="margin-top:6px;">Publish reads the <b>saved</b> targets (save first). OneLake targets need the <code>onelake</code> extra installed and the proxy's Entra identity configured.</div>
     <div class="status" id="omStatus"></div>
@@ -518,14 +589,14 @@
     <h2 id="omEditTitle">Edit target</h2>
     <label>Target id</label>
     <input id="omId" placeholder="fabric-sales" />
-    <label>Source connection <span class="hint">(the source database engine — from the Connection tab)</span></label>
+    <label>Source connection <span class="hint">(the source database engine configured under Sources)</span></label>
     <select id="omConnection"></select>
     <label>Fabric workspace <span class="hint">(browse via the proxy's Entra identity — no URL pasting)</span></label>
     <div class="row">
       <div><input id="omWsFilter" placeholder="Filter workspaces…" /></div>
       <div style="display:flex;gap:6px;">
         <select id="omWorkspace" style="flex:1;"><option value="">— Load workspaces —</option></select>
-        <button class="btn ghost" id="btnLoadWorkspaces" type="button" title="List Fabric workspaces">🔄</button>
+        <button class="btn ghost" id="btnLoadWorkspaces" type="button" title="Reload Fabric workspaces" aria-label="Reload Fabric workspaces">Reload</button>
       </div>
     </div>
     <label>Mirrored database</label>
@@ -557,7 +628,7 @@
     <h2 style="margin-top:8px;">Tables</h2>
     <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. <b>Watermark</b> tracking reads only rows after the committed composite cursor (upsert-only; no deletes). <b>Snapshot</b> tracking performs a full-source scan every cycle to detect inserts, updates, and deletes. A table retention value overrides the target value.</div>
     <div class="actions" style="margin-bottom:8px;">
-      <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">🔄 Load tables from source</button>
+      <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">Load tables from source</button>
       <span class="status" id="omTablesStatus" style="margin:0 0 0 4px;display:inline-block;"></span>
     </div>
     <div id="omTableRows"></div>
@@ -571,7 +642,7 @@
     <pre id="omPreview" style="display:none;"></pre>
   </div>
 </div>
-<div id="settings-tab" class="tab-content">
+<div id="settings-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-settings" hidden>
   <div class="card">
     <h2>Global Settings</h2>
     <div class="hint" style="margin-bottom:14px;">Refresh settings apply instantly via <b>Apply now</b>. Bucket, table format, and auth settings require <b>Save to config.json + restart</b> to take effect.</div>
@@ -637,7 +708,7 @@
 </div>
 
 <!-- ADVANCED TAB -->
-<div id="advanced-tab" class="tab-content">
+<div id="advanced-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-advanced" hidden>
   <div class="card">
     <h2>All Settings</h2>
     <div class="hint" style="margin-bottom:14px;">Every global configuration setting with its built-in default. Leave a field blank to keep the default; only changed values are written to <code>config.json</code>.</div>
@@ -652,14 +723,12 @@
 </div>
 
 <!-- OPERATIONAL TAB -->
-<div id="operational-tab" class="tab-content">
+<div id="operational-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-operational" hidden>
   <div class="card">
-    <h2>Operational Configuration <span style="font-weight:400;text-transform:none;">(read current · push changes · scale the fleet)</span></h2>
-    <div class="hint">Shows what this server is <b>actually running</b> (env / config.json / default). Change a value and
-      <b>Save</b> it to <code>config.json</code> — most settings apply on the next restart. When opened on the
-      <b>Manager</b>, you can also scale the number of Agents <b>live</b>.</div>
+    <h2>System configuration</h2>
+    <div class="hint">Review the effective value and source for every setting. Changed values are highlighted before you apply them; each setting identifies whether it applies immediately or after restart.</div>
 
-    <div style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <div id="legacySecretPanel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>S3 secret key</b> <span id="s3SecretState" class="hint" style="margin-left:6px;">(checking...)</span>
       <div class="hint">Write-only field. Value is never shown back; status only.</div>
       <div class="tablebar" style="margin-top:8px;">
@@ -670,7 +739,7 @@
       <div class="status" id="s3SecretStatus"></div>
     </div>
 
-    <div style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <div id="sigv4Panel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>SigV4 diagnostics</b>
       <div class="hint">Effective authentication values used by this running process.</div>
       <div style="margin-top:8px; display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; align-items:center;">
@@ -697,31 +766,120 @@
       <input id="liveSearch" placeholder="Filter settings…" />
       <button class="btn ghost" id="btnReloadLive">Reload</button>
       <button class="btn ghost" id="btnSaveLive">Save to config.json</button>
-      <button class="btn primary" id="btnApplyLive">⚡ Apply now</button>
+      <button class="btn primary" id="btnApplyLive">Review and apply</button>
     </div>
     <div class="hint" style="margin-top:6px;">
-      <span style="color:#4ade80;">⚡ live</span> settings apply immediately.
-      <span style="color:#fb923c;">↺ restart</span> settings are saved to <code>config.json</code> and apply on next restart.
+      <span style="color:#4ade80;">Live</span> settings apply immediately.
+      <span style="color:#fb923c;">Restart</span> settings are saved and apply on next restart.
     </div>
     <div class="status" id="liveStatus"></div>
-    <div id="liveSettings" style="max-height:420px; overflow:auto; margin-top:8px;"><div class="hint">Loading…</div></div>
+    <div id="liveSettings" style="margin-top:8px;"><div class="hint">Loading…</div></div>
   </div>
 </div>
 
 <script>
 // ---- Tab switching ----
 function initTabs(){
-  document.querySelectorAll('.tab-btn').forEach(btn => {
+  const tabs = [...document.querySelectorAll('.tab-btn')];
+  tabs.forEach((btn, index) => {
     btn.addEventListener('click', () => {
       const tabName = btn.dataset.tab;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      tabs.forEach(b => {
+        const selected = b === btn;
+        b.classList.toggle('active', selected);
+        b.setAttribute('aria-selected', String(selected));
+        b.tabIndex = selected ? 0 : -1;
+      });
+      document.querySelectorAll('.tab-content').forEach(c => {
+        c.classList.remove('active');
+        c.hidden = true;
+      });
       $("sourceStorageView").classList.remove("active");
-      btn.classList.add('active');
-      document.getElementById(tabName + '-tab').classList.add('active');
+      const panel = document.getElementById(tabName + '-tab');
+      panel.classList.add('active');
+      panel.hidden = false;
       if(tabName === "sources") setSourceKind(activeSourceKind);
     });
+    btn.addEventListener('keydown', event => {
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      let next = index;
+      if(event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      if(event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+      if(event.key === 'Home') next = 0;
+      if(event.key === 'End') next = tabs.length - 1;
+      tabs[next].focus();
+      tabs[next].click();
+    });
   });
+}
+
+let generatedControlId = 0;
+function wireAccessibility(root=document){
+  root.querySelectorAll('label:not([for])').forEach(label => {
+    let control = label.querySelector('input,select,textarea');
+    if(!control && label.nextElementSibling?.matches('input,select,textarea')) control = label.nextElementSibling;
+    if(!control) control = label.parentElement?.querySelector(':scope > input, :scope > select, :scope > textarea');
+    if(!control) return;
+    if(!control.id) control.id = `control-${++generatedControlId}`;
+    label.htmlFor = control.id;
+  });
+  root.querySelectorAll('input,select,textarea').forEach(control => {
+    if(control.labels?.length || control.hasAttribute('aria-label') || control.hasAttribute('aria-labelledby')) return;
+    const fallback = control.placeholder || control.id.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^control-\d+$/, 'Value');
+    control.setAttribute('aria-label', fallback || 'Value');
+  });
+  root.querySelectorAll('.status').forEach(status => {
+    status.setAttribute('role', status.classList.contains('err') ? 'alert' : 'status');
+    status.setAttribute('aria-live', status.classList.contains('err') ? 'assertive' : 'polite');
+  });
+  root.querySelectorAll('.connrow,.tghead').forEach(row => {
+    if(row.dataset.keyboardWired) return;
+    row.dataset.keyboardWired = 'true';
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.addEventListener('keydown', event => {
+      if(event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      row.click();
+    });
+  });
+}
+
+function arrangeGoalPanels(){
+  const security = $("securityContent");
+  [$("securityAccessKeys"), $("legacySecretPanel"), $("sigv4Panel")].forEach(panel => {
+    if(panel) security.appendChild(panel);
+  });
+  document.querySelectorAll('[data-go-tab]').forEach(button => {
+    button.onclick = () => document.querySelector(`.tab-btn[data-tab="${button.dataset.goTab}"]`)?.click();
+  });
+}
+
+function renderOverview(){
+  const databaseSources = [...state.connections.values()].filter(source =>
+    source.tested || source.db_url || source.db_url_masked || source.host
+  ).length;
+  const storageSources = (typeof mountState !== 'undefined' && mountState.mounts) ? mountState.mounts.length : 0;
+  const sourceCount = databaseSources + storageSources;
+  const tableCount = state.selected.size;
+  $("overviewSources").textContent = String(sourceCount);
+  $("overviewSourcesState").textContent = sourceCount
+    ? `${databaseSources} database and ${storageSources} storage source${storageSources === 1 ? '' : 's'}.`
+    : "No sources configured.";
+  $("overviewTables").textContent = String(tableCount);
+  $("overviewTablesState").textContent = tableCount
+    ? `${tableCount} table${tableCount === 1 ? '' : 's'} selected for serving.`
+    : "No tables selected.";
+  const sigv4 = typeof settingByKey === 'function' ? settingByKey("require_sigv4") : null;
+  const protectedEndpoint = sigv4 && (sigv4.value === true || String(sigv4.value).toLowerCase() === 'true');
+  $("overviewSecurity").textContent = protectedEndpoint ? "Protected" : "Review";
+  $("overviewSecurityState").textContent = protectedEndpoint
+    ? "SigV4 authentication is enabled."
+    : "SigV4 is off; keep this endpoint local until access is configured.";
+  $("overviewSummary").textContent = sourceCount && tableCount
+    ? "Sources and tables are configured. Review security and pending system changes before restart."
+    : "Complete the numbered steps to prepare this proxy for use.";
 }
 
 let activeSourceKind = "database";
@@ -1894,11 +2052,11 @@ async function saveSettings(){
   // Save all settings from form to config.json (including non-live like bucket, require_sigv4)
   const settings = {};
   const bucket = $("bucket").value.trim();
-  if(bucket && bucket !== "fabric-iceberg-poc") settings.bucket = bucket;
+  if(bucket) settings.bucket = bucket;
   const ns = parseInt($("numSplits").value); if(ns) settings.num_splits = ns;
-  const fmt = $("tableFormat").value; if(fmt && fmt !== "iceberg") settings.table_format = fmt;
-  const mm = $("materializeMode").value; if(mm && mm !== "eager") settings.materialize_mode = mm;
-  if($("requireSigv4").checked) settings.require_sigv4 = true;
+  const fmt = $("tableFormat").value; if(fmt) settings.table_format = fmt;
+  const mm = $("materializeMode").value; if(mm) settings.materialize_mode = mm;
+  settings.require_sigv4 = $("requireSigv4").checked;
   settings.auto_refresh = $("autoRefresh").checked;
   if($("autoRefresh").checked){
     const poll = parseInt($("refreshPoll").value); if(poll) settings.refresh_poll_seconds = poll;
@@ -2818,14 +2976,18 @@ function omPolicyEditor(tb,index){
     const tr=c.transform||{};
     const options=[
       ["keep","Keep"],["remove","Remove"],["deterministic_hash","Deterministic hash"],["random_token","Random token"]
-    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${control&&value!=="keep"?" disabled":""}>${label}</option>`).join("");
+    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${(control&&value!=="keep")||(value==="deterministic_hash"&&!state.tokenizationKeyRefs.length&&kind!==value)?" disabled":""}>${label}</option>`).join("");
     const alias=kind==="keep"?String(c.name||source):String(c.name||source+"_token");
+    const missingKey = kind==="deterministic_hash" && !String(tr.key_ref||"").trim();
     const details=(kind==="deterministic_hash")
       ? `<select class="om-policy-key" data-i="${index}" data-source="${omEsc(source)}" data-p="key_ref" title="Available references come from configured FSP_TOKENIZATION_KEY_* environment variables; values are never returned"${!state.tokenizationKeyRefs.length&&!tr.key_ref?" disabled":""}>${tokenizationKeyOptionHtml(tr.key_ref||"")}</select>`
         + `<input class="om-policy-domain" data-i="${index}" data-source="${omEsc(source)}" data-p="domain" value="${omEsc(tr.domain||"")}" placeholder="domain" />`
         + `<select class="om-policy-normalization" data-i="${index}" data-source="${omEsc(source)}" data-p="normalization"><option value="none"${(tr.normalization||"none")==="none"?" selected":""}>none</option><option value="trim"${tr.normalization==="trim"?" selected":""}>trim</option><option value="trim_lower"${tr.normalization==="trim_lower"?" selected":""}>trim + lower</option></select>`
+        + (missingKey ? `<div class="invalid om-policy-error" role="alert">${state.tokenizationKeyRefs.length
+          ? "Choose a tokenization key."
+          : "No tokenization keys are configured. Add an FSP_TOKENIZATION_KEY_* environment variable and restart, or choose another policy."}</div>` : "")
       : (kind==="random_token" ? `<span class="hint">Fresh value per extraction; pending recovery is preserved.</span>` : "");
-    return `<div class="row om-policy-row"><div><label>${omEsc(source)}${control?" <span class=\"hint\">(control)</span>":""}</label><select class="om-policy-kind" data-i="${index}" data-source="${omEsc(source)}"${control?" disabled":""}>${options}</select></div>`
+    return `<div class="row om-policy-row" data-table-index="${index}" data-policy-source="${omEsc(source)}"><div><label>${omEsc(source)}${control?" <span class=\"hint\">(control)</span>":""}</label><select class="om-policy-kind" data-i="${index}" data-source="${omEsc(source)}"${control?" disabled":""}>${options}</select></div>`
       + `<div><label>Output name</label><input class="om-policy-name" data-i="${index}" data-source="${omEsc(source)}" value="${omEsc(alias)}"${kind==="remove"||control?" disabled":""} /></div>`
       + `<div class="om-policy-details">${details}</div></div>`;
   }).join("");
@@ -3068,7 +3230,36 @@ function omApplyTarget(){
   const idx = state.om.targets.findIndex(x=>x.id===t.id);
   if(idx>=0) state.om.targets[idx]=JSON.parse(JSON.stringify(t)); else state.om.targets.push(JSON.parse(JSON.stringify(t)));
   omRenderList();
-  s.className="status ok"; s.textContent=`Target "${t.id}" staged — click "Save targets to config" to persist.`;
+  s.className="status ok"; s.textContent=`Target "${t.id}" staged — click "Save targets" to persist.`;
+}
+
+function omTokenizationProblems(targets){
+  const problems=[];
+  (targets||[]).forEach((target,targetIndex)=>(target.tables||[]).forEach((table,tableIndex)=>(table.columns||[]).forEach(column=>{
+    const transform=column&&column.transform;
+    if(transform&&transform.kind==="deterministic_hash"&&!String(transform.key_ref||"").trim()){
+      problems.push({targetIndex,tableIndex,source:String(column.source||column.name||"column"),
+        target:String(target.id||"target"),table:String(table.name||table.target_table||table.source_table||`table ${tableIndex+1}`)});
+    }
+  })));
+  return problems;
+}
+
+function omShowTokenizationProblem(problem){
+  omEdit(problem.targetIndex);
+  const detail=$("omEditStatus");
+  detail.className="status err";
+  detail.textContent = state.tokenizationKeyRefs.length
+    ? `Table "${problem.table}", column "${problem.source}": choose a tokenization key under Column policies.`
+    : `Table "${problem.table}", column "${problem.source}": deterministic hashing needs a tokenization key. Configure an FSP_TOKENIZATION_KEY_* environment variable and restart, or choose another column policy.`;
+  requestAnimationFrame(()=>{
+    const row=[...document.querySelectorAll('.om-policy-row')].find(item=>
+      Number(item.dataset.tableIndex)===problem.tableIndex&&item.dataset.policySource===problem.source);
+    if(row){
+      row.scrollIntoView({behavior:"smooth",block:"center"});
+      (row.querySelector('.om-policy-key:not(:disabled)') || row.querySelector('.om-policy-kind'))?.focus();
+    }
+  });
 }
 
 async function omPreview(){
@@ -3087,7 +3278,15 @@ async function omPreview(){
 }
 
 async function omSave(){
-  const s = $("omStatus"); s.className="status"; s.textContent="Saving…";
+  const s = $("omStatus");
+  const problem=omTokenizationProblems(state.om.targets)[0];
+  if(problem){
+    s.className="status err";
+    s.textContent=`Fix the tokenization policy for table "${problem.table}", column "${problem.source}" before saving.`;
+    omShowTokenizationProblem(problem);
+    return;
+  }
+  s.className="status"; s.textContent="Saving…";
   try{
     const r = await fetch("/_config/api/open-mirror/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({open_mirror_targets:state.om.targets})});
     const d = await r.json();
@@ -3313,11 +3512,18 @@ function recordEdit(inp){
 function renderLive(){
   const q = ($("liveSearch").value||"").toLowerCase();
   const wrap = $("liveSettings"); wrap.innerHTML="";
-  let cat=null;
+  let cat=null, groupBody=null, groupIndex=0;
   for(const s of live.settings){
     if(s.secret) continue;                       // never edit secrets here
     if(q && !(s.key.includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
-    if(s.category!==cat){ cat=s.category; const h=document.createElement("div"); h.className="setcat"; h.textContent=cat; wrap.appendChild(h); }
+    if(s.category!==cat){
+      cat=s.category;
+      const group=document.createElement("details"); group.className="settings-group";
+      group.open = !!q || groupIndex++ === 0;
+      const heading=document.createElement("summary"); heading.textContent=cat;
+      groupBody=document.createElement("div"); groupBody.className="settings-group-body";
+      group.append(heading, groupBody); wrap.appendChild(group);
+    }
     const row=document.createElement("div"); row.className="setrow";
     const lab=document.createElement("label");
     const badge=document.createElement("span");
@@ -3342,7 +3548,7 @@ function renderLive(){
     inp.addEventListener("change", ()=>recordEdit(inp));
     const src=document.createElement("span"); src.className="sethelp";
     src.textContent = s.source + (s.source==="default"?"":" · was "+cur);
-    row.append(lab, inp, src); wrap.appendChild(row);
+    row.append(lab, inp, src); groupBody.appendChild(row);
   }
   if(!wrap.children.length) wrap.innerHTML='<div class="hint">No settings match.</div>';
   updateSaveBadge();
@@ -3366,8 +3572,9 @@ function updateSaveBadge(){
     const s = live.settings.find(x=>x.key===k); return s && s.live;
   }).length;
   const restartN = n - liveN;
-  $("btnApplyLive").textContent = n ? ("⚡ Apply "+n+" change"+(n>1?"s":"")) : "⚡ Apply now";
+  $("btnApplyLive").textContent = n ? ("Review and apply "+n+" change"+(n>1?"s":"")) : "Review and apply";
   $("btnSaveLive").textContent = n ? ("Save "+n+" to config.json") : "Save to config.json";
+  $("overviewSystem").textContent = n ? `${n} pending` : "Current";
 }
 
 async function saveLive(){
@@ -3389,6 +3596,11 @@ async function applyLive(){
   const changes=collectLiveChanges();
   const n=Object.keys(changes).length;
   if(!n){ liveFlash($("liveStatus"), "No changes to apply. (Edit a value first.)"); return; }
+  const review = Object.keys(changes).map(key => {
+    const setting = live.settings.find(item => item.key === key);
+    return `${key}: ${changes[key]} (${setting && setting.live ? 'applies now' : 'restart required'})`;
+  }).join("\n");
+  if(!confirm(`Apply these ${n} change${n === 1 ? '' : 's'}?\n\n${review}`)) return;
   liveFlash($("liveStatus"), "Applying "+n+" change(s)…", true);
   try{
     const r=await fetch("/_config/api/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:changes})});
@@ -3495,7 +3707,14 @@ $("tableSource").onchange=()=>{
   state.addTable.sourceId=sourceId;
   $("tableSource").value=sourceId;
 };
-loadCurrent();
+arrangeGoalPanels();
+wireAccessibility();
+new MutationObserver(records => {
+  records.forEach(record => record.addedNodes.forEach(node => {
+    if(node.nodeType === Node.ELEMENT_NODE) wireAccessibility(node);
+  }));
+}).observe(document.body, {childList:true, subtree:true});
+loadCurrent().then(renderOverview);
 initTabs();
 setSourceKind("database");
 </script>

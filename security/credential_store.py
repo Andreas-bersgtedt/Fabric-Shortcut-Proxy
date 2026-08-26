@@ -502,6 +502,62 @@ class CredentialStore:
     def list_access_key_ids(self) -> list[str]:
         return sorted(self._load().get("access_keys", {}).keys())
 
+    def export_records(self) -> dict:
+        """Return every locally stored secret in plaintext for an encrypted export."""
+        if not self.available:
+            raise RuntimeError("credential store encryption is unavailable")
+        return {
+            "connections": {
+                key: value for key in self.list_ids()
+                if (value := self.get_url(key)) is not None
+            },
+            "secrets": {
+                key: value for key in self.list_secret_ids()
+                if (value := self.get_secret(key)) is not None
+            },
+            "access_keys": {
+                key: value for key in self.list_access_key_ids()
+                if (value := self.get_access_key(key)) is not None
+            },
+        }
+
+    @staticmethod
+    def validate_records(records: dict) -> None:
+        if not isinstance(records, dict):
+            raise ValueError("credential records must be an object")
+        for section in ("connections", "secrets", "access_keys"):
+            values = records.get(section)
+            if not isinstance(values, dict):
+                raise ValueError(f"credential records are missing {section}")
+            for key, value in values.items():
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError(f"{section} contains an invalid id")
+                if section == "connections" and (not isinstance(value, str) or not value.strip()):
+                    raise ValueError("connection records must contain non-empty URLs")
+                if section != "connections" and not isinstance(value, dict):
+                    raise ValueError(f"{section} records must contain objects")
+
+    def replace_records(self, records: dict) -> None:
+        """Atomically replace all local credential records using this store's cipher."""
+        if self._cipher is None:
+            raise RuntimeError("credential store encryption is unavailable")
+        self.validate_records(records)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        def encrypted(value) -> dict:
+            raw = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
+            token = base64.b64encode(self._cipher.encrypt(raw.encode("utf-8"))).decode("ascii")
+            return {"enc": token, "updated_at": now}
+
+        data = {
+            "version": _VERSION,
+            "backend": self.backend_name,
+            "connections": {key: encrypted(value) for key, value in records["connections"].items()},
+            "secrets": {key: encrypted(value) for key, value in records["secrets"].items()},
+            "access_keys": {key: encrypted(value) for key, value in records["access_keys"].items()},
+        }
+        self._save(data)
+
     def status(self) -> dict:
         """Non-secret summary for the UI (never returns plaintext URLs)."""
         data = self._load()

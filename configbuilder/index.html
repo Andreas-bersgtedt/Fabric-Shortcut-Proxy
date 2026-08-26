@@ -566,7 +566,33 @@
       <div class="hint">Manage client credentials and verify the authentication currently protecting this endpoint.</div>
     </div>
   </div>
-  <div id="securityContent" class="security-stack"></div>
+  <div id="securityContent" class="security-stack">
+    <div class="card" id="backupRestorePanel">
+      <h2>Backup and restore</h2>
+      <div class="hint">Create a portable encrypted backup of all configuration, database credentials, storage secrets, access keys and ACLs, and Open Mirroring state (including any pending recovery payload). Source datasets, generated caches, logs, environment-only secrets, external TLS files, and remote Key Vault contents are not copied.</div>
+      <div class="row">
+        <section>
+          <h3>Download backup</h3>
+          <label for="backupPassword">Backup password</label>
+          <input id="backupPassword" type="password" minlength="12" autocomplete="new-password" placeholder="At least 12 characters" />
+          <label for="backupPasswordConfirm">Confirm password</label>
+          <input id="backupPasswordConfirm" type="password" minlength="12" autocomplete="new-password" placeholder="Repeat password" />
+          <div class="actions"><button class="btn primary" id="btnCreateBackup">Download encrypted backup</button></div>
+          <div class="status" id="backupStatus"></div>
+        </section>
+        <section>
+          <h3>Restore backup</h3>
+          <label for="restoreFile">Backup file</label>
+          <input id="restoreFile" type="file" accept=".fspbackup,application/vnd.fsp.backup" />
+          <label for="restorePassword">Backup password</label>
+          <input id="restorePassword" type="password" minlength="12" autocomplete="off" placeholder="Password used to create the backup" />
+          <label class="checkbox"><input type="checkbox" id="restoreConfirm" /><span>Replace current configuration, credentials, keys, and mirror state</span></label>
+          <div class="actions"><button class="btn primary" id="btnRestoreBackup">Restore backup</button></div>
+          <div class="status" id="restoreStatus"></div>
+        </section>
+      </div>
+    </div>
+  </div>
 </div>
 <!-- OPEN MIRROR TAB -->
 <div id="openmirror-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-openmirror" hidden>
@@ -3765,6 +3791,59 @@ async function saveAdvanced(){
   }catch(e){ liveFlash($("advancedStatus"), "Save error: "+e); }
 }
 
+async function createEncryptedBackup(){
+  const password=$('backupPassword').value;
+  const confirmation=$('backupPasswordConfirm').value;
+  if(password.length<12){ liveFlash($('backupStatus'),'Use a password containing at least 12 characters.'); return; }
+  if(password!==confirmation){ liveFlash($('backupStatus'),'The passwords do not match.'); return; }
+  const button=$('btnCreateBackup');
+  button.disabled=true;
+  liveFlash($('backupStatus'),'Encrypting backup…',true);
+  try{
+    const response=await fetch('/_config/api/backup',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})
+    });
+    if(!response.ok){
+      const detail=await response.json().catch(()=>({}));
+      throw new Error(detail.error||`Backup failed (${response.status})`);
+    }
+    const disposition=response.headers.get('Content-Disposition')||'';
+    const filename=disposition.match(/filename="([^"]+)"/)?.[1]||'fsp-backup.fspbackup';
+    const url=URL.createObjectURL(await response.blob());
+    const link=document.createElement('a');
+    link.href=url; link.download=filename; document.body.appendChild(link); link.click(); link.remove();
+    URL.revokeObjectURL(url);
+    $('backupPassword').value=''; $('backupPasswordConfirm').value='';
+    liveFlash($('backupStatus'),'Encrypted backup downloaded. Store the file and password separately.',true);
+  }catch(error){ liveFlash($('backupStatus'),error.message||String(error)); }
+  finally{ button.disabled=false; }
+}
+
+async function restoreEncryptedBackup(){
+  const file=$('restoreFile').files[0];
+  const password=$('restorePassword').value;
+  if(!file){ liveFlash($('restoreStatus'),'Choose an .fspbackup file.'); return; }
+  if(password.length<12){ liveFlash($('restoreStatus'),'Enter the backup password.'); return; }
+  if(!$('restoreConfirm').checked){ liveFlash($('restoreStatus'),'Confirm that current managed state will be replaced.'); return; }
+  if(!confirm('Restore this backup and replace current FSP configuration, credentials, access keys, and Open Mirroring state?')) return;
+  const button=$('btnRestoreBackup');
+  button.disabled=true;
+  liveFlash($('restoreStatus'),'Verifying and restoring backup…',true);
+  try{
+    const form=new FormData();
+    form.append('password',password);
+    form.append('backup',file,file.name);
+    const response=await fetch('/_config/api/restore',{
+      method:'POST',body:form
+    });
+    const detail=await response.json().catch(()=>({}));
+    if(!response.ok) throw new Error(detail.error||`Restore failed (${response.status})`);
+    $('restorePassword').value=''; $('restoreFile').value=''; $('restoreConfirm').checked=false;
+    liveFlash($('restoreStatus'),`Restore complete: ${detail.config_files} config files, ${detail.connections} connections, ${detail.secrets} secrets, ${detail.access_keys} access keys, and ${detail.mirror_state_files} mirror state files. Restart the Manager to apply it.`,true);
+  }catch(error){ liveFlash($('restoreStatus'),error.message||String(error)); }
+  finally{ button.disabled=false; }
+}
+
 $("liveSearch").addEventListener("input", renderLive);
 $("btnReloadLive").onclick = loadCurrent;
 $("btnSaveLive").onclick = saveLive;
@@ -3777,6 +3856,8 @@ $("btnSaveS3Secret").onclick = saveS3Secret;
 $("btnClearS3Secret").onclick = clearS3Secret;
 $("btnApplyAdvanced").onclick = applyAdvanced;
 $("btnSaveAdvanced").onclick = saveAdvanced;
+$("btnCreateBackup").onclick = createEncryptedBackup;
+$("btnRestoreBackup").onclick = restoreEncryptedBackup;
 document.querySelectorAll("[data-source-kind]").forEach(button=>{
   button.onclick=()=>setSourceKind(button.dataset.sourceKind);
 });

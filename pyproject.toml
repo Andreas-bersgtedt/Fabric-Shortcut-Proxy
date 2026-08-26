@@ -9,6 +9,7 @@ description = "Fabric Shortcut Proxy for Microsoft Fabric (POC)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",
+    "python-multipart>=0.0.9", # backup restore upload parsing
     "uvicorn[standard]>=0.29",
     "pyarrow>=15.0",
     "fastavro>=1.9",
@@ -16,6 +17,7 @@ dependencies = [
     "aiosqlite>=0.20",          # SQLite async driver (demo / dev)
     "aioodbc>=0.5",            # SQL Server async driver (production)
     "databricks-sqlalchemy>=2.0",  # Databricks SQLAlchemy dialect/plugin
+    "cryptography>=42.0",       # password-encrypted portable backup + Fernet credentials
     "structlog>=24.1",
     "tzdata>=2024.1",          # IANA tz data (Windows) — needed to read tz-aware timestamp values
     "pytest>=8.0",
@@ -53,7 +55,7 @@ drivers = [
 ]
 # Encrypted credential store: Fernet backend for non-Windows hosts (Windows uses
 # DPAPI via ctypes, no extra needed).
-credentials = ["cryptography>=42.0"]
+credentials = []
 # Native S3 / MinIO / S3-compatible mount backend (storage proxy, Phase 2). Kept
 # out of core so local/NFS/SMB mounts install without a cloud SDK.
 s3proxy = ["boto3>=1.34"]

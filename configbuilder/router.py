@@ -19,8 +19,8 @@ import os
 import pathlib
 import uuid
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import config
 from db.capabilities import capabilities_for_dialect, flavor_warnings
@@ -32,6 +32,7 @@ from db.reflect import (
     UnsupportedDialect,
 )
 from observability.logging import get_logger
+from security.backup import BackupError, create_backup, restore_backup
 from security.credential_store import CredentialStore, env_var_for, looks_masked
 
 log = get_logger(__name__)
@@ -1121,6 +1122,57 @@ def _store() -> CredentialStore:
     except Exception:  # noqa: BLE001 - write-back must never break the save path
         pass
     return st
+
+
+@router.post("/api/backup")
+async def download_backup(request: Request) -> Response:
+    """Create a portable password-encrypted backup of all FSP-managed state."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    password = body.get("password")
+    if not isinstance(password, str):
+        return JSONResponse({"ok": False, "error": "password is required"}, status_code=400)
+    try:
+        archive, summary = await asyncio.to_thread(
+            create_backup,
+            password,
+            root=pathlib.Path.cwd(),
+            store=_store(),
+            mirror_state_dir=getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state"),
+        )
+    except (BackupError, OSError, RuntimeError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+    headers = {
+        "Content-Disposition": f'attachment; filename="fsp-backup-{stamp}.fspbackup"',
+        "X-FSP-Backup-Summary": ",".join(f"{key}={value}" for key, value in summary.items()),
+        "Cache-Control": "no-store",
+    }
+    return Response(archive, media_type="application/vnd.fsp.backup", headers=headers)
+
+
+@router.post("/api/restore")
+async def upload_restore(
+    password: str = Form(...),
+    backup: UploadFile = File(...),
+) -> JSONResponse:
+    """Restore an uploaded backup; the Manager must restart to load it."""
+    archive = await backup.read(512 * 1024 * 1024 + 1)
+    try:
+        summary = await asyncio.to_thread(
+            restore_backup,
+            archive,
+            password,
+            root=pathlib.Path.cwd(),
+            store=_store(),
+            mirror_state_dir=getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state"),
+        )
+    except (BackupError, OSError, RuntimeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    from security.access_keys import invalidate_cache
+    invalidate_cache()
+    return JSONResponse({"ok": True, **summary})
 
 
 async def _restart_agents(request: Request) -> int:

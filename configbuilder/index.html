@@ -1983,8 +1983,13 @@ function renderSelected(){
       enable.append(encb, document.createTextNode("on"));
 
       const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
-      rm.onclick = ()=>{
+      rm.onclick = async ()=>{
+        const removed=state.selected.get(key);
         state.selected.delete(key);
+        renderSelected(); renderConnList(); renderTables(); persistConns();
+        if(await applyTables({removing:true})) return;
+        state.selected.set(key,removed);
+        state.expandedGroups.add(removed.connection||"default");
         renderSelected(); renderConnList(); renderTables(); persistConns();
       };
 
@@ -2107,21 +2112,16 @@ async function saveSettings(){
   }catch(e){ flash("Save error: "+e); }
 }
 
-async function applyTables(){
+async function applyTables(options={}){
   const status = $("tableStatus");
   const valid = [...state.selected.values()].filter(s=>!s.invalid && s.key_column);
   const policyProblems = valid.flatMap(s=>policyErrors(s).map(error=>`${s.name}: ${error}`));
   if(policyProblems.length){
     status.className="status err";
     status.textContent=policyProblems.join(" ");
-    return;
+    return false;
   }
   const tables = valid.map(tableConfig);
-  if(!tables.length){
-    status.className="status err";
-    status.textContent="Select at least one table with a valid key column to apply.";
-    return;
-  }
   // Table names are the virtual Iceberg table id and must be unique across ALL
   // sources — the same table selected under two connections would collide.
   const names = tables.map(t=>t.name);
@@ -2130,7 +2130,7 @@ async function applyTables(){
     status.className="status err";
     status.textContent="Duplicate table name(s): "+dups.join(", ")
       +". Names must be unique across every source — remove the copies (e.g. the same table added under two connections).";
-    return;
+    return false;
   }
   // Every referenced named source must be applyable: tested this session, or its
   // password is already saved in the Manager store (config gets a password-stripped
@@ -2142,7 +2142,7 @@ async function applyTables(){
     status.className="status err";
     status.textContent="These sources aren't ready yet: "+notReady.join(", ")
       +". Open Sources and either test each one or save its credentials, then apply again.";
-    return;
+    return false;
   }
   // Persist the referenced named sources alongside the tables (passwords stripped)
   // so config.tables.json never references an undefined connection.
@@ -2153,7 +2153,7 @@ async function applyTables(){
   if(connections.length) settings.connections = connections;
 
   status.className="status";
-  status.textContent="Applying "+tables.length+" table(s)…";
+  status.textContent=tables.length ? "Applying "+tables.length+" table(s)…" : "Removing all configured tables…";
   try{
     const r = await fetch("/_config/api/apply", {
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -2163,19 +2163,21 @@ async function applyTables(){
     if(!r.ok){
       status.className="status err";
       status.textContent="Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status);
-      return;
+      return false;
     }
     status.className="status ok";
-    let msg = "✓ Applied "+tables.length+" table(s)";
+    let msg = tables.length ? "✓ Applied "+tables.length+" table(s)" : "✓ Removed all configured tables";
     if(connections.length) msg += " + "+connections.length+" named source"+(connections.length>1?"s":"");
     msg += " to config (restart to apply).";
     const envHints = refIds.map(cid=>{ const c=state.connections.get(cid); return hasPw(c.db_url)?envVarFor(cid):null; }).filter(Boolean);
     if(envHints.length) msg += " Set "+[...new Set(envHints)].join(", ")+" for the password(s).";
     status.textContent = msg;
     setTimeout(()=>{ status.textContent=""; status.className="status"; }, 6000);
+    return true;
   }catch(e){
     status.className="status err";
     status.textContent="Apply error: "+e;
+    return false;
   }
 }
 

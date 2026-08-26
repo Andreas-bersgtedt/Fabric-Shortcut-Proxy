@@ -41,6 +41,7 @@ _HTML_PATH = pathlib.Path(__file__).parent / "index.html"
 # Config objects are import-time snapshots. Keep deleted ids hidden from builder
 # reads until restart, when the persisted files become the new snapshots.
 _REMOVED_CONNECTION_IDS: set[str] = set()
+_BUILDER_TABLES_OVERRIDE: list[dict] | None = None
 _OPEN_MIRROR_JOBS: dict[str, dict] = {}
 _OPEN_MIRROR_TASKS: set[asyncio.Task] = set()
 _LATEST_OPEN_MIRROR_JOB_ID: str | None = None
@@ -288,6 +289,8 @@ async def bootstrap_builder() -> JSONResponse:
             "enabled": t.enabled,
             "schema": schema or None,
         })
+    if _BUILDER_TABLES_OVERRIDE is not None:
+        tables = [dict(table) for table in _BUILDER_TABLES_OVERRIDE]
 
     # Named source connections (exclude the reserved 'default', which is the db_url
     # above). Passwords are masked — the builder never receives raw secrets.
@@ -412,6 +415,10 @@ async def apply_config(request: Request) -> JSONResponse:
             for item in updates["connections"] if isinstance(item, dict)
         }
         _REMOVED_CONNECTION_IDS.difference_update(restored_ids)
+    if isinstance(updates.get("tables"), list):
+        global _BUILDER_TABLES_OVERRIDE
+        _BUILDER_TABLES_OVERRIDE = [dict(table) for table in updates["tables"]
+                                    if isinstance(table, dict)]
 
     log.info("config_applied",
              applied_live=live_result["applied"],

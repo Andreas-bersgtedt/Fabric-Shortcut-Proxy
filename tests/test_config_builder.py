@@ -314,6 +314,27 @@ async def test_index_serves_html(app):
     assert 'id="btnCopy"' not in r.text
     assert 'disabled${currentReference?"":" selected"}' in r.text
     assert 'if(field==="key_ref") omRenderTableRows();' in r.text
+    assert 'if(await applyTables({removing:true})) return;' in r.text
+
+
+async def test_apply_empty_tables_persists_and_updates_bootstrap(app, tmp_path, monkeypatch):
+    import configbuilder.router as router_module
+
+    monkeypatch.chdir(tmp_path)
+    router_module._BUILDER_TABLES_OVERRIDE = None
+    try:
+        async with _client(app) as client:
+            applied = await client.post(
+                "/_config/api/apply",
+                json={"settings": {"tables": []}},
+            )
+            bootstrap = await client.get("/_config/api/bootstrap")
+
+        assert applied.status_code == 200
+        assert json.loads((tmp_path / "config.tables.json").read_text())["tables"] == []
+        assert bootstrap.json()["builder"]["tables"] == []
+    finally:
+        router_module._BUILDER_TABLES_OVERRIDE = None
 
 
 async def test_delete_connection_persists_and_removes_credential(app, tmp_path, monkeypatch):

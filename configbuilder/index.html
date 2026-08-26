@@ -1766,7 +1766,7 @@ function tokenizationKeyOptionHtml(currentReference){
   if(currentReference && !references.includes(currentReference)){
     options.push(`<option value="${omEsc(currentReference)}">${omEsc(currentReference)} (unavailable)</option>`);
   }
-  options.push(`<option value="" disabled>${references.length?"Select key reference":"No configured key references"}</option>`);
+  options.push(`<option value="" disabled${currentReference?"":" selected"}>${references.length?"Select key reference":"No configured key references"}</option>`);
   for(const reference of references){
     options.push(`<option value="${omEsc(reference)}"${reference===currentReference?" selected":""}>${omEsc(reference)}</option>`);
   }

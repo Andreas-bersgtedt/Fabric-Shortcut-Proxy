@@ -2874,7 +2874,7 @@ async function removeAccessKey(id){
 }
 
 // ---- Open Mirroring targets (config.open_mirror.json) ----
-if(!state.om) state.om = { targets: [], editing: null };
+if(!state.om) state.om = { targets: [], editing: null, publishJob: null, publishPoll: null };
 function omEsc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"", cleanup_retention_days:null, columns:null, _sourceColumns:[] }; }
 function omNewTarget(){ return { id:"", connection:"default", landing_zone_root:"", workspace_id:"",
@@ -2896,10 +2896,18 @@ function omRenderList(){
   ts.forEach((t,i)=>{
     const row = document.createElement("div"); row.className="connrow";
     const tables = (t.tables||[]).map(x=>x.name||x.target_table||x.source_table).filter(Boolean).join(", ");
+    const publish = state.om.publishJob && state.om.publishJob.targets
+      ? state.om.publishJob.targets[t.id] : null;
+    const publishLabel = publish ? ({queued:"queued",running:"publishing",completed:"complete",
+      completed_with_errors:"errors",skipped:"skipped",error:"failed",cancelled:"cancelled"}[publish.status]||publish.status) : "";
+    const publishClass = publish && publish.status==="completed" ? "ok"
+      : (publish && ["error","completed_with_errors","cancelled"].includes(publish.status) ? "err" : "");
     row.innerHTML = `<div><div class="cid">${omEsc(t.id||"(unnamed)")} `
-      + `<span class="badge ${t.enabled!==false?"ok":""}">${t.enabled!==false?"enabled":"disabled"}</span></div>`
+      + `<span class="badge ${t.enabled!==false?"ok":""}">${t.enabled!==false?"enabled":"disabled"}</span>`
+      + (publish ? ` <span class="badge ${publishClass}">${omEsc(publishLabel)}</span>` : "") + `</div>`
       + `<div class="meta">→ ${omEsc(t.connection||"default")} · ${omEsc(t.landing_zone_root||"")}`
-      + (tables?` · tables: ${omEsc(tables)}`:"")+`</div></div>`
+      + (tables?` · tables: ${omEsc(tables)}`:"")
+      + (publish&&publish.error?`<br>${omEsc(publish.error)}`:"")+`</div></div>`
       + `<div class="connacts"><button class="iconbtn" data-i="${i}" data-act="edit" title="Edit">✎</button>`
       + `<button class="iconbtn" data-i="${i}" data-act="del" title="Remove">✕</button></div>`;
     box.appendChild(row);
@@ -3326,13 +3334,31 @@ async function omSave(){
 
 async function omPublish(dryRun){
   const s = $("omStatus"), pre=$("omPublishOut");
-  s.className="status"; s.textContent = dryRun ? "Dry run…" : "Publishing…"; pre.style.display="none";
+  s.className="status"; s.textContent = dryRun ? "Starting dry run…" : "Starting publish…"; pre.style.display="none";
   try{
     const r = await fetch("/_config/api/open-mirror/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dry_run:!!dryRun})});
     const d = await r.json();
-    if(!r.ok){ s.className="status err"; s.textContent=(d.errors?d.errors.join("; "):d.error)||"Publish failed"; return; }
-    const lines=[];
-    (d.targets||[]).forEach(t=>{
+    if(!r.ok){
+      if(d.job){ state.om.publishJob=d.job; omRenderPublishJob(); omSchedulePublishPoll(); }
+      else { s.className="status err"; s.textContent=(d.errors?d.errors.join("; "):d.error)||"Publish failed"; }
+      return;
+    }
+    state.om.publishJob=d.job;
+    omRenderPublishJob();
+    omSchedulePublishPoll();
+  }catch(e){ s.className="status err"; s.textContent="Publish request failed."; }
+}
+
+function omPublishActive(job){ return !!job && ["queued","running"].includes(job.status); }
+
+function omRenderPublishJob(){
+  const job=state.om.publishJob, s=$("omStatus"), pre=$("omPublishOut");
+  const publishButton=$("btnPublishOm"), dryRunButton=$("btnDryRunOm");
+  if(publishButton) publishButton.disabled=omPublishActive(job);
+  if(dryRunButton) dryRunButton.disabled=omPublishActive(job);
+  if(!job){ s.className="status"; s.textContent=""; pre.style.display="none"; omRenderList(); return; }
+  const targets=Object.values(job.targets||{}), lines=[];
+  targets.forEach(t=>{
       lines.push((t.error?"✗ ":"• ")+t.target_id+(t.skipped?" (disabled)":"")+(t.error?("  ERROR: "+t.error):""));
       (t.dropped||[]).forEach(dp=>lines.push("    dropped: "+dp));
       (t.tables||[]).forEach(tb=>{
@@ -3340,12 +3366,37 @@ async function omPublish(dryRun){
           : (tb.action+"  ins="+tb.inserts+" upd="+tb.updates+" del="+tb.deletes+(tb.path?("  "+tb.path):""));
         lines.push("    "+tb.table+": "+detail);
       });
-    });
-    pre.textContent = lines.join("\n") || "(no targets configured)";
-    pre.style.display="block";
-    s.className = d.ok ? "status ok" : "status err";
-    s.textContent = d.ok ? (dryRun?"Dry run complete.":"Publish complete.") : "Completed with errors — see below.";
-  }catch(e){ s.className="status err"; s.textContent="Publish request failed."; }
+  });
+  pre.textContent=lines.join("\n")||(omPublishActive(job)?"Waiting for mirrors…":"(no targets configured)");
+  pre.style.display="block";
+  const completed=targets.filter(t=>["completed","skipped","error"].includes(t.status)).length;
+  if(omPublishActive(job)){
+    s.className="status";
+    s.textContent=`${job.dry_run?"Dry run":"Publish"} running in background · ${completed}/${targets.length} mirrors finished. You can navigate away.`;
+  }else{
+    const failed=job.status!=="completed";
+    s.className="status "+(failed?"err":"ok");
+    s.textContent=failed?"Publish completed with errors — see mirror status below.":(job.dry_run?"Dry run complete.":"Publish complete.");
+  }
+  omRenderList();
+}
+
+function omSchedulePublishPoll(){
+  if(state.om.publishPoll) clearTimeout(state.om.publishPoll);
+  state.om.publishPoll=null;
+  if(omPublishActive(state.om.publishJob)) state.om.publishPoll=setTimeout(omPollPublishJob,1500);
+}
+
+async function omPollPublishJob(){
+  const job=state.om.publishJob;
+  const path=job&&job.id
+    ? "/_config/api/open-mirror/publish/jobs/"+encodeURIComponent(job.id)
+    : "/_config/api/open-mirror/publish/jobs/latest";
+  try{
+    const r=await fetch(path,{cache:"no-store"}), d=await r.json();
+    if(r.ok&&d.ok){ state.om.publishJob=d.job; omRenderPublishJob(); }
+  }catch(e){ /* keep the last known status and retry */ }
+  omSchedulePublishPoll();
 }
 
 function omOnBootstrap(builder){
@@ -3383,6 +3434,7 @@ function omInit(){
   omRenderConnectionOptions();
   omRenderList();
   if(!state.om.editing) omWriteForm(omNewTarget());
+  omPollPublishJob();
 }
 
 loadForm();

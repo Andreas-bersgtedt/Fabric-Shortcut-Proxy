@@ -14,8 +14,10 @@ The generated ``config.json`` is assembled client-side from these responses.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import os
 import pathlib
+import uuid
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -39,6 +41,9 @@ _HTML_PATH = pathlib.Path(__file__).parent / "index.html"
 # Config objects are import-time snapshots. Keep deleted ids hidden from builder
 # reads until restart, when the persisted files become the new snapshots.
 _REMOVED_CONNECTION_IDS: set[str] = set()
+_OPEN_MIRROR_JOBS: dict[str, dict] = {}
+_OPEN_MIRROR_TASKS: set[asyncio.Task] = set()
+_LATEST_OPEN_MIRROR_JOB_ID: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -643,9 +648,94 @@ async def preview_open_mirror(request: Request) -> JSONResponse:
     })
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _publish_target_payload(result) -> dict:
+    return {
+        "target_id": result.target_id,
+        "skipped": result.skipped,
+        "error": result.error,
+        "dropped": result.dropped,
+        "replication_status": result.replication_status,
+        "replication_action": result.replication_action,
+        "tables": [{
+            "table": item.table, "action": item.action, "rows": item.rows,
+            "inserts": item.inserts, "updates": item.updates, "deletes": item.deletes,
+            "path": item.path, "error": item.error,
+            "strategy": item.strategy, "reason": item.reason,
+            "input_cursor": item.input_cursor, "output_cursor": item.output_cursor,
+            "pages_read": item.pages_read, "rows_scanned": item.rows_scanned,
+            "rows_published": item.rows_published,
+            "state_status": item.state_status, "state_path": item.state_path,
+            "recovery": item.recovery, "query_mode": item.query_mode,
+        } for item in result.results],
+    }
+
+
+async def _run_open_mirror_job(job_id: str, targets: list, *, dry_run: bool, mode: str | None) -> None:
+    from open_mirror.scheduler import publish_targets_with_preflight
+
+    job = _OPEN_MIRROR_JOBS[job_id]
+    job["status"] = "running"
+    job["started_at"] = _utc_now()
+    try:
+        for target in targets:
+            target_status = job["targets"][target.id]
+            target_status["status"] = "running"
+            target_status["started_at"] = _utc_now()
+            try:
+                result = (await publish_targets_with_preflight(
+                    [target], dry_run=dry_run, mode=mode
+                ))[0]
+                payload = _publish_target_payload(result)
+                failed = bool(result.error or any(item.action == "error" for item in result.results))
+                target_status.update(payload)
+                target_status["status"] = "error" if failed else ("skipped" if result.skipped else "completed")
+            except Exception as exc:  # noqa: BLE001 - isolate each mirror in the job
+                log.warning("open_mirror_publish_target_failed", target=target.id, error=str(exc))
+                target_status.update({"status": "error", "error": str(exc), "tables": []})
+            target_status["completed_at"] = _utc_now()
+        job["status"] = (
+            "completed_with_errors"
+            if any(item["status"] == "error" for item in job["targets"].values())
+            else "completed"
+        )
+    except asyncio.CancelledError:
+        job["status"] = "cancelled"
+        raise
+    except Exception as exc:  # noqa: BLE001 - retain a queryable terminal job state
+        job["status"] = "error"
+        job["error"] = str(exc)
+        log.warning("open_mirror_publish_job_failed", job_id=job_id, error=str(exc))
+    finally:
+        job["completed_at"] = _utc_now()
+        log.info("open_mirror_publish_job_finished", job_id=job_id, status=job["status"])
+
+
+def _open_mirror_job_response(job: dict) -> JSONResponse:
+    return JSONResponse({"ok": True, "job": job})
+
+
+@router.get("/api/open-mirror/publish/jobs/latest")
+async def latest_open_mirror_publish_job() -> JSONResponse:
+    if not _LATEST_OPEN_MIRROR_JOB_ID:
+        return JSONResponse({"ok": True, "job": None})
+    return _open_mirror_job_response(_OPEN_MIRROR_JOBS[_LATEST_OPEN_MIRROR_JOB_ID])
+
+
+@router.get("/api/open-mirror/publish/jobs/{job_id}")
+async def get_open_mirror_publish_job(job_id: str) -> JSONResponse:
+    job = _OPEN_MIRROR_JOBS.get(job_id)
+    if not job:
+        return JSONResponse({"ok": False, "error": "publish job not found"}, status_code=404)
+    return _open_mirror_job_response(job)
+
+
 @router.post("/api/open-mirror/publish")
 async def publish_open_mirror(request: Request) -> JSONResponse:
-    """Publish now: read the source and push batches into the landing zone.
+    """Start a background publish job and return its queryable status immediately.
 
     Body (all optional): ``{"target_id": "...", "dry_run": true}``. With no
     ``target_id`` every configured target is published. Failures are quarantined
@@ -661,48 +751,45 @@ async def publish_open_mirror(request: Request) -> JSONResponse:
     mode = str(body.get("mode") or "").strip().lower() or None
 
     from open_mirror.config import load_targets
-    from open_mirror.scheduler import publish_targets_with_preflight
-
     targets = load_targets()
     if target_id:
         targets = [t for t in targets if t.id == target_id]
         if not targets:
             return JSONResponse({"ok": False, "error": f"no target with id {target_id!r}"},
                                 status_code=404)
-    try:
-        results = await publish_targets_with_preflight(
-            targets, dry_run=dry_run, mode=mode
-        )
-    except Exception as exc:  # noqa: BLE001 - surface, never 500 the builder
-        log.warning("open_mirror_publish_failed", error=str(exc))
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    active = next((job for job in _OPEN_MIRROR_JOBS.values()
+                   if job["status"] in {"queued", "running"}), None)
+    if active:
+        return JSONResponse({"ok": False, "error": "a publish job is already running",
+                             "job": active}, status_code=409)
 
-    summary = []
-    ok = True
-    for tr in results:
-        if tr.error or any(r.action == "error" for r in tr.results):
-            ok = False
-        summary.append({
-            "target_id": tr.target_id,
-            "skipped": tr.skipped,
-            "error": tr.error,
-            "dropped": tr.dropped,
-            "replication_status": tr.replication_status,
-            "replication_action": tr.replication_action,
-            "tables": [{
-                "table": r.table, "action": r.action, "rows": r.rows,
-                "inserts": r.inserts, "updates": r.updates, "deletes": r.deletes,
-                "path": r.path, "error": r.error,
-                "strategy": r.strategy, "reason": r.reason,
-                "input_cursor": r.input_cursor, "output_cursor": r.output_cursor,
-                "pages_read": r.pages_read, "rows_scanned": r.rows_scanned,
-                "rows_published": r.rows_published,
-                "state_status": r.state_status, "state_path": r.state_path,
-                "recovery": r.recovery, "query_mode": r.query_mode,
-            } for r in tr.results],
-        })
-    log.info("open_mirror_publish_now", target=target_id or "*", dry_run=dry_run, ok=ok)
-    return JSONResponse({"ok": ok, "dry_run": dry_run, "targets": summary})
+    global _LATEST_OPEN_MIRROR_JOB_ID
+    job_id = uuid.uuid4().hex
+    job = {
+        "id": job_id,
+        "status": "queued",
+        "dry_run": dry_run,
+        "created_at": _utc_now(),
+        "started_at": None,
+        "completed_at": None,
+        "error": None,
+        "targets": {
+            target.id: {"target_id": target.id, "status": "queued", "error": None,
+                        "started_at": None, "completed_at": None, "tables": []}
+            for target in targets
+        },
+    }
+    _OPEN_MIRROR_JOBS[job_id] = job
+    _LATEST_OPEN_MIRROR_JOB_ID = job_id
+    task = asyncio.create_task(
+        _run_open_mirror_job(job_id, targets, dry_run=dry_run, mode=mode),
+        name=f"open-mirror-publish-{job_id[:8]}",
+    )
+    _OPEN_MIRROR_TASKS.add(task)
+    task.add_done_callback(_OPEN_MIRROR_TASKS.discard)
+    log.info("open_mirror_publish_job_started", job_id=job_id,
+             target=target_id or "*", dry_run=dry_run)
+    return JSONResponse({"ok": True, "job": job}, status_code=202)
 
 
 @router.post("/api/open-mirror/reset")

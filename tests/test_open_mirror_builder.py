@@ -112,6 +112,10 @@ def test_index_has_open_mirror_tab():
     assert "Column policies" in html
     assert "deterministic_hash" in html
     assert "omUpdatePolicy" in html
+    assert 'class="omkeys"' in html
+    assert 'class="omwatermark"' in html
+    assert "omKeyOptions" in html
+    assert "omWatermarkOptions" in html
 
 
 async def test_list_and_inspect_tables_for_connection(app, tmp_path, monkeypatch):

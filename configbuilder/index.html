@@ -2961,10 +2961,10 @@ function omRenderTableRows(){
       + `<div><label>Source table</label><input data-i="${i}" data-f="source_table" value="${omEsc(tb.source_table)}" placeholder="dbo.sales" /></div></div>`
       + `<div class="row"><div><label>Target table</label><input data-i="${i}" data-f="target_table" value="${omEsc(tb.target_table)}" placeholder="sales" /></div>`
       + `<div><label>Landing-zone schema <span class="hint">(optional)</span></label><input data-i="${i}" data-f="schema" value="${omEsc(tb.schema)}" placeholder="(root)" /></div></div>`
-      + `<div class="row"><div><label>Key column(s) <span class="hint">(auto-detected on pick)</span></label><input data-i="${i}" data-f="key_column" value="${omEsc(tb.key_column)}" placeholder="id" /></div>`
+      + `<div class="row"><div><label>Key column(s) <span class="hint">(auto-detected; Ctrl/Cmd-click for composite keys)</span></label>`
+      + `<select class="omkeys" data-i="${i}" multiple size="${Math.min(4,Math.max(2,omColumnNames(tb).length))}">${omKeyOptions(tb)}</select></div>`
       + `<div><label>Watermark column <span class="hint">(optional — efficient incremental)</span></label>`
-      + `<input list="omwm${i}" data-i="${i}" data-f="watermark_column" value="${omEsc(tb.watermark_column)}" placeholder="(none — snapshot full-source scan)" />`
-      + `<datalist id="omwm${i}">${omColsDatalist(tb)}</datalist></div></div>`
+      + `<select class="omwatermark" data-i="${i}">${omWatermarkOptions(tb)}</select></div></div>`
       + `<label>Tracking strategy</label><select class="ommode" data-i="${i}" data-f="mode">`
       + `<option value="incremental"${(tb.mode||"incremental")==="incremental"?" selected":""}>Automatic (watermark when configured; otherwise snapshot full-source scan)</option>`
       + `<option value="watermark"${tb.mode==="watermark"?" selected":""}>Watermark (source-incremental)</option>`
@@ -2985,6 +2985,20 @@ function omRenderTableRows(){
   });
   box.querySelectorAll("select.ommode").forEach(sel=>{
     sel.onchange = ()=>{ const i=parseInt(sel.dataset.i); if(state.om.editing.tables[i]) state.om.editing.tables[i].mode=sel.value; };
+  });
+  box.querySelectorAll("select.omkeys").forEach(sel=>{
+    sel.onchange = ()=>{
+      const table=state.om.editing.tables[parseInt(sel.dataset.i)]; if(!table) return;
+      table.key_column=Array.from(sel.selectedOptions).map(option=>option.value).filter(Boolean).join(",");
+      omRenderTableRows();
+    };
+  });
+  box.querySelectorAll("select.omwatermark").forEach(sel=>{
+    sel.onchange = ()=>{
+      const table=state.om.editing.tables[parseInt(sel.dataset.i)]; if(!table) return;
+      table.watermark_column=sel.value;
+      omRenderTableRows();
+    };
   });
   box.querySelectorAll("select.om-policy-kind").forEach(sel=>{
     sel.onchange = ()=>omUpdatePolicy(parseInt(sel.dataset.i), sel.dataset.source, sel.value);
@@ -3098,10 +3112,26 @@ async function omResetTable(i){
   s.textContent=d.ok?`State reset for ${target.id}/${name}. Previous status: ${d.previous_status}.`:(d.error||"Reset failed.");
 }
 
-// Build a <datalist> of the picked table's columns (for the watermark field).
-function omColsDatalist(tb){
-  const cols = (tb && tb._cols) || [];
-  return cols.map(n=>`<option value="${omEsc(n)}"></option>`).join("");
+function omColumnNames(tb){
+  const reflected=(tb&&Array.isArray(tb._sourceColumns)?tb._sourceColumns:[])
+    .map(column=>String(column.name||column.source||"").trim()).filter(Boolean);
+  const configured=(tb&&Array.isArray(tb.columns)?tb.columns:[])
+    .map(column=>String(column.source||column.name||"").trim()).filter(Boolean);
+  return Array.from(new Set([...reflected,...configured]));
+}
+
+function omKeyOptions(tb){
+  const selected=String((tb&&tb.key_column)||"").split(",").map(value=>value.trim()).filter(Boolean);
+  const names=Array.from(new Set([...omColumnNames(tb),...selected]));
+  if(!names.length) return `<option value="" disabled>Pick a source table to load columns</option>`;
+  return names.map(name=>`<option value="${omEsc(name)}"${selected.includes(name)?" selected":""}>${omEsc(name)}</option>`).join("");
+}
+
+function omWatermarkOptions(tb){
+  const selected=String((tb&&tb.watermark_column)||"").trim();
+  const names=Array.from(new Set([...omColumnNames(tb),...(selected?[selected]:[])]));
+  return `<option value=""${selected?"":" selected"}>No watermark (snapshot scan)</option>`
+    + names.map(name=>`<option value="${omEsc(name)}"${selected===name?" selected":""}>${omEsc(name)}</option>`).join("");
 }
 
 // Build the <select> options for one table row from the loaded table list.

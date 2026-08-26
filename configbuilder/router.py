@@ -36,6 +36,9 @@ log = get_logger(__name__)
 
 router = APIRouter(prefix="/_config")
 _HTML_PATH = pathlib.Path(__file__).parent / "index.html"
+# Config objects are import-time snapshots. Keep deleted ids hidden from builder
+# reads until restart, when the persisted files become the new snapshots.
+_REMOVED_CONNECTION_IDS: set[str] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +248,8 @@ async def bootstrap_builder() -> JSONResponse:
     """
     tables = []
     for t in config.TABLES:
+        if t.connection_id in _REMOVED_CONNECTION_IDS:
+            continue
         schema = []
         for column in t.schema or []:
             item = {
@@ -283,7 +288,7 @@ async def bootstrap_builder() -> JSONResponse:
     # above). Passwords are masked — the builder never receives raw secrets.
     connections = []
     for cid, conn in config.CONNECTIONS.items():
-        if cid == "default":
+        if cid == "default" or cid in _REMOVED_CONNECTION_IDS:
             continue
         connections.append({
             "id": cid,
@@ -396,6 +401,13 @@ async def apply_config(request: Request) -> JSONResponse:
     except Exception:  # noqa: BLE001 - write-back must never break the apply
         pass
 
+    if isinstance(updates.get("connections"), list):
+        restored_ids = {
+            str(item.get("id") or "").strip()
+            for item in updates["connections"] if isinstance(item, dict)
+        }
+        _REMOVED_CONNECTION_IDS.difference_update(restored_ids)
+
     log.info("config_applied",
              applied_live=live_result["applied"],
              restart_required=live_result["restart_required"],
@@ -414,6 +426,81 @@ async def apply_config(request: Request) -> JSONResponse:
                 if live_result["restart_required"] else ""
             )
         ),
+    })
+
+
+@router.delete("/api/connections/{connection_id}")
+async def delete_connection(connection_id: str, request: Request) -> JSONResponse:
+    """Persistently remove a named source, its table mappings, and its credential."""
+    cid = str(connection_id or "").strip()
+    if not cid or cid == "default":
+        return JSONResponse(
+            {"ok": False, "error": "the primary connection cannot be deleted"},
+            status_code=400,
+        )
+
+    dependencies = [
+        str(target.get("id") or "(unnamed)")
+        for target in _open_mirror_targets_payload()
+        if str(target.get("connection") or "default") == cid
+    ]
+    if dependencies:
+        return JSONResponse({
+            "ok": False,
+            "error": (
+                f"connection {cid!r} is used by Open Mirroring target(s): "
+                + ", ".join(dependencies)
+                + ". Remove or reassign those targets first."
+            ),
+        }, status_code=409)
+
+    body = await request.json()
+    connections = body.get("connections") if isinstance(body, dict) else None
+    tables = body.get("tables") if isinstance(body, dict) else None
+    if not isinstance(connections, list) or not isinstance(tables, list):
+        return JSONResponse({
+            "ok": False,
+            "error": "body must contain the remaining connections and tables arrays",
+        }, status_code=400)
+    if any(str((item or {}).get("id") or "").strip() == cid
+           for item in connections if isinstance(item, dict)):
+        return JSONResponse({"ok": False, "error": "deleted connection remains in payload"},
+                            status_code=400)
+
+    clean, errors = config.validate_setting_updates({
+        "connections": connections,
+        "tables": tables,
+    })
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+    try:
+        saved = config.write_config_updates(clean)
+    except (OSError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    credential_removed = False
+    environment_override = False
+    if config.ENABLE_CREDENTIAL_STORE:
+        store = _store()
+        stored_url = store.get_url(cid) if cid in store.list_ids() else None
+        credential_removed = store.delete(cid)
+        env_name = env_var_for(cid)
+        current_env = os.environ.get(env_name)
+        if stored_url and current_env == stored_url:
+            os.environ.pop(env_name, None)
+        elif current_env:
+            environment_override = True
+
+    _REMOVED_CONNECTION_IDS.add(cid)
+    log.info("connection_deleted", connection=cid, credential_removed=credential_removed,
+             environment_override=environment_override)
+    return JSONResponse({
+        "ok": True,
+        "connection_id": cid,
+        "path": saved["path"],
+        "credential_removed": credential_removed,
+        "environment_override": environment_override,
+        "restart_required": True,
     })
 
 
@@ -731,7 +818,7 @@ async def list_sources() -> JSONResponse:
         "credential_stored": "default" in stored,
     }]
     for connection_id, connection in config.CONNECTIONS.items():
-        if connection_id == "default":
+        if connection_id == "default" or connection_id in _REMOVED_CONNECTION_IDS:
             continue
         sources.append({
             "id": f"database:{connection_id}",

@@ -6,7 +6,9 @@ DB, so it does not depend on main.py's ENABLE_CONFIG_BUILDER mount order.
 """
 from __future__ import annotations
 
+import json
 import pathlib
+from types import SimpleNamespace
 
 import pytest
 import httpx
@@ -290,6 +292,7 @@ def _client(app):
 async def test_index_serves_html(app):
     async with _client(app) as c:
         r = await c.get("/_config/")
+    assert 'fetch("/_config/api/connections/"+encodeURIComponent(id)' in r.text
     assert r.status_code == 200
     assert "Config Builder" in r.text
     assert "column policies" in r.text
@@ -309,6 +312,66 @@ async def test_index_serves_html(app):
     assert 'id="preview"' not in r.text
     assert 'id="btnDownload"' not in r.text
     assert 'id="btnCopy"' not in r.text
+
+
+async def test_delete_connection_persists_and_removes_credential(app, tmp_path, monkeypatch):
+    import config
+    import configbuilder.router as router_module
+
+    class FakeStore:
+        deleted = []
+
+        def list_ids(self):
+            return ["SaleLT"]
+
+        def get_url(self, connection_id):
+            return "postgresql+asyncpg://stored/db"
+
+        def delete(self, connection_id):
+            self.deleted.append(connection_id)
+            return True
+
+    store = FakeStore()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True)
+    monkeypatch.setattr(config, "CONNECTIONS", {
+        "SaleLT": SimpleNamespace(db_url="postgresql+asyncpg://stored/db"),
+    })
+    monkeypatch.setattr(config, "TABLES", [SimpleNamespace(connection_id="SaleLT")])
+    monkeypatch.setattr(router_module, "_store", lambda: store)
+    monkeypatch.setattr(router_module, "_open_mirror_targets_payload", lambda: [])
+    router_module._REMOVED_CONNECTION_IDS.discard("SaleLT")
+
+    try:
+        async with _client(app) as client:
+            deleted = await client.request(
+                "DELETE",
+                "/_config/api/connections/SaleLT",
+                json={"connections": [], "tables": []},
+            )
+            bootstrap = await client.get("/_config/api/bootstrap")
+
+        assert deleted.status_code == 200
+        assert deleted.json()["credential_removed"] is True
+        assert store.deleted == ["SaleLT"]
+        assert json.loads((tmp_path / "config.connection.json").read_text())["connections"] == []
+        assert json.loads((tmp_path / "config.tables.json").read_text())["tables"] == []
+        assert bootstrap.json()["builder"]["connections"] == []
+        assert bootstrap.json()["builder"]["tables"] == []
+    finally:
+        router_module._REMOVED_CONNECTION_IDS.discard("SaleLT")
+
+
+async def test_delete_connection_rejects_primary_connection(app):
+    async with _client(app) as client:
+        response = await client.request(
+            "DELETE",
+            "/_config/api/connections/default",
+            json={"connections": [], "tables": []},
+        )
+
+    assert response.status_code == 400
+    assert "cannot be deleted" in response.json()["error"]
 
 
 def test_settings_catalog_has_defaults():

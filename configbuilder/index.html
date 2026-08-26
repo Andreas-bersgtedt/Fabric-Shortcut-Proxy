@@ -1040,10 +1040,30 @@ function clearConnTables(id){
   for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
   renderConnList(); renderSelected();
 }
-function removeConn(id){
+async function removeConn(id){
   const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
   const label = id === "default" ? "the default connection" : `connection '${id}'`;
   if(!confirm(`Remove ${label}`+(n?` and its ${n} selected table(s)`:"")+"?")) return;
+  const status=$("connStatus");
+  status.className="status"; status.textContent=`Removing connection '${id}'…`;
+  const connections=[...state.connections.values()]
+    .filter(connection=>connection.id!=="default"&&connection.id!==id&&(connection.db_url||connection.db_url_masked))
+    .map(connection=>({id:connection.id,db_url:stripPw(connection.db_url||connection.db_url_masked)}));
+  const tables=[...state.selected.values()]
+    .filter(table=>(table.connection||"default")!==id)
+    .map(tableConfig);
+  let result;
+  try{
+    const response=await fetch("/_config/api/connections/"+encodeURIComponent(id),{
+      method:"DELETE",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({connections,tables})
+    });
+    result=await response.json();
+    if(!response.ok||!result.ok) throw new Error((result.errors&&result.errors.join("; "))||result.error||String(response.status));
+  }catch(error){
+    status.className="status err"; status.textContent="Connection was not removed: "+error.message;
+    return;
+  }
   for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
   state.connections.delete(id);
   // Never leave the manager empty — a default slot must always exist.
@@ -1052,7 +1072,12 @@ function removeConn(id){
   const c = state.connections.get(state.activeConnId);
   state.db_url = c.db_url; state.db_url_masked = c.db_url_masked;
   writeFormFromConn(c);
-  renderConnList(); renderSelected(); persistConns();
+  state.storedCreds.delete(id);
+  renderConnList(); renderSelected(); persistConns(); refreshSourceCatalog(); renderOverview();
+  status.className=result.environment_override?"status err":"status ok";
+  status.textContent=result.environment_override
+    ? `Connection '${id}' was removed from config, but ${envVarFor(id)} still overrides it. Remove that environment variable before restart.`
+    : `Connection '${id}' and its stored credential were removed. Restart to apply the runtime change.`;
 }
 function renameActive(newId){
   newId = (newId||"").trim();

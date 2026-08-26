@@ -313,6 +313,7 @@ async def test_index_serves_html(app):
     assert 'id="btnDownload"' not in r.text
     assert 'id="btnCopy"' not in r.text
     assert 'disabled${currentReference?"":" selected"}' in r.text
+    assert 'if(field==="key_ref") omRenderTableRows();' in r.text
 
 
 async def test_delete_connection_persists_and_removes_credential(app, tmp_path, monkeypatch):

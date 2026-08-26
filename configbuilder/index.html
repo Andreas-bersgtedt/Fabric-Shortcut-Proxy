@@ -2957,7 +2957,11 @@ function omRenderTableRows(){
     inp.oninput = ()=>omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, "name", inp.value);
   });
   box.querySelectorAll(".om-policy-key,.om-policy-domain,.om-policy-normalization").forEach(inp=>{
-    inp.oninput = inp.onchange = ()=>omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, inp.dataset.p, inp.value);
+    inp.oninput = inp.onchange = ()=>{
+      const field=inp.dataset.p;
+      omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, field, inp.value);
+      if(field==="key_ref") omRenderTableRows();
+    };
   });
   box.querySelectorAll("[data-del]").forEach(b=>{
     b.onclick = ()=>{ const i=parseInt(b.dataset.del); state.om.editing.tables.splice(i,1);

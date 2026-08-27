@@ -263,6 +263,7 @@ static Config CFG;
 static std::atomic<bool> g_draining{false};
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_image_ready{false};
+static std::atomic<SocketHandle> g_listen_socket{kInvalidSocket};
 
 // Forward decl: lazy on-miss materialization request to the Manager. Defined with
 // the HTTP client further below (register/heartbeat share the same transport).
@@ -378,21 +379,6 @@ static bool write_object_index(const std::vector<IndexedObject>& entries) {
         fs::rename(tmp, path, ec);
     }
     return !ec;
-}
-
-static bool load_object_index(std::vector<IndexedObject>& entries) {
-    std::ifstream in(object_index_path());
-    std::string header;
-    if (!in || !std::getline(in, header) || header != "cpp-agent-index-v1") return false;
-
-    IndexedObject entry;
-    while (in >> std::quoted(entry.key) >> entry.size) {
-        if (entry.key.empty() || entry.key == kObjectIndexFile) return false;
-        entries.push_back(entry);
-    }
-    if (!in.eof()) return false;
-    return std::is_sorted(entries.begin(), entries.end(),
-                          [](const auto& left, const auto& right) { return left.key < right.key; });
 }
 
 static bool rebuild_object_index() {
@@ -1245,10 +1231,14 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, [](int) {
         g_draining = true;
         g_running = false;
+        SocketHandle socket = g_listen_socket.exchange(kInvalidSocket);
+        if (socket != kInvalidSocket) close_socket(socket);
     });
     std::signal(SIGINT, [](int) {
         g_draining = true;
         g_running = false;
+        SocketHandle socket = g_listen_socket.exchange(kInvalidSocket);
+        if (socket != kInvalidSocket) close_socket(socket);
     });
 
     initialize_object_index();
@@ -1281,6 +1271,7 @@ int main(int argc, char** argv) {
         net_cleanup();
         return 1;
     }
+    g_listen_socket = srv;
 
     log_line("serving S3 from '" + CFG.store_dir + "' on " + CFG.host + ":" + std::to_string(CFG.port) +
              " (bucket=" + CFG.bucket + ")");
@@ -1334,7 +1325,7 @@ int main(int argc, char** argv) {
     }
     if (ctl.joinable()) ctl.join();
     if (index_refresher.joinable()) index_refresher.join();
-    close_socket(srv);
+    if (g_listen_socket.exchange(kInvalidSocket) != kInvalidSocket) close_socket(srv);
     net_cleanup();
     return 0;
 }

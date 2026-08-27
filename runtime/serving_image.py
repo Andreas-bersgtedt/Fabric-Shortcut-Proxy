@@ -28,7 +28,8 @@ def publish_serving_image(store, *, generation_id: str | None = None) -> dict:
 
     Objects are first written below ``generations/<id>``.  ``CURRENT`` is changed
     only after the generation's ``READY.json`` is written, so serving agents never
-    select an incomplete image. Returns ``{"written": n, "skipped": m}``.
+    select an incomplete image. Returns ``{"written": n, "skipped": m,
+    "objects": total, "generation_id": id, "activated": bool}``.
     """
     from s3.router import _snapshot_objects
     import cache.lru_cache as cache

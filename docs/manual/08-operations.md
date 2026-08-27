@@ -32,6 +32,10 @@ run it as a service under a gMSA or local service account
 | `/_admin/refresh` | POST | Re-read the source and publish a new snapshot |
 | `/_admin/gc` | POST | Run retention garbage collection now |
 | `/_admin/publish-image` | POST | Publish a complete serving image (data + metadata) |
+| `/_config/api/open-mirror/publish` | POST | Start an on-demand Open Mirroring background job |
+| `/_config/api/open-mirror/publish/jobs/latest` | GET | Read the latest Open Mirroring job and per-target status |
+| `/_config/api/backup` | POST | Download a password-encrypted portable backup |
+| `/_config/api/restore` | POST | Restore a multipart backup upload; restart required |
 
 The config builder (`/_config`) and the monitor (`/_monitor`) are served on the Manager
 control plane, or on the agent's own port in Lite mode. In the enterprise edition the admin
@@ -75,9 +79,12 @@ combination at startup.
 
 ## 8.5 Open Mirror publishing
 
-The Manager publishes targets from `config.open_mirror.json` only when
+The Manager publishes targets from `config.open_mirror.json` on a schedule when
 `OPEN_MIRROR_PUBLISH=1`. The interval is controlled by `OPEN_MIRROR_INTERVAL_SECONDS`; a
-target can also be published on demand from the config builder with **Publish now** or **Dry run**.
+target can also be published on demand from the Config Builder with **Publish now** or **Dry run**.
+On-demand requests return a job id immediately. The UI polls that job and shows per-target and
+per-table status, so navigation does not interrupt publishing. Only one on-demand job runs at a
+time, and the latest status remains queryable while the Manager process remains up.
 
 Before reading a OneLake target's source tables, the Manager checks the mirrored database status.
 When `self_healing` is enabled, it calls Fabric's mirroring start operation for `Initialized`,
@@ -231,12 +238,25 @@ on a timer (`retention_gc_interval_seconds`), or trigger it once with `POST /_ad
 | Open Mirror table stops after a restart | State is missing, corrupt, unreadable, or incompatible | Inspect `OPEN_MIRROR_STATE_DIR`; use the explicit reset endpoint only after review |
 | Open Mirror preflight does not start mirroring | Target is not a OneLake target, self-healing is disabled, or Fabric identifiers are missing | Check `landing_zone_root`, `workspace_id`, `mirrored_database_id`, and `self_healing` |
 
+## 8.12 Backup and restore
+
+Create and restore portable `.fspbackup` archives in the Config Builder **Security** area. The
+archive includes split configuration, local credential-store records, scoped access keys, and
+Open Mirroring state. It does not include source data, generated artifacts or caches, logs,
+environment-only secrets, external TLS files, or remote Key Vault contents.
+
+Before restore, take a destination backup and stop Open Mirroring publishing. Upload the archive,
+enter its password, and review the returned counts. Restore is transactional, but the running
+process does not reload every restored setting. Restart the Manager, then verify sources, table
+mappings, access-key scopes, and mirror status before resuming publishing. The complete procedure
+and API examples are in [BACKUP_RESTORE.md](../BACKUP_RESTORE.md).
+
 Launcher and host issues are covered in
 [LINUX_MANAGER_TROUBLESHOOTING.md](../LINUX_MANAGER_TROUBLESHOOTING.md) and the deployment
 guides. Oracle and Databricks operational specifics are in
 [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](../ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
-## 8.12 Next
+## 8.13 Next
 
 Continue to [Chapter 9: Reference](09-reference.md) for the settings groups, dialect matrix,
 path formats, and launcher flags.

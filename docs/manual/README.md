@@ -1,6 +1,6 @@
 # Fabric Shortcut Proxy — User Manual
 
-Version 2.4.0
+Version 2.6.0
 
 This manual is the end-to-end guide to installing, configuring, and operating the
 Fabric Shortcut Proxy. It is organized into chapters (files) that each cover one
@@ -29,10 +29,10 @@ duplicating it.
 | 2 | [Core concepts](02-concepts.md) | S3 front door, warehouse vs mount, Iceberg/Delta output, Open Mirroring, splits, snapshots, freshness, dialects |
 | 3 | [Architecture](03-architecture.md) | Request lifecycle, Open Mirror publishing path, module map, data plane vs control plane, Manager/Agent |
 | 4 | [Installation](04-installation.md) | Prerequisites, getting the code, virtual environment, drivers, Lite vs cluster |
-| 5 | [Configuration](05-configuration.md) | Settings model, the config files, the table registry, multi-connection sources |
+| 5 | [Configuration](05-configuration.md) | Settings model, split config files, Config Builder, tables, sources, and Open Mirroring |
 | 6 | [Connecting Microsoft Fabric](06-connectivity.md) | Shortcut setup, OPDG and public patterns, storage-proxy mounts |
-| 7 | [Security](07-security.md) | Credentials, SigV4 keys and ACL, credential mediation, Entra ID + Key Vault, TLS, audit, tokenization |
-| 8 | [Operations](08-operations.md) | Running the service, endpoints, monitoring, freshness, scaling, troubleshooting |
+| 7 | [Security](07-security.md) | Credentials, SigV4 keys and ACL, encrypted backup, Key Vault, TLS, audit, tokenization |
+| 8 | [Operations](08-operations.md) | Running, monitoring, background publishing, backup/restore, scaling, troubleshooting |
 | 9 | [Reference](09-reference.md) | Settings groups, dialect matrix, path formats, launcher flags, glossary |
 | 10 | [Tutorials](10-tutorials.md) | End-to-end worked examples: demo, SQL Server shortcut, file-share mount, tokenized column |
 

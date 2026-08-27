@@ -16,7 +16,7 @@ The source database remains the system of record. The proxy is a read-path virtu
 
 Yes. Alongside the database-to-table virtualization, the same S3 endpoint can act as a **secured storage proxy**: a **mounted** bucket streams existing files straight from a storage backend as **read-only byte passthrough**, while every other bucket (including the database warehouse) resolves through the Iceberg/Delta path unchanged.
 
-This is **additive**: a single deployment can expose the relational warehouse *and* file shares/object stores at once, behind one authenticated front door. It is enabled per bucket through a mount table (`config.mounts.json`) or the config-builder **Storage** tab, and is off by default (`ENABLE_STORAGE_PROXY`).
+This is **additive**: a single deployment can expose the relational warehouse *and* file shares/object stores at once, behind one authenticated front door. It is enabled per bucket through a mount table (`config.mounts.json`) or the Config Builder **Sources** area, and is off by default (`ENABLE_STORAGE_PROXY`).
 
 ## Which storage backends can the proxy front?
 
@@ -36,9 +36,9 @@ Yes (issue #16). Give the proxy its own Entra ID identity with `AUTH_MODE` (`def
 
 ## How is access to mounted buckets secured?
 
-The front door verifies AWS SigV4 against **scoped access keys**, not just one static pair. Each key is authorized to specific buckets/prefixes and is read-only. Mounted buckets are authenticated even when global signature enforcement is off (`ENFORCE_MOUNT_AUTH`, default on), so a secured mount is never served anonymously. Keys are managed in the config-builder **Storage → Access keys** panel; the legacy single key remains a wildcard until the first scoped key is created.
+The front door verifies AWS SigV4 against **scoped access keys**, not just one static pair. Each key is authorized to specific buckets/prefixes and is read-only. Mounted buckets are authenticated even when global signature enforcement is off (`ENFORCE_MOUNT_AUTH`, default on), so a secured mount is never served anonymously. Keys are managed in the Config Builder **Security → Access keys** panel; the legacy single key remains a wildcard until the first scoped key is created.
 
-Transport can be secured with TLS at the proxy (`TLS_CERT_FILE` / `TLS_KEY_FILE`) or a fronting load balancer, and every mounted-object access (identity, bucket, key, bytes) is written to an audit log. Details are in [SECURITY.md](SECURITY.md) and [CONFIGURATION.md](CONFIGURATION.md) §14.
+Transport can be secured with TLS at the proxy (`TLS_CERT_FILE` / `TLS_KEY_FILE`) or a fronting load balancer, and every mounted-object access (identity, bucket, key, bytes) is written to an audit log. Manage keys in **Security → Access keys**. Details are in [SECURITY.md](SECURITY.md) and [CONFIGURATION.md](CONFIGURATION.md) §14.
 
 ## How are source-data changes tracked?
 
@@ -64,6 +64,17 @@ Open Mirroring and this proxy solve different problems:
 Use Open Mirroring when a supported, durable replication path and incremental freshness are the priority. The proxy is more relevant when the requirement is to expose an existing relational source through a Fabric shortcut without first building a conventional ingestion or replication pipeline. The two refresh systems are separate: shortcut refresh updates virtualized table artifacts, while Open Mirroring publishes landing-zone files and committed source cursors.
 
 > Since 2.5.1 the proxy also ships an **Open Mirroring publisher** (the `open_mirror` module and the config-builder **Open Mirror** tab), so a single deployment can both virtualize a source through a shortcut *and* push selected tables into a Fabric Open Mirroring landing zone. The publisher reuses the same source connectors and the proxy's Entra identity (for OneLake), supports snapshot-diff or source-watermark incremental change tracking, and can browse Fabric workspaces/mirrored databases so no OneLake URL is pasted by hand.
+
+## What does backup and restore include?
+
+The Config Builder **Security** area creates password-protected `.fspbackup` files containing
+all split configuration files, locally stored connection and mount secrets, scoped access keys,
+and Open Mirroring cursor and recovery state. The archive is portable between hosts because
+restore re-encrypts secrets with the destination credential store.
+
+It does not include source data, generated Parquet or metadata caches, logs, environment-only
+secrets, external TLS files, or remote Key Vault contents. Use a password of at least 12
+characters and restart the Manager after restore. See [BACKUP_RESTORE.md](BACKUP_RESTORE.md).
 
 ## If the proxy uses SQL pushdown, how is it different from a Data Factory connector?
 

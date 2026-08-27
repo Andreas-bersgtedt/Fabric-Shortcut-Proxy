@@ -105,13 +105,17 @@ def cleanup_target(
     *,
     table_name: str | None = None,
     execute: bool = False,
+    now: dt.datetime | None = None,
 ) -> dict:
     backend = open_landing_zone(target.landing_zone_root)
     tables = [
         table for table in target.tables
         if table.enabled and (table_name is None or table.target_table == table_name or table.name == table_name)
     ]
-    candidates = [inspect_cleanup(target, table, backend=backend) for table in tables]
+    candidates = [
+        inspect_cleanup(target, table, backend=backend, now=now)
+        for table in tables
+    ]
     deleted = []
     if execute:
         for candidate in candidates:

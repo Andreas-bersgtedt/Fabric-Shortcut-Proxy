@@ -49,7 +49,7 @@ The repository builds two distributions. Install the one that matches your deplo
 | **Enterprise (cluster)** | `fabric-shortcut-proxy-enterprise` | `python -m enterprise.manager` | `pip install -e . -e ./enterprise` |
 
 The enterprise wheel is pinned to the exact core version it was built against
-(`fabric-shortcut-proxy==2.5.3`). A Lite-only install runs the standalone proxy unchanged;
+(`fabric-shortcut-proxy==2.6.0`). A Lite-only install runs the standalone proxy unchanged;
 the cluster hooks in `main.py` import the enterprise package lazily and print a clear hint
 if it is not installed.
 
@@ -72,8 +72,9 @@ SQLite is bundled for the demo. Install the driver for your real source:
 | Databricks SQL | `databricks-sqlalchemy` | bundled; requires an HTTP path to a SQL warehouse |
 
 Optional dependency extras (declared in `pyproject.toml`): `postgres`, `oracle`, `s3proxy`
-(native S3/MinIO mounts), `azureblob` (Azure Blob/ADLS mounts), `credentials` (encrypted
-store), and `dev` (test dependencies). Combine them, for example
+(native S3/MinIO mounts), `azureblob` (Azure Blob/ADLS mounts), and `dev` (test dependencies).
+The encrypted store and backup/restore dependencies are included in the base installation.
+Combine extras, for example
 `pip install -e ".[postgres,s3proxy]"`.
 
 ```powershell

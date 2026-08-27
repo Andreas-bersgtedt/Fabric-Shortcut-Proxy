@@ -6,8 +6,10 @@ a temp working directory so config.open_mirror.json is written there.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
@@ -110,6 +112,10 @@ def test_index_has_open_mirror_tab():
     assert "Column policies" in html
     assert "deterministic_hash" in html
     assert "omUpdatePolicy" in html
+    assert 'class="omkeys"' in html
+    assert 'class="omwatermark"' in html
+    assert "omKeyOptions" in html
+    assert "omWatermarkOptions" in html
 
 
 async def test_list_and_inspect_tables_for_connection(app, tmp_path, monkeypatch):
@@ -150,9 +156,60 @@ async def test_publish_no_targets_is_ok(app, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # no config.open_mirror.json here => zero targets
     async with _client(app) as c:
         r = await c.post("/_config/api/open-mirror/publish", json={"dry_run": True})
-    assert r.status_code == 200
+        await asyncio.sleep(0)
+        status = await c.get("/_config/api/open-mirror/publish/jobs/latest")
+    assert r.status_code == 202
     d = r.json()
-    assert d["ok"] is True and d["targets"] == []
+    assert d["ok"] is True and d["job"]["targets"] == {}
+    assert status.json()["job"]["status"] == "completed"
+
+
+async def test_publish_job_reports_per_target_progress(app, monkeypatch):
+    import configbuilder.router as router_module
+    import open_mirror.config as mirror_config
+    import open_mirror.scheduler as scheduler
+    from open_mirror.source import PublishResult, TargetResult
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    target = SimpleNamespace(id="fabric-sales")
+
+    async def fake_publish(targets, *, dry_run=False, mode=None):
+        started.set()
+        await release.wait()
+        return [TargetResult("fabric-sales", results=[
+            PublishResult("fabric-sales", "sales", action="incremental", inserts=3)
+        ])]
+
+    monkeypatch.setattr(mirror_config, "load_targets", lambda: [target])
+    monkeypatch.setattr(scheduler, "publish_targets_with_preflight", fake_publish)
+    router_module._OPEN_MIRROR_JOBS.clear()
+    router_module._LATEST_OPEN_MIRROR_JOB_ID = None
+
+    async with _client(app) as client:
+        response = await client.post("/_config/api/open-mirror/publish", json={})
+        assert response.status_code == 202
+        job_id = response.json()["job"]["id"]
+        await started.wait()
+
+        running = await client.get(f"/_config/api/open-mirror/publish/jobs/{job_id}")
+        assert running.json()["job"]["targets"]["fabric-sales"]["status"] == "running"
+        duplicate = await client.post("/_config/api/open-mirror/publish", json={})
+        assert duplicate.status_code == 409
+        assert duplicate.json()["job"]["id"] == job_id
+
+        release.set()
+        for _ in range(10):
+            await asyncio.sleep(0)
+            completed = await client.get(f"/_config/api/open-mirror/publish/jobs/{job_id}")
+            if completed.json()["job"]["status"] == "completed":
+                break
+
+    job = completed.json()["job"]
+    assert job["status"] == "completed"
+    mirror = job["targets"]["fabric-sales"]
+    assert mirror["status"] == "completed"
+    assert mirror["tables"][0]["inserts"] == 3
 
 
 async def test_save_rejects_unknown_tracking_mode(app, tmp_path, monkeypatch):

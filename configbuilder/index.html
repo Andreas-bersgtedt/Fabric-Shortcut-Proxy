@@ -20,22 +20,37 @@
   .navbtn:hover { border-color:var(--accent2); color:#dff4ff; }
   .warn-banner { background:#3b2f14; border:1px solid var(--warn); color:#fcd34d;
                  padding:8px 12px; border-radius:8px; margin:12px 24px; font-size:12px; }
-    .tabs { display:flex; gap:0; border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg);
-      max-width:100%; overflow-x:auto; }
+  .tabs { display:grid; grid-template-columns:repeat(6,auto); justify-content:start; gap:0;
+          border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg); }
   .tab-btn { appearance:none; background:none; border:none; color:var(--muted); padding:14px 16px;
             font:inherit; font-weight:600; cursor:pointer; font-size:12px; letter-spacing:.04em;
             text-transform:uppercase; border-bottom:2px solid transparent; margin-bottom:-1px;
             transition:all 0.2s; }
   .tab-btn:hover { color:var(--fg); }
   .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
-  .tab-content { display:none; padding:24px; }
+  .tab-content { display:none; padding:24px; max-width:1240px; margin:0 auto; }
   .tab-content.active { display:block; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .source-switch { display:inline-flex; gap:2px; padding:3px; margin-bottom:16px;
+                   border:1px solid var(--line); background:#0b1220; border-radius:8px; }
+  .source-switch button { border:0; background:transparent; color:var(--muted); padding:7px 12px;
+                          border-radius:6px; cursor:pointer; font:inherit; font-weight:600; }
+  .source-switch button.active { background:var(--card); color:var(--fg); }
+  .source-kind-view { display:none; }
+  .source-kind-view.active { display:block; }
+  #sourceStorageView { padding:0 24px 24px; }
+  .section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  .section-head h2 { margin:0; }
+  .object-picker { display:grid; grid-template-columns:minmax(220px,320px) 1fr; gap:16px; }
+  .metadata-summary { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; }
   .card h2 { margin:0 0 12px; font-size:14px; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); }
-  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
   input, select { width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
                   background:#0b1220; color:var(--fg); font:inherit; }
   input:focus, select:focus { outline:2px solid var(--accent2); border-color:var(--accent2); }
+  button:focus-visible, a:focus-visible, summary:focus-visible, [tabindex="0"]:focus-visible {
+    outline:3px solid var(--accent); outline-offset:3px;
+  }
   .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .btn { cursor:pointer; border:none; border-radius:8px; padding:9px 14px; font:inherit; font-weight:600; }
   .btn.primary { background:var(--accent); color:#04233a; }
@@ -108,7 +123,16 @@
   pre { background:#0b1220; border:1px solid var(--line); border-radius:8px; padding:12px;
         overflow:auto; max-height:420px; font-size:12px; }
   .actions { display:flex; gap:8px; margin-top:10px; }
-  .hint { color:var(--muted); font-size:11px; margin-top:6px; }
+  .hint { color:var(--muted); font-size:13px; margin-top:6px; }
+  .overview-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+  .overview-step { border:1px solid var(--line); border-radius:8px; padding:16px; background:var(--card); }
+  .overview-step h2 { margin:0 0 6px; color:var(--fg); font-size:15px; text-transform:none; }
+  .overview-step .step-number { color:var(--accent); font-weight:700; margin-right:6px; }
+  .overview-value { font-size:22px; font-weight:700; margin:12px 0 2px; }
+  .overview-state { color:var(--muted); min-height:42px; }
+  .overview-banner { display:flex; justify-content:space-between; gap:16px; align-items:center;
+                     border:1px solid var(--line); padding:14px 16px; margin-bottom:16px; }
+  .security-stack > * + * { margin-top:16px !important; }
   .checkbox { display:flex; align-items:center; gap:8px; margin-top:10px; }
   .checkbox input { width:auto; }
   .setcat { margin:14px 0 4px; color:var(--muted); font-size:11px; text-transform:uppercase;
@@ -124,12 +148,28 @@
   .setrow input, .setrow select { padding:5px 8px; }
   .setrow .sethelp { color:var(--muted); font-size:11px; }
   .tab-settings { max-height:460px; overflow:auto; }
+  .settings-group { border-top:1px solid var(--line); }
+  .settings-group:first-child { border-top:0; }
+  .settings-group > summary { cursor:pointer; padding:12px 4px; color:var(--fg); font-weight:700;
+                              text-transform:uppercase; font-size:12px; }
+  .settings-group-body { padding-bottom:10px; }
   @media (max-width:760px) {
+    header { align-items:flex-start; }
+    .tabs { grid-template-columns:repeat(3,1fr); padding:0 12px; }
+    .tab-btn { padding:12px 6px; font-size:11px; white-space:normal; }
+    .tab-content { padding:16px 12px; }
+    .overview-grid { grid-template-columns:1fr; }
+    .overview-banner { align-items:flex-start; flex-direction:column; }
+    .row { grid-template-columns:1fr; }
+    .actions { flex-wrap:wrap; }
+    .actions .btn { min-height:44px; }
     .cfgrow { grid-template-columns:1fr auto; }
     .cfgrow .src { grid-column:1 / -1; }
     .policy-head { display:none; }
     .policy-row { grid-template-columns:1fr; }
     .policy-detail { grid-column:1; grid-template-columns:1fr; }
+    .object-picker { grid-template-columns:1fr; }
+    .section-head { align-items:flex-start; flex-direction:column; }
   }
 </style>
 </head>
@@ -137,37 +177,77 @@
 <header>
   <div>
     <h1>Config Builder</h1>
-    <p>Connect to SQL sources, pick tables, download <code>config.json</code>.</p>
+    <p>Define sources, configure tables, and manage proxy settings.</p>
   </div>
   <a class="navbtn" href="/_manager">Back to Manager</a>
 </header>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
 
-<div class="tabs">
-  <button class="tab-btn active" data-tab="connection">Connection</button>
-  <button class="tab-btn" data-tab="tables">Tables</button>
-  <button class="tab-btn" data-tab="openmirror">Open Mirror</button>
-  <button class="tab-btn" data-tab="storage">Storage</button>
-  <button class="tab-btn" data-tab="settings">Settings</button>
-  <button class="tab-btn" data-tab="advanced">Advanced</button>
-  <button class="tab-btn" data-tab="operational">Operational</button>
+<div class="tabs" role="tablist" aria-label="Configuration sections">
+  <button class="tab-btn active" id="tab-overview" role="tab" aria-selected="true" aria-controls="overview-tab" tabindex="0" data-tab="overview">Overview</button>
+  <button class="tab-btn" id="tab-sources" role="tab" aria-selected="false" aria-controls="sources-tab" tabindex="-1" data-tab="sources">Sources</button>
+  <button class="tab-btn" id="tab-tables" role="tab" aria-selected="false" aria-controls="tables-tab" tabindex="-1" data-tab="tables">Tables</button>
+  <button class="tab-btn" id="tab-openmirror" role="tab" aria-selected="false" aria-controls="openmirror-tab" tabindex="-1" data-tab="openmirror">Mirroring</button>
+  <button class="tab-btn" id="tab-security" role="tab" aria-selected="false" aria-controls="security-tab" tabindex="-1" data-tab="security">Security</button>
+  <button class="tab-btn" id="tab-operational" role="tab" aria-selected="false" aria-controls="operational-tab" tabindex="-1" data-tab="operational">System</button>
 </div>
 
-<!-- CONNECTION TAB -->
-<div id="connection-tab" class="tab-content active">
+<div id="overview-tab" class="tab-content active" role="tabpanel" aria-labelledby="tab-overview">
+  <div class="overview-banner">
+    <div>
+      <h2 style="margin:0 0 4px;">Configuration readiness</h2>
+      <div class="hint" id="overviewSummary">Checking the running configuration…</div>
+    </div>
+    <button class="btn primary" type="button" data-go-tab="sources">Continue setup</button>
+  </div>
+  <div class="overview-grid">
+    <section class="overview-step">
+      <h2><span class="step-number">1</span>Connect sources</h2>
+      <div class="overview-value" id="overviewSources">0</div>
+      <div class="overview-state" id="overviewSourcesState">No sources configured.</div>
+      <button class="btn ghost" type="button" data-go-tab="sources">Manage sources</button>
+    </section>
+    <section class="overview-step">
+      <h2><span class="step-number">2</span>Select tables</h2>
+      <div class="overview-value" id="overviewTables">0</div>
+      <div class="overview-state" id="overviewTablesState">No tables selected.</div>
+      <button class="btn ghost" type="button" data-go-tab="tables">Manage tables</button>
+    </section>
+    <section class="overview-step">
+      <h2><span class="step-number">3</span>Secure access</h2>
+      <div class="overview-value" id="overviewSecurity">Review</div>
+      <div class="overview-state" id="overviewSecurityState">Check authentication before exposure.</div>
+      <button class="btn ghost" type="button" data-go-tab="security">Review security</button>
+    </section>
+    <section class="overview-step">
+      <h2><span class="step-number">4</span>Apply and verify</h2>
+      <div class="overview-value" id="overviewSystem">Current</div>
+      <div class="overview-state">Review effective values and apply pending changes.</div>
+      <button class="btn ghost" type="button" data-go-tab="operational">Review system</button>
+    </section>
+  </div>
+</div>
+
+<!-- SOURCES TAB -->
+<div id="sources-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-sources" hidden>
+  <div class="source-switch" aria-label="Source type">
+    <button type="button" class="active" data-source-kind="database">Databases</button>
+    <button type="button" data-source-kind="storage">Files &amp; object storage</button>
+  </div>
+  <div id="sourceDatabaseView" class="source-kind-view active">
   <div class="card">
-    <h2>Connections</h2>
-    <div class="hint" style="margin-bottom:12px;">Your <b>default</b> connection is your primary database (saved as <code>db_url</code>) and is <b>always present</b> — configure it with your main source and put your tables on it. Only <b>+ Add connection</b> when you need a <b>second, different</b> database; those extra sources are saved to <code>connections[]</code> and a restart loads them.</div>
+    <h2>Database Sources</h2>
+    <div class="hint" style="margin-bottom:12px;">Primary database is the default source. Add another database source when tables come from a different server or engine.</div>
     <div id="connList" class="connlist"></div>
     <div class="actions" style="margin-top:12px;">
-      <button class="btn ghost" id="btnAddConn">+ Add connection</button>
-      <button class="btn ghost" id="btnSaveConnection">💾 Save all connections to config</button>
+      <button class="btn ghost" id="btnAddConn">+ Add database source</button>
+      <button class="btn ghost" id="btnSaveConnection">Save all database sources</button>
     </div>
   </div>
 
   <div class="card" style="margin-top:16px;">
-    <h2 id="connEditTitle">Edit connection</h2>
-    <div class="hint" style="margin-bottom:14px;">Enter the source details, then <b>Test connection</b> to verify it and list its tables.</div>
+    <h2 id="connEditTitle">Edit database source</h2>
+    <div class="hint" style="margin-bottom:14px;">Enter the source details, then <b>Test connection</b> to verify that it is reachable.</div>
     <label>Connection id</label>
     <input id="connId" value="default" placeholder="default" />
     <div class="hint" id="connIdHint" style="margin:-6px 0 12px;">The <code>default</code> id is the reserved primary source and can't be renamed or deleted. If you only have one database, configure <code>default</code> and skip adding connections. Named sources (e.g. <code>warehouse_pg</code>) are only for additional databases.</div>
@@ -224,42 +304,60 @@
       </div>
     </details>
     <div class="actions">
-      <button class="btn primary" id="btnConnect">Test connection &amp; list tables</button>
-      <button class="btn ghost" id="btnSaveCred" title="Encrypt this connection's password in the Manager credential store so it survives a restart">🔒 Save credentials to Manager</button>
+      <button class="btn ghost" id="btnConnect">Test connection</button>
+      <button class="btn primary" id="btnSaveSource">Save source</button>
+      <button class="btn ghost" id="btnSaveCred" style="display:none;" tabindex="-1">Save credentials to Manager</button>
     </div>
-    <div class="hint" id="credHint" style="margin-top:8px;">Passwords are never written to config files. <b>Save credentials to Manager</b> encrypts the password (Windows DPAPI / Fernet) so the connection survives a restart — no env var needed.</div>
+    <div class="hint" id="credHint" style="margin-top:8px;">Save source stores non-secret properties in configuration and encrypts its password in the Manager credential store when needed.</div>
     <div class="status" id="connStatus"></div>
+  </div>
   </div>
 </div>
 
 <!-- TABLES TAB -->
-<div id="tables-tab" class="tab-content">
-  <div class="card">
-    <h2>Select Tables</h2>
-    <div class="hint" style="margin-bottom:14px;">Choose which tables to include in the configuration. Once selected, key columns will be auto-detected.</div>
-    <div class="tablebar">
-      <input id="tableSearch" placeholder="Filter tables…" />
-      <button class="btn ghost" id="selAll">All</button>
-      <button class="btn ghost" id="selNone">None</button>
+<div id="tables-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-tables" hidden>
+  <div class="card" id="selectedCard">
+    <div class="section-head">
+      <h2>Configured Tables</h2>
+      <button class="btn primary" id="btnAddTable">+ Add table</button>
     </div>
-    <div class="tables" id="tableList"></div>
-  </div>
-
-  <div class="card" id="selectedCard" style="margin-top:16px; display:none;">
-    <h2>Per-Table Configuration</h2>
-    <div class="hint" style="margin-bottom:14px;">Grouped by source connection — click a group to expand it. Set the key column, split <b>strategy</b> (how each split is sliced), <b>splits</b> (count) and <b>target rows</b> (rows per split), or remove a table with ✕. Precedence: when <b>target rows</b> &gt; 0 (global default 100000) the split count is derived from the row count and overrides <b>splits</b> — which then applies only as a fallback; set target rows to 0 to fix the count at <b>splits</b>. <b>Strategy</b> never changes the count. The badge under each table shows the effective split count. <b>Balance</b> (range/date only): <b>span</b> = equal key/time width; <b>count</b> = equal rows per split (NTILE, balances skew, adds a planning scan).</div>
+    <div class="hint" id="emptyTables">No tables configured.</div>
     <div id="selectedList"></div>
     <div class="actions">
-      <button class="btn primary" id="btnApplyTables">⚡ Apply tables</button>
+      <button class="btn primary" id="btnApplyTables">Apply table changes</button>
     </div>
     <div class="status" id="tableStatus"></div>
   </div>
+
+  <div class="card" id="addTableCard" style="margin-top:16px; display:none;">
+    <div class="section-head">
+      <h2>Add Table</h2>
+      <button class="btn ghost" id="btnCancelAddTable">Cancel</button>
+    </div>
+    <label>Source</label>
+    <div class="tablebar">
+      <select id="tableSource"></select>
+      <button class="btn primary" id="btnLoadSourceObjects">Load available tables/views</button>
+    </div>
+    <div class="status" id="sourceObjectsStatus"></div>
+    <div id="objectPicker" class="object-picker" style="display:none;">
+      <div>
+        <div class="tablebar"><input id="tableSearch" placeholder="Filter tables and views" /></div>
+        <div class="tables" id="tableList"></div>
+      </div>
+      <div id="tableMetadata"><div class="hint">Select a table or view to inspect its metadata.</div></div>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="btnSaveAddedTable" disabled>Save table</button>
+    </div>
+    <div class="status" id="addTableStatus"></div>
+  </div>
 </div>
 
-<!-- STORAGE TAB -->
-<div id="storage-tab" class="tab-content">
+<!-- STORAGE SOURCE VIEW -->
+<div id="sourceStorageView" class="source-kind-view">
   <div class="card">
-    <h2>Storage Proxy <span style="font-weight:400;text-transform:none;">(secured file / object passthrough)</span></h2>
+    <h2>File and Object Storage Sources</h2>
     <div class="hint" style="margin-bottom:12px;">Serve <b>existing files</b> from a storage backend through this proxy's S3 endpoint,
       <b>alongside</b> your database tables. Backends: <code>local</code> — a filesystem path (an
       <b>OS-mounted NFS or SMB share</b>, e.g. <code>\\server\share</code> or <code>/mnt/share</code>);
@@ -274,15 +372,15 @@
 
     <div id="mountList" class="connlist"></div>
     <div class="actions" style="margin-top:12px;">
-      <button class="btn ghost" id="btnAddMount">+ Add mount</button>
-      <button class="btn primary" id="btnSaveMounts">💾 Save mounts to config</button>
+      <button class="btn ghost" id="btnAddMount">+ Add storage source</button>
+      <button class="btn ghost" id="btnSaveMounts">Save all storage sources</button>
     </div>
     <div class="status" id="mountStatus"></div>
   </div>
 
   <div class="card" style="margin-top:16px;">
-    <h2 id="mountEditTitle">Edit mount</h2>
-    <div class="hint" style="margin-bottom:12px;">Fill in the details, <b>Test</b> to verify the backend is reachable, then <b>Add / update</b>.</div>
+    <h2 id="mountEditTitle">Edit storage source</h2>
+    <div class="hint" style="margin-bottom:12px;">Enter the source details. Save source verifies reachability, stores new credentials when needed, and persists the source.</div>
     <label>Bucket <span class="hint">(the S3 bucket name Fabric/clients will use)</span></label>
     <input id="mountBucket" placeholder="secure-nfs" />
     <label>Backend</label>
@@ -326,7 +424,7 @@
       <div id="s3CredBox">
         <label>Credential id <span class="hint">(names the encrypted secret this mount uses)</span></label>
         <input id="mountCredential" placeholder="s3vault" />
-        <div class="hint" style="margin:4px 0 10px;">Enter the upstream secret below and <b>Save S3 credential</b> to store it encrypted in the Manager. The secret is never written to <code>config.mounts.json</code>.</div>
+        <div class="hint" style="margin:4px 0 10px;">Enter a new upstream secret below. Save source stores it encrypted in the Manager; the secret is never written to <code>config.mounts.json</code>.</div>
         <label>Auth type</label>
         <select id="s3AuthMode">
           <option value="static">static — access key + secret</option>
@@ -346,7 +444,7 @@
         <div class="s3f" data-modes="web_identity"><label>Web identity token file</label><input id="s3TokenFile" placeholder="/var/run/secrets/eks.amazonaws.com/serviceaccount/token" /></div>
         <div class="s3f" data-modes="profile sso"><label>Profile</label><input id="s3Profile" placeholder="default" /></div>
         <div class="s3f" data-modes="process"><label>credential_process command</label><input id="s3Process" placeholder="/usr/local/bin/cred-helper --json" /></div>
-        <div class="actions"><button class="btn ghost" id="btnSaveS3Cred">🔒 Save S3 credential</button></div>
+        <div class="actions" style="display:none;"><button class="btn ghost" id="btnSaveS3Cred">Save S3 credential</button></div>
         <div class="status" id="s3CredStatus"></div>
       </div>
     </div>
@@ -372,7 +470,7 @@
       <div id="azCredBox">
         <label>Credential id <span class="hint">(names the encrypted secret this mount uses)</span></label>
         <input id="mountAzCredential" placeholder="blobvault" />
-        <div class="hint" style="margin:4px 0 10px;">Enter the upstream secret below and <b>Save Azure credential</b> to store it encrypted in the Manager. The secret is never written to <code>config.mounts.json</code>.</div>
+        <div class="hint" style="margin:4px 0 10px;">Enter a new upstream secret below. Save source stores it encrypted in the Manager; the secret is never written to <code>config.mounts.json</code>.</div>
         <label>Auth type</label>
         <select id="azAuthMode">
           <option value="account_key">account_key — storage account shared key</option>
@@ -388,7 +486,7 @@
         <div class="azf" data-modes="aad_client_secret"><label>Client id</label><input id="azClientId" placeholder="app (client) id" /></div>
         <div class="azf" data-modes="aad_client_secret"><label>Client secret</label><input id="azClientSecret" type="password" placeholder="client secret value" /></div>
         <div class="azf" data-modes="managed_identity"><label>Client id <span class="hint">(optional — user-assigned MI)</span></label><input id="azMiClientId" placeholder="leave blank for system-assigned" /></div>
-        <div class="actions"><button class="btn ghost" id="btnSaveAzCred">🔒 Save Azure credential</button></div>
+        <div class="actions" style="display:none;"><button class="btn ghost" id="btnSaveAzCred">Save Azure credential</button></div>
         <div class="status" id="azCredStatus"></div>
       </div>
     </div>
@@ -425,12 +523,12 @@
       <span>Read-only</span></div>
     <div class="actions">
       <button class="btn ghost" id="btnTestMount">Test</button>
-      <button class="btn primary" id="btnApplyMount">Add / update mount</button>
+      <button class="btn primary" id="btnApplyMount">Save source</button>
     </div>
     <div class="status" id="mountEditStatus"></div>
   </div>
 
-  <div class="card" style="margin-top:16px;">
+  <div class="card" id="securityAccessKeys" style="margin-top:16px;">
     <h2>Access keys <span style="font-weight:400;text-transform:none;">(per-key authorization)</span></h2>
     <div class="hint" style="margin-bottom:12px;">Issue scoped S3 access keys so each client/tenant can reach only the buckets it's allowed.
       Keys are stored <b>encrypted</b> in the Manager; the secret is shown <b>once</b> at creation. When any key exists it governs SigV4 auth
@@ -461,17 +559,52 @@
     </div>
   </div>
 </div>
+<div id="security-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-security" hidden>
+  <div class="section-head">
+    <div>
+      <h2 style="margin:0;">Security and access</h2>
+      <div class="hint">Manage client credentials and verify the authentication currently protecting this endpoint.</div>
+    </div>
+  </div>
+  <div id="securityContent" class="security-stack">
+    <div class="card" id="backupRestorePanel">
+      <h2>Backup and restore</h2>
+      <div class="hint">Create a portable encrypted backup of all configuration, database credentials, storage secrets, access keys and ACLs, and Open Mirroring state (including any pending recovery payload). Source datasets, generated caches, logs, environment-only secrets, external TLS files, and remote Key Vault contents are not copied.</div>
+      <div class="row">
+        <section>
+          <h3>Download backup</h3>
+          <label for="backupPassword">Backup password</label>
+          <input id="backupPassword" type="password" minlength="12" autocomplete="new-password" placeholder="At least 12 characters" />
+          <label for="backupPasswordConfirm">Confirm password</label>
+          <input id="backupPasswordConfirm" type="password" minlength="12" autocomplete="new-password" placeholder="Repeat password" />
+          <div class="actions"><button class="btn primary" id="btnCreateBackup">Download encrypted backup</button></div>
+          <div class="status" id="backupStatus"></div>
+        </section>
+        <section>
+          <h3>Restore backup</h3>
+          <label for="restoreFile">Backup file</label>
+          <input id="restoreFile" type="file" accept=".fspbackup,application/vnd.fsp.backup" />
+          <label for="restorePassword">Backup password</label>
+          <input id="restorePassword" type="password" minlength="12" autocomplete="off" placeholder="Password used to create the backup" />
+          <label class="checkbox"><input type="checkbox" id="restoreConfirm" /><span>Replace current configuration, credentials, keys, and mirror state</span></label>
+          <div class="actions"><button class="btn primary" id="btnRestoreBackup">Restore backup</button></div>
+          <div class="status" id="restoreStatus"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- OPEN MIRROR TAB -->
-<div id="openmirror-tab" class="tab-content">
+<div id="openmirror-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-openmirror" hidden>
   <div class="card">
     <h2>Open Mirroring Targets</h2>
-    <div class="hint" style="margin-bottom:12px;">Push source tables into a Microsoft Fabric <b>Open Mirroring</b> landing zone. Each target reuses an existing <b>source connection</b> (configured on the <b>Connection</b> tab) and writes Parquet data files plus <code>_metadata.json</code> to the mirrored database's landing zone. Saved to <code>config.open_mirror.json</code>; applies on the next restart. See the <a href="https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format" target="_blank" rel="noopener">landing-zone format</a>.</div>
+    <div class="hint" style="margin-bottom:12px;">Push source tables into a Microsoft Fabric <b>Open Mirroring</b> landing zone. Each target reuses a database configured under <b>Sources</b> and writes Parquet data files plus <code>_metadata.json</code> to the mirrored database's landing zone. Saved targets apply after restart. See the <a href="https://learn.microsoft.com/fabric/mirroring/open-mirroring-landing-zone-format" target="_blank" rel="noopener">landing-zone format</a>.</div>
     <div id="omList" class="connlist"></div>
     <div class="actions" style="margin-top:12px;">
       <button class="btn ghost" id="btnAddOmTarget">+ Add target</button>
-      <button class="btn primary" id="btnSaveOm">💾 Save targets to config</button>
+      <button class="btn primary" id="btnSaveOm">Save targets</button>
       <button class="btn ghost" id="btnDryRunOm" title="Read the source and report the change set without writing">Dry run</button>
-      <button class="btn ghost" id="btnPublishOm" title="Publish saved targets into the landing zone now">▶ Publish now</button>
+      <button class="btn ghost" id="btnPublishOm" title="Publish saved targets into the landing zone now">Publish saved targets</button>
     </div>
     <div class="hint" style="margin-top:6px;">Publish reads the <b>saved</b> targets (save first). OneLake targets need the <code>onelake</code> extra installed and the proxy's Entra identity configured.</div>
     <div class="status" id="omStatus"></div>
@@ -482,14 +615,14 @@
     <h2 id="omEditTitle">Edit target</h2>
     <label>Target id</label>
     <input id="omId" placeholder="fabric-sales" />
-    <label>Source connection <span class="hint">(the source database engine — from the Connection tab)</span></label>
+    <label>Source connection <span class="hint">(the source database engine configured under Sources)</span></label>
     <select id="omConnection"></select>
     <label>Fabric workspace <span class="hint">(browse via the proxy's Entra identity — no URL pasting)</span></label>
     <div class="row">
       <div><input id="omWsFilter" placeholder="Filter workspaces…" /></div>
       <div style="display:flex;gap:6px;">
         <select id="omWorkspace" style="flex:1;"><option value="">— Load workspaces —</option></select>
-        <button class="btn ghost" id="btnLoadWorkspaces" type="button" title="List Fabric workspaces">🔄</button>
+        <button class="btn ghost" id="btnLoadWorkspaces" type="button" title="Reload Fabric workspaces" aria-label="Reload Fabric workspaces">Reload</button>
       </div>
     </div>
     <label>Mirrored database</label>
@@ -521,7 +654,7 @@
     <h2 style="margin-top:8px;">Tables</h2>
     <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. <b>Watermark</b> tracking reads only rows after the committed composite cursor (upsert-only; no deletes). <b>Snapshot</b> tracking performs a full-source scan every cycle to detect inserts, updates, and deletes. A table retention value overrides the target value.</div>
     <div class="actions" style="margin-bottom:8px;">
-      <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">🔄 Load tables from source</button>
+      <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">Load tables from source</button>
       <span class="status" id="omTablesStatus" style="margin:0 0 0 4px;display:inline-block;"></span>
     </div>
     <div id="omTableRows"></div>
@@ -535,10 +668,10 @@
     <pre id="omPreview" style="display:none;"></pre>
   </div>
 </div>
-<div id="settings-tab" class="tab-content">
+<div id="settings-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-settings" hidden>
   <div class="card">
     <h2>Global Settings</h2>
-    <div class="hint" style="margin-bottom:14px;">Refresh settings apply instantly via <b>Apply now</b>. Bucket, table format, and auth settings require <b>Download + restart</b> to take effect.</div>
+    <div class="hint" style="margin-bottom:14px;">Refresh settings apply instantly via <b>Apply now</b>. Bucket, table format, and auth settings require <b>Save to config.json + restart</b> to take effect.</div>
     <div class="row">
       <div><label>Bucket</label><input id="bucket" value="fabric-iceberg-poc" /></div>
       <div><label>Default splits</label><input id="numSplits" value="8" /></div>
@@ -568,13 +701,8 @@
       so unread tables cost nothing. <b>lazy</b> pins the bytes (works with iceberg and delta;
       multi-agent needs a shared artifact store). <b>virtual</b> keeps zero bytes at rest and
       regenerates each split deterministically per request — for snapshot-isolated / immutable
-      sources only. Neither is for auto-refresh. Requires <b>Download + restart</b>.</div>
+      sources only. Neither is for auto-refresh. Requires <b>Save to config.json + restart</b>.</div>
     <div class="checkbox"><input type="checkbox" id="requireSigv4" /><span>require_sigv4</span></div>
-    <div class="checkbox"><input type="checkbox" id="includePassword" checked />
-      <span>Include password in db_url</span></div>
-    <div class="hint" id="pwHint" style="display:none;">
-      Password omitted — set <code>DB_URL</code> as an environment variable at runtime.</div>
-
     <div class="checkbox" style="margin-top:6px;"><input type="checkbox" id="autoRefresh" />
       <span>auto_refresh — re-read source &amp; publish new snapshots on change</span></div>
     <div id="refreshOpts" style="display:none;">
@@ -597,20 +725,16 @@
         <span>refresh_allow_full_pull (auto: full read when probe unavailable)</span></div>
     </div>
 
-    <label style="margin-top:14px;">config.json preview</label>
-    <pre id="preview">{}</pre>
     <div class="actions">
       <button class="btn primary" id="btnApplySettings">⚡ Apply now</button>
       <button class="btn ghost" id="btnSaveSettings">Save to config.json</button>
-      <button class="btn ghost" id="btnDownload">Download config.json</button>
-      <button class="btn ghost" id="btnCopy">Copy</button>
     </div>
     <div class="status" id="buildStatus"></div>
   </div>
 </div>
 
 <!-- ADVANCED TAB -->
-<div id="advanced-tab" class="tab-content">
+<div id="advanced-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-advanced" hidden>
   <div class="card">
     <h2>All Settings</h2>
     <div class="hint" style="margin-bottom:14px;">Every global configuration setting with its built-in default. Leave a field blank to keep the default; only changed values are written to <code>config.json</code>.</div>
@@ -625,14 +749,12 @@
 </div>
 
 <!-- OPERATIONAL TAB -->
-<div id="operational-tab" class="tab-content">
+<div id="operational-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-operational" hidden>
   <div class="card">
-    <h2>Operational Configuration <span style="font-weight:400;text-transform:none;">(read current · push changes · scale the fleet)</span></h2>
-    <div class="hint">Shows what this server is <b>actually running</b> (env / config.json / default). Change a value and
-      <b>Save</b> it to <code>config.json</code> — most settings apply on the next restart. When opened on the
-      <b>Manager</b>, you can also scale the number of Agents <b>live</b>.</div>
+    <h2>System configuration</h2>
+    <div class="hint">Review the effective value and source for every setting. Changed values are highlighted before you apply them; each setting identifies whether it applies immediately or after restart.</div>
 
-    <div style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <div id="legacySecretPanel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>S3 secret key</b> <span id="s3SecretState" class="hint" style="margin-left:6px;">(checking...)</span>
       <div class="hint">Write-only field. Value is never shown back; status only.</div>
       <div class="tablebar" style="margin-top:8px;">
@@ -643,7 +765,7 @@
       <div class="status" id="s3SecretStatus"></div>
     </div>
 
-    <div style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <div id="sigv4Panel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>SigV4 diagnostics</b>
       <div class="hint">Effective authentication values used by this running process.</div>
       <div style="margin-top:8px; display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; align-items:center;">
@@ -670,29 +792,131 @@
       <input id="liveSearch" placeholder="Filter settings…" />
       <button class="btn ghost" id="btnReloadLive">Reload</button>
       <button class="btn ghost" id="btnSaveLive">Save to config.json</button>
-      <button class="btn primary" id="btnApplyLive">⚡ Apply now</button>
+      <button class="btn primary" id="btnApplyLive">Review and apply</button>
     </div>
     <div class="hint" style="margin-top:6px;">
-      <span style="color:#4ade80;">⚡ live</span> settings apply immediately.
-      <span style="color:#fb923c;">↺ restart</span> settings are saved to <code>config.json</code> and apply on next restart.
+      <span style="color:#4ade80;">Live</span> settings apply immediately.
+      <span style="color:#fb923c;">Restart</span> settings are saved and apply on next restart.
     </div>
     <div class="status" id="liveStatus"></div>
-    <div id="liveSettings" style="max-height:420px; overflow:auto; margin-top:8px;"><div class="hint">Loading…</div></div>
+    <div id="liveSettings" style="margin-top:8px;"><div class="hint">Loading…</div></div>
   </div>
 </div>
 
 <script>
 // ---- Tab switching ----
 function initTabs(){
-  document.querySelectorAll('.tab-btn').forEach(btn => {
+  const tabs = [...document.querySelectorAll('.tab-btn')];
+  tabs.forEach((btn, index) => {
     btn.addEventListener('click', () => {
       const tabName = btn.dataset.tab;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(tabName + '-tab').classList.add('active');
+      tabs.forEach(b => {
+        const selected = b === btn;
+        b.classList.toggle('active', selected);
+        b.setAttribute('aria-selected', String(selected));
+        b.tabIndex = selected ? 0 : -1;
+      });
+      document.querySelectorAll('.tab-content').forEach(c => {
+        c.classList.remove('active');
+        c.hidden = true;
+      });
+      $("sourceStorageView").classList.remove("active");
+      const panel = document.getElementById(tabName + '-tab');
+      panel.classList.add('active');
+      panel.hidden = false;
+      if(tabName === "sources") setSourceKind(activeSourceKind);
+    });
+    btn.addEventListener('keydown', event => {
+      if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      let next = index;
+      if(event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      if(event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+      if(event.key === 'Home') next = 0;
+      if(event.key === 'End') next = tabs.length - 1;
+      tabs[next].focus();
+      tabs[next].click();
     });
   });
+}
+
+let generatedControlId = 0;
+function wireAccessibility(root=document){
+  root.querySelectorAll('label:not([for])').forEach(label => {
+    let control = label.querySelector('input,select,textarea');
+    if(!control && label.nextElementSibling?.matches('input,select,textarea')) control = label.nextElementSibling;
+    if(!control) control = label.parentElement?.querySelector(':scope > input, :scope > select, :scope > textarea');
+    if(!control) return;
+    if(!control.id) control.id = `control-${++generatedControlId}`;
+    label.htmlFor = control.id;
+  });
+  root.querySelectorAll('input,select,textarea').forEach(control => {
+    if(control.labels?.length || control.hasAttribute('aria-label') || control.hasAttribute('aria-labelledby')) return;
+    const fallback = control.placeholder || control.id.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^control-\d+$/, 'Value');
+    control.setAttribute('aria-label', fallback || 'Value');
+  });
+  root.querySelectorAll('.status').forEach(status => {
+    status.setAttribute('role', status.classList.contains('err') ? 'alert' : 'status');
+    status.setAttribute('aria-live', status.classList.contains('err') ? 'assertive' : 'polite');
+  });
+  root.querySelectorAll('.connrow,.tghead').forEach(row => {
+    if(row.dataset.keyboardWired) return;
+    row.dataset.keyboardWired = 'true';
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.addEventListener('keydown', event => {
+      if(event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      row.click();
+    });
+  });
+}
+
+function arrangeGoalPanels(){
+  const security = $("securityContent");
+  [$("securityAccessKeys"), $("legacySecretPanel"), $("sigv4Panel")].forEach(panel => {
+    if(panel) security.appendChild(panel);
+  });
+  document.querySelectorAll('[data-go-tab]').forEach(button => {
+    button.onclick = () => document.querySelector(`.tab-btn[data-tab="${button.dataset.goTab}"]`)?.click();
+  });
+}
+
+function renderOverview(){
+  const databaseSources = [...state.connections.values()].filter(source =>
+    source.tested || source.db_url || source.db_url_masked || source.host
+  ).length;
+  const storageSources = (typeof mountState !== 'undefined' && mountState.mounts) ? mountState.mounts.length : 0;
+  const sourceCount = databaseSources + storageSources;
+  const tableCount = state.selected.size;
+  $("overviewSources").textContent = String(sourceCount);
+  $("overviewSourcesState").textContent = sourceCount
+    ? `${databaseSources} database and ${storageSources} storage source${storageSources === 1 ? '' : 's'}.`
+    : "No sources configured.";
+  $("overviewTables").textContent = String(tableCount);
+  $("overviewTablesState").textContent = tableCount
+    ? `${tableCount} table${tableCount === 1 ? '' : 's'} selected for serving.`
+    : "No tables selected.";
+  const sigv4 = typeof settingByKey === 'function' ? settingByKey("require_sigv4") : null;
+  const protectedEndpoint = sigv4 && (sigv4.value === true || String(sigv4.value).toLowerCase() === 'true');
+  $("overviewSecurity").textContent = protectedEndpoint ? "Protected" : "Review";
+  $("overviewSecurityState").textContent = protectedEndpoint
+    ? "SigV4 authentication is enabled."
+    : "SigV4 is off; keep this endpoint local until access is configured.";
+  $("overviewSummary").textContent = sourceCount && tableCount
+    ? "Sources and tables are configured. Review security and pending system changes before restart."
+    : "Complete the numbered steps to prepare this proxy for use.";
+}
+
+let activeSourceKind = "database";
+function setSourceKind(kind){
+  activeSourceKind = kind === "storage" ? "storage" : "database";
+  document.querySelectorAll("[data-source-kind]").forEach(button=>{
+    button.classList.toggle("active", button.dataset.sourceKind === activeSourceKind);
+  });
+  $("sourceDatabaseView").classList.toggle("active", activeSourceKind === "database");
+  const sourcesActive = $("sources-tab").classList.contains("active");
+  $("sourceStorageView").classList.toggle("active", sourcesActive && activeSourceKind === "storage");
 }
 
 const $ = (id) => document.getElementById(id);
@@ -714,7 +938,10 @@ const state = {
   storedCreds: new Set(),    // connection ids with an encrypted credential in the Manager store
   credBackend: "",           // encryption backend the Manager store is using
   credAvailable: false,      // whether the Manager can encrypt/persist credentials
+  tokenizationKeyRefs: [],   // configured FSP_TOKENIZATION_KEY_* references (values are never returned)
   showHiddenPrimary: false,  // reveal the empty default card even when auto-hidden
+  sourceCatalog: [],
+  addTable: { sourceId:"", objects:[], metadata:null, draft:null },
   globals: { num_splits: 8, split_target_rows: 100000, split_count_min: 1, split_count_max: 256, split_strategy: "modulo" }
 };
 
@@ -737,7 +964,7 @@ function newConn(id){
   return { id, dialect:"postgresql", host:"", port:"", database:"", username:"", password:"",
     driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"",
     auth_method:"sql", client_id:"", client_secret:"",
-    db_url:"", db_url_masked:"", flavor:"", tested:false };
+    db_url:"", db_url_masked:"", flavor:"", tested:false, connection:null, discovered:null };
 }
 
 // ---- persistence (never the password) ----
@@ -770,7 +997,7 @@ function writeFormFromConn(c){
   $("connId").value = c.id;
   $("connId").disabled = (c.id === "default");
   $("port").placeholder = "(default "+DEFAULT_PORTS[c.dialect||"postgresql"]+")";
-  $("connEditTitle").textContent = "Edit connection — " + c.id;
+  $("connEditTitle").textContent = "Edit database source — " + c.id;
   updateAuthUI();
 }
 
@@ -830,19 +1057,39 @@ function addConn(){
   writeFormFromConn(state.connections.get(id));
   renderConnList(); persistConns();
   $("connId").focus(); $("connId").select();
-  const s=$("connStatus"); s.className="status"; s.textContent="New connection — set an id + details, then Test connection.";
+  const s=$("connStatus"); s.className="status"; s.textContent="New database source. Set an id and source details, then save it.";
 }
 function clearConnTables(id){
   const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
   if(!n){ const s=$("connStatus"); s.className="status"; s.textContent="No tables are assigned to '"+id+"'."; return; }
   if(!confirm(`Remove all ${n} table(s) from '${id}'?`)) return;
   for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
-  renderConnList(); renderSelected(); updatePreview();
+  renderConnList(); renderSelected();
 }
-function removeConn(id){
+async function removeConn(id){
   const n = [...state.selected.values()].filter(s=>(s.connection||"default")===id).length;
   const label = id === "default" ? "the default connection" : `connection '${id}'`;
   if(!confirm(`Remove ${label}`+(n?` and its ${n} selected table(s)`:"")+"?")) return;
+  const status=$("connStatus");
+  status.className="status"; status.textContent=`Removing connection '${id}'…`;
+  const connections=[...state.connections.values()]
+    .filter(connection=>connection.id!=="default"&&connection.id!==id&&(connection.db_url||connection.db_url_masked))
+    .map(connection=>({id:connection.id,db_url:stripPw(connection.db_url||connection.db_url_masked)}));
+  const tables=[...state.selected.values()]
+    .filter(table=>(table.connection||"default")!==id)
+    .map(tableConfig);
+  let result;
+  try{
+    const response=await fetch("/_config/api/connections/"+encodeURIComponent(id),{
+      method:"DELETE",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({connections,tables})
+    });
+    result=await response.json();
+    if(!response.ok||!result.ok) throw new Error((result.errors&&result.errors.join("; "))||result.error||String(response.status));
+  }catch(error){
+    status.className="status err"; status.textContent="Connection was not removed: "+error.message;
+    return;
+  }
   for(const k of [...state.selected.keys()]){ if(k.startsWith(id+"::")) state.selected.delete(k); }
   state.connections.delete(id);
   // Never leave the manager empty — a default slot must always exist.
@@ -851,7 +1098,12 @@ function removeConn(id){
   const c = state.connections.get(state.activeConnId);
   state.db_url = c.db_url; state.db_url_masked = c.db_url_masked;
   writeFormFromConn(c);
-  renderConnList(); renderSelected(); updatePreview(); persistConns();
+  state.storedCreds.delete(id);
+  renderConnList(); renderSelected(); persistConns(); refreshSourceCatalog(); renderOverview();
+  status.className=result.environment_override?"status err":"status ok";
+  status.textContent=result.environment_override
+    ? `Connection '${id}' was removed from config, but ${envVarFor(id)} still overrides it. Remove that environment variable before restart.`
+    : `Connection '${id}' and its stored credential were removed. Restart to apply the runtime change.`;
 }
 function renameActive(newId){
   newId = (newId||"").trim();
@@ -872,7 +1124,7 @@ function renameActive(newId){
   }
   state.activeConnId = newId;
   writeFormFromConn(c);
-  renderConnList(); renderSelected(); updatePreview(); persistConns();
+  renderConnList(); renderSelected(); persistConns();
 }
 function renderConnList(){
   const wrap = $("connList"); wrap.innerHTML = "";
@@ -996,16 +1248,13 @@ function applyBootstrap(builder){
 
   const active = state.connections.get(state.activeConnId);
   state.db_url = active.db_url || ""; state.db_url_masked = active.db_url_masked || "";
-  if(builder.has_db_url){
-    $("includePassword").checked = false;
-    $("pwHint").style.display = "block";
-  }
   $("refreshOpts").style.display = $("autoRefresh").checked ? "block" : "none";
   $("fmtHint").style.display = $("tableFormat").value === "delta" ? "block" : "none";
   $("matHint").style.display = $("materializeMode").value !== "eager" ? "block" : "none";
   writeFormFromConn(active);
   renderConnList();
   renderSelected();
+  refreshSourceCatalog();
   if(typeof omOnBootstrap === "function") omOnBootstrap(builder);
   saveForm();
   persistConns();
@@ -1029,15 +1278,25 @@ async function api(path, body){
   return data;
 }
 
+async function loadTokenizationKeyReferences(){
+  try{
+    const response=await fetch("/_config/api/tokenization-key-references",{cache:"no-store"}).then(result=>result.json());
+    state.tokenizationKeyRefs=response.ok?(response.references||[]):[];
+  }catch(error){ state.tokenizationKeyRefs=[]; }
+  renderSelected();
+  if(state.addTable.draft) renderAddTableMetadata();
+  if(state.om.editing) omRenderTableRows();
+}
+
 // ---- connect / test ----
-$("btnConnect").onclick = async () => {
+async function testActiveConnection(){
   commitActive();
   const s = $("connStatus"); s.className="status"; s.textContent="Connecting…";
   $("btnConnect").disabled = true;
   const conn = connFields();
   const data = await api("/_config/api/connect", conn);
   $("btnConnect").disabled = false;
-  if(!data.ok){ s.className="status err"; s.textContent="✗ " + (data.error||"connection failed"); return; }
+  if(!data.ok){ s.className="status err"; s.textContent="Connection failed: " + (data.error||"unknown error"); return null; }
   const connId = conn.id || "default";
   state.activeConnId = connId;
   const c = state.connections.get(connId) || newConn(connId);
@@ -1045,18 +1304,53 @@ $("btnConnect").onclick = async () => {
   c.db_url = data.db_url; c.db_url_masked = data.db_url_masked;
   c.flavor = (data.capabilities && data.capabilities.flavor) || conn.dialect; c.tested = true;
   c.capabilities = data.capabilities || null;
+  c.connection = conn;
+  c.discovered = data.tables || [];
   state.connections.set(connId, c);
   state.connection = conn; state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
-  state.tables = data.tables || [];
-  // Re-listing this source: drop only ITS prior selections.
-  for(const k of [...state.selected.keys()]){
-    if(k.startsWith(connId + "::")) state.selected.delete(k);
-  }
   s.className="status ok";
-  s.textContent = `✓ Connected as '${connId}'${data.server_version?(" (v"+data.server_version+")"):""} — ${state.tables.length} tables`;
-  renderConnList(); renderTables(); persistConns();
-  document.querySelector('[data-tab="tables"]').click(); renderSelected();
-};
+  s.textContent = `Connected as '${connId}'${data.server_version?(" (v"+data.server_version+")"):""}.`;
+  renderConnList(); persistConns(); refreshSourceCatalog();
+  return c;
+}
+$("btnConnect").onclick = testActiveConnection;
+
+async function saveActiveSource(){
+  const status=$("connStatus");
+  $("btnSaveSource").disabled=true;
+  const connection=await testActiveConnection();
+  if(!connection){ $("btnSaveSource").disabled=false; return; }
+  if(hasPw(connection.db_url)){
+    if(!state.credAvailable){
+      status.className="status err";
+      status.textContent="This source needs a password, but the Manager credential store is unavailable.";
+      $("btnSaveSource").disabled=false; return;
+    }
+    const credential=await api("/_config/api/credentials",{connection_id:connection.id,db_url:connection.db_url,apply:true});
+    if(!credential.ok){
+      status.className="status err"; status.textContent="Credential save failed: "+(credential.error||"unknown error");
+      $("btnSaveSource").disabled=false; return;
+    }
+  }
+  const settings={};
+  if(connection.id==="default") settings.db_url=stripPw(connection.db_url);
+  else {
+    settings.connections=[...state.connections.values()]
+      .filter(item=>item.id!=="default"&&(item.db_url||item.db_url_masked))
+      .map(item=>({id:item.id,db_url:stripPw(item.db_url||item.db_url_masked)}));
+  }
+  try{
+    const response=await fetch("/_config/api/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings})});
+    const result=await response.json();
+    if(!response.ok){ throw new Error((result.errors&&result.errors.join("; "))||result.error||String(response.status)); }
+    await refreshCredStatus();
+    renderConnList(); refreshSourceCatalog();
+    status.className="status ok";
+    status.textContent="Source saved. Table selection is available from the Tables tab.";
+  }catch(error){ status.className="status err"; status.textContent="Source save failed: "+error.message; }
+  $("btnSaveSource").disabled=false;
+}
+$("btnSaveSource").onclick=saveActiveSource;
 
 // ---- credential store (persist DB passwords in the Manager, encrypted) ----
 async function refreshCredStatus(){
@@ -1069,8 +1363,8 @@ async function refreshCredStatus(){
   const h = $("credHint");
   if(h){
     if(state.credAvailable){
-      h.innerHTML = `Passwords are never written to config files. <b>Save credentials to Manager</b> encrypts the password `
-        + `(<code>${state.credBackend}</code>) so the connection survives a restart — no env var needed.`;
+      h.innerHTML = `Passwords are never written to config files. <b>Save source</b> encrypts the password `
+        + `with <code>${state.credBackend}</code> so the source survives a restart.`;
     } else {
       h.innerHTML = `⚠ The Manager can't encrypt credentials on this host (no backend). Install <code>cryptography</code> `
         + `or set <code>FSP_CRED_KEY</code>, or supply the password via the <code>DB_URL</code> env var.`;
@@ -1162,45 +1456,226 @@ $("btnSaveConnection").onclick = async () => {
   }
 };
 
-// ---- table list ----
-function renderTables(){
-  const q = $("tableSearch").value.toLowerCase();
-  const list = $("tableList"); list.innerHTML="";
-  const groups = {};
-  for(const t of state.tables){
-    const label = (t.schema? t.schema+"." : "") + t.name;
-    if(q && !label.toLowerCase().includes(q)) continue;
-    (groups[t.schema||""] ||= []).push(t);
-  }
-  Object.keys(groups).sort().forEach(schema => {
-    const hdr = document.createElement("div"); hdr.className="schema-hdr";
-    hdr.textContent = schema || "(default)"; list.appendChild(hdr);
-    for(const t of groups[schema]){
-      const key = (t.schema? t.schema+"." : "") + t.name;
-      const row = document.createElement("div"); row.className="trow";
-      const cb = document.createElement("input"); cb.type="checkbox";
-      cb.checked = state.selected.has(selKey(state.activeConnId, key));
-      cb.onchange = () => toggleTable(t, cb.checked);
-      const name = document.createElement("div"); name.className="name"; name.textContent = key;
-      const kind = document.createElement("span"); kind.className="kind"; kind.textContent = t.kind;
-      row.append(cb, name, kind); list.appendChild(row);
+// ---- source-driven table editor ----
+async function refreshSourceCatalog(){
+  let sources = [];
+  try{
+    const response = await fetch("/_config/api/sources", {cache:"no-store"}).then(result=>result.json());
+    if(response.ok) sources = response.sources || [];
+  }catch(e){ /* local tested sources are still usable */ }
+  for(const connection of state.connections.values()){
+    const id = "database:" + connection.id;
+    if(!sources.some(source=>source.id===id)){
+      sources.push({id, runtime_id:connection.id, label:connection.id==="default"?"Primary database":connection.id,
+        kind:"database", type:connection.flavor||connection.dialect});
     }
+  }
+  for(const mount of mountState.mounts){
+    const id = "storage:" + mount.bucket;
+    if(!sources.some(source=>source.id===id)){
+      sources.push({id, runtime_id:mount.bucket, label:mount.bucket, kind:"storage",
+        type:mount.backend, format:mount.format||null});
+    }
+  }
+  state.sourceCatalog = sources;
+  renderTableSourceOptions();
+}
+
+function renderTableSourceOptions(){
+  const select = $("tableSource");
+  if(!select) return;
+  const current = state.addTable.sourceId || select.value;
+  select.innerHTML = "";
+  for(const source of state.sourceCatalog){
+    const option = document.createElement("option");
+    option.value = source.id;
+    option.textContent = `${source.label} · ${source.type}${source.format?(" · "+source.format):""}`;
+    select.appendChild(option);
+  }
+  if(current && state.sourceCatalog.some(source=>source.id===current)) select.value=current;
+  state.addTable.sourceId = select.value || "";
+  $("btnLoadSourceObjects").disabled = !select.value;
+}
+
+function resetAddTableEditor(){
+  state.addTable.objects=[]; state.addTable.metadata=null; state.addTable.draft=null;
+  state.tables=[];
+  $("tableSearch").value="";
+  $("tableList").innerHTML="";
+  $("tableMetadata").innerHTML='<div class="hint">Select a table or view to inspect its metadata.</div>';
+  $("objectPicker").style.display="none";
+  $("btnSaveAddedTable").disabled=true;
+  $("sourceObjectsStatus").textContent="";
+  $("addTableStatus").textContent="";
+}
+
+function openAddTable(){
+  resetAddTableEditor();
+  refreshSourceCatalog();
+  $("addTableCard").style.display="block";
+  $("tableSource").focus();
+}
+
+async function loadSourceObjects(){
+  const sourceId=$("tableSource").value;
+  const source=state.sourceCatalog.find(item=>item.id===sourceId);
+  const status=$("sourceObjectsStatus");
+  state.addTable.sourceId=sourceId;
+  state.addTable.metadata=null; state.addTable.draft=null;
+  status.className="status"; status.textContent="Loading available tables and views…";
+  $("btnLoadSourceObjects").disabled=true;
+  let objects=null;
+  if(source?.kind==="database"){
+    const connection=state.connections.get(source.runtime_id);
+    if(connection?.discovered) objects=connection.discovered;
+  }
+  if(objects===null){
+    const result=await api("/_config/api/sources/"+encodeURIComponent(sourceId)+"/discover", {});
+    if(!result.ok){
+      status.className="status err"; status.textContent="Could not load objects: "+(result.error||"source unavailable");
+      $("btnLoadSourceObjects").disabled=false; return;
+    }
+    objects=result.objects||[];
+  }
+  state.addTable.objects=objects;
+  state.tables=objects;
+  status.className=objects.length?"status ok":"status";
+  status.textContent=objects.length?`Found ${objects.length} table(s) and view(s).`:"No supported tables or views found on this source.";
+  $("objectPicker").style.display=objects.length?"grid":"none";
+  $("btnLoadSourceObjects").disabled=false;
+  renderTables();
+}
+
+function renderTables(){
+  const query=$("tableSearch").value.toLowerCase();
+  const list=$("tableList"); list.innerHTML="";
+  const groups={};
+  for(const object of state.addTable.objects){
+    const label=(object.schema?object.schema+".":"")+object.name;
+    if(query && !label.toLowerCase().includes(query)) continue;
+    (groups[object.schema||""] ||= []).push(object);
+  }
+  for(const schema of Object.keys(groups).sort()){
+    const header=document.createElement("div"); header.className="schema-hdr";
+    header.textContent=schema||"(default)"; list.appendChild(header);
+    for(const object of groups[schema]){
+      const row=document.createElement("button"); row.type="button"; row.className="trow";
+      row.style.cssText="width:100%;background:transparent;color:inherit;border-left:0;border-right:0;border-bottom:0;cursor:pointer;text-align:left;";
+      const name=document.createElement("span"); name.className="name";
+      name.textContent=(object.schema?object.schema+".":"")+object.name;
+      const kind=document.createElement("span"); kind.className="kind"; kind.textContent=object.kind||"table";
+      row.append(name,kind); row.onclick=()=>inspectSourceObject(object); list.appendChild(row);
+    }
+  }
+}
+$("tableSearch").oninput=renderTables;
+
+async function inspectSourceObject(object){
+  const sourceId=state.addTable.sourceId;
+  const source=state.sourceCatalog.find(item=>item.id===sourceId);
+  const status=$("addTableStatus");
+  status.className="status"; status.textContent="Loading metadata…";
+  let metadata=null;
+  if(source?.kind==="database"){
+    const connection=state.connections.get(source.runtime_id);
+    if(connection?.connection){
+      const result=await api("/_config/api/inspect", {connection:connection.connection,
+        tables:[{schema:object.schema||null,name:object.name}]});
+      if(result.ok) metadata=(result.tables||[])[0]||null;
+      else { status.className="status err"; status.textContent=result.error||"Metadata inspection failed."; return; }
+    }
+  }
+  if(metadata===null){
+    const result=await api("/_config/api/sources/"+encodeURIComponent(sourceId)+"/inspect",
+      {schema:object.schema||null,name:object.name});
+    if(!result.ok){ status.className="status err"; status.textContent=result.error||"Metadata inspection failed."; return; }
+    metadata=result.object;
+  }
+  const runtimeId=source.runtime_id;
+  const sourceTable=metadata.source_table||((object.schema?object.schema+".":"")+object.name);
+  state.addTable.metadata=metadata;
+  state.addTable.draft={
+    name:object.name, schema:object.schema||null, source_table:sourceTable,
+    connection:runtimeId, source_kind:source.kind, source_type:source.type,
+    key_column:metadata.detected_key||null, integer_keys:metadata.integer_keys||[],
+    columns:reflectedPolicyColumns(metadata.columns||[]), approx_rows:metadata.approx_rows,
+    num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
+    invalid:!metadata.detected_key, pending:false, policies_open:true, enabled:true,
+  };
+  status.textContent=""; status.className="status";
+  renderAddTableMetadata();
+}
+
+function renderAddTableMetadata(){
+  const draft=state.addTable.draft;
+  const metadata=state.addTable.metadata;
+  if(!draft || !metadata) return;
+  const wrap=$("tableMetadata"); wrap.innerHTML="";
+  const title=document.createElement("h3"); title.style.margin="0 0 4px"; title.textContent=draft.source_table;
+  const summary=document.createElement("div"); summary.className="metadata-summary";
+  for(const text of [draft.source_kind, metadata.format||draft.source_type,
+    metadata.approx_rows!=null?Intl.NumberFormat().format(metadata.approx_rows)+" estimated rows":null,
+    draft.columns.length+" columns"].filter(Boolean)){
+    const badge=document.createElement("span"); badge.className="badge"; badge.textContent=text; summary.appendChild(badge);
+  }
+  const nameLabel=document.createElement("label"); nameLabel.textContent="Exposed table name";
+  const nameInput=document.createElement("input"); nameInput.value=draft.name;
+  nameInput.oninput=()=>{ draft.name=nameInput.value.trim(); $("btnSaveAddedTable").disabled=!draft.name||!draft.key_column; };
+  const keyLabel=document.createElement("label"); keyLabel.textContent="Key / split column";
+  const keySelect=document.createElement("select");
+  const candidates=keyCandidates(draft);
+  if(!draft.key_column){ const option=document.createElement("option"); option.value=""; option.textContent="Choose a key column"; keySelect.appendChild(option); }
+  for(const candidate of candidates){
+    const option=document.createElement("option"); option.value=candidate; option.textContent=candidate;
+    option.selected=candidate===draft.key_column; keySelect.appendChild(option);
+  }
+  keySelect.onchange=()=>{ draft.key_column=keySelect.value||null; draft.invalid=!draft.key_column; renderAddTableMetadata(); };
+  const policyTitle=document.createElement("h3"); policyTitle.textContent="Columns and transforms"; policyTitle.style.margin="16px 0 8px";
+  wrap.append(title,summary,nameLabel,nameInput,keyLabel,keySelect,policyTitle,
+    renderPolicyEditor(draft,{tokenCapable:draft.source_kind==="storage"||connectionSupportsTokens(draft),
+      onEdit:()=>{},rerender:renderAddTableMetadata}));
+  const errors=policyErrors(draft);
+  if(errors.length){ const error=document.createElement("div"); error.className="policy-error"; error.textContent=errors.join(" "); wrap.appendChild(error); }
+  $("btnSaveAddedTable").disabled=!draft.name||!draft.key_column||errors.length>0;
+}
+
+function storagePolicyColumns(draft){
+  return draft.columns.filter(column=>column.policy!=="remove").map(column=>{
+    const transformed=column.policy==="deterministic_hash"||column.policy==="random_token";
+    const item={field_id:column.field_id,name:column.name.trim(),type:transformed?"string":column.type,nullable:column.nullable};
+    if(column.name!==column.source||transformed) item.source=column.source;
+    if(column.policy==="deterministic_hash") item.transform={kind:"deterministic_hash",key_ref:column.key_ref.trim(),domain:column.domain,normalization:column.normalization};
+    else if(column.policy==="random_token") item.transform={kind:"random_token"};
+    return item;
   });
 }
-$("tableSearch").oninput = renderTables;
-$("selAll").onclick = () => bulk(true);
-$("selNone").onclick = () => bulk(false);
-function bulk(on){
-  const q = $("tableSearch").value.toLowerCase();
-  for(const t of state.tables){
-    const label = (t.schema? t.schema+"." : "") + t.name;
-    if(q && !label.toLowerCase().includes(q)) continue;
-    const key = selKey(state.activeConnId, label);
-    if(on && !state.selected.has(key)) state.selected.set(key, stub(t));
-    if(!on) state.selected.delete(key);
+
+async function saveAddedTable(){
+  const draft=state.addTable.draft;
+  const status=$("addTableStatus");
+  if(!draft||!draft.name||!draft.key_column) return;
+  const duplicate=[...state.selected.values()].find(table=>table.name===draft.name && selKey(table.connection,table.source_table)!==selKey(draft.connection,draft.source_table));
+  if(duplicate){ status.className="status err"; status.textContent="A configured table already uses the exposed name '"+draft.name+"'."; return; }
+  $("btnSaveAddedTable").disabled=true;
+  if(draft.source_kind==="storage"){
+    const mount=mountState.mounts.find(item=>item.bucket===draft.connection);
+    if(!mount){ status.className="status err"; status.textContent="The selected storage source is no longer available."; return; }
+    mount.key_column=draft.key_column; mount.columns=storagePolicyColumns(draft);
+    const result=await api("/_config/api/mounts",{mounts:mountState.mounts,enabled:$("storageEnabled").checked});
+    if(!result.ok){ status.className="status err"; status.textContent=(result.errors||[result.error||"Save failed"]).join("; "); $("btnSaveAddedTable").disabled=false; return; }
+    renderMounts();
+  }else{
+    state.selected.set(selKey(draft.connection,draft.source_table),draft);
+    state.expandedGroups.add(draft.connection);
+    renderSelected();
+    await applyTables();
+    if(!$("tableStatus").classList.contains("ok")){ $("btnSaveAddedTable").disabled=false; return; }
   }
-  renderTables(); scheduleInspect(); renderSelected();
+  status.className="status ok"; status.textContent="Table saved.";
+  $("addTableCard").style.display="none";
+  resetAddTableEditor();
 }
+
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
   key_column:null, num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
@@ -1274,7 +1749,8 @@ function policyErrors(entry){
   const errors = [];
   const kept = entry.columns.filter(column=>column.policy!=="remove");
   const names = kept.map(column=>column.name.trim());
-  if(!kept.some(column=>column.source===entry.key_column)) errors.push("The split key must be kept.");
+  const splitKey = entry.columns.find(column=>column.source===entry.key_column);
+  if(splitKey && splitKey.policy!=="keep") errors.push("The split key must be kept.");
   if(names.some(name=>!name)) errors.push("Every kept column needs an output name.");
   if(new Set(names).size!==names.length) errors.push("Output names must be unique.");
   for(const column of kept){
@@ -1289,9 +1765,43 @@ function policyErrors(entry){
   return errors;
 }
 
+function tokenizationKeySelect(currentReference, onChange){
+  const select=document.createElement("select");
+  select.title="Available references come from configured FSP_TOKENIZATION_KEY_* environment variables; values are never returned";
+  const references=[...state.tokenizationKeyRefs];
+  if(currentReference && !references.includes(currentReference)){
+    const unavailable=document.createElement("option"); unavailable.value=currentReference;
+    unavailable.textContent=currentReference+" (unavailable)"; select.appendChild(unavailable);
+  }
+  const placeholder=document.createElement("option"); placeholder.value="";
+  placeholder.textContent=references.length?"Select key reference":"No configured key references";
+  placeholder.disabled=true; select.appendChild(placeholder);
+  for(const reference of references){
+    const option=document.createElement("option"); option.value=reference; option.textContent=reference;
+    select.appendChild(option);
+  }
+  select.value=currentReference||"";
+  select.disabled=!references.length&&!currentReference;
+  select.onchange=()=>onChange(select.value);
+  return select;
+}
+
+function tokenizationKeyOptionHtml(currentReference){
+  const references=[...state.tokenizationKeyRefs];
+  const options=[];
+  if(currentReference && !references.includes(currentReference)){
+    options.push(`<option value="${omEsc(currentReference)}">${omEsc(currentReference)} (unavailable)</option>`);
+  }
+  options.push(`<option value="" disabled${currentReference?"":" selected"}>${references.length?"Select key reference":"No configured key references"}</option>`);
+  for(const reference of references){
+    options.push(`<option value="${omEsc(reference)}"${reference===currentReference?" selected":""}>${omEsc(reference)}</option>`);
+  }
+  return options.join("");
+}
+
 function renderPolicyEditor(entry, opts){
   opts = opts || {};
-  const onEdit = opts.onEdit || updatePreview;
+  const onEdit = opts.onEdit || (()=>{});
   const rerender = opts.rerender || renderSelected;
   const editor = document.createElement("div"); editor.className="policy-editor";
   const head = document.createElement("div"); head.className="policy-head";
@@ -1324,9 +1834,9 @@ function renderPolicyEditor(entry, opts){
     row.append(source, output, policy, type);
     if(column.policy==="deterministic_hash"){
       const detail=document.createElement("div"); detail.className="policy-detail";
-      const keyRef=document.createElement("input"); keyRef.placeholder="Key reference"; keyRef.value=column.key_ref;
-      keyRef.title="Resolves from FSP_TOKENIZATION_KEY_<KEY_REF>; the secret is never stored here";
-      keyRef.oninput=()=>{ column.key_ref=keyRef.value; onEdit(); };
+      const keyRef=tokenizationKeySelect(column.key_ref, value=>{
+        column.key_ref=value; onEdit(); rerender();
+      });
       const domain=document.createElement("input"); domain.placeholder="Domain"; domain.value=column.domain;
       domain.oninput=()=>{ column.domain=domain.value; onEdit(); };
       const normalization=document.createElement("select");
@@ -1389,7 +1899,8 @@ function keyCandidates(s){
 function renderSelected(){
   const wrap = $("selectedList"); const card = $("selectedCard");
   const items = [...state.selected.values()];
-  card.style.display = items.length? "block":"none";
+  card.style.display = "block";
+  $("emptyTables").style.display = items.length ? "none" : "block";
   wrap.innerHTML="";
 
   // Group the selected tables by their source connection.
@@ -1417,7 +1928,7 @@ function renderSelected(){
     const dscb = document.createElement("input"); dscb.type="checkbox";
     dscb.checked = _allOn; dscb.indeterminate = _anyOn && !_allOn;
     dscb.onclick = (e)=> e.stopPropagation();
-    dscb.onchange = ()=>{ for(const s of list) s.enabled = dscb.checked; renderSelected(); updatePreview(); persistConns(); };
+    dscb.onchange = ()=>{ for(const s of list) s.enabled = dscb.checked; renderSelected(); persistConns(); };
     dsEnable.append(dscb, document.createTextNode("enabled"));
     head.appendChild(dsEnable);
     head.onclick = ()=>{
@@ -1469,7 +1980,7 @@ function renderSelected(){
         const o=document.createElement("option"); o.value=val; o.textContent=label;
         if(val===(s.split_balance||"")) o.selected=true; bal.appendChild(o);
       }
-      bal.onchange = ()=>{ s.split_balance = bal.value||null; updatePreview(); };
+      bal.onchange = ()=>{ s.split_balance = bal.value||null; };
 
       const splits = document.createElement("input"); splits.className="mini"; splits.placeholder="splits";
       splits.title="Requested split count. Used only as a FALLBACK when 'target rows' > 0 (the row-target planner then derives the count and this value applies only if the row estimate is unavailable). Authoritative when 'target rows' = 0. Blank = global default.";
@@ -1486,21 +1997,26 @@ function renderSelected(){
         splitInfo.title = info.title;
       };
       strat.onchange = ()=>{ s.split_strategy = strat.value||null; renderSelected(); persistConns(); };
-      splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; refreshBadge(); updatePreview(); };
-      target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; refreshBadge(); updatePreview(); };
+      splits.oninput = ()=>{ s.num_splits = splits.value.trim()? parseInt(splits.value):null; refreshBadge(); };
+      target.oninput = ()=>{ s.split_target_rows = target.value.trim()? parseInt(target.value):null; refreshBadge(); };
       refreshBadge();
       src.appendChild(document.createElement("br")); src.appendChild(splitInfo);
 
       const enable = document.createElement("label"); enable.className="enrow";
       enable.title="Serve this table. Unchecked = disabled (enabled:false): the agent skips it and won't fail if its source is unreachable.";
       const encb = document.createElement("input"); encb.type="checkbox"; encb.checked = s.enabled !== false;
-      encb.onchange = ()=>{ s.enabled = encb.checked; renderSelected(); updatePreview(); persistConns(); };
+      encb.onchange = ()=>{ s.enabled = encb.checked; renderSelected(); persistConns(); };
       enable.append(encb, document.createTextNode("on"));
 
       const rm = document.createElement("button"); rm.className="iconbtn"; rm.textContent="✕"; rm.title="Remove this table";
-      rm.onclick = ()=>{
+      rm.onclick = async ()=>{
+        const removed=state.selected.get(key);
         state.selected.delete(key);
-        renderSelected(); renderConnList(); renderTables(); updatePreview(); persistConns();
+        renderSelected(); renderConnList(); renderTables(); persistConns();
+        if(await applyTables({removing:true})) return;
+        state.selected.set(key,removed);
+        state.expandedGroups.add(removed.connection||"default");
+        renderSelected(); renderConnList(); renderTables(); persistConns();
       };
 
       row.append(src, keysel, strat, bal, splits, target, enable, rm); table.appendChild(row);
@@ -1518,10 +2034,9 @@ function renderSelected(){
 
     grp.append(head, body); wrap.appendChild(grp);
   }
-  updatePreview();
 }
 
-// ---- config assembly + preview ----
+// ---- table config assembly ----
 function tableConfig(entry){
   const table = {name:entry.name, source_table:entry.source_table, key_column:entry.key_column};
   if(entry.num_splits) table.num_splits=parseInt(entry.num_splits);
@@ -1549,79 +2064,12 @@ function tableConfig(entry){
   return table;
 }
 
-function buildConfig(){
-  const cfg = {};
-  const withPw = $("includePassword").checked;
-  // Never emit the "user:***@host" masked form (it also trips the security gate);
-  // when a password is excluded OR the url is masked, strip it to a credential-free URL.
-  const urlOf = (c) => {
-    const full = c.db_url || c.db_url_masked || "";
-    if(looksMasked(full)) return stripPw(full);   // masked = no real password to include
-    return withPw ? full : stripPw(full);
-  };
-  const dflt = state.connections.get("default");
-  cfg.db_url = dflt ? urlOf(dflt) : (withPw ? state.db_url : stripPw(state.db_url || state.db_url_masked));
-  // Named sources -> connections[] (the reserved 'default' stays as db_url).
-  const named = [...state.connections.values()].filter(c=>c.id!=="default");
-  if(named.length) cfg.connections = named.map(c=>({ id:c.id, db_url: urlOf(c) }));
-  const ns = parseInt($("numSplits").value)||8; cfg.num_splits = ns;
-  const bucket = $("bucket").value.trim();
-  if(bucket && bucket!=="fabric-iceberg-poc") cfg.bucket = bucket;
-  const fmt = $("tableFormat").value;
-  if(fmt && fmt!=="iceberg") cfg.table_format = fmt;
-  const mm = $("materializeMode").value;
-  if(mm && mm!=="eager") cfg.materialize_mode = mm;
-  if($("requireSigv4").checked) cfg.require_sigv4 = true;
-  if($("autoRefresh").checked){
-    cfg.auto_refresh = true;
-    const poll = parseInt($("refreshPoll").value);
-    if(poll && poll!==600) cfg.refresh_poll_seconds = poll;
-    const strat = $("refreshStrategy").value;
-    if(strat && strat!=="auto") cfg.refresh_strategy = strat;
-    if($("refreshFullPull").checked) cfg.refresh_allow_full_pull = true;
-    const ttl = parseInt($("refreshTtl").value);
-    if(ttl && ttl!==1200) cfg.refresh_ttl_seconds = ttl;
-  }
-  cfg.tables = [...state.selected.values()].filter(s=>!s.invalid && s.key_column).map(tableConfig);
-  // Advanced overrides (section 4). Only emit values changed from their default.
-  document.querySelectorAll('#allSettings [data-key]').forEach(inp=>{
-    const raw = (inp.value||"").trim();
-    if(raw==="") return;                       // blank => keep default
-    const key = inp.dataset.key, type = inp.dataset.type, def = inp.dataset.default;
-    let val;
-    if(type==="bool") val = (raw==="true");
-    else if(type==="int"){ val = parseInt(raw); if(isNaN(val)) return; }
-    else if(type==="float"){ val = parseFloat(raw); if(isNaN(val)) return; }
-    else val = raw;
-    if(String(val) === String(def)) return;    // equals default => don't write
-    cfg[key] = val;
-  });
-  return cfg;
-}
-function updatePreview(){
-  if(!state.db_url){ $("preview").textContent = "{}"; return; }
-  $("preview").textContent = JSON.stringify(buildConfig(), null, 2);
-}
-["bucket","numSplits","tableFormat","materializeMode","requireSigv4","includePassword","autoRefresh","refreshPoll","refreshStrategy","refreshTtl","refreshFullPull"].forEach(id=>{
-  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; updatePreview(); });
-  $(id).addEventListener("change", ()=>{ if(id==="includePassword") $("pwHint").style.display = $(id).checked?"none":"block"; if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; updatePreview(); });
+["bucket","numSplits","tableFormat","materializeMode","requireSigv4","autoRefresh","refreshPoll","refreshStrategy","refreshTtl","refreshFullPull"].forEach(id=>{
+  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; });
+  $(id).addEventListener("change", ()=>{ if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; });
 });
 
-// ---- download / copy ----
 $("btnApplyTables").onclick = applyTables;
-$("btnDownload").onclick = () => {
-  if(!state.db_url){ flash("Connect first."); return; }
-  const cfg = buildConfig();
-  if(!cfg.tables.length){ flash("Select at least one table with a valid integer key."); return; }
-  const blob = new Blob([JSON.stringify(cfg, null, 2)], {type:"application/json"});
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-  a.download = "config.json"; a.click(); URL.revokeObjectURL(a.href);
-  flash("✓ Downloaded config.json", true);
-};
-$("btnCopy").onclick = async () => {
-  try{ await navigator.clipboard.writeText($("preview").textContent); flash("✓ Copied", true); }
-  catch(e){ flash("Copy failed"); }
-};
 function flash(msg, ok){ const s=$("buildStatus"); s.className="status "+(ok?"ok":"err"); s.textContent=msg;
   setTimeout(()=>{ s.textContent=""; s.className="status"; }, 4000); }
 
@@ -1660,11 +2108,11 @@ async function saveSettings(){
   // Save all settings from form to config.json (including non-live like bucket, require_sigv4)
   const settings = {};
   const bucket = $("bucket").value.trim();
-  if(bucket && bucket !== "fabric-iceberg-poc") settings.bucket = bucket;
+  if(bucket) settings.bucket = bucket;
   const ns = parseInt($("numSplits").value); if(ns) settings.num_splits = ns;
-  const fmt = $("tableFormat").value; if(fmt && fmt !== "iceberg") settings.table_format = fmt;
-  const mm = $("materializeMode").value; if(mm && mm !== "eager") settings.materialize_mode = mm;
-  if($("requireSigv4").checked) settings.require_sigv4 = true;
+  const fmt = $("tableFormat").value; if(fmt) settings.table_format = fmt;
+  const mm = $("materializeMode").value; if(mm) settings.materialize_mode = mm;
+  settings.require_sigv4 = $("requireSigv4").checked;
   settings.auto_refresh = $("autoRefresh").checked;
   if($("autoRefresh").checked){
     const poll = parseInt($("refreshPoll").value); if(poll) settings.refresh_poll_seconds = poll;
@@ -1690,21 +2138,16 @@ async function saveSettings(){
   }catch(e){ flash("Save error: "+e); }
 }
 
-async function applyTables(){
+async function applyTables(options={}){
   const status = $("tableStatus");
   const valid = [...state.selected.values()].filter(s=>!s.invalid && s.key_column);
   const policyProblems = valid.flatMap(s=>policyErrors(s).map(error=>`${s.name}: ${error}`));
   if(policyProblems.length){
     status.className="status err";
     status.textContent=policyProblems.join(" ");
-    return;
+    return false;
   }
   const tables = valid.map(tableConfig);
-  if(!tables.length){
-    status.className="status err";
-    status.textContent="Select at least one table with a valid key column to apply.";
-    return;
-  }
   // Table names are the virtual Iceberg table id and must be unique across ALL
   // sources — the same table selected under two connections would collide.
   const names = tables.map(t=>t.name);
@@ -1713,7 +2156,7 @@ async function applyTables(){
     status.className="status err";
     status.textContent="Duplicate table name(s): "+dups.join(", ")
       +". Names must be unique across every source — remove the copies (e.g. the same table added under two connections).";
-    return;
+    return false;
   }
   // Every referenced named source must be applyable: tested this session, or its
   // password is already saved in the Manager store (config gets a password-stripped
@@ -1724,8 +2167,8 @@ async function applyTables(){
   if(notReady.length){
     status.className="status err";
     status.textContent="These sources aren't ready yet: "+notReady.join(", ")
-      +". Open the Connection tab and either Test each one or Save credentials to the Manager, then apply again.";
-    return;
+      +". Open Sources and either test each one or save its credentials, then apply again.";
+    return false;
   }
   // Persist the referenced named sources alongside the tables (passwords stripped)
   // so config.tables.json never references an undefined connection.
@@ -1736,7 +2179,7 @@ async function applyTables(){
   if(connections.length) settings.connections = connections;
 
   status.className="status";
-  status.textContent="Applying "+tables.length+" table(s)…";
+  status.textContent=tables.length ? "Applying "+tables.length+" table(s)…" : "Removing all configured tables…";
   try{
     const r = await fetch("/_config/api/apply", {
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -1746,19 +2189,21 @@ async function applyTables(){
     if(!r.ok){
       status.className="status err";
       status.textContent="Apply failed: "+((d.errors&&d.errors.join("; "))||d.error||r.status);
-      return;
+      return false;
     }
     status.className="status ok";
-    let msg = "✓ Applied "+tables.length+" table(s)";
+    let msg = tables.length ? "✓ Applied "+tables.length+" table(s)" : "✓ Removed all configured tables";
     if(connections.length) msg += " + "+connections.length+" named source"+(connections.length>1?"s":"");
     msg += " to config (restart to apply).";
     const envHints = refIds.map(cid=>{ const c=state.connections.get(cid); return hasPw(c.db_url)?envVarFor(cid):null; }).filter(Boolean);
     if(envHints.length) msg += " Set "+[...new Set(envHints)].join(", ")+" for the password(s).";
     status.textContent = msg;
     setTimeout(()=>{ status.textContent=""; status.className="status"; }, 6000);
+    return true;
   }catch(e){
     status.className="status err";
     status.textContent="Apply error: "+e;
+    return false;
   }
 }
 
@@ -1853,7 +2298,6 @@ function renderSettings(){
       if(s.type==="bool") inp.value = (eff.value===true || String(eff.value)==="true") ? "true" : "false";
       else inp.value = String(eff.value);
     }
-    inp.addEventListener("input", updatePreview); inp.addEventListener("change", updatePreview);
     const help=document.createElement("div"); help.className="sethelp"; help.textContent=s.help||"";
     row.append(lab, inp, help); wrap.appendChild(row);
   }
@@ -1934,6 +2378,7 @@ async function loadMounts(){
   }catch(e){ /* keep empty on failure */ }
   populateBackendOptions();
   renderMounts();
+  refreshSourceCatalog();
 }
 
 function populateBackendOptions(){
@@ -2244,11 +2689,11 @@ $("btnAddMount").onclick = () => {
   $("mountTokOn").checked = false; $("tokBody").style.display = "none";
   tokState.columns = []; $("mountTokPolicy").innerHTML = ""; $("mountTokStatus").textContent = "";
   $("mountTokFormat").value = ""; $("mountTokOutput").value = ""; updateTokFormatHint(); $("tokKeyBox").style.display = "none";
-  $("mountEditTitle").textContent = "Add mount";
+  $("mountEditTitle").textContent = "Add storage source";
   $("mountEditStatus").textContent = ""; $("mountBucket").focus();
 };
 
-$("btnApplyMount").onclick = () => {
+$("btnApplyMount").onclick = async () => {
   const m = readMountForm();
   const s = $("mountEditStatus"); s.className = "status";
   if(!m.bucket){ s.className = "status err"; s.textContent = "Bucket is required."; return; }
@@ -2263,7 +2708,7 @@ $("btnApplyMount").onclick = () => {
     if(!m.credential && !m.auth){
       s.className = "status err"; s.textContent = "Choose an authentication source (stored credential, anonymous, or instance)."; return; }
     if(m.credential === "" && $("mountAuthSource").value === "credential"){
-      s.className = "status err"; s.textContent = "Enter a credential id (and Save S3 credential) or pick anonymous/instance."; return; }
+      s.className = "status err"; s.textContent = "Enter a credential id and secret, or pick anonymous/instance."; return; }
   }
   if(m.backend === "azure"){
     if(!m.root){ s.className = "status err"; s.textContent = "Container is required for the azure backend."; return; }
@@ -2273,12 +2718,32 @@ $("btnApplyMount").onclick = () => {
     if(!m.credential && !m.auth){
       s.className = "status err"; s.textContent = "Choose an authentication source (stored credential, default, managed identity, or anonymous)."; return; }
     if(m.credential === "" && $("mountAzAuthSource").value === "credential"){
-      s.className = "status err"; s.textContent = "Enter a credential id (and Save Azure credential) or pick default/managed_identity/anonymous."; return; }
+      s.className = "status err"; s.textContent = "Enter a credential id and secret, or pick default/managed_identity/anonymous."; return; }
   }
+  $("btnApplyMount").disabled=true;
+  const s3CredentialEntered=m.backend==="s3" && ["s3AccessKey","s3SecretKey","s3SessionToken","s3RoleArn","s3ExternalId","s3TokenFile","s3Profile","s3Process"]
+    .some(id=>($(id).value||"").trim());
+  const azureCredentialEntered=m.backend==="azure" && ["azAccountKey","azSasToken","azConnString","azTenantId","azClientId","azClientSecret","azMiClientId"]
+    .some(id=>($(id).value||"").trim());
+  if(s3CredentialEntered){
+    const credential=await api("/_config/api/s3-credentials",{credential_id:m.credential,auth:readS3AuthForm()});
+    if(!credential.ok){ s.className="status err"; s.textContent=(credential.errors||[credential.error||"Credential save failed"]).join("; "); $("btnApplyMount").disabled=false; return; }
+  }
+  if(azureCredentialEntered){
+    const credential=await api("/_config/api/azure-credentials",{credential_id:m.credential,auth:readAzAuthForm()});
+    if(!credential.ok){ s.className="status err"; s.textContent=(credential.errors||[credential.error||"Credential save failed"]).join("; "); $("btnApplyMount").disabled=false; return; }
+  }
+  s.textContent="Testing source…";
+  const test=await api("/_config/api/mounts/test",m);
+  if(!test.ok){ s.className="status err"; s.textContent="Source test failed: "+(test.error||"backend not reachable"); $("btnApplyMount").disabled=false; return; }
   const idx = mountState.mounts.findIndex(x => x.bucket === m.bucket);
   if(idx >= 0) mountState.mounts[idx] = m; else mountState.mounts.push(m);
+  const saved=await api("/_config/api/mounts",{mounts:mountState.mounts,enabled:$("storageEnabled").checked});
+  if(!saved.ok){ s.className="status err"; s.textContent=(saved.errors||[saved.error||"Source save failed"]).join("; "); $("btnApplyMount").disabled=false; return; }
   renderMounts();
-  s.className = "status ok"; s.textContent = `Mount '${m.bucket}' ${idx >= 0 ? "updated" : "added"}. Remember to Save mounts to config.`;
+  refreshSourceCatalog();
+  s.className = "status ok"; s.textContent = `Source '${m.bucket}' ${idx >= 0 ? "updated" : "added"}. Restart to apply.`;
+  $("btnApplyMount").disabled=false;
 };
 
 $("btnSaveS3Cred").onclick = async () => {
@@ -2437,7 +2902,7 @@ async function removeAccessKey(id){
 }
 
 // ---- Open Mirroring targets (config.open_mirror.json) ----
-if(!state.om) state.om = { targets: [], editing: null };
+if(!state.om) state.om = { targets: [], editing: null, publishJob: null, publishPoll: null };
 function omEsc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"", cleanup_retention_days:null, columns:null, _sourceColumns:[] }; }
 function omNewTarget(){ return { id:"", connection:"default", landing_zone_root:"", workspace_id:"",
@@ -2459,10 +2924,18 @@ function omRenderList(){
   ts.forEach((t,i)=>{
     const row = document.createElement("div"); row.className="connrow";
     const tables = (t.tables||[]).map(x=>x.name||x.target_table||x.source_table).filter(Boolean).join(", ");
+    const publish = state.om.publishJob && state.om.publishJob.targets
+      ? state.om.publishJob.targets[t.id] : null;
+    const publishLabel = publish ? ({queued:"queued",running:"publishing",completed:"complete",
+      completed_with_errors:"errors",skipped:"skipped",error:"failed",cancelled:"cancelled"}[publish.status]||publish.status) : "";
+    const publishClass = publish && publish.status==="completed" ? "ok"
+      : (publish && ["error","completed_with_errors","cancelled"].includes(publish.status) ? "err" : "");
     row.innerHTML = `<div><div class="cid">${omEsc(t.id||"(unnamed)")} `
-      + `<span class="badge ${t.enabled!==false?"ok":""}">${t.enabled!==false?"enabled":"disabled"}</span></div>`
+      + `<span class="badge ${t.enabled!==false?"ok":""}">${t.enabled!==false?"enabled":"disabled"}</span>`
+      + (publish ? ` <span class="badge ${publishClass}">${omEsc(publishLabel)}</span>` : "") + `</div>`
       + `<div class="meta">→ ${omEsc(t.connection||"default")} · ${omEsc(t.landing_zone_root||"")}`
-      + (tables?` · tables: ${omEsc(tables)}`:"")+`</div></div>`
+      + (tables?` · tables: ${omEsc(tables)}`:"")
+      + (publish&&publish.error?`<br>${omEsc(publish.error)}`:"")+`</div></div>`
       + `<div class="connacts"><button class="iconbtn" data-i="${i}" data-act="edit" title="Edit">✎</button>`
       + `<button class="iconbtn" data-i="${i}" data-act="del" title="Remove">✕</button></div>`;
     box.appendChild(row);
@@ -2488,10 +2961,10 @@ function omRenderTableRows(){
       + `<div><label>Source table</label><input data-i="${i}" data-f="source_table" value="${omEsc(tb.source_table)}" placeholder="dbo.sales" /></div></div>`
       + `<div class="row"><div><label>Target table</label><input data-i="${i}" data-f="target_table" value="${omEsc(tb.target_table)}" placeholder="sales" /></div>`
       + `<div><label>Landing-zone schema <span class="hint">(optional)</span></label><input data-i="${i}" data-f="schema" value="${omEsc(tb.schema)}" placeholder="(root)" /></div></div>`
-      + `<div class="row"><div><label>Key column(s) <span class="hint">(auto-detected on pick)</span></label><input data-i="${i}" data-f="key_column" value="${omEsc(tb.key_column)}" placeholder="id" /></div>`
+      + `<div class="row"><div><label>Key column(s) <span class="hint">(auto-detected; Ctrl/Cmd-click for composite keys)</span></label>`
+      + `<select class="omkeys" data-i="${i}" multiple size="${Math.min(4,Math.max(2,omColumnNames(tb).length))}">${omKeyOptions(tb)}</select></div>`
       + `<div><label>Watermark column <span class="hint">(optional — efficient incremental)</span></label>`
-      + `<input list="omwm${i}" data-i="${i}" data-f="watermark_column" value="${omEsc(tb.watermark_column)}" placeholder="(none — snapshot full-source scan)" />`
-      + `<datalist id="omwm${i}">${omColsDatalist(tb)}</datalist></div></div>`
+      + `<select class="omwatermark" data-i="${i}">${omWatermarkOptions(tb)}</select></div></div>`
       + `<label>Tracking strategy</label><select class="ommode" data-i="${i}" data-f="mode">`
       + `<option value="incremental"${(tb.mode||"incremental")==="incremental"?" selected":""}>Automatic (watermark when configured; otherwise snapshot full-source scan)</option>`
       + `<option value="watermark"${tb.mode==="watermark"?" selected":""}>Watermark (source-incremental)</option>`
@@ -2513,6 +2986,20 @@ function omRenderTableRows(){
   box.querySelectorAll("select.ommode").forEach(sel=>{
     sel.onchange = ()=>{ const i=parseInt(sel.dataset.i); if(state.om.editing.tables[i]) state.om.editing.tables[i].mode=sel.value; };
   });
+  box.querySelectorAll("select.omkeys").forEach(sel=>{
+    sel.onchange = ()=>{
+      const table=state.om.editing.tables[parseInt(sel.dataset.i)]; if(!table) return;
+      table.key_column=Array.from(sel.selectedOptions).map(option=>option.value).filter(Boolean).join(",");
+      omRenderTableRows();
+    };
+  });
+  box.querySelectorAll("select.omwatermark").forEach(sel=>{
+    sel.onchange = ()=>{
+      const table=state.om.editing.tables[parseInt(sel.dataset.i)]; if(!table) return;
+      table.watermark_column=sel.value;
+      omRenderTableRows();
+    };
+  });
   box.querySelectorAll("select.om-policy-kind").forEach(sel=>{
     sel.onchange = ()=>omUpdatePolicy(parseInt(sel.dataset.i), sel.dataset.source, sel.value);
   });
@@ -2520,7 +3007,11 @@ function omRenderTableRows(){
     inp.oninput = ()=>omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, "name", inp.value);
   });
   box.querySelectorAll(".om-policy-key,.om-policy-domain,.om-policy-normalization").forEach(inp=>{
-    inp.oninput = inp.onchange = ()=>omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, inp.dataset.p, inp.value);
+    inp.oninput = inp.onchange = ()=>{
+      const field=inp.dataset.p;
+      omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, field, inp.value);
+      if(field==="key_ref") omRenderTableRows();
+    };
   });
   box.querySelectorAll("[data-del]").forEach(b=>{
     b.onclick = ()=>{ const i=parseInt(b.dataset.del); state.om.editing.tables.splice(i,1);
@@ -2564,14 +3055,18 @@ function omPolicyEditor(tb,index){
     const tr=c.transform||{};
     const options=[
       ["keep","Keep"],["remove","Remove"],["deterministic_hash","Deterministic hash"],["random_token","Random token"]
-    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${control&&value!=="keep"?" disabled":""}>${label}</option>`).join("");
+    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${(control&&value!=="keep")||(value==="deterministic_hash"&&!state.tokenizationKeyRefs.length&&kind!==value)?" disabled":""}>${label}</option>`).join("");
     const alias=kind==="keep"?String(c.name||source):String(c.name||source+"_token");
+    const missingKey = kind==="deterministic_hash" && !String(tr.key_ref||"").trim();
     const details=(kind==="deterministic_hash")
-      ? `<input class="om-policy-key" data-i="${index}" data-source="${omEsc(source)}" data-p="key_ref" value="${omEsc(tr.key_ref||"")}" placeholder="key reference" title="Environment key reference" />`
+      ? `<select class="om-policy-key" data-i="${index}" data-source="${omEsc(source)}" data-p="key_ref" title="Available references come from configured FSP_TOKENIZATION_KEY_* environment variables; values are never returned"${!state.tokenizationKeyRefs.length&&!tr.key_ref?" disabled":""}>${tokenizationKeyOptionHtml(tr.key_ref||"")}</select>`
         + `<input class="om-policy-domain" data-i="${index}" data-source="${omEsc(source)}" data-p="domain" value="${omEsc(tr.domain||"")}" placeholder="domain" />`
         + `<select class="om-policy-normalization" data-i="${index}" data-source="${omEsc(source)}" data-p="normalization"><option value="none"${(tr.normalization||"none")==="none"?" selected":""}>none</option><option value="trim"${tr.normalization==="trim"?" selected":""}>trim</option><option value="trim_lower"${tr.normalization==="trim_lower"?" selected":""}>trim + lower</option></select>`
+        + (missingKey ? `<div class="invalid om-policy-error" role="alert">${state.tokenizationKeyRefs.length
+          ? "Choose a tokenization key."
+          : "No tokenization keys are configured. Add an FSP_TOKENIZATION_KEY_* environment variable and restart, or choose another policy."}</div>` : "")
       : (kind==="random_token" ? `<span class="hint">Fresh value per extraction; pending recovery is preserved.</span>` : "");
-    return `<div class="row om-policy-row"><div><label>${omEsc(source)}${control?" <span class=\"hint\">(control)</span>":""}</label><select class="om-policy-kind" data-i="${index}" data-source="${omEsc(source)}"${control?" disabled":""}>${options}</select></div>`
+    return `<div class="row om-policy-row" data-table-index="${index}" data-policy-source="${omEsc(source)}"><div><label>${omEsc(source)}${control?" <span class=\"hint\">(control)</span>":""}</label><select class="om-policy-kind" data-i="${index}" data-source="${omEsc(source)}"${control?" disabled":""}>${options}</select></div>`
       + `<div><label>Output name</label><input class="om-policy-name" data-i="${index}" data-source="${omEsc(source)}" value="${omEsc(alias)}"${kind==="remove"||control?" disabled":""} /></div>`
       + `<div class="om-policy-details">${details}</div></div>`;
   }).join("");
@@ -2617,10 +3112,26 @@ async function omResetTable(i){
   s.textContent=d.ok?`State reset for ${target.id}/${name}. Previous status: ${d.previous_status}.`:(d.error||"Reset failed.");
 }
 
-// Build a <datalist> of the picked table's columns (for the watermark field).
-function omColsDatalist(tb){
-  const cols = (tb && tb._cols) || [];
-  return cols.map(n=>`<option value="${omEsc(n)}"></option>`).join("");
+function omColumnNames(tb){
+  const reflected=(tb&&Array.isArray(tb._sourceColumns)?tb._sourceColumns:[])
+    .map(column=>String(column.name||column.source||"").trim()).filter(Boolean);
+  const configured=(tb&&Array.isArray(tb.columns)?tb.columns:[])
+    .map(column=>String(column.source||column.name||"").trim()).filter(Boolean);
+  return Array.from(new Set([...reflected,...configured]));
+}
+
+function omKeyOptions(tb){
+  const selected=String((tb&&tb.key_column)||"").split(",").map(value=>value.trim()).filter(Boolean);
+  const names=Array.from(new Set([...omColumnNames(tb),...selected]));
+  if(!names.length) return `<option value="" disabled>Pick a source table to load columns</option>`;
+  return names.map(name=>`<option value="${omEsc(name)}"${selected.includes(name)?" selected":""}>${omEsc(name)}</option>`).join("");
+}
+
+function omWatermarkOptions(tb){
+  const selected=String((tb&&tb.watermark_column)||"").trim();
+  const names=Array.from(new Set([...omColumnNames(tb),...(selected?[selected]:[])]));
+  return `<option value=""${selected?"":" selected"}>No watermark (snapshot scan)</option>`
+    + names.map(name=>`<option value="${omEsc(name)}"${selected===name?" selected":""}>${omEsc(name)}</option>`).join("");
 }
 
 // Build the <select> options for one table row from the loaded table list.
@@ -2814,7 +3325,36 @@ function omApplyTarget(){
   const idx = state.om.targets.findIndex(x=>x.id===t.id);
   if(idx>=0) state.om.targets[idx]=JSON.parse(JSON.stringify(t)); else state.om.targets.push(JSON.parse(JSON.stringify(t)));
   omRenderList();
-  s.className="status ok"; s.textContent=`Target "${t.id}" staged — click "Save targets to config" to persist.`;
+  s.className="status ok"; s.textContent=`Target "${t.id}" staged — click "Save targets" to persist.`;
+}
+
+function omTokenizationProblems(targets){
+  const problems=[];
+  (targets||[]).forEach((target,targetIndex)=>(target.tables||[]).forEach((table,tableIndex)=>(table.columns||[]).forEach(column=>{
+    const transform=column&&column.transform;
+    if(transform&&transform.kind==="deterministic_hash"&&!String(transform.key_ref||"").trim()){
+      problems.push({targetIndex,tableIndex,source:String(column.source||column.name||"column"),
+        target:String(target.id||"target"),table:String(table.name||table.target_table||table.source_table||`table ${tableIndex+1}`)});
+    }
+  })));
+  return problems;
+}
+
+function omShowTokenizationProblem(problem){
+  omEdit(problem.targetIndex);
+  const detail=$("omEditStatus");
+  detail.className="status err";
+  detail.textContent = state.tokenizationKeyRefs.length
+    ? `Table "${problem.table}", column "${problem.source}": choose a tokenization key under Column policies.`
+    : `Table "${problem.table}", column "${problem.source}": deterministic hashing needs a tokenization key. Configure an FSP_TOKENIZATION_KEY_* environment variable and restart, or choose another column policy.`;
+  requestAnimationFrame(()=>{
+    const row=[...document.querySelectorAll('.om-policy-row')].find(item=>
+      Number(item.dataset.tableIndex)===problem.tableIndex&&item.dataset.policySource===problem.source);
+    if(row){
+      row.scrollIntoView({behavior:"smooth",block:"center"});
+      (row.querySelector('.om-policy-key:not(:disabled)') || row.querySelector('.om-policy-kind'))?.focus();
+    }
+  });
 }
 
 async function omPreview(){
@@ -2833,7 +3373,15 @@ async function omPreview(){
 }
 
 async function omSave(){
-  const s = $("omStatus"); s.className="status"; s.textContent="Saving…";
+  const s = $("omStatus");
+  const problem=omTokenizationProblems(state.om.targets)[0];
+  if(problem){
+    s.className="status err";
+    s.textContent=`Fix the tokenization policy for table "${problem.table}", column "${problem.source}" before saving.`;
+    omShowTokenizationProblem(problem);
+    return;
+  }
+  s.className="status"; s.textContent="Saving…";
   try{
     const r = await fetch("/_config/api/open-mirror/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({open_mirror_targets:state.om.targets})});
     const d = await r.json();
@@ -2844,13 +3392,31 @@ async function omSave(){
 
 async function omPublish(dryRun){
   const s = $("omStatus"), pre=$("omPublishOut");
-  s.className="status"; s.textContent = dryRun ? "Dry run…" : "Publishing…"; pre.style.display="none";
+  s.className="status"; s.textContent = dryRun ? "Starting dry run…" : "Starting publish…"; pre.style.display="none";
   try{
     const r = await fetch("/_config/api/open-mirror/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dry_run:!!dryRun})});
     const d = await r.json();
-    if(!r.ok){ s.className="status err"; s.textContent=(d.errors?d.errors.join("; "):d.error)||"Publish failed"; return; }
-    const lines=[];
-    (d.targets||[]).forEach(t=>{
+    if(!r.ok){
+      if(d.job){ state.om.publishJob=d.job; omRenderPublishJob(); omSchedulePublishPoll(); }
+      else { s.className="status err"; s.textContent=(d.errors?d.errors.join("; "):d.error)||"Publish failed"; }
+      return;
+    }
+    state.om.publishJob=d.job;
+    omRenderPublishJob();
+    omSchedulePublishPoll();
+  }catch(e){ s.className="status err"; s.textContent="Publish request failed."; }
+}
+
+function omPublishActive(job){ return !!job && ["queued","running"].includes(job.status); }
+
+function omRenderPublishJob(){
+  const job=state.om.publishJob, s=$("omStatus"), pre=$("omPublishOut");
+  const publishButton=$("btnPublishOm"), dryRunButton=$("btnDryRunOm");
+  if(publishButton) publishButton.disabled=omPublishActive(job);
+  if(dryRunButton) dryRunButton.disabled=omPublishActive(job);
+  if(!job){ s.className="status"; s.textContent=""; pre.style.display="none"; omRenderList(); return; }
+  const targets=Object.values(job.targets||{}), lines=[];
+  targets.forEach(t=>{
       lines.push((t.error?"✗ ":"• ")+t.target_id+(t.skipped?" (disabled)":"")+(t.error?("  ERROR: "+t.error):""));
       (t.dropped||[]).forEach(dp=>lines.push("    dropped: "+dp));
       (t.tables||[]).forEach(tb=>{
@@ -2858,12 +3424,37 @@ async function omPublish(dryRun){
           : (tb.action+"  ins="+tb.inserts+" upd="+tb.updates+" del="+tb.deletes+(tb.path?("  "+tb.path):""));
         lines.push("    "+tb.table+": "+detail);
       });
-    });
-    pre.textContent = lines.join("\n") || "(no targets configured)";
-    pre.style.display="block";
-    s.className = d.ok ? "status ok" : "status err";
-    s.textContent = d.ok ? (dryRun?"Dry run complete.":"Publish complete.") : "Completed with errors — see below.";
-  }catch(e){ s.className="status err"; s.textContent="Publish request failed."; }
+  });
+  pre.textContent=lines.join("\n")||(omPublishActive(job)?"Waiting for mirrors…":"(no targets configured)");
+  pre.style.display="block";
+  const completed=targets.filter(t=>["completed","skipped","error"].includes(t.status)).length;
+  if(omPublishActive(job)){
+    s.className="status";
+    s.textContent=`${job.dry_run?"Dry run":"Publish"} running in background · ${completed}/${targets.length} mirrors finished. You can navigate away.`;
+  }else{
+    const failed=job.status!=="completed";
+    s.className="status "+(failed?"err":"ok");
+    s.textContent=failed?"Publish completed with errors — see mirror status below.":(job.dry_run?"Dry run complete.":"Publish complete.");
+  }
+  omRenderList();
+}
+
+function omSchedulePublishPoll(){
+  if(state.om.publishPoll) clearTimeout(state.om.publishPoll);
+  state.om.publishPoll=null;
+  if(omPublishActive(state.om.publishJob)) state.om.publishPoll=setTimeout(omPollPublishJob,1500);
+}
+
+async function omPollPublishJob(){
+  const job=state.om.publishJob;
+  const path=job&&job.id
+    ? "/_config/api/open-mirror/publish/jobs/"+encodeURIComponent(job.id)
+    : "/_config/api/open-mirror/publish/jobs/latest";
+  try{
+    const r=await fetch(path,{cache:"no-store"}), d=await r.json();
+    if(r.ok&&d.ok){ state.om.publishJob=d.job; omRenderPublishJob(); }
+  }catch(e){ /* keep the last known status and retry */ }
+  omSchedulePublishPoll();
 }
 
 function omOnBootstrap(builder){
@@ -2901,6 +3492,7 @@ function omInit(){
   omRenderConnectionOptions();
   omRenderList();
   if(!state.om.editing) omWriteForm(omNewTarget());
+  omPollPublishJob();
 }
 
 loadForm();
@@ -2909,6 +3501,7 @@ ensureDefaultConn();
 writeFormFromConn(state.connections.get(state.activeConnId));
 renderConnList();
 loadSettings();
+loadTokenizationKeyReferences();
 loadMounts();
 loadAccessKeys();
 omInit();
@@ -3058,11 +3651,18 @@ function recordEdit(inp){
 function renderLive(){
   const q = ($("liveSearch").value||"").toLowerCase();
   const wrap = $("liveSettings"); wrap.innerHTML="";
-  let cat=null;
+  let cat=null, groupBody=null, groupIndex=0;
   for(const s of live.settings){
     if(s.secret) continue;                       // never edit secrets here
     if(q && !(s.key.includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
-    if(s.category!==cat){ cat=s.category; const h=document.createElement("div"); h.className="setcat"; h.textContent=cat; wrap.appendChild(h); }
+    if(s.category!==cat){
+      cat=s.category;
+      const group=document.createElement("details"); group.className="settings-group";
+      group.open = !!q || groupIndex++ === 0;
+      const heading=document.createElement("summary"); heading.textContent=cat;
+      groupBody=document.createElement("div"); groupBody.className="settings-group-body";
+      group.append(heading, groupBody); wrap.appendChild(group);
+    }
     const row=document.createElement("div"); row.className="setrow";
     const lab=document.createElement("label");
     const badge=document.createElement("span");
@@ -3087,7 +3687,7 @@ function renderLive(){
     inp.addEventListener("change", ()=>recordEdit(inp));
     const src=document.createElement("span"); src.className="sethelp";
     src.textContent = s.source + (s.source==="default"?"":" · was "+cur);
-    row.append(lab, inp, src); wrap.appendChild(row);
+    row.append(lab, inp, src); groupBody.appendChild(row);
   }
   if(!wrap.children.length) wrap.innerHTML='<div class="hint">No settings match.</div>';
   updateSaveBadge();
@@ -3111,8 +3711,9 @@ function updateSaveBadge(){
     const s = live.settings.find(x=>x.key===k); return s && s.live;
   }).length;
   const restartN = n - liveN;
-  $("btnApplyLive").textContent = n ? ("⚡ Apply "+n+" change"+(n>1?"s":"")) : "⚡ Apply now";
+  $("btnApplyLive").textContent = n ? ("Review and apply "+n+" change"+(n>1?"s":"")) : "Review and apply";
   $("btnSaveLive").textContent = n ? ("Save "+n+" to config.json") : "Save to config.json";
+  $("overviewSystem").textContent = n ? `${n} pending` : "Current";
 }
 
 async function saveLive(){
@@ -3134,6 +3735,11 @@ async function applyLive(){
   const changes=collectLiveChanges();
   const n=Object.keys(changes).length;
   if(!n){ liveFlash($("liveStatus"), "No changes to apply. (Edit a value first.)"); return; }
+  const review = Object.keys(changes).map(key => {
+    const setting = live.settings.find(item => item.key === key);
+    return `${key}: ${changes[key]} (${setting && setting.live ? 'applies now' : 'restart required'})`;
+  }).join("\n");
+  if(!confirm(`Apply these ${n} change${n === 1 ? '' : 's'}?\n\n${review}`)) return;
   liveFlash($("liveStatus"), "Applying "+n+" change(s)…", true);
   try{
     const r=await fetch("/_config/api/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:changes})});
@@ -3215,6 +3821,59 @@ async function saveAdvanced(){
   }catch(e){ liveFlash($("advancedStatus"), "Save error: "+e); }
 }
 
+async function createEncryptedBackup(){
+  const password=$('backupPassword').value;
+  const confirmation=$('backupPasswordConfirm').value;
+  if(password.length<12){ liveFlash($('backupStatus'),'Use a password containing at least 12 characters.'); return; }
+  if(password!==confirmation){ liveFlash($('backupStatus'),'The passwords do not match.'); return; }
+  const button=$('btnCreateBackup');
+  button.disabled=true;
+  liveFlash($('backupStatus'),'Encrypting backup…',true);
+  try{
+    const response=await fetch('/_config/api/backup',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})
+    });
+    if(!response.ok){
+      const detail=await response.json().catch(()=>({}));
+      throw new Error(detail.error||`Backup failed (${response.status})`);
+    }
+    const disposition=response.headers.get('Content-Disposition')||'';
+    const filename=disposition.match(/filename="([^"]+)"/)?.[1]||'fsp-backup.fspbackup';
+    const url=URL.createObjectURL(await response.blob());
+    const link=document.createElement('a');
+    link.href=url; link.download=filename; document.body.appendChild(link); link.click(); link.remove();
+    URL.revokeObjectURL(url);
+    $('backupPassword').value=''; $('backupPasswordConfirm').value='';
+    liveFlash($('backupStatus'),'Encrypted backup downloaded. Store the file and password separately.',true);
+  }catch(error){ liveFlash($('backupStatus'),error.message||String(error)); }
+  finally{ button.disabled=false; }
+}
+
+async function restoreEncryptedBackup(){
+  const file=$('restoreFile').files[0];
+  const password=$('restorePassword').value;
+  if(!file){ liveFlash($('restoreStatus'),'Choose an .fspbackup file.'); return; }
+  if(password.length<12){ liveFlash($('restoreStatus'),'Enter the backup password.'); return; }
+  if(!$('restoreConfirm').checked){ liveFlash($('restoreStatus'),'Confirm that current managed state will be replaced.'); return; }
+  if(!confirm('Restore this backup and replace current FSP configuration, credentials, access keys, and Open Mirroring state?')) return;
+  const button=$('btnRestoreBackup');
+  button.disabled=true;
+  liveFlash($('restoreStatus'),'Verifying and restoring backup…',true);
+  try{
+    const form=new FormData();
+    form.append('password',password);
+    form.append('backup',file,file.name);
+    const response=await fetch('/_config/api/restore',{
+      method:'POST',body:form
+    });
+    const detail=await response.json().catch(()=>({}));
+    if(!response.ok) throw new Error(detail.error||`Restore failed (${response.status})`);
+    $('restorePassword').value=''; $('restoreFile').value=''; $('restoreConfirm').checked=false;
+    liveFlash($('restoreStatus'),`Restore complete: ${detail.config_files} config files, ${detail.connections} connections, ${detail.secrets} secrets, ${detail.access_keys} access keys, and ${detail.mirror_state_files} mirror state files. Restart the Manager to apply it.`,true);
+  }catch(error){ liveFlash($('restoreStatus'),error.message||String(error)); }
+  finally{ button.disabled=false; }
+}
+
 $("liveSearch").addEventListener("input", renderLive);
 $("btnReloadLive").onclick = loadCurrent;
 $("btnSaveLive").onclick = saveLive;
@@ -3227,8 +3886,31 @@ $("btnSaveS3Secret").onclick = saveS3Secret;
 $("btnClearS3Secret").onclick = clearS3Secret;
 $("btnApplyAdvanced").onclick = applyAdvanced;
 $("btnSaveAdvanced").onclick = saveAdvanced;
-loadCurrent();
+$("btnCreateBackup").onclick = createEncryptedBackup;
+$("btnRestoreBackup").onclick = restoreEncryptedBackup;
+document.querySelectorAll("[data-source-kind]").forEach(button=>{
+  button.onclick=()=>setSourceKind(button.dataset.sourceKind);
+});
+$("btnAddTable").onclick=openAddTable;
+$("btnCancelAddTable").onclick=()=>{ $("addTableCard").style.display="none"; resetAddTableEditor(); };
+$("btnLoadSourceObjects").onclick=loadSourceObjects;
+$("btnSaveAddedTable").onclick=saveAddedTable;
+$("tableSource").onchange=()=>{
+  const sourceId=$("tableSource").value;
+  resetAddTableEditor();
+  state.addTable.sourceId=sourceId;
+  $("tableSource").value=sourceId;
+};
+arrangeGoalPanels();
+wireAccessibility();
+new MutationObserver(records => {
+  records.forEach(record => record.addedNodes.forEach(node => {
+    if(node.nodeType === Node.ELEMENT_NODE) wireAccessibility(node);
+  }));
+}).observe(document.body, {childList:true, subtree:true});
+loadCurrent().then(renderOverview);
 initTabs();
+setSourceKind("database");
 </script>
 </body>
 </html>

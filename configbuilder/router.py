@@ -14,11 +14,13 @@ The generated ``config.json`` is assembled client-side from these responses.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import os
 import pathlib
+import uuid
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import config
 from db.capabilities import capabilities_for_dialect, flavor_warnings
@@ -30,12 +32,20 @@ from db.reflect import (
     UnsupportedDialect,
 )
 from observability.logging import get_logger
+from security.backup import BackupError, create_backup, restore_backup
 from security.credential_store import CredentialStore, env_var_for, looks_masked
 
 log = get_logger(__name__)
 
 router = APIRouter(prefix="/_config")
 _HTML_PATH = pathlib.Path(__file__).parent / "index.html"
+# Config objects are import-time snapshots. Keep deleted ids hidden from builder
+# reads until restart, when the persisted files become the new snapshots.
+_REMOVED_CONNECTION_IDS: set[str] = set()
+_BUILDER_TABLES_OVERRIDE: list[dict] | None = None
+_OPEN_MIRROR_JOBS: dict[str, dict] = {}
+_OPEN_MIRROR_TASKS: set[asyncio.Task] = set()
+_LATEST_OPEN_MIRROR_JOB_ID: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +190,18 @@ async def keyvault_status() -> JSONResponse:
     return JSONResponse(st)
 
 
+@router.get("/api/tokenization-key-references")
+async def tokenization_key_references() -> JSONResponse:
+    """List configured tokenization key references without returning key values."""
+    prefix = "FSP_TOKENIZATION_KEY_"
+    references = sorted({
+        name[len(prefix):].lower().replace("_", "-")
+        for name, value in os.environ.items()
+        if name.upper().startswith(prefix) and value
+    })
+    return JSONResponse({"ok": True, "references": references})
+
+
 @router.post("/api/keyvault/test")
 async def keyvault_test(request: Request) -> JSONResponse:
     """Live Key Vault connectivity test for the 'Test Key Vault' button.
@@ -233,6 +255,8 @@ async def bootstrap_builder() -> JSONResponse:
     """
     tables = []
     for t in config.TABLES:
+        if t.connection_id in _REMOVED_CONNECTION_IDS:
+            continue
         schema = []
         for column in t.schema or []:
             item = {
@@ -266,12 +290,14 @@ async def bootstrap_builder() -> JSONResponse:
             "enabled": t.enabled,
             "schema": schema or None,
         })
+    if _BUILDER_TABLES_OVERRIDE is not None:
+        tables = [dict(table) for table in _BUILDER_TABLES_OVERRIDE]
 
     # Named source connections (exclude the reserved 'default', which is the db_url
     # above). Passwords are masked — the builder never receives raw secrets.
     connections = []
     for cid, conn in config.CONNECTIONS.items():
-        if cid == "default":
+        if cid == "default" or cid in _REMOVED_CONNECTION_IDS:
             continue
         connections.append({
             "id": cid,
@@ -384,6 +410,17 @@ async def apply_config(request: Request) -> JSONResponse:
     except Exception:  # noqa: BLE001 - write-back must never break the apply
         pass
 
+    if isinstance(updates.get("connections"), list):
+        restored_ids = {
+            str(item.get("id") or "").strip()
+            for item in updates["connections"] if isinstance(item, dict)
+        }
+        _REMOVED_CONNECTION_IDS.difference_update(restored_ids)
+    if isinstance(updates.get("tables"), list):
+        global _BUILDER_TABLES_OVERRIDE
+        _BUILDER_TABLES_OVERRIDE = [dict(table) for table in updates["tables"]
+                                    if isinstance(table, dict)]
+
     log.info("config_applied",
              applied_live=live_result["applied"],
              restart_required=live_result["restart_required"],
@@ -402,6 +439,81 @@ async def apply_config(request: Request) -> JSONResponse:
                 if live_result["restart_required"] else ""
             )
         ),
+    })
+
+
+@router.delete("/api/connections/{connection_id}")
+async def delete_connection(connection_id: str, request: Request) -> JSONResponse:
+    """Persistently remove a named source, its table mappings, and its credential."""
+    cid = str(connection_id or "").strip()
+    if not cid or cid == "default":
+        return JSONResponse(
+            {"ok": False, "error": "the primary connection cannot be deleted"},
+            status_code=400,
+        )
+
+    dependencies = [
+        str(target.get("id") or "(unnamed)")
+        for target in _open_mirror_targets_payload()
+        if str(target.get("connection") or "default") == cid
+    ]
+    if dependencies:
+        return JSONResponse({
+            "ok": False,
+            "error": (
+                f"connection {cid!r} is used by Open Mirroring target(s): "
+                + ", ".join(dependencies)
+                + ". Remove or reassign those targets first."
+            ),
+        }, status_code=409)
+
+    body = await request.json()
+    connections = body.get("connections") if isinstance(body, dict) else None
+    tables = body.get("tables") if isinstance(body, dict) else None
+    if not isinstance(connections, list) or not isinstance(tables, list):
+        return JSONResponse({
+            "ok": False,
+            "error": "body must contain the remaining connections and tables arrays",
+        }, status_code=400)
+    if any(str((item or {}).get("id") or "").strip() == cid
+           for item in connections if isinstance(item, dict)):
+        return JSONResponse({"ok": False, "error": "deleted connection remains in payload"},
+                            status_code=400)
+
+    clean, errors = config.validate_setting_updates({
+        "connections": connections,
+        "tables": tables,
+    })
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+    try:
+        saved = config.write_config_updates(clean)
+    except (OSError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    credential_removed = False
+    environment_override = False
+    if config.ENABLE_CREDENTIAL_STORE:
+        store = _store()
+        stored_url = store.get_url(cid) if cid in store.list_ids() else None
+        credential_removed = store.delete(cid)
+        env_name = env_var_for(cid)
+        current_env = os.environ.get(env_name)
+        if stored_url and current_env == stored_url:
+            os.environ.pop(env_name, None)
+        elif current_env:
+            environment_override = True
+
+    _REMOVED_CONNECTION_IDS.add(cid)
+    log.info("connection_deleted", connection=cid, credential_removed=credential_removed,
+             environment_override=environment_override)
+    return JSONResponse({
+        "ok": True,
+        "connection_id": cid,
+        "path": saved["path"],
+        "credential_removed": credential_removed,
+        "environment_override": environment_override,
+        "restart_required": True,
     })
 
 
@@ -544,9 +656,94 @@ async def preview_open_mirror(request: Request) -> JSONResponse:
     })
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _publish_target_payload(result) -> dict:
+    return {
+        "target_id": result.target_id,
+        "skipped": result.skipped,
+        "error": result.error,
+        "dropped": result.dropped,
+        "replication_status": result.replication_status,
+        "replication_action": result.replication_action,
+        "tables": [{
+            "table": item.table, "action": item.action, "rows": item.rows,
+            "inserts": item.inserts, "updates": item.updates, "deletes": item.deletes,
+            "path": item.path, "error": item.error,
+            "strategy": item.strategy, "reason": item.reason,
+            "input_cursor": item.input_cursor, "output_cursor": item.output_cursor,
+            "pages_read": item.pages_read, "rows_scanned": item.rows_scanned,
+            "rows_published": item.rows_published,
+            "state_status": item.state_status, "state_path": item.state_path,
+            "recovery": item.recovery, "query_mode": item.query_mode,
+        } for item in result.results],
+    }
+
+
+async def _run_open_mirror_job(job_id: str, targets: list, *, dry_run: bool, mode: str | None) -> None:
+    from open_mirror.scheduler import publish_targets_with_preflight
+
+    job = _OPEN_MIRROR_JOBS[job_id]
+    job["status"] = "running"
+    job["started_at"] = _utc_now()
+    try:
+        for target in targets:
+            target_status = job["targets"][target.id]
+            target_status["status"] = "running"
+            target_status["started_at"] = _utc_now()
+            try:
+                result = (await publish_targets_with_preflight(
+                    [target], dry_run=dry_run, mode=mode
+                ))[0]
+                payload = _publish_target_payload(result)
+                failed = bool(result.error or any(item.action == "error" for item in result.results))
+                target_status.update(payload)
+                target_status["status"] = "error" if failed else ("skipped" if result.skipped else "completed")
+            except Exception as exc:  # noqa: BLE001 - isolate each mirror in the job
+                log.warning("open_mirror_publish_target_failed", target=target.id, error=str(exc))
+                target_status.update({"status": "error", "error": str(exc), "tables": []})
+            target_status["completed_at"] = _utc_now()
+        job["status"] = (
+            "completed_with_errors"
+            if any(item["status"] == "error" for item in job["targets"].values())
+            else "completed"
+        )
+    except asyncio.CancelledError:
+        job["status"] = "cancelled"
+        raise
+    except Exception as exc:  # noqa: BLE001 - retain a queryable terminal job state
+        job["status"] = "error"
+        job["error"] = str(exc)
+        log.warning("open_mirror_publish_job_failed", job_id=job_id, error=str(exc))
+    finally:
+        job["completed_at"] = _utc_now()
+        log.info("open_mirror_publish_job_finished", job_id=job_id, status=job["status"])
+
+
+def _open_mirror_job_response(job: dict) -> JSONResponse:
+    return JSONResponse({"ok": True, "job": job})
+
+
+@router.get("/api/open-mirror/publish/jobs/latest")
+async def latest_open_mirror_publish_job() -> JSONResponse:
+    if not _LATEST_OPEN_MIRROR_JOB_ID:
+        return JSONResponse({"ok": True, "job": None})
+    return _open_mirror_job_response(_OPEN_MIRROR_JOBS[_LATEST_OPEN_MIRROR_JOB_ID])
+
+
+@router.get("/api/open-mirror/publish/jobs/{job_id}")
+async def get_open_mirror_publish_job(job_id: str) -> JSONResponse:
+    job = _OPEN_MIRROR_JOBS.get(job_id)
+    if not job:
+        return JSONResponse({"ok": False, "error": "publish job not found"}, status_code=404)
+    return _open_mirror_job_response(job)
+
+
 @router.post("/api/open-mirror/publish")
 async def publish_open_mirror(request: Request) -> JSONResponse:
-    """Publish now: read the source and push batches into the landing zone.
+    """Start a background publish job and return its queryable status immediately.
 
     Body (all optional): ``{"target_id": "...", "dry_run": true}``. With no
     ``target_id`` every configured target is published. Failures are quarantined
@@ -562,48 +759,45 @@ async def publish_open_mirror(request: Request) -> JSONResponse:
     mode = str(body.get("mode") or "").strip().lower() or None
 
     from open_mirror.config import load_targets
-    from open_mirror.scheduler import publish_targets_with_preflight
-
     targets = load_targets()
     if target_id:
         targets = [t for t in targets if t.id == target_id]
         if not targets:
             return JSONResponse({"ok": False, "error": f"no target with id {target_id!r}"},
                                 status_code=404)
-    try:
-        results = await publish_targets_with_preflight(
-            targets, dry_run=dry_run, mode=mode
-        )
-    except Exception as exc:  # noqa: BLE001 - surface, never 500 the builder
-        log.warning("open_mirror_publish_failed", error=str(exc))
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    active = next((job for job in _OPEN_MIRROR_JOBS.values()
+                   if job["status"] in {"queued", "running"}), None)
+    if active:
+        return JSONResponse({"ok": False, "error": "a publish job is already running",
+                             "job": active}, status_code=409)
 
-    summary = []
-    ok = True
-    for tr in results:
-        if tr.error or any(r.action == "error" for r in tr.results):
-            ok = False
-        summary.append({
-            "target_id": tr.target_id,
-            "skipped": tr.skipped,
-            "error": tr.error,
-            "dropped": tr.dropped,
-            "replication_status": tr.replication_status,
-            "replication_action": tr.replication_action,
-            "tables": [{
-                "table": r.table, "action": r.action, "rows": r.rows,
-                "inserts": r.inserts, "updates": r.updates, "deletes": r.deletes,
-                "path": r.path, "error": r.error,
-                "strategy": r.strategy, "reason": r.reason,
-                "input_cursor": r.input_cursor, "output_cursor": r.output_cursor,
-                "pages_read": r.pages_read, "rows_scanned": r.rows_scanned,
-                "rows_published": r.rows_published,
-                "state_status": r.state_status, "state_path": r.state_path,
-                "recovery": r.recovery, "query_mode": r.query_mode,
-            } for r in tr.results],
-        })
-    log.info("open_mirror_publish_now", target=target_id or "*", dry_run=dry_run, ok=ok)
-    return JSONResponse({"ok": ok, "dry_run": dry_run, "targets": summary})
+    global _LATEST_OPEN_MIRROR_JOB_ID
+    job_id = uuid.uuid4().hex
+    job = {
+        "id": job_id,
+        "status": "queued",
+        "dry_run": dry_run,
+        "created_at": _utc_now(),
+        "started_at": None,
+        "completed_at": None,
+        "error": None,
+        "targets": {
+            target.id: {"target_id": target.id, "status": "queued", "error": None,
+                        "started_at": None, "completed_at": None, "tables": []}
+            for target in targets
+        },
+    }
+    _OPEN_MIRROR_JOBS[job_id] = job
+    _LATEST_OPEN_MIRROR_JOB_ID = job_id
+    task = asyncio.create_task(
+        _run_open_mirror_job(job_id, targets, dry_run=dry_run, mode=mode),
+        name=f"open-mirror-publish-{job_id[:8]}",
+    )
+    _OPEN_MIRROR_TASKS.add(task)
+    task.add_done_callback(_OPEN_MIRROR_TASKS.discard)
+    log.info("open_mirror_publish_job_started", job_id=job_id,
+             target=target_id or "*", dry_run=dry_run)
+    return JSONResponse({"ok": True, "job": job}, status_code=202)
 
 
 @router.post("/api/open-mirror/reset")
@@ -688,6 +882,132 @@ def _connection_url_for(connection_id: str):
     """SQLAlchemy URL for a saved connection id (uses the stored/effective URL)."""
     from sqlalchemy.engine import make_url
     return make_url(config.effective_db_url(connection_id or "default"))
+
+
+def _source_ref(source_id: str) -> tuple[str, str]:
+    """Split a namespaced builder source id into its kind and runtime id."""
+    kind, separator, runtime_id = str(source_id or "").partition(":")
+    if separator and kind in {"database", "storage"} and runtime_id:
+        return kind, runtime_id
+    raise ValueError("source id must be database:<connection> or storage:<mount>")
+
+
+@router.get("/api/sources")
+async def list_sources() -> JSONResponse:
+    """Return saved database connections and storage mounts without secrets."""
+    import storage.mounts as sm
+
+    stored = set()
+    if config.ENABLE_CREDENTIAL_STORE:
+        try:
+            stored = {str(item.get("id")) for item in _store().status().get("connections", [])}
+        except Exception:  # noqa: BLE001 - source listing must survive store failures
+            stored = set()
+
+    sources = [{
+        "id": "database:default",
+        "runtime_id": "default",
+        "label": "Primary database",
+        "kind": "database",
+        "type": _flavor_from_url(config.DB_URL),
+        "credential_stored": "default" in stored,
+    }]
+    for connection_id, connection in config.CONNECTIONS.items():
+        if connection_id == "default" or connection_id in _REMOVED_CONNECTION_IDS:
+            continue
+        sources.append({
+            "id": f"database:{connection_id}",
+            "runtime_id": connection_id,
+            "label": connection_id,
+            "kind": "database",
+            "type": _flavor_from_url(connection.db_url),
+            "credential_stored": connection_id in stored,
+        })
+    for mount in sm.MOUNTS.values():
+        sources.append({
+            "id": f"storage:{mount.bucket}",
+            "runtime_id": mount.bucket,
+            "label": mount.bucket,
+            "kind": "storage",
+            "type": mount.backend,
+            "format": getattr(mount, "format", "") or None,
+            "credential_stored": bool(getattr(mount, "credential", "")),
+        })
+    return JSONResponse({"ok": True, "sources": sources})
+
+
+@router.post("/api/sources/{source_id}/discover")
+async def discover_source_objects(source_id: str) -> JSONResponse:
+    """List selectable objects from one saved source."""
+    import storage.mounts as sm
+
+    try:
+        kind, runtime_id = _source_ref(source_id)
+        if kind == "database":
+            async with SchemaReflector(_connection_url_for(runtime_id)) as reflector:
+                objects = await reflector.list_tables()
+        else:
+            mount = sm.MOUNTS.get(runtime_id)
+            if mount is None:
+                raise ValueError(f"unknown storage source {runtime_id!r}")
+            fmt = getattr(mount, "format", "") or ""
+            objects = ([{"schema": None, "name": mount.bucket, "kind": fmt}]
+                       if fmt in {"delta", "iceberg"} else [])
+    except Exception as exc:  # noqa: BLE001 - return a clean builder error
+        return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "source_id": source_id, "objects": objects})
+
+
+@router.post("/api/sources/{source_id}/inspect")
+async def inspect_source_object(source_id: str, request: Request) -> JSONResponse:
+    """Return normalized metadata for one object in a saved source."""
+    import storage.mounts as sm
+
+    body = await request.json()
+    body = body if isinstance(body, dict) else {}
+    try:
+        kind, runtime_id = _source_ref(source_id)
+        name = str(body.get("name") or "").strip()
+        schema = str(body.get("schema") or "").strip() or None
+        if not name:
+            raise ValueError("name is required")
+        if kind == "database":
+            source_table = f"{schema}.{name}" if schema else name
+            async with SchemaReflector(_connection_url_for(runtime_id)) as reflector:
+                available = await reflector.list_tables()
+                if not any(item.get("name") == name and (item.get("schema") or None) == schema
+                           for item in available):
+                    raise ValueError("object is not part of the selected database source")
+                columns = await reflector.columns(source_table)
+                primary_key = await reflector.primary_key(source_table)
+                detected_key, integer_keys = detect_key_column(columns, primary_key)
+                approx_rows = await reflector.approx_row_count(source_table)
+            result = {
+                "name": name, "schema": schema, "source_table": source_table,
+                "columns": columns, "primary_key": primary_key,
+                "detected_key": detected_key, "integer_keys": integer_keys,
+                "approx_rows": approx_rows,
+            }
+        else:
+            mount = sm.MOUNTS.get(runtime_id)
+            if mount is None or name != runtime_id:
+                raise ValueError("object is not part of the selected storage source")
+            from storage.objectstore_reader import reader_for_mount
+            arrow_schema = reader_for_mount(mount).schema()
+            columns = [{"name": field.name, "type": _arrow_to_iceberg_type(field.type),
+                        "nullable": bool(field.nullable)} for field in arrow_schema]
+            integer_keys = [column["name"] for column in columns
+                            if column["type"] in {"int", "long"}]
+            result = {
+                "name": name, "schema": None, "source_table": name,
+                "columns": columns, "primary_key": [],
+                "detected_key": getattr(mount, "key_column", "") or (integer_keys[0] if integer_keys else None),
+                "integer_keys": integer_keys, "approx_rows": None,
+                "format": getattr(mount, "format", "") or None,
+            }
+    except Exception as exc:  # noqa: BLE001 - return a clean builder error
+        return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "source_id": source_id, "object": result})
 
 
 @router.post("/api/open-mirror/list-tables")
@@ -802,6 +1122,57 @@ def _store() -> CredentialStore:
     except Exception:  # noqa: BLE001 - write-back must never break the save path
         pass
     return st
+
+
+@router.post("/api/backup")
+async def download_backup(request: Request) -> Response:
+    """Create a portable password-encrypted backup of all FSP-managed state."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    password = body.get("password")
+    if not isinstance(password, str):
+        return JSONResponse({"ok": False, "error": "password is required"}, status_code=400)
+    try:
+        archive, summary = await asyncio.to_thread(
+            create_backup,
+            password,
+            root=pathlib.Path.cwd(),
+            store=_store(),
+            mirror_state_dir=getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state"),
+        )
+    except (BackupError, OSError, RuntimeError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+    headers = {
+        "Content-Disposition": f'attachment; filename="fsp-backup-{stamp}.fspbackup"',
+        "X-FSP-Backup-Summary": ",".join(f"{key}={value}" for key, value in summary.items()),
+        "Cache-Control": "no-store",
+    }
+    return Response(archive, media_type="application/vnd.fsp.backup", headers=headers)
+
+
+@router.post("/api/restore")
+async def upload_restore(
+    password: str = Form(...),
+    backup: UploadFile = File(...),
+) -> JSONResponse:
+    """Restore an uploaded backup; the Manager must restart to load it."""
+    archive = await backup.read(512 * 1024 * 1024 + 1)
+    try:
+        summary = await asyncio.to_thread(
+            restore_backup,
+            archive,
+            password,
+            root=pathlib.Path.cwd(),
+            store=_store(),
+            mirror_state_dir=getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state"),
+        )
+    except (BackupError, OSError, RuntimeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    from security.access_keys import invalidate_cache
+    invalidate_cache()
+    return JSONResponse({"ok": True, **summary})
 
 
 async def _restart_agents(request: Request) -> int:

@@ -170,9 +170,17 @@ array in `config.tables.json`.
 - Mount credentials: encrypted by id in the credential store, never in `config.mounts.json`.
 
 **What is the config builder?** A web UI at `/_config` (enable with `ENABLE_CONFIG_BUILDER=1`)
-that connects to your DB, lists tables, auto‑detects the PK, reflects schema, and edits/saves
-config live. It accepts DB credentials, so keep it on a trusted network. See
+that manages sources, reflected tables, tokenization policies, storage credentials, access
+keys, encrypted backups, and Open Mirroring targets. It applies changes to the split config
+files and encrypted credential store. It accepts DB credentials, so keep it on a trusted network. See
 [configbuilder/](configbuilder/) and [docs/CONFIG_BUILDER_PLAN.md](docs/CONFIG_BUILDER_PLAN.md).
+
+**What does backup and restore include?** The Config Builder **Security** area creates a
+password-protected `.fspbackup` containing the split config files, locally stored connection
+and mount secrets, scoped access keys, and Open Mirroring recovery state. It excludes source
+data, caches, logs, environment-only secrets, external TLS files, and remote Key Vault contents.
+Restore re-encrypts secrets for the destination host and requires a Manager restart. See
+[docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md).
 
 ---
 
@@ -274,7 +282,7 @@ requests get `403`. See [docs/SECURITY.md](docs/SECURITY.md).
 
 **What are scoped access keys?** Per‑key records with `allowed_buckets`, optional per‑bucket
 `allowed_prefixes`, read‑only permissions, and an `enabled` flag — managed in the config
-builder's **Storage → Access keys** panel or the `/_config/api/access-keys` API. The legacy key
+builder's **Security → Access keys** panel or the `/_config/api/access-keys` API. The legacy key
 stays a wildcard until you add the first scoped key.
 
 **What is forced mount auth?** `ENFORCE_MOUNT_AUTH` (default on) requires SigV4 on mounted

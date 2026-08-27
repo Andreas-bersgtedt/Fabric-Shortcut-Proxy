@@ -81,7 +81,8 @@ shares/object stores at once.
 - **Audit**: every mounted-object access (identity, bucket, key, bytes) is logged when `ENABLE_AUDIT_LOG` is on; recent events at `GET /_config/api/audit`.
 
 Enable it in the config-builder **Storage** tab, or set `ENABLE_STORAGE_PROXY=1` and drop a
-`config.mounts.json`. Design, phasing, and diagrams: [devplan/StorageProxy.md](devplan/StorageProxy.md).
+`config.mounts.json`. Design and operating details: [Storage virtualization](docs/s3virtulization.md)
+and [Security](docs/SECURITY.md).
 
 ## Project layout
 
@@ -347,7 +348,7 @@ For strict canonical-only behavior (no legacy aliases), start Manager with:
 
 > **Storage proxy note:** mounted buckets are always authenticated when
 > `ENFORCE_MOUNT_AUTH=1` (the default), regardless of `REQUIRE_SIGV4`. Issue scoped
-> per-tenant **access keys** (config-builder → Storage → *Access keys*) so each
+> per-tenant **access keys** (Config Builder → Security → *Access keys*) so each
 > Fabric shortcut can reach only its allowed buckets/prefixes; the legacy single
 > key keeps working as a wildcard until the first access key is created. Put the
 > proxy behind TLS (`TLS_CERT_FILE`/`TLS_KEY_FILE` or an LB) before enabling auth.
@@ -399,9 +400,8 @@ connection string).
 
 ### Config Builder UI
 
-Prefer clicking to typing JSON? Enable the built-in **config builder**: a small
-web page that connects to your database, lists tables, and downloads a
-`config.json`:
+Enable the built-in **Config Builder** to manage sources, reflected tables, security,
+and Open Mirroring from one browser UI:
 
 ```powershell
 $env:ENABLE_CONFIG_BUILDER = "1"
@@ -411,10 +411,16 @@ $env:ENABLE_CONFIG_BUILDER = "1"
 
 If you run standalone `python main.py` (no Manager), open `http://localhost:9000/_config/`.
 
-Enter host / user / password, pick tables (the key column is auto-detected and
-overridable), and click **Download config.json**. It's **off by default** and
-accepts DB credentials, so run it locally only. PostgreSQL needs `asyncpg`
-(`pip install asyncpg`); SQL Server needs the ODBC driver.
+Use **Sources** to create and test connections, **Tables** to apply reflected tables and
+column policies, **Security** to manage access keys and encrypted backups, and **Open
+Mirroring** to configure and publish replication targets. Changes are persisted to the
+matching split `config.*.json` files and encrypted credential store. Removing a connection
+or table is durable across navigation and reloads.
+
+The builder is **off by default** and accepts DB credentials, so expose it only on a trusted
+administrative network. PostgreSQL needs `asyncpg` (`pip install asyncpg`); SQL Server needs
+the ODBC driver. Backup scope and recovery steps are in
+[Encrypted Backup and Restore](docs/BACKUP_RESTORE.md).
 
 > For in-depth, working PostgreSQL and SQL Server examples, single-table **and**
 > multi-table, with source DDL and troubleshooting, see the
@@ -477,12 +483,14 @@ landing zone, so one deployment can both virtualize a source and replicate table
   does not start or resume Fabric capacity.
 - **OneLake auth.** Writes authenticate with the proxy's **own Entra identity** (the Key Vault
   service principal / managed identity / default credential); no separate secret.
-- **Config-builder Open Mirror tab.** Pick source tables (key auto-detected), set a watermark,
-  and **browse Fabric workspaces + mirrored databases** so the landing-zone URL fills itself in.
-  Publish on a schedule (`OPEN_MIRROR_PUBLISH`) or on demand with **Publish now** / **Dry run**.
+- **Config Builder Open Mirroring area.** Pick key columns and an optional watermark from the
+  reflected source schema; composite keys are supported. **Browse Fabric workspaces and mirrored
+  databases** so the landing-zone URL fills itself in.
+  Publish on a schedule (`OPEN_MIRROR_PUBLISH`) or start a background **Publish now** or
+  **Dry run** job. Per-target and per-table status remains available while you navigate.
 
 Run the manager with the OneLake dependency (`Manager.sh` / `Manager.ps1` install the `onelake`
-extra automatically), enable the config UI, and configure a target on the **Open Mirror** tab.
+extra automatically), enable the config UI, and configure a target in **Open Mirroring**.
 
 The Manager identity needs Read and Write access to each mirrored database. The Fabric tenant
 setting that permits service principals to use Fabric APIs must also be enabled. On Linux the

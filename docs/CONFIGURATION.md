@@ -69,10 +69,9 @@ CONFIG_FILE=/deploy/prod.config.json bash ./Manager.sh --skip-install
 variables still override individual keys, e.g. `$env:DB_URL=…` wins over the
 file's `db_url`. Full key list is in §8; per-table fields in §5.2.
 
-### 1.2 Or build it in the browser (`ENABLE_CONFIG_BUILDER`)
+### 1.2 Manage split configuration in the browser (`ENABLE_CONFIG_BUILDER`)
 
-Don't want to write JSON at all? Enable the **config builder** and generate the
-file from a UI:
+Enable the **Config Builder** to manage the split configuration files from one UI:
 
 ```powershell
 $env:ENABLE_CONFIG_BUILDER = "1"
@@ -82,9 +81,15 @@ $env:ENABLE_CONFIG_BUILDER = "1"
 
 If you run standalone `python main.py` (no Manager), use `http://localhost:9000/_config/`.
 
-Enter host / user / password → pick tables (key column auto-detected, overridable)
-→ **Download config.json**. It's **off by default** and accepts DB credentials, so
-run it locally only. The Manager bootstrap installs all supported Python database drivers.
+Use **Sources** to create and test connections, **Tables** to reflect and apply tables and
+column policies, **Open Mirroring** to configure and publish targets, and **Security** to
+manage credentials, access keys, and encrypted backups. Changes are written to the matching
+`config.*.json` files and encrypted credential store. Removing a source or table is persisted;
+an empty table selection writes an empty registry instead of restoring defaults on reload.
+
+The builder is **off by default** and accepts database credentials, so expose it only on a
+trusted administrative network. The Manager bootstrap installs the supported Python database
+drivers. See [BACKUP_RESTORE.md](BACKUP_RESTORE.md) before moving configuration between hosts.
 
 The Manager console and configuration UI require HTTP Basic authentication when
 `MANAGER_AUTH_ENABLED=1` (the default). Use the configured
@@ -774,7 +779,7 @@ Install the SDK for native backends: `pip install '.[s3proxy]'` (S3),
 | `azure` | the container | `.[azureblob]` | connection_string, account_key, sas, aad_client_secret, managed_identity, default, anonymous |
 
 Upstream secrets live encrypted in the credential store and are set in the config
-builder (**Storage → mount editor**) or via `/_config/api/{s3,azure}-credentials`.
+builder (**Sources → mount editor**) or via `/_config/api/{s3,azure}-credentials`.
 
 ### 14.3 Access keys & authorization
 
@@ -791,6 +796,6 @@ allowed buckets/prefixes:
 | `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |
 
-Manage keys in the config-builder **Storage → Access keys** panel (create returns
+Manage keys in the Config Builder **Security → Access keys** panel (create returns
 the secret once; rotate/delete supported). The legacy single key stays a wildcard
 until the first access key is created. Full security model: [SECURITY.md](SECURITY.md).

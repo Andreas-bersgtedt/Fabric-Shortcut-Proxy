@@ -58,7 +58,7 @@ authorization and audit.
 - The legacy single key acts as an implicit wildcard until you create the first scoped key.
 - After that, each request is authorized against the presenting key's allowed buckets and
   prefixes.
-- Manage keys in the config builder Storage tab or via `/_config/api/access-keys` (create
+- Manage keys in the Config Builder **Security** area or via `/_config/api/access-keys` (create
   returns the secret once; rotate and delete are supported).
 
 Turn on enforcement with `REQUIRE_SIGV4=1`. Mounted buckets are a special case: they are
@@ -82,7 +82,7 @@ it does not bypass HTTP Basic authentication.
 
 Outbound secrets for storage-proxy mounts are held encrypted and resolved by id, never
 exposed to clients or written into `config.mounts.json`. The store uses DPAPI on Windows and
-Fernet elsewhere (install the `credentials` extra on non-Windows hosts). It also holds
+Fernet elsewhere; `cryptography` is a core dependency. It also holds
 connection strings and access keys, and survives restarts, hydrating `DB_URL` and
 `DB_URL_<ID>` at startup.
 
@@ -162,7 +162,23 @@ policies in the config builder per-column editor. Validate with the UAT runbooks
 [TOKENIZATION_MULTI_DIALECT_UAT.md](../TOKENIZATION_MULTI_DIALECT_UAT.md) (PostgreSQL, Oracle,
 Databricks).
 
-## 7.9 Entra ID identity and Azure Key Vault
+## 7.10 Encrypted backup and restore
+
+The Config Builder **Security** area creates portable `.fspbackup` archives containing split
+configuration, logical encrypted-store records, scoped access keys, and Open Mirroring recovery
+state. The archive uses a scrypt-derived 256-bit key and AES-256-GCM authenticated encryption.
+Passwords must contain at least 12 characters.
+
+Restore validates and decrypts the complete archive before replacement, re-encrypts secrets with
+the destination credential store, and replaces config, credentials, and mirror state as one
+transaction. A wrong password, modified archive, unsupported file, unsafe state path, or failed
+write does not leave a partial restore. Restart the Manager after success.
+
+Source data, generated artifacts and caches, logs, environment-only secrets, external TLS files,
+and remote Key Vault contents are outside the archive. Follow
+[BACKUP_RESTORE.md](../BACKUP_RESTORE.md) for the complete scope and operator procedure.
+
+## 7.11 Entra ID identity and Azure Key Vault
 
 Beyond per-mount Azure auth, the proxy can take its **own** Entra ID identity and use Azure
 Key Vault as a central credential store. `AUTH_MODE` selects the outbound identity —
@@ -190,7 +206,7 @@ button), in `/readyz`, and on the monitor. Install the `keyvault` extra
 (`pip install '.[keyvault]'`); the Manager launchers install it by default. Full policy is in
 [SECURITY.md](../SECURITY.md).
 
-## 7.10 Hardening checklist
+## 7.12 Hardening checklist
 
 - Give the proxy a read-only database login scoped to the exposed tables.
 - Set `REQUIRE_SIGV4=1` and issue scoped access keys; stop relying on the legacy wildcard.
@@ -201,7 +217,7 @@ button), in `/readyz`, and on the monitor. Install the `keyvault` extra
 - Store all secrets in the environment or the encrypted store; commit none. Centralize them
   in Azure Key Vault (`KEYVAULT_URI`, optionally `KEYVAULT_WRITE_BACK`) where available.
 
-## 7.11 Next
+## 7.13 Next
 
 Continue to [Chapter 8: Operations](08-operations.md) for running, monitoring, scaling, and
 troubleshooting the service.

@@ -6,7 +6,9 @@ DB, so it does not depend on main.py's ENABLE_CONFIG_BUILDER mount order.
 """
 from __future__ import annotations
 
+import json
 import pathlib
+from types import SimpleNamespace
 
 import pytest
 import httpx
@@ -290,14 +292,109 @@ def _client(app):
 async def test_index_serves_html(app):
     async with _client(app) as c:
         r = await c.get("/_config/")
+    assert 'fetch("/_config/api/connections/"+encodeURIComponent(id)' in r.text
     assert r.status_code == 200
     assert "Config Builder" in r.text
     assert "column policies" in r.text
     assert 'kind:"deterministic_hash"' in r.text
     assert 'kind:"random_token"' in r.text
     assert 'column.policy!=="remove"' in r.text
+    assert 'const splitKey = entry.columns.find(column=>column.source===entry.key_column);' in r.text
+    assert 'if(splitKey && splitKey.policy!=="keep")' in r.text
+    assert '!kept.some(column=>column.source===entry.key_column)' not in r.text
     assert '["mssql", "postgresql", "postgres", "oracle", "databricks"]' in r.text
     assert 'id="materializeMode"' in r.text
+    assert 'data-tab="sources"' in r.text
+    assert 'id="btnAddTable"' in r.text
+    assert 'id="tableSource"' in r.text
+    assert 'data-tab="storage"' not in r.text
+    assert 'id="includePassword"' not in r.text
+    assert 'id="preview"' not in r.text
+    assert 'id="btnDownload"' not in r.text
+    assert 'id="btnCopy"' not in r.text
+    assert 'disabled${currentReference?"":" selected"}' in r.text
+    assert 'if(field==="key_ref") omRenderTableRows();' in r.text
+    assert 'if(await applyTables({removing:true})) return;' in r.text
+
+
+async def test_apply_empty_tables_persists_and_updates_bootstrap(app, tmp_path, monkeypatch):
+    import configbuilder.router as router_module
+
+    monkeypatch.chdir(tmp_path)
+    router_module._BUILDER_TABLES_OVERRIDE = None
+    try:
+        async with _client(app) as client:
+            applied = await client.post(
+                "/_config/api/apply",
+                json={"settings": {"tables": []}},
+            )
+            bootstrap = await client.get("/_config/api/bootstrap")
+
+        assert applied.status_code == 200
+        assert json.loads((tmp_path / "config.tables.json").read_text())["tables"] == []
+        assert bootstrap.json()["builder"]["tables"] == []
+    finally:
+        router_module._BUILDER_TABLES_OVERRIDE = None
+
+
+async def test_delete_connection_persists_and_removes_credential(app, tmp_path, monkeypatch):
+    import config
+    import configbuilder.router as router_module
+
+    class FakeStore:
+        deleted = []
+
+        def list_ids(self):
+            return ["SaleLT"]
+
+        def get_url(self, connection_id):
+            return "postgresql+asyncpg://stored/db"
+
+        def delete(self, connection_id):
+            self.deleted.append(connection_id)
+            return True
+
+    store = FakeStore()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True)
+    monkeypatch.setattr(config, "CONNECTIONS", {
+        "SaleLT": SimpleNamespace(db_url="postgresql+asyncpg://stored/db"),
+    })
+    monkeypatch.setattr(config, "TABLES", [SimpleNamespace(connection_id="SaleLT")])
+    monkeypatch.setattr(router_module, "_store", lambda: store)
+    monkeypatch.setattr(router_module, "_open_mirror_targets_payload", lambda: [])
+    router_module._REMOVED_CONNECTION_IDS.discard("SaleLT")
+
+    try:
+        async with _client(app) as client:
+            deleted = await client.request(
+                "DELETE",
+                "/_config/api/connections/SaleLT",
+                json={"connections": [], "tables": []},
+            )
+            bootstrap = await client.get("/_config/api/bootstrap")
+
+        assert deleted.status_code == 200
+        assert deleted.json()["credential_removed"] is True
+        assert store.deleted == ["SaleLT"]
+        assert json.loads((tmp_path / "config.connection.json").read_text())["connections"] == []
+        assert json.loads((tmp_path / "config.tables.json").read_text())["tables"] == []
+        assert bootstrap.json()["builder"]["connections"] == []
+        assert bootstrap.json()["builder"]["tables"] == []
+    finally:
+        router_module._REMOVED_CONNECTION_IDS.discard("SaleLT")
+
+
+async def test_delete_connection_rejects_primary_connection(app):
+    async with _client(app) as client:
+        response = await client.request(
+            "DELETE",
+            "/_config/api/connections/default",
+            json={"connections": [], "tables": []},
+        )
+
+    assert response.status_code == 400
+    assert "cannot be deleted" in response.json()["error"]
 
 
 def test_settings_catalog_has_defaults():
@@ -324,6 +421,23 @@ async def test_settings_api(app):
     assert r.status_code == 200
     keys = {s["key"] for s in r.json()["settings"]}
     assert {"num_splits", "pin_materialized_splits", "auto_refresh", "require_sigv4"} <= keys
+
+
+async def test_tokenization_key_references_hide_values(app, monkeypatch):
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "super-secret-value")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_ORDER_HASH", "another-secret")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_EMPTY", "")
+
+    async with _client(app) as client:
+        response = await client.get("/_config/api/tokenization-key-references")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "references": ["customer-pii-v1", "order-hash"],
+    }
+    assert "super-secret-value" not in response.text
+    assert "another-secret" not in response.text
 
 
 async def test_bootstrap_api_prefills_running_builder_config(app):
@@ -427,3 +541,51 @@ async def test_inspect_reflects_and_detects_key(app, db_path):
     assert "gadget_id" in t["integer_keys"]
     assert {c["name"] for c in t["columns"]} == {"gadget_id", "label", "price"}
     assert t["approx_rows"] == 3
+
+
+async def test_source_catalog_namespaces_database_and_storage(app, db_path, monkeypatch):
+    import config
+    import storage.mounts as mounts
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setattr(config, "CONNECTIONS", {})
+    monkeypatch.setattr(mounts, "MOUNTS", {
+        "lake": SimpleNamespace(bucket="lake", backend="local", format="delta", credential="")
+    })
+    async with _client(app) as client:
+        response = await client.get("/_config/api/sources")
+
+    assert response.status_code == 200
+    sources = {source["id"]: source for source in response.json()["sources"]}
+    assert sources["database:default"]["label"] == "Primary database"
+    assert sources["storage:lake"]["format"] == "delta"
+    assert "db_url" not in response.text
+    assert db_path not in response.text
+
+
+async def test_saved_source_discovery_and_inspection(app, db_path, monkeypatch):
+    import config
+
+    url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setattr(config, "effective_db_url", lambda connection_id="default": url)
+    async with _client(app) as client:
+        discovered = await client.post("/_config/api/sources/database:default/discover", json={})
+        objects = discovered.json()["objects"]
+        gadget = next(item for item in objects if item["name"] == "gadgets")
+        inspected = await client.post("/_config/api/sources/database:default/inspect", json={
+            "schema": gadget["schema"], "name": gadget["name"],
+        })
+        rejected = await client.post("/_config/api/sources/database:default/inspect", json={
+            "schema": gadget["schema"], "name": "missing",
+        })
+
+    assert discovered.status_code == 200
+    assert "gadgets" in {item["name"] for item in objects}
+    assert inspected.status_code == 200
+    metadata = inspected.json()["object"]
+    assert metadata["source_table"] == "main.gadgets"
+    assert metadata["detected_key"] == "gadget_id"
+    assert {column["name"] for column in metadata["columns"]} == {"gadget_id", "label", "price"}
+    assert rejected.status_code == 400
+    assert "not part of the selected database source" in rejected.json()["error"]

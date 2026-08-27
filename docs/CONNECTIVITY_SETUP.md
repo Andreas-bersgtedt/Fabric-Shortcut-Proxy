@@ -184,7 +184,7 @@ bucket, and upstream secrets live in the **credential store by id**, never inlin
   ]
 }
 ```
-Store the upstream credential encrypted via the config builder **Storage** tab, or the API
+Store the upstream credential encrypted via the Config Builder **Sources** area, or the API
 (`POST /_config/api/s3-credentials` / `/_config/api/azure-credentials`). A credential‑less mount
 must set `"auth"` (`anonymous`/`instance` for s3; `default`/`managed_identity`/`anonymous` for
 azure). Scope Fabric's access with per‑key ACLs and keep `ENFORCE_MOUNT_AUTH=1` (default) so a

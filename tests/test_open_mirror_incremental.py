@@ -188,7 +188,7 @@ def test_cleanup_deletes_old_files_and_keeps_recent_files(tmp_path):
     assert candidate.retained_file_count == 1
     assert candidate.reason == "retention_elapsed"
 
-    result = cleanup_target(target, execute=True)
+    result = cleanup_target(target, execute=True, now=now)
     assert result["deleted"] == ["dbo.schema/sales/_FilesReadyToDelete/old.parquet"]
     assert not old.exists()
     assert recent.exists()

@@ -1,5 +1,10 @@
 # Sidequest Plan: Config Builder SPA
 
+> Historical design record. The shipped Config Builder now manages split `config.*.json`
+> files and encrypted credentials directly; it no longer uses the download-only workflow
+> described below. See [CONFIGURATION.md](CONFIGURATION.md) and
+> [BACKUP_RESTORE.md](BACKUP_RESTORE.md) for current operator guidance.
+
 A small web tool that connects to a **SQL Server** or **PostgreSQL** database with
 just host / user / password, lets you pick one or more tables, and **downloads a
 ready-to-use `config.json`** for the proxy.

@@ -421,6 +421,7 @@ flowchart TB
     TAB["config.tables.json"]
     CONN["config.connection.json"]
     MNT["config.mounts.json"]
+    OM["config.open_mirror.json"]
   end
 
   subgraph LOAD["config loading"]
@@ -439,7 +440,7 @@ flowchart TB
   end
 
   ENV & SYS & PERF & FRESHF --> LOAD
-  TAB & CONN & MNT --> LOAD
+  TAB & CONN & MNT & OM --> LOAD
   LOAD --> API
   VAL --> WRITE --> SYS & PERF & FRESHF & TAB & CONN
   CAT --> UI["/_config builder + monitor"]
@@ -447,6 +448,13 @@ flowchart TB
 
 Secret material (DB URLs, upstream creds, access keys) is **not** stored in these
 JSON files, it lives in the encrypted credential store.
+
+The Config Builder applies each concern to its owning split file. Its portable backup path
+exports logical credential records and Open Mirroring state, encrypts the complete archive with
+a password-derived AES-256-GCM key, then re-encrypts secrets for the destination host on restore.
+This avoids copying machine-bound DPAPI or Fernet ciphertext. Restore replaces configuration,
+credentials, and mirror state transactionally; the Manager must restart before restored runtime
+settings take effect. See [BACKUP_RESTORE.md](BACKUP_RESTORE.md).
 
 ---
 

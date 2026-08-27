@@ -47,9 +47,9 @@ Status: Completed (Phases 1–4).
 - **Inbound security (Phase 4):** SigV4 verified against **scoped access keys**
   (per-bucket/prefix ACLs, read-only), forced auth on mounts (`ENFORCE_MOUNT_AUTH`),
   TLS termination, and per-access **audit logging** (`ENABLE_AUDIT_LOG`).
-- **Config-builder UI:** Storage tab (mount editor per backend + Access-keys manager).
+- **Config Builder UI:** Sources includes the mount editor; Security includes access-key management.
 
-Reference: [devplan/StorageProxy.md](../devplan/StorageProxy.md), [SECURITY.md](SECURITY.md),
+Reference: [s3virtulization.md](s3virtulization.md), [SECURITY.md](SECURITY.md),
 [CONFIGURATION.md](CONFIGURATION.md) §14. Optional next step: read-write (PUT/DELETE/multipart).
 
 ## Phase 1: Canonical Source Path Model

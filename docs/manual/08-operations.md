@@ -32,6 +32,7 @@ run it as a service under a gMSA or local service account
 | `/_admin/refresh` | POST | Re-read the source and publish a new snapshot |
 | `/_admin/gc` | POST | Run retention garbage collection now |
 | `/_admin/publish-image` | POST | Publish a complete serving image (data + metadata) |
+| `/_config/api/open-mirror/health` | POST | Run read-only dependency checks for an edited Open Mirror target |
 | `/_config/api/open-mirror/publish` | POST | Start an on-demand Open Mirroring background job |
 | `/_config/api/open-mirror/publish/jobs/latest` | GET | Read the latest Open Mirroring job and per-target status |
 | `/_config/api/backup` | POST | Download a password-encrypted portable backup |
@@ -86,6 +87,15 @@ On-demand requests return a job id immediately. The UI polls that job and shows 
 per-table status, so navigation does not interrupt publishing. Only one on-demand job runs at a
 time, and the latest status remains queryable while the Manager process remains up.
 
+Use **Check health** before the first publish or after changing a source credential, schema, or
+Fabric target. It checks the target currently shown in the editor, even before it is saved, and
+reports configuration, Manager credential freshness, source query access, table key/watermark
+columns, Fabric mirroring status, and landing-zone listing access independently. The check is
+read-only: it does not start Fabric mirroring, read source rows, write OneLake files, or advance
+publication state. A warning identifies a condition that may need attention, such as a saved
+credential awaiting Manager restart, a nullable or string watermark, or a mirror that is not
+`Running`; an error or blocked result must be resolved before publishing.
+
 Before reading a OneLake target's source tables, the Manager checks the mirrored database status.
 When `self_healing` is enabled, it calls Fabric's mirroring start operation for `Initialized`,
 `Paused`, or `Stopped`, then waits for `Running` within
@@ -106,6 +116,20 @@ curl -X POST http://localhost:9200/_config/api/open-mirror/reset \
 
 The reset endpoint requires all three fields. It preserves invalid state until this explicit
 action, so a corrupt or unreadable state file never becomes an accidental full load.
+
+If no data reaches Fabric, check the cycle in this order:
+
+1. `open_mirror_cycle` with `replication_unavailable=1` means Fabric preflight failed before a
+  source query. Check the Manager identity's Fabric permissions and mirrored database status.
+2. `open_mirror_table_failed` with `pages_read=0` means source reflection or the first query
+  failed. The message includes the final database-driver error after retries.
+3. A missing table state file means no batch committed. A state file whose
+  `published_rows_total` increases confirms that OneLake writes completed and were verified.
+4. Large first pages can exceed driver timeouts or delay shutdown. Set `OPEN_MIRROR_MAX_ROWS` to
+  a bounded value and use a non-null, monotonic watermark supported by a source index.
+
+Restart the Manager after changing a saved source credential. Restarting only supervised Agents
+does not refresh the Manager process that owns scheduled and on-demand Open Mirror jobs.
 
 For tokenized Open Mirror targets, use the dedicated
 [Open Mirror tokenization UAT](../TOKENIZATION_OPEN_MIRROR_UAT.md) before production use.

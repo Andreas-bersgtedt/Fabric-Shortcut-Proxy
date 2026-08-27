@@ -656,6 +656,171 @@ async def preview_open_mirror(request: Request) -> JSONResponse:
     })
 
 
+@router.post("/api/open-mirror/health")
+async def check_open_mirror_health(request: Request) -> JSONResponse:
+    """Run read-only dependency checks for one edited Open Mirror target."""
+    body = await request.json()
+    raw_target = body.get("target") if isinstance(body, dict) else None
+    if not isinstance(raw_target, dict):
+        return JSONResponse(
+            {"ok": False, "error": 'body must be {"target": {...}}'},
+            status_code=400,
+        )
+    clean, errors = config.validate_setting_updates(
+        {"open_mirror_targets": [raw_target]}
+    )
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+
+    from sqlalchemy.engine import make_url
+    from db.executor import execute_scalar
+    from open_mirror.config import target_from_dict
+    from open_mirror.fabric_api import get_mirroring_status
+    from open_mirror.landing_zone import is_onelake_uri, open_landing_zone
+    from open_mirror.source import derive_table_schema
+
+    target_payload = clean["open_mirror_targets"][0]
+    target = target_from_dict(target_payload)
+    checks: list[dict] = []
+
+    def add(check_id: str, label: str, status: str, detail: str) -> None:
+        checks.append({
+            "id": check_id, "label": label, "status": status, "detail": detail,
+        })
+
+    add("configuration", "Configuration", "ok", "Target configuration is valid.")
+
+    effective_url = config.effective_db_url(target.connection_id)
+    stored_url = None
+    if config.ENABLE_CREDENTIAL_STORE:
+        try:
+            stored_url = _store().get_url(target.connection_id)
+        except Exception as exc:  # noqa: BLE001 - health checks must continue
+            add("credential_store", "Credential store", "warning", _clean_error(exc))
+    if stored_url and stored_url != effective_url:
+        add(
+            "credential", "Runtime credential", "warning",
+            "A newer saved credential exists. Restart the Manager before publishing.",
+        )
+    else:
+        parsed_url = make_url(effective_url)
+        auth_detail = (
+            "Runtime connection includes a username and password."
+            if parsed_url.username and parsed_url.password
+            else "Runtime connection uses passwordless or driver-managed authentication."
+        )
+        add("credential", "Runtime credential", "ok", auth_detail)
+
+    source_ready = False
+    try:
+        await execute_scalar("SELECT 1", connection=target.connection_id)
+        source_ready = True
+        add("source", "Source connection", "ok", "Source accepted a test query.")
+    except Exception as exc:  # noqa: BLE001 - return the dependency failure
+        add("source", "Source connection", "error", _clean_error(exc))
+
+    for table in target.tables:
+        if not table.enabled:
+            add(
+                f"table:{table.name}", f"Table {table.name}", "warning",
+                "Table is disabled; schema check skipped.",
+            )
+            continue
+        if not source_ready:
+            add(
+                f"table:{table.name}", f"Table {table.name}", "blocked",
+                "Source connection failed; schema check not run.",
+            )
+            continue
+        try:
+            columns = await derive_table_schema(
+                table.source_table, target.connection_id
+            )
+            by_name = {column.source_name: column for column in columns}
+            missing = [name for name in table.key_columns if name not in by_name]
+            if table.watermark_column and table.watermark_column not in by_name:
+                missing.append(table.watermark_column)
+            if missing:
+                add(
+                    f"table:{table.name}", f"Table {table.name}", "error",
+                    "Missing control column(s): " + ", ".join(missing),
+                )
+                continue
+            watermark = by_name.get(table.watermark_column or "")
+            if watermark and (
+                watermark.nullable or watermark.iceberg_type.lower() == "string"
+            ):
+                add(
+                    f"table:{table.name}", f"Table {table.name}", "warning",
+                    "Schema is readable, but the watermark should be non-null and "
+                    "monotonic; nullable or string watermarks can stall pagination.",
+                )
+            else:
+                add(
+                    f"table:{table.name}", f"Table {table.name}", "ok",
+                    f"Schema is readable; {len(columns)} column(s) reflected.",
+                )
+        except Exception as exc:  # noqa: BLE001 - isolate table checks
+            add(
+                f"table:{table.name}", f"Table {table.name}", "error",
+                _clean_error(exc),
+            )
+
+    onelake = is_onelake_uri(target.landing_zone_root)
+    if onelake:
+        if not target.workspace_id or not target.mirrored_database_id:
+            add(
+                "fabric", "Fabric mirroring", "error",
+                "Workspace and mirrored database IDs are required.",
+            )
+        else:
+            try:
+                payload = await asyncio.to_thread(
+                    get_mirroring_status,
+                    target.workspace_id,
+                    target.mirrored_database_id,
+                )
+                status = payload.get("status") or payload.get("mirroringStatus")
+                if isinstance(status, dict):
+                    status = status.get("status")
+                status = str(status or "Unknown")
+                add(
+                    "fabric", "Fabric mirroring",
+                    "ok" if status == "Running" else "warning",
+                    f"Mirroring status is {status}.",
+                )
+            except Exception as exc:  # noqa: BLE001 - continue to OneLake
+                add("fabric", "Fabric mirroring", "error", _clean_error(exc))
+    else:
+        add(
+            "fabric", "Fabric mirroring", "skipped",
+            "Local landing-zone targets do not use Fabric mirroring status.",
+        )
+
+    try:
+        backend = open_landing_zone(target.landing_zone_root)
+        await asyncio.to_thread(backend.list_dir, "")
+        add(
+            "landing_zone", "Landing zone", "ok",
+            "Landing-zone root is accessible for listing.",
+        )
+    except Exception as exc:  # noqa: BLE001 - final dependency result
+        add("landing_zone", "Landing zone", "error", _clean_error(exc))
+
+    overall = (
+        "error" if any(item["status"] in {"error", "blocked"} for item in checks)
+        else "warning" if any(item["status"] == "warning" for item in checks)
+        else "ok"
+    )
+    return JSONResponse({
+        "ok": overall != "error",
+        "status": overall,
+        "target_id": target.id,
+        "checked_at": _utc_now(),
+        "checks": checks,
+    })
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1256,7 +1421,9 @@ async def save_credential(request: Request) -> JSONResponse:
         "backend": st.backend_name,
         "applied": apply_now,
         "restarted": restarted,
-        "note": ("Saved and restarted Agents — the new credential is live."
+        "manager_restart_required": True,
+        "note": ("Saved and restarted Agents. Restart the Manager to apply the "
+                 "credential to Manager-hosted services such as Open Mirroring."
                  if apply_now else
                  "Saved (encrypted). Restart the Manager/Agents to apply."),
     })

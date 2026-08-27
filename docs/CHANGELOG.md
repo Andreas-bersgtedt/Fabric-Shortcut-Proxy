@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - The Config Builder Open Mirror editor now saves target and per-table cleanup retention values.
+- Open Mirror targets now have a read-only **Check health** action that validates configuration,
+  runtime credential freshness, source connectivity, table control columns, Fabric mirroring
+  status, and landing-zone access before publication.
 - The Manager Monitor now includes a Data File Manager for Open Mirror cleanup. It inspects
   Fabric's `_FilesReadyToDelete` folders, applies per-target or per-table retention, defaults to
   dry-run inspection, and deletes only eligible processed folders after explicit confirmation.
@@ -35,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lite, Enterprise, Manager, and Agent version metadata now report `2.6.0`.
 
 ### Fixed
+- Open Mirror scheduler limits, including per-cycle page and row caps, now persist to
+  `config.system.json` when saved through the Config Builder.
+- Source retry failures retain the final database-driver error, and SQL Server connection
+  attempts use the configured query timeout at the ODBC driver boundary.
+- Credential-save responses now distinguish restarted Agents from the Manager process that owns
+  Open Mirror jobs, so the UI reports the required Manager restart.
 - Tokenization selectors now reflect their actual saved state and refresh validation as soon as
   a key is selected.
 

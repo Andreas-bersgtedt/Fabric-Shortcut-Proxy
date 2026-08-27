@@ -248,6 +248,25 @@ async def test_endpoint_builds_url_from_fields(cred_app):
         assert d["env_var"] == "DB_URL_WAREHOUSE_PG"
 
 
+async def test_endpoint_apply_reports_manager_restart_required(cred_app, monkeypatch):
+    async def restart_agents(_request):
+        return 2
+
+    monkeypatch.setattr("configbuilder.router._restart_agents", restart_agents)
+    async with _client(cred_app) as client:
+        response = await client.post("/_config/api/credentials", json={
+            "connection_id": "default",
+            "db_url": "mssql+aioodbc://user:secret@host:1433/db",
+            "apply": True,
+        })
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["restarted"] == 2
+    assert body["manager_restart_required"] is True
+    assert "Open Mirroring" in body["note"]
+
+
 async def test_endpoint_rejects_empty(cred_app):
     async with _client(cred_app) as c:
         r = await c.post("/_config/api/credentials", json={"connection_id": "default"})

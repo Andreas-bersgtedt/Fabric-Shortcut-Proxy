@@ -149,7 +149,7 @@ the credential store by id, never inline.
 ```
 
 Turn it on with `ENABLE_STORAGE_PROXY=1` and store upstream credentials encrypted via the
-config builder Storage tab or the credential API. Keep `ENFORCE_MOUNT_AUTH=1` (default) so a
+Config Builder **Sources** area or the credential API. Keep `ENFORCE_MOUNT_AUTH=1` (default) so a
 mount is never served anonymously, and scope Fabric's access with per-key ACLs (chapter 7).
 Then create the Fabric shortcut against the mount bucket exactly as in Pattern A; only the
 bucket name changes.

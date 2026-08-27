@@ -13,6 +13,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fabric's `_FilesReadyToDelete` folders, applies per-target or per-table retention, defaults to
   dry-run inspection, and deletes only eligible processed folders after explicit confirmation.
 
+## [2.6.0]: 2026-08-27
+
+### Added
+- The Config Builder Security area can create and restore portable `.fspbackup` archives.
+  Backups use scrypt and AES-256-GCM and include split configuration, encrypted-store records,
+  scoped access keys, and Open Mirroring recovery state. Restored secrets are re-encrypted for
+  the destination host.
+- Open Mirroring key columns are selected from reflected source columns and support composite
+  keys. The optional watermark is selected from the same reflected schema.
+- On-demand Open Mirroring publishes now run as background jobs with per-target and per-table
+  status that remains available while the operator navigates within the Config Builder.
+
+### Changed
+- The Config Builder now presents task-focused Sources, Tables, Security, and Open Mirroring
+  workflows and applies changes directly to the split configuration files.
+- Connection and table removal is persisted immediately, including an explicitly empty table
+  registry, so removed items do not return after navigation or reload.
+- `cryptography` and `python-multipart` are core dependencies for encrypted backup creation and
+  multipart restore uploads.
+- Lite, Enterprise, Manager, and Agent version metadata now report `2.6.0`.
+
+### Fixed
+- Tokenization selectors now reflect their actual saved state and refresh validation as soon as
+  a key is selected.
+
 ## [2.5.3]: 2026-08-24
 
 ### C++ serving agent
@@ -403,6 +428,7 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
+[2.6.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.3...2.6.0
 [2.5.3]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.2...2.5.3
 [2.5.2]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.1...2.5.2
 [2.5.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.0...2.5.1

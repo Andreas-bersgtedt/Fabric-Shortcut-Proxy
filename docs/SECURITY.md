@@ -180,9 +180,28 @@ Each access key carries an authorization scope, stored **encrypted**:
   confines a key to sub-paths. Out-of-scope requests are rejected with
   `AccessDenied` (403).
 - **Read-only** in v1: write methods (PUT/DELETE/POST) are always denied.
-- Manage keys in the config-builder **Storage → Access keys** panel, or via
+- Manage keys in the Config Builder **Security → Access keys** panel, or via
   `/_config/api/access-keys` (create returns the secret **once**; rotate/delete
   supported).
+
+### Encrypted backup and restore
+
+The Config Builder **Security** area creates portable `.fspbackup` archives. A backup contains
+the split configuration files, logical encrypted-store records, scoped access keys, and Open
+Mirroring recovery state. It does not copy machine-bound DPAPI or Fernet ciphertext directly:
+the archive decrypts those records in memory, protects the complete payload with a password,
+and re-encrypts each record with the destination store during restore.
+
+The archive key is derived with scrypt and the payload is authenticated and encrypted with
+AES-256-GCM. Use a unique password of at least 12 characters, transfer the archive through a
+protected channel, and store its password separately. Restore rejects the wrong password,
+tampering, unsupported files, and unsafe state paths before replacing data. Config files,
+credentials, and mirror state are restored as one transaction and rolled back on write failure.
+
+Backups do not include source datasets, generated artifacts or caches, logs, environment-only
+secrets, external TLS key files, or the contents of a remote Key Vault. Back up those systems
+according to their own recovery procedures. Restart the Manager after a successful restore.
+See [BACKUP_RESTORE.md](BACKUP_RESTORE.md) for the operator procedure and exact scope.
 
 ### Upstream credential mediation (outbound)
 

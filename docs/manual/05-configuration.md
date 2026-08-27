@@ -37,8 +37,11 @@ committed `*.example.json` template; the real files are gitignored.
 |---|---|---|
 | `config.system.json` | S3 endpoint, server, ports, feature flags, cluster settings | `config.system.example.json` |
 | `config.connection.json` | Connection string and query/robustness settings | `config.connection.example.json` |
+| `config.performance.json` | Split planning, query, cache, and materialization settings | `config.performance.example.json` |
+| `config.freshness.json` | Refresh strategy, cadence, and full-pull policy | `config.freshness.example.json` |
 | `config.tables.json` | The table registry | `config.tables.example.json` |
 | `config.mounts.json` | Storage-proxy mount table (references credential ids, not secrets) | `config.mounts.example.json` |
+| `config.open_mirror.json` | Open Mirroring targets and table policies | `config.open_mirror.example.json` |
 
 A legacy single `config.json` (template `config.example.json`) still works and is picked up
 automatically, or point `CONFIG_FILE` at a specific path. Copy a template, edit it, and
@@ -49,8 +52,8 @@ Copy-Item config.connection.example.json config.connection.json
 Copy-Item config.tables.example.json config.tables.json
 ```
 
-Never commit a file that contains a connection string or key. `config.connection.json`,
-`config.system.json`, `config.tables.json`, and `config.mounts.json` are all gitignored.
+Never commit a file that contains a connection string or key. The live `config.*.json` files
+are gitignored; only their `*.example.json` templates are tracked.
 
 ## 5.3 Connecting to a source
 
@@ -133,8 +136,9 @@ the proxy validates both at startup.
 
 ## 5.7 The config builder
 
-If you would rather not write JSON, enable the browser config builder. It reflects tables,
-auto-detects key columns, edits per-column policies, and downloads or applies the config.
+Enable the browser Config Builder to manage the split configuration without editing each file.
+It reflects tables, auto-detects key columns, edits per-column policies, and applies changes to
+the owning `config.*.json` file and encrypted credential store.
 
 ```powershell
 $env:ENABLE_CONFIG_BUILDER = "1"
@@ -143,9 +147,15 @@ $env:ENABLE_CONFIG_BUILDER = "1"
 # standalone python main.py: http://localhost:9000/_config/
 ```
 
-It is off by default and accepts database credentials, so run it on a private surface only.
-It also hosts the per-column tokenization policy editor (chapter 7). The builder preserves
-existing explicit schemas and transforms across reloads and apply operations.
+Use **Sources** for connections and mount credentials, **Tables** for the served registry and
+tokenization policies, **Security** for scoped access keys and encrypted backup/restore, and
+**Open Mirroring** for replication targets. Connection and table removal is persisted
+immediately. Applying an empty table selection writes an empty registry, so deleted entries do
+not return on bootstrap or reload.
+
+The builder is off by default and accepts database credentials, so run it on a private surface
+only. It preserves existing explicit schemas and transforms across reloads and apply operations.
+See chapter 7 for credential and backup protections.
 
 ## 5.8 Multi-connection sources
 
@@ -225,9 +235,17 @@ sequence file are not selected. The Manager deletes eligible files individually 
 the ready directory only when no files remain. It reports a failure if that empty-directory
 cleanup cannot be verified.
 
-The Config Builder's Open Mirror tab exposes the same policy. Set the target retention in days,
+The Config Builder's **Open Mirroring** area exposes the same policy. Set the target retention in days,
 or leave a table override blank to inherit it. Saving writes both values to
 `config.open_mirror.json`; restart the Manager for the scheduler to use a changed policy.
+
+Key columns and the optional watermark are selected from the reflected source schema. Select
+more than one key column for a composite key, or choose **No watermark** for snapshot tracking.
+The control-column choices update tokenization validation immediately.
+
+**Publish now** and **Dry run** start background jobs instead of holding the browser request open.
+The Config Builder polls the job and shows per-target and per-table progress. The latest job can
+be recovered after navigating to another area of the UI while the Manager process remains up.
 
 ## 5.12 Validation
 

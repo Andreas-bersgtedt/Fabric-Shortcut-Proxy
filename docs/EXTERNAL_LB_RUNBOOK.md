@@ -7,8 +7,7 @@ and the C++ agent's throughput is preserved. Backend discovery is "Tier 2": a sm
 renderer keeps the nginx `upstream` in sync with the live fleet.
 
 See [architecture-distributed.excalidraw](architecture-distributed.excalidraw) for
-the topology and [architecture-overview.excalidraw](architecture-overview.excalidraw)
-for the component view.
+the deployment topology and component view.
 
 ## Topology
 

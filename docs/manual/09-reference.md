@@ -1,7 +1,7 @@
 # Chapter 9: Reference
 
 Quick lookup for settings, dialects, paths, launcher flags, endpoints, and terms. The
-settings registry in [config.py](../config.py) is the source of truth, and the config
+settings registry in [config.py](../../config.py) is the source of truth, and the config
 builder's All settings panel lists every key with its default and help text. The complete
 narrative settings reference is [CONFIGURATION.md](../CONFIGURATION.md).
 
@@ -141,6 +141,8 @@ launcher uses `--kebab-case`.
 | `/_admin/timeline`, `/_admin/trace`, `/_admin/objects`, `/_admin/schemas` | Diagnostics |
 | `/_admin/refresh`, `/_admin/gc`, `/_admin/publish-image` | Snapshot, GC, and image actions |
 | `/_config/api/keyvault`, `/_config/api/keyvault/test` | Key Vault status and a live connectivity test |
+| `/_config/api/open-mirror/publish`, `/_config/api/open-mirror/publish/jobs/latest` | Start and inspect background Open Mirroring publishes |
+| `/_config/api/backup`, `/_config/api/restore` | Download and restore password-encrypted deployment state |
 | `/_config`, `/_monitor`, `/_manager` | Config builder, monitor, admin console; Manager Basic auth required |
 
 Chapter 8 has the full table with methods and query parameters.
@@ -154,8 +156,11 @@ Chapter 8 has the full table with methods and query parameters.
 | `s3proxy` | `boto3` | Native S3 / MinIO mounts |
 | `azureblob` | `azure-storage-blob`, `azure-identity` | Azure Blob / ADLS mounts |
 | `keyvault` | `azure-keyvault-secrets`, `azure-identity` | Entra ID identity + Azure Key Vault credential store (issue #16) |
-| `credentials` | `cryptography` | Encrypted store on non-Windows hosts |
 | `dev` | `pyiceberg`, `botocore`, `httpx` | Tests and reference-reader validation |
+
+`cryptography` and `python-multipart` are core dependencies because the encrypted credential
+store and backup/restore APIs are available in the base installation. The legacy `credentials`
+extra remains accepted but installs no additional package.
 
 ## 9.8 Glossary
 

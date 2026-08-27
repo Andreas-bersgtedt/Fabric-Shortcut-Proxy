@@ -208,6 +208,13 @@ Each table uses one of these strategies:
 - `mode: "initial"`: an explicit full load. Invocation mode takes precedence over table mode,
   which takes precedence over `OPEN_MIRROR_MODE`.
 
+A watermark must be non-null and increase when a source row changes. Timestamp or sequence
+columns are typical choices; descriptive text is not. The publisher orders rows by the watermark
+and key columns, so the source should have an index that supports that order for large tables.
+Start a large initial load with `OPEN_MIRROR_MAX_ROWS` set to a bounded page size such as 10,000,
+plus `OPEN_MIRROR_MAX_PAGES_PER_CYCLE` or `OPEN_MIRROR_MAX_ROWS_PER_CYCLE` when each scheduler
+cycle must have a fixed source-load budget.
+
 The Manager stores cursor and recovery state outside the landing zone. Set
 `OPEN_MIRROR_STATE_DIR` explicitly for a service installation, or create the Linux service
 directory before startup. Missing state permits the first load; corrupt or unreadable state stops
@@ -223,6 +230,9 @@ Set `fabric_retention_days` on a target to reconcile Fabric's mirrored-database
 This is separate from `cleanup_retention_days`, which controls deletion of processed
 landing-zone files. The Manager uses its existing Fabric identity and preserves the rest of
 the mirrored-database definition when it changes this value.
+
+Saving a source credential with **Apply** restarts supervised Agents. Restart the Manager as
+well before using that credential from Manager-hosted Open Mirror jobs.
 
 The Manager Monitor includes a Data File Manager for processed landing-zone files. Set
 `cleanup_retention_days` on a target to choose how long files remain in Fabric's

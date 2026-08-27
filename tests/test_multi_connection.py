@@ -95,6 +95,22 @@ def test_effective_db_url_and_max_rows(two_sources):
     assert config.effective_query_max_rows("default") == config.QUERY_MAX_ROWS
 
 
+def test_sql_server_engine_uses_configured_driver_timeout(monkeypatch):
+    captured = {}
+
+    def fake_create_engine(db_url, **kwargs):
+        captured.update(db_url=db_url, **kwargs)
+        return object()
+
+    monkeypatch.setattr(executor, "create_async_engine", fake_create_engine)
+    result = executor._make_async_engine(
+        "mssql+aioodbc://host/database", timeout_seconds=17
+    )
+
+    assert result is not None
+    assert captured["connect_args"] == {"timeout": 17}
+
+
 def test_default_connection_always_present():
     assert "default" in connection_config.CONNECTIONS
     assert connection_config.get_connection(None).id == "default"

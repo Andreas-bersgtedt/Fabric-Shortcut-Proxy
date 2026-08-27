@@ -89,7 +89,10 @@ async def test_execute_split_query_raises_source_unavailable(monkeypatch):
 
     monkeypatch.setattr(ex, "_execute_once", always_fail)
 
-    with pytest.raises(ex.SourceUnavailable):
+    with pytest.raises(
+        ex.SourceUnavailable,
+        match="SQL query failed after 3 attempt.*RuntimeError: db down",
+    ):
         await ex.execute_split_query("SELECT 1", {}, split_index=0, max_retries=2)
 
     assert attempts["n"] == 3  # initial + 2 retries

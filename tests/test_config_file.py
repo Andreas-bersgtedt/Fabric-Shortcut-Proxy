@@ -154,6 +154,24 @@ def test_write_config_updates_persists_keyvault_settings(tmp_path, monkeypatch):
     assert saved["keyvault_refresh_seconds"] == 120
 
 
+def test_write_config_updates_persists_open_mirror_limits(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = config.write_config_updates({
+        "open_mirror_max_rows": 10_000,
+        "open_mirror_max_pages_per_cycle": 1,
+        "open_mirror_max_rows_per_cycle": 10_000,
+        "open_mirror_preflight_timeout_seconds": 30,
+        "open_mirror_fabric_retry_attempts": 2,
+    })
+    assert "open_mirror_max_pages_per_cycle" in result["changed"]
+    saved = json.loads((tmp_path / "config.system.json").read_text(encoding="utf-8"))["system"]
+    assert saved["open_mirror_max_rows"] == 10_000
+    assert saved["open_mirror_max_pages_per_cycle"] == 1
+    assert saved["open_mirror_max_rows_per_cycle"] == 10_000
+    assert saved["open_mirror_preflight_timeout_seconds"] == 30
+    assert saved["open_mirror_fabric_retry_attempts"] == 2
+
+
 def test_effective_settings_reads_system_file(tmp_path, monkeypatch):
     # Regression: system settings (e.g. keyvault_uri) must resolve from
     # config.system.json in the live editor, not silently fall back to default

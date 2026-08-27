@@ -53,16 +53,20 @@ def _db_url_uses_async_driver(db_url: str) -> bool:
     )
 
 
-def _make_async_engine(db_url: str) -> AsyncEngine:
+def _make_async_engine(
+    db_url: str, timeout_seconds: int | None = None
+) -> AsyncEngine:
     kwargs: dict = {"echo": False, "hide_parameters": True}
     # SQLite (including aiosqlite) uses StaticPool and does not accept
     # pool_size / max_overflow / pool_timeout.
     if "sqlite" not in db_url:
         kwargs.update({"pool_size": 5, "max_overflow": 10, "pool_timeout": 30})
+    if db_url.lower().startswith("mssql+") and timeout_seconds is not None:
+        kwargs["connect_args"] = {"timeout": max(1, int(timeout_seconds))}
     return create_async_engine(db_url, **kwargs)
 
 
-def _make_sync_engine(db_url: str) -> Engine:
+def _make_sync_engine(db_url: str, timeout_seconds: int | None = None) -> Engine:
     kwargs: dict = {
         "echo": False,
         "hide_parameters": True,
@@ -70,6 +74,8 @@ def _make_sync_engine(db_url: str) -> Engine:
     }
     if "sqlite" not in db_url:
         kwargs.update({"pool_size": 5, "max_overflow": 10, "pool_timeout": 30})
+    if db_url.lower().startswith("mssql+") and timeout_seconds is not None:
+        kwargs["connect_args"] = {"timeout": max(1, int(timeout_seconds))}
     return create_engine(db_url, **kwargs)
 
 
@@ -83,7 +89,7 @@ def get_engine() -> AsyncEngine:
 
     global _engine
     if _engine is None:
-        _engine = _make_async_engine(config.DB_URL)
+        _engine = _make_async_engine(config.DB_URL, config.QUERY_TIMEOUT_SECONDS)
     return _engine
 
 
@@ -91,7 +97,7 @@ def get_sync_engine() -> Engine:
     """Sync engine for the DEFAULT connection (``config.DB_URL``)."""
     global _sync_engine
     if _sync_engine is None:
-        _sync_engine = _make_sync_engine(config.DB_URL)
+        _sync_engine = _make_sync_engine(config.DB_URL, config.QUERY_TIMEOUT_SECONDS)
     return _sync_engine
 
 
@@ -137,9 +143,10 @@ def _source_gate():
 class ConnectionHandle:
     """Lazily-created engines + backpressure gate for a NAMED source connection."""
 
-    def __init__(self, connection_id: str, db_url: str):
+    def __init__(self, connection_id: str, db_url: str, timeout_seconds: int):
         self.connection_id = connection_id
         self.db_url = db_url
+        self.timeout_seconds = timeout_seconds
         self._engine: AsyncEngine | None = None
         self._sync_engine: Engine | None = None
         self._sem: asyncio.Semaphore | None = None
@@ -156,12 +163,12 @@ class ConnectionHandle:
                 f"query APIs, which apply a sync-threadpool fallback for this flavor."
             )
         if self._engine is None:
-            self._engine = _make_async_engine(self.db_url)
+            self._engine = _make_async_engine(self.db_url, self.timeout_seconds)
         return self._engine
 
     def get_sync_engine(self) -> Engine:
         if self._sync_engine is None:
-            self._sync_engine = _make_sync_engine(self.db_url)
+            self._sync_engine = _make_sync_engine(self.db_url, self.timeout_seconds)
         return self._sync_engine
 
     def gate(self):
@@ -194,7 +201,9 @@ def _get_named_handle(connection_id: str) -> ConnectionHandle:
         conn = config.get_connection(connection_id)
         if conn is None:
             raise RuntimeError(f"Unknown connection id {connection_id!r}.")
-        h = ConnectionHandle(connection_id, conn.db_url)
+        h = ConnectionHandle(
+            connection_id, conn.db_url, conn.query_timeout_seconds
+        )
         _named_handles[connection_id] = h
     return h
 
@@ -311,8 +320,12 @@ async def execute_split_query(
         if attempt < max_retries:
             await asyncio.sleep(backoff * (attempt + 1))
 
+    detail = (
+        f": {type(last_exc).__name__}: {last_exc}"
+        if last_exc is not None else ""
+    )
     raise SourceUnavailable(
-        f"SQL query failed after {max_retries + 1} attempt(s)"
+        f"SQL query failed after {max_retries + 1} attempt(s){detail}"
     ) from last_exc
 
 

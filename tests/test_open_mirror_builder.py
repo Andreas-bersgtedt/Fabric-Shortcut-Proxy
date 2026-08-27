@@ -69,6 +69,203 @@ async def test_preview_rejects_target_on_unknown_connection(app):
     assert any("missing-conn" in e for e in r.json()["errors"])
 
 
+async def test_health_checks_full_dependency_chain(app, monkeypatch):
+    import configbuilder.router as router_module
+    import db.executor as executor
+    import open_mirror.fabric_api as fabric_api
+    import open_mirror.landing_zone as landing_zone
+    import open_mirror.source as source
+
+    calls = {"source": 0, "schema": 0, "fabric": 0, "landing": 0}
+
+    async def fake_scalar(sql, params=None, connection="default"):
+        assert sql == "SELECT 1"
+        calls["source"] += 1
+        return 1
+
+    async def fake_schema(source_table, connection="default"):
+        calls["schema"] += 1
+        return [
+            config.ColumnDef(1, "id", "long", nullable=False),
+            config.ColumnDef(2, "changed_at", "timestamptz", nullable=False),
+        ]
+
+    def fake_status(workspace_id, database_id, credential=None):
+        calls["fabric"] += 1
+        return {"status": "Running"}
+
+    class FakeLandingZone:
+        def list_dir(self, path):
+            calls["landing"] += 1
+            return []
+
+    class FakeStore:
+        def get_url(self, connection_id):
+            return None
+
+    monkeypatch.setattr(executor, "execute_scalar", fake_scalar)
+    monkeypatch.setattr(source, "derive_table_schema", fake_schema)
+    monkeypatch.setattr(fabric_api, "get_mirroring_status", fake_status)
+    monkeypatch.setattr(landing_zone, "open_landing_zone", lambda root: FakeLandingZone())
+    monkeypatch.setattr(router_module, "_store", lambda: FakeStore())
+    target = _target()
+    target.update({"workspace_id": "ws", "mirrored_database_id": "db"})
+    target["tables"][0].update({
+        "mode": "watermark", "watermark_column": "changed_at",
+    })
+
+    async with _client(app) as client:
+        response = await client.post(
+            "/_config/api/open-mirror/health", json={"target": target}
+        )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["ok"] is True and body["status"] == "ok"
+    assert calls == {"source": 1, "schema": 1, "fabric": 1, "landing": 1}
+    assert {item["id"] for item in body["checks"]} >= {
+        "configuration", "credential", "source", "table:sales", "fabric",
+        "landing_zone",
+    }
+
+
+async def test_health_isolates_source_failure_and_redacts_secrets(app, monkeypatch):
+    import configbuilder.router as router_module
+    import db.executor as executor
+    import open_mirror.fabric_api as fabric_api
+    import open_mirror.landing_zone as landing_zone
+    import open_mirror.source as source
+
+    calls = {"schema": 0, "fabric": 0, "landing": 0}
+
+    async def failing_scalar(sql, params=None, connection="default"):
+        raise RuntimeError("mssql+aioodbc://user:secret@db/source unavailable")
+
+    async def fake_schema(source_table, connection="default"):
+        calls["schema"] += 1
+        return []
+
+    def fake_status(workspace_id, database_id, credential=None):
+        calls["fabric"] += 1
+        return {"status": "Running"}
+
+    class FakeLandingZone:
+        def list_dir(self, path):
+            calls["landing"] += 1
+            return []
+
+    class FakeStore:
+        def get_url(self, connection_id):
+            return None
+
+    monkeypatch.setattr(executor, "execute_scalar", failing_scalar)
+    monkeypatch.setattr(source, "derive_table_schema", fake_schema)
+    monkeypatch.setattr(fabric_api, "get_mirroring_status", fake_status)
+    monkeypatch.setattr(landing_zone, "open_landing_zone", lambda root: FakeLandingZone())
+    monkeypatch.setattr(router_module, "_store", lambda: FakeStore())
+    target = _target()
+    target.update({"workspace_id": "ws", "mirrored_database_id": "db"})
+
+    async with _client(app) as client:
+        response = await client.post(
+            "/_config/api/open-mirror/health", json={"target": target}
+        )
+
+    body = response.json()
+    checks = {item["id"]: item for item in body["checks"]}
+    assert response.status_code == 200
+    assert body["ok"] is False and body["status"] == "error"
+    assert checks["source"]["status"] == "error"
+    assert checks["table:sales"]["status"] == "blocked"
+    assert "secret" not in checks["source"]["detail"]
+    assert calls == {"schema": 0, "fabric": 1, "landing": 1}
+
+
+async def test_health_reports_actionable_warnings(app, monkeypatch):
+    import configbuilder.router as router_module
+    import db.executor as executor
+    import open_mirror.fabric_api as fabric_api
+    import open_mirror.landing_zone as landing_zone
+    import open_mirror.source as source
+
+    async def fake_scalar(sql, params=None, connection="default"):
+        return 1
+
+    async def fake_schema(source_table, connection="default"):
+        return [
+            config.ColumnDef(1, "id", "long", nullable=False),
+            config.ColumnDef(2, "changed_at", "string", nullable=True),
+        ]
+
+    class FakeLandingZone:
+        def list_dir(self, path):
+            return []
+
+    class FakeStore:
+        def get_url(self, connection_id):
+            return "mssql+aioodbc://user:new-password@db/source"
+
+    monkeypatch.setattr(router_module.config, "ENABLE_CREDENTIAL_STORE", True)
+    monkeypatch.setattr(router_module, "_store", lambda: FakeStore())
+    monkeypatch.setattr(executor, "execute_scalar", fake_scalar)
+    monkeypatch.setattr(source, "derive_table_schema", fake_schema)
+    monkeypatch.setattr(
+        fabric_api, "get_mirroring_status",
+        lambda workspace_id, database_id, credential=None: {"status": "Stopped"},
+    )
+    monkeypatch.setattr(landing_zone, "open_landing_zone", lambda root: FakeLandingZone())
+    target = _target()
+    target.update({"workspace_id": "ws", "mirrored_database_id": "db"})
+    target["tables"][0].update({
+        "mode": "watermark", "watermark_column": "changed_at",
+    })
+
+    async with _client(app) as client:
+        response = await client.post(
+            "/_config/api/open-mirror/health", json={"target": target}
+        )
+
+    body = response.json()
+    checks = {item["id"]: item for item in body["checks"]}
+    assert body["ok"] is True and body["status"] == "warning"
+    assert checks["credential"]["status"] == "warning"
+    assert checks["table:sales"]["status"] == "warning"
+    assert checks["fabric"]["status"] == "warning"
+    assert "new-password" not in response.text
+
+
+async def test_health_reports_landing_zone_failure(app, monkeypatch):
+    import db.executor as executor
+    import open_mirror.landing_zone as landing_zone
+    import open_mirror.source as source
+
+    async def fake_scalar(sql, params=None, connection="default"):
+        return 1
+
+    async def fake_schema(source_table, connection="default"):
+        return [config.ColumnDef(1, "id", "long", nullable=False)]
+
+    class FailingLandingZone:
+        def list_dir(self, path):
+            raise RuntimeError("OneLake listing denied")
+
+    monkeypatch.setattr(executor, "execute_scalar", fake_scalar)
+    monkeypatch.setattr(source, "derive_table_schema", fake_schema)
+    monkeypatch.setattr(landing_zone, "open_landing_zone", lambda root: FailingLandingZone())
+
+    async with _client(app) as client:
+        response = await client.post(
+            "/_config/api/open-mirror/health",
+            json={"target": _target(root="./local-landing")},
+        )
+
+    body = response.json()
+    checks = {item["id"]: item for item in body["checks"]}
+    assert body["ok"] is False and body["status"] == "error"
+    assert checks["fabric"]["status"] == "skipped"
+    assert checks["landing_zone"]["status"] == "error"
+
+
 async def test_save_writes_open_mirror_config(app, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     async with _client(app) as c:
@@ -104,6 +301,7 @@ def test_index_has_open_mirror_tab():
     assert 'id="openmirror-tab"' in html
     assert "api/open-mirror/save" in html
     assert "api/open-mirror/preview" in html
+    assert "api/open-mirror/health" in html
     assert "api/open-mirror/publish" in html
     assert "api/open-mirror/list-tables" in html
     assert "api/open-mirror/inspect-table" in html
@@ -114,6 +312,8 @@ def test_index_has_open_mirror_tab():
     assert "omUpdatePolicy" in html
     assert 'class="omkeys"' in html
     assert 'class="omwatermark"' in html
+    assert 'id="btnHealthOm"' in html
+    assert 'id="omHealthOut"' in html
     assert "omKeyOptions" in html
     assert "omWatermarkOptions" in html
 

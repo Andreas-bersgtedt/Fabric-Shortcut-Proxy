@@ -662,9 +662,11 @@
 
     <div class="actions" style="margin-top:12px;">
       <button class="btn primary" id="btnApplyOmTarget">Add / update target</button>
+      <button class="btn ghost" id="btnHealthOm" title="Check source, schema, Fabric status, and landing-zone access without publishing">Check health</button>
       <button class="btn ghost" id="btnPreviewOm">Preview layout</button>
     </div>
     <div class="status" id="omEditStatus"></div>
+    <pre id="omHealthOut" style="display:none;"></pre>
     <pre id="omPreview" style="display:none;"></pre>
   </div>
 </div>
@@ -1388,7 +1390,8 @@ $("btnSaveCred").onclick = async () => {
   if(!r.ok){ s.className="status err"; s.textContent="✗ "+(r.error||"could not save credential"); return; }
   s.className="status ok";
   s.textContent = `🔒 Saved (${r.backend}) as ${r.env_var}.`
-    + (r.restarted ? ` Restarted ${r.restarted} agent(s) — the credential is live.` : ` ${r.note||""}`);
+    + (r.restarted ? ` Restarted ${r.restarted} agent(s).` : "")
+    + ` ${r.note||""}`;
   await refreshCredStatus();
   renderConnList();
 };
@@ -3372,6 +3375,44 @@ async function omPreview(){
   }catch(e){ s.className="status err"; s.textContent="Preview request failed."; }
 }
 
+async function omCheckHealth(){
+  const status=$("omEditStatus"), output=$("omHealthOut"), button=$("btnHealthOm");
+  let target;
+  try{ target=omReadForm(); }
+  catch(e){ status.className="status err"; status.textContent=e.message; return; }
+  button.disabled=true;
+  status.className="status";
+  status.textContent="Checking dependency chain…";
+  output.style.display="none";
+  try{
+    const response=await fetch("/_config/api/open-mirror/health",{
+      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target})
+    });
+    const result=await response.json();
+    if(!response.ok){
+      status.className="status err";
+      status.textContent=(result.errors?result.errors.join("; "):result.error)||"Health check failed";
+      return;
+    }
+    const labels={ok:"OK",warning:"WARN",error:"ERROR",blocked:"BLOCKED",skipped:"SKIP"};
+    output.textContent=(result.checks||[]).map(check=>
+      `[${labels[check.status]||String(check.status).toUpperCase()}] ${check.label}\n    ${check.detail}`
+    ).join("\n");
+    output.style.display="block";
+    status.className="status "+(result.status==="ok"?"ok":result.status==="warning"?"":"err");
+    status.textContent=result.status==="ok"
+      ? "All Open Mirror dependencies are healthy."
+      : result.status==="warning"
+        ? "Health check completed with warnings."
+        : "Health check found blocking errors.";
+  }catch(e){
+    status.className="status err";
+    status.textContent="Health check request failed.";
+  }finally{
+    button.disabled=false;
+  }
+}
+
 async function omSave(){
   const s = $("omStatus");
   const problem=omTokenizationProblems(state.om.targets)[0];
@@ -3470,6 +3511,7 @@ function omInit(){
   wire("btnAddOmTarget", omAddTarget);
   wire("btnSaveOm", omSave);
   wire("btnApplyOmTarget", omApplyTarget);
+  wire("btnHealthOm", omCheckHealth);
   wire("btnPreviewOm", omPreview);
   wire("btnDryRunOm", ()=>omPublish(true));
   wire("btnPublishOm", ()=>omPublish(false));

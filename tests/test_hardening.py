@@ -148,6 +148,17 @@ def test_validate_config_rejects_bad_num_splits(monkeypatch):
         config.validate_config()
 
 
+def test_validate_config_accepts_best_effort_generation_consistency(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_SOURCE_CONSISTENCY", "best_effort")
+    config.validate_config()
+
+
+def test_validate_config_rejects_unsupported_snapshot_consistency(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_SOURCE_CONSISTENCY", "snapshot")
+    with pytest.raises(ValueError, match="do not share a source snapshot token"):
+        config.validate_config()
+
+
 def test_validate_config_rejects_duplicate_field_ids(monkeypatch):
     dup = list(config.TABLE_SCHEMA) + [config.TABLE_SCHEMA[0]]
     monkeypatch.setattr(config, "TABLE_SCHEMA", dup)

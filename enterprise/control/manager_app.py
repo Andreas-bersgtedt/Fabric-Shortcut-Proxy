@@ -89,6 +89,8 @@ def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int,
 def _build_supervisors(monitor_token: str = "") -> list[AgentSupervisor]:
     """One supervisor per Agent (count = AGENT_COUNT), each on PORT + i with its
     own materialization shard."""
+    if config.MANAGER_SUPERVISION_MODE == "external":
+        return []
     count = max(1, config.AGENT_COUNT)
     return [_make_supervisor(i, count, monitor_token) for i in range(count)]
 
@@ -175,11 +177,18 @@ def create_manager_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         configure_logging()
         config.validate_config()
+        if os.environ.get("KUBERNETES_SERVICE_HOST") and config.MANAGER_SUPERVISION_MODE != "external":
+            raise RuntimeError(
+                "Manager local supervision is disabled in Kubernetes because it would spawn "
+                "an unintended Agent child process. Set MANAGER_SUPERVISION_MODE=external "
+                "and deploy Agents separately, or omit the Manager deployment."
+            )
         agent_ports = [config.PORT + i for i in range(len(supervisors))]
         log.info("manager_startup", control_host=config.CONTROL_HOST,
                  control_port=config.CONTROL_PORT, agent_count=len(supervisors),
                  agent_ports=agent_ports, gateway=bool(gateway),
                  admin_ui=config.ENABLE_ADMIN_UI, manager_ha=config.MANAGER_HA,
+                 supervision_mode=config.MANAGER_SUPERVISION_MODE,
                  manager_auth=manager_auth_active(),
                  tables=[t.name for t in config.TABLES])
         if config.MANAGER_AUTH_ENABLED and not config.MANAGER_AUTH_PASSWORD:
@@ -192,7 +201,8 @@ def create_manager_app() -> FastAPI:
             ha_task = asyncio.create_task(_leadership_loop(), name="ha-leadership")
         else:
             app.state.is_leader = True
-            await _start_all()
+            if supervisors:
+                await _start_all()
         # Open Mirroring publish loop (opt-in): push source tables into the Fabric
         # landing zone on a schedule. Fails soft per target/table.
         om_scheduler = None
@@ -215,7 +225,8 @@ def create_manager_app() -> FastAPI:
             if lease is not None:
                 lease.release()
         else:
-            await _stop_all()
+            if supervisors:
+                await _stop_all()
         if gateway is not None:
             await gateway.aclose()
 
@@ -243,7 +254,12 @@ def create_manager_app() -> FastAPI:
         alive = [s for s in supervisors if s.is_alive]
         looped = [s.name for s in supervisors if s.crash_looped]
         # A standby is "ready" as a warm spare even though it supervises nothing.
-        ready = (not leader) or (len(alive) >= 1 and not looped)
+        managed_agents_ready = (
+            registry.count() >= 1
+            if config.MANAGER_SUPERVISION_MODE == "external"
+            else len(alive) >= 1 and not looped
+        )
+        ready = (not leader) or managed_agents_ready
         return JSONResponse(
             status_code=200 if ready else 503,
             content={
@@ -251,6 +267,8 @@ def create_manager_app() -> FastAPI:
                 "role": "primary" if leader else "standby",
                 "agents_alive": len(alive),
                 "agents_total": len(supervisors),
+                "agents_registered": registry.count(),
+                "supervision_mode": config.MANAGER_SUPERVISION_MODE,
                 "crash_looped": looped,
                 "restarts": {s.name: s.restart_count for s in supervisors},
             },

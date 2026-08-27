@@ -53,6 +53,7 @@ from system_config import (
     ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_SERVING, PUBLISH_SERVING_IMAGE,
     # Fleet
     AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
+    MANAGER_SUPERVISION_MODE, GENERATION_SOURCE_CONSISTENCY,
     # Control Plane
     MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT, AGENT_HOST_ALLOWLIST,
     AGENT_ADVERTISE_HOST,
@@ -191,6 +192,8 @@ _register("OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS", "open_mirror_fabric_retry_attempt
 _register("TLS_CERT_FILE", "tls_cert_file", "str", TLS_CERT_FILE)
 _register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
+_register("MANAGER_SUPERVISION_MODE", "manager_supervision_mode", "str", MANAGER_SUPERVISION_MODE)
+_register("GENERATION_SOURCE_CONSISTENCY", "generation_source_consistency", "str", GENERATION_SOURCE_CONSISTENCY)
 _register("ENABLE_GATEWAY", "enable_gateway", "bool", ENABLE_GATEWAY)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 
@@ -628,6 +631,22 @@ def validate_config() -> None:
         problems.append(f"ROLLING_RESTART_HEALTH_TIMEOUT must be > 0 (got {ROLLING_RESTART_HEALTH_TIMEOUT}).")
     if AGENT_COUNT < 1:
         problems.append(f"AGENT_COUNT must be >= 1 (got {AGENT_COUNT}).")
+    if MANAGER_SUPERVISION_MODE not in ("local", "external"):
+        problems.append(
+            "MANAGER_SUPERVISION_MODE must be 'local' or 'external' "
+            f"(got {MANAGER_SUPERVISION_MODE!r})."
+        )
+    if GENERATION_SOURCE_CONSISTENCY not in ("best_effort", "snapshot"):
+        problems.append(
+            "GENERATION_SOURCE_CONSISTENCY must be 'best_effort' or 'snapshot' "
+            f"(got {GENERATION_SOURCE_CONSISTENCY!r})."
+        )
+    elif GENERATION_SOURCE_CONSISTENCY == "snapshot":
+        problems.append(
+            "GENERATION_SOURCE_CONSISTENCY='snapshot' is not yet supported: distributed "
+            "workers do not share a source snapshot token. Use 'best_effort', or keep "
+            "materialization on one worker until a source-specific snapshot provider exists."
+        )
     if AGENT_SHARD_COUNT < 1:
         problems.append(f"AGENT_SHARD_COUNT must be >= 1 (got {AGENT_SHARD_COUNT}).")
     if not (0 <= AGENT_SHARD_INDEX < AGENT_SHARD_COUNT):
@@ -907,6 +926,8 @@ SETTINGS_META: dict[str, dict] = {
     "agent_restart_backoff": {"cat": "Cluster (scale)", "help": "Manager: delay before respawning a crashed Agent (seconds)."},
     "agent_max_rapid_restarts": {"cat": "Cluster (scale)", "help": "Manager: crash-loop guard — stop respawning after this many restarts in the window."},
     "agent_count": {"cat": "Cluster (scale)", "help": "Manager: number of Agents to supervise (each on PORT+i)."},
+    "manager_supervision_mode": {"cat": "Cluster (scale)", "help": "Manager Agent ownership: 'local' spawns child processes; 'external' accepts orchestrator-managed Agent registrations and spawns none.", "choices": ["local", "external"]},
+    "generation_source_consistency": {"cat": "Cluster (scale)", "help": "Source-read contract for a generation. 'best_effort' permits independently timed split reads. 'snapshot' is rejected until shared source snapshot tokens are supported.", "choices": ["best_effort", "snapshot"]},
     "agent_shard_index": {"cat": "Cluster (scale)", "help": "This Agent's materialization shard (set by the Manager)."},
     "agent_shard_count": {"cat": "Cluster (scale)", "help": "Total materialization shards (= agent_count)."},
     "shard_strategy": {"cat": "Cluster (scale)", "help": "Split-ownership across shards: 'modulo' (round-robin by split index) or 'weighted' (size-weighted, balances bytes using observed split sizes from the prior run; needs a shared artifact store). Restart to apply.", "choices": ["modulo", "weighted"]},
@@ -1002,6 +1023,8 @@ _KEY_TO_ATTR: dict[str, str] = {
     "tls_cert_file": "TLS_CERT_FILE",
     "tls_key_file": "TLS_KEY_FILE",
     "agent_count": "AGENT_COUNT",
+    "manager_supervision_mode": "MANAGER_SUPERVISION_MODE",
+    "generation_source_consistency": "GENERATION_SOURCE_CONSISTENCY",
     "shard_strategy": "SHARD_STRATEGY",
     "table_format": "TABLE_FORMAT",
     "metadata_cache_ttl": "METADATA_CACHE_TTL_SECONDS",
@@ -1102,6 +1125,8 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "artifact_store_serving": "config.system.json",
     "publish_serving_image": "config.system.json",
     "agent_count": "config.system.json",
+    "manager_supervision_mode": "config.system.json",
+    "generation_source_consistency": "config.system.json",
     "agent_shard_index": "config.system.json",
     "agent_shard_count": "config.system.json",
     "shard_strategy": "config.system.json",

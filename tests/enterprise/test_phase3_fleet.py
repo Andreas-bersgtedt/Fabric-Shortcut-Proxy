@@ -7,6 +7,7 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import httpx
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
@@ -152,3 +153,38 @@ def test_build_supervisors_assigns_ports_and_shards(monkeypatch):
     # lazy serves byte-identical splits across the fleet.
     assert all(e["MATERIALIZE_MODE"] == "lazy" for e in envs)
     assert all(e["ARTIFACT_STORE_SERVING"] == "1" for e in envs)
+
+
+def test_external_manager_builds_no_local_supervisors(monkeypatch):
+    from enterprise.control import manager_app
+    monkeypatch.setattr(config, "MANAGER_SUPERVISION_MODE", "external", raising=False)
+    monkeypatch.setattr(config, "AGENT_COUNT", 3, raising=False)
+
+    assert manager_app._build_supervisors() == []
+
+
+async def test_kubernetes_rejects_local_manager_supervision(monkeypatch):
+    from enterprise.control.manager_app import create_manager_app
+    monkeypatch.setattr(config, "MANAGER_SUPERVISION_MODE", "local", raising=False)
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+    app = create_manager_app()
+
+    with pytest.raises(RuntimeError, match="MANAGER_SUPERVISION_MODE=external"):
+        async with app.router.lifespan_context(app):
+            pass
+
+
+async def test_external_manager_readiness_uses_registered_agents(monkeypatch):
+    from enterprise.control.manager_app import create_manager_app
+    monkeypatch.setattr(config, "MANAGER_SUPERVISION_MODE", "external", raising=False)
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    app = create_manager_app()
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://mgr") as client:
+            assert (await client.get("/readyz")).status_code == 503
+            _register(app.state.registry, "external-1", 9400, "127.0.0.1")
+            response = await client.get("/readyz")
+            assert response.status_code == 200
+            assert response.json()["supervision_mode"] == "external"

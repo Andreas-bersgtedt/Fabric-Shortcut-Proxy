@@ -279,6 +279,12 @@ PUBLISH_SERVING_IMAGE: bool = _get_bool("PUBLISH_SERVING_IMAGE", "publish_servin
 # Number of Agents to supervise (Manager)
 AGENT_COUNT: int = _get_int("AGENT_COUNT", "agent_count", 1)
 
+# Manager process ownership: local spawns Agent children; external only accepts
+# registrations from Agents managed by Kubernetes or another orchestrator.
+MANAGER_SUPERVISION_MODE: str = _get_str(
+    "MANAGER_SUPERVISION_MODE", "manager_supervision_mode", "local"
+).strip().lower()
+
 # This Agent's materialization shard (set by Manager)
 AGENT_SHARD_INDEX: int = _get_int("AGENT_SHARD_INDEX", "agent_shard_index", 0)
 
@@ -294,6 +300,13 @@ ENABLE_GATEWAY: bool = _get_bool("ENABLE_GATEWAY", "enable_gateway", False)
 
 # Non-owner Agent: max wait for a sharded split to appear in the store
 MATERIALIZE_WAIT_SECONDS: float = float(_get_int("MATERIALIZE_WAIT_SECONDS", "materialize_wait_seconds", 30))
+
+# Cross-worker source-read contract. "best_effort" allows each split query to
+# observe the source independently. "snapshot" is reserved for a future shared,
+# source-specific snapshot token and currently fails validation.
+GENERATION_SOURCE_CONSISTENCY: str = _get_str(
+    "GENERATION_SOURCE_CONSISTENCY", "generation_source_consistency", "best_effort"
+).strip().lower()
 
 # ---------------------------------------------------------------------------
 # Control Plane (Phase 1)

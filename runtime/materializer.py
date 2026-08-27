@@ -30,6 +30,11 @@ from planner.split_planner import build_split_query
 from iceberg.stats import collect_split_stats
 from iceberg.state_store import SnapshotState
 from observability.logging import get_logger
+from runtime.split_completion import (
+    apply_split_completion,
+    publish_split_completion,
+    read_split_completion,
+)
 
 log = get_logger(__name__)
 
@@ -64,15 +69,15 @@ def _should_pin() -> bool:
     return config.PIN_MATERIALIZED_SPLITS and config.MATERIALIZE_MODE != "virtual"
 
 
-async def _wait_for_store(key: str) -> bytes | None:
-    """Poll the shared store for a split the owning shard is generating."""
+async def _wait_for_completion(split):
+    """Poll for the owning shard's small durable completion record."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + config.MATERIALIZE_WAIT_SECONDS
     while loop.time() < deadline:
         await asyncio.sleep(0.25)
-        got = cache.warm_parquet(key)
-        if got is not None:
-            return got
+        completion = read_split_completion(split)
+        if completion is not None:
+            return completion
     return None
 
 
@@ -81,6 +86,8 @@ def _apply_bytes(split, data: bytes) -> int:
     split.record_count = pq.read_metadata(io.BytesIO(data)).num_rows
     if config.ICEBERG_MANIFEST_STATS:
         split.stats = collect_split_stats(data, split.table.schema)
+    if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
+        publish_split_completion(split, data)
     if _should_pin():
         cache.pin_parquet(split.object_key, data)
     return split.record_count
@@ -88,17 +95,17 @@ def _apply_bytes(split, data: bytes) -> int:
 
 async def _materialize_split(split) -> int:
     key = split.object_key
+    if not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
+        completion = await _wait_for_completion(split)
+        if completion is None:
+            raise TimeoutError(
+                f"timed out waiting for owner completion: table={split.table.name} "
+                f"split={split.split_index}"
+            )
+        return apply_split_completion(split, completion)
     warm = cache.warm_parquet(key)
     if warm is not None:
         return _apply_bytes(split, warm)
-    # Cluster: a non-owner waits for the owning shard to publish this split to the
-    # shared store rather than regenerating it (avoids cross-agent byte drift).
-    if not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
-        warm = await _wait_for_store(key)
-        if warm is not None:
-            return _apply_bytes(split, warm)
-        log.warning("lazy_materialize_wait_timeout_fallback_generate",
-                    table=split.table.name, split_index=split.split_index)
     async with _sem:
         warm = cache.warm_parquet(key)   # another waiter may have won the race
         if warm is not None:
@@ -122,14 +129,16 @@ async def _materialize_split(split) -> int:
                 rows, split_index=split.split_index, columns=split.table.schema
             )
             nrows = len(rows)
-        if _should_pin():
-            cache.pin_parquet(key, pq_bytes)
-        else:
-            cache.put_parquet(key, pq_bytes)
         split.record_count = nrows
         split.file_size_in_bytes = len(pq_bytes)
         if config.ICEBERG_MANIFEST_STATS:
             split.stats = collect_split_stats(pq_bytes, split.table.schema)
+        if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
+            publish_split_completion(split, pq_bytes)
+        if _should_pin():
+            cache.pin_parquet(key, pq_bytes)
+        else:
+            cache.put_parquet(key, pq_bytes)
         return nrows
 
 

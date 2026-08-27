@@ -314,6 +314,14 @@ def test_index_has_open_mirror_tab():
     assert 'class="omwatermark"' in html
     assert 'id="btnHealthOm"' in html
     assert 'id="omHealthOut"' in html
+    assert 'id="omTableList"' in html
+    assert 'id="omTargetSettings"' in html
+    assert 'id="btnCancelOmTarget"' in html
+    assert "Save all staged changes" in html
+    assert "editingIndex" in html
+    assert "Discard staged changes" in html
+    assert "if(!state.om.editing) omWriteForm(omNewTarget());" not in html
+    assert "Another target already uses id" in html
     assert "omKeyOptions" in html
     assert "omWatermarkOptions" in html
 

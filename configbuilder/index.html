@@ -101,6 +101,16 @@
   .connrow .cid { font-weight:600; font-size:13px; }
   .connrow .meta { font-size:11px; color:var(--muted); margin-top:2px; word-break:break-all; }
   .connacts { display:flex; gap:6px; }
+  .om-workspace { display:grid; grid-template-columns:minmax(210px,280px) minmax(0,1fr); gap:14px; margin-top:10px; }
+  .om-table-nav { border-right:1px solid var(--line); padding-right:14px; }
+  .om-table-list { display:flex; flex-direction:column; gap:6px; margin:8px 0; }
+  .om-table-item { width:100%; text-align:left; background:transparent; color:var(--fg); border:1px solid var(--line);
+                   border-radius:6px; padding:8px 10px; cursor:pointer; }
+  .om-table-item:hover, .om-table-item.active { border-color:var(--accent); background:rgba(56,189,248,.07); }
+  .om-table-item small { display:block; color:var(--muted); overflow-wrap:anywhere; }
+  .om-editor-section { border-top:1px solid var(--line); margin-top:14px; padding-top:2px; }
+  .om-editor-section > summary { cursor:pointer; padding:12px 0; font-weight:700; color:var(--fg); }
+  .om-context { color:var(--muted); font-size:12px; margin:-4px 0 10px; }
   .badge { display:inline-block; font-size:10px; padding:0 6px; border-radius:20px;
            border:1px solid var(--line); color:var(--muted); vertical-align:middle; }
   .badge.ok { color:var(--ok); border-color:var(--ok); }
@@ -170,6 +180,8 @@
     .policy-detail { grid-column:1; grid-template-columns:1fr; }
     .object-picker { grid-template-columns:1fr; }
     .section-head { align-items:flex-start; flex-direction:column; }
+    .om-workspace { grid-template-columns:1fr; }
+    .om-table-nav { border-right:0; border-bottom:1px solid var(--line); padding:0 0 12px; }
   }
 </style>
 </head>
@@ -602,7 +614,7 @@
     <div id="omList" class="connlist"></div>
     <div class="actions" style="margin-top:12px;">
       <button class="btn ghost" id="btnAddOmTarget">+ Add target</button>
-      <button class="btn primary" id="btnSaveOm">Save targets</button>
+      <button class="btn primary" id="btnSaveOm">Save all staged changes</button>
       <button class="btn ghost" id="btnDryRunOm" title="Read the source and report the change set without writing">Dry run</button>
       <button class="btn ghost" id="btnPublishOm" title="Publish saved targets into the landing zone now">Publish saved targets</button>
     </div>
@@ -611,8 +623,11 @@
     <pre id="omPublishOut" style="display:none;"></pre>
   </div>
 
-  <div class="card" style="margin-top:16px;">
+  <div class="card" id="omEditor" style="margin-top:16px;display:none;">
     <h2 id="omEditTitle">Edit target</h2>
+    <div class="om-context" id="omEditContext"></div>
+    <details class="om-editor-section" id="omTargetSettings" open>
+    <summary>Target settings</summary>
     <label>Target id</label>
     <input id="omId" placeholder="fabric-sales" />
     <label>Source connection <span class="hint">(the source database engine configured under Sources)</span></label>
@@ -650,18 +665,29 @@
     <input id="omCleanupRetention" type="number" min="0" step="1" value="7" />
     <label>Fabric mirrored-database retention (days) <span class="hint">(1-30; blank leaves Fabric unchanged)</span></label>
     <input id="omFabricRetention" type="number" min="1" max="30" step="1" placeholder="Fabric default" />
+    </details>
 
-    <h2 style="margin-top:8px;">Tables</h2>
-    <div class="hint" style="margin-bottom:8px;">Pick source tables from the selected connection (the key column is auto-detected), or type them. <code>schema</code> nests the mirrored table under a <code>&lt;schema&gt;.schema</code> folder. <b>Watermark</b> tracking reads only rows after the committed composite cursor (upsert-only; no deletes). <b>Snapshot</b> tracking performs a full-source scan every cycle to detect inserts, updates, and deletes. A table retention value overrides the target value.</div>
-    <div class="actions" style="margin-bottom:8px;">
-      <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">Load tables from source</button>
-      <span class="status" id="omTablesStatus" style="margin:0 0 0 4px;display:inline-block;"></span>
+    <details class="om-editor-section" id="omTablesSection" open>
+    <summary>Tables <span class="badge" id="omTableCount">0</span></summary>
+    <div class="hint" style="margin-bottom:8px;">Tables belong only to the target named above. Select one table to edit it; changes remain staged until you update the target and save targets.</div>
+    <div class="om-workspace">
+      <aside class="om-table-nav">
+        <div class="actions" style="margin-top:0;">
+          <button class="btn ghost" id="btnLoadOmTables" title="List tables from the selected source connection">Load source</button>
+          <button class="btn ghost" id="btnAddOmTable">+ Table</button>
+        </div>
+        <div class="status" id="omTablesStatus"></div>
+        <div class="om-table-list" id="omTableList"></div>
+      </aside>
+      <section>
+        <div id="omTableRows"></div>
+      </section>
     </div>
-    <div id="omTableRows"></div>
-    <button class="btn ghost" id="btnAddOmTable" style="margin-top:8px;">+ Add table</button>
+    </details>
 
     <div class="actions" style="margin-top:12px;">
       <button class="btn primary" id="btnApplyOmTarget">Add / update target</button>
+      <button class="btn ghost" id="btnCancelOmTarget">Close editor</button>
       <button class="btn ghost" id="btnHealthOm" title="Check source, schema, Fabric status, and landing-zone access without publishing">Check health</button>
       <button class="btn ghost" id="btnPreviewOm">Preview layout</button>
     </div>
@@ -2905,11 +2931,11 @@ async function removeAccessKey(id){
 }
 
 // ---- Open Mirroring targets (config.open_mirror.json) ----
-if(!state.om) state.om = { targets: [], editing: null, publishJob: null, publishPoll: null };
+if(!state.om) state.om = { targets: [], editing: null, editingIndex: null, selectedTable: null, dirty: false, publishJob: null, publishPoll: null };
 function omEsc(v){ return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function omNewTable(){ return { name:"", source_table:"", target_table:"", key_column:"", schema:"", mode:"incremental", watermark_column:"", cleanup_retention_days:null, columns:null, _sourceColumns:[] }; }
 function omNewTarget(){ return { id:"", connection:"default", landing_zone_root:"", workspace_id:"",
-  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, self_healing:null, cleanup_retention_days:7, fabric_retention_days:null, tables:[ omNewTable() ] }; }
+  mirrored_database_id:"", partner_name:"FabricShortcutProxy", source_type:"SQL", enabled:true, self_healing:null, cleanup_retention_days:7, fabric_retention_days:null, tables:[] }; }
 
 function omRenderConnectionOptions(){
   const sel = $("omConnection"); if(!sel) return;
@@ -2925,8 +2951,8 @@ function omRenderList(){
   if(!ts.length){ box.innerHTML = `<div class="hint">No targets yet. Click <b>+ Add target</b> to create one.</div>`; return; }
   box.innerHTML = "";
   ts.forEach((t,i)=>{
-    const row = document.createElement("div"); row.className="connrow";
-    const tables = (t.tables||[]).map(x=>x.name||x.target_table||x.source_table).filter(Boolean).join(", ");
+    const row = document.createElement("div"); row.className="connrow"+(state.om.editingIndex===i?" active":"");
+    const tableCount = (t.tables||[]).filter(x=>x.name||x.target_table||x.source_table).length;
     const publish = state.om.publishJob && state.om.publishJob.targets
       ? state.om.publishJob.targets[t.id] : null;
     const publishLabel = publish ? ({queued:"queued",running:"publishing",completed:"complete",
@@ -2937,10 +2963,10 @@ function omRenderList(){
       + `<span class="badge ${t.enabled!==false?"ok":""}">${t.enabled!==false?"enabled":"disabled"}</span>`
       + (publish ? ` <span class="badge ${publishClass}">${omEsc(publishLabel)}</span>` : "") + `</div>`
       + `<div class="meta">→ ${omEsc(t.connection||"default")} · ${omEsc(t.landing_zone_root||"")}`
-      + (tables?` · tables: ${omEsc(tables)}`:"")
+      + ` · ${tableCount} table${tableCount===1?"":"s"}`
       + (publish&&publish.error?`<br>${omEsc(publish.error)}`:"")+`</div></div>`
-      + `<div class="connacts"><button class="iconbtn" data-i="${i}" data-act="edit" title="Edit">✎</button>`
-      + `<button class="iconbtn" data-i="${i}" data-act="del" title="Remove">✕</button></div>`;
+      + `<div class="connacts"><button class="iconbtn" data-i="${i}" data-act="edit" title="Edit target">Edit</button>`
+      + `<button class="iconbtn" data-i="${i}" data-act="del" title="Remove target">Remove</button></div>`;
     box.appendChild(row);
   });
   box.querySelectorAll(".iconbtn").forEach(b=>{
@@ -2949,14 +2975,36 @@ function omRenderList(){
   });
 }
 
+function omTableLabel(table,index){
+  return table.name||table.target_table||table.source_table||`New table ${index+1}`;
+}
+
+function omRenderTableList(){
+  const box=$("omTableList"), target=state.om.editing, tables=(target&&target.tables)||[];
+  if(!box) return;
+  $("omTableCount").textContent=String(tables.length);
+  if(!tables.length){ box.innerHTML='<div class="hint">No tables staged for this target.</div>'; return; }
+  box.innerHTML=tables.map((table,index)=>`<button type="button" class="om-table-item${state.om.selectedTable===index?" active":""}" data-table="${index}">`
+    + `${omEsc(omTableLabel(table,index))}<small>${omEsc(table.source_table||"Source not selected")}</small></button>`).join("");
+  box.querySelectorAll("[data-table]").forEach(button=>{
+    button.onclick=()=>{ state.om.selectedTable=parseInt(button.dataset.table); omRenderTableRows(); };
+  });
+}
+
 function omRenderTableRows(){
   const box = $("omTableRows"); if(!box) return;
   const t = state.om.editing; if(!t){ box.innerHTML=""; return; }
-  if(!t.tables || !t.tables.length) t.tables = [ omNewTable() ];
+  if(!Array.isArray(t.tables)) t.tables=[];
+  if(state.om.selectedTable==null || !t.tables[state.om.selectedTable]){
+    state.om.selectedTable=t.tables.length?0:null;
+  }
+  omRenderTableList();
   box.innerHTML = "";
-  t.tables.forEach((tb,i)=>{
+  const i=state.om.selectedTable;
+  if(i==null){ box.innerHTML='<div class="hint">Add a table, then configure it here.</div>'; return; }
+  const tb=t.tables[i];
     const row = document.createElement("div"); row.className="policy-editor";
-    row.style.padding="8px"; row.style.marginBottom="8px";
+    row.style.padding="10px"; row.style.margin="0";
     row.innerHTML =
       `<label>Source table <span class="hint">(pick from the connection, or type below)</span></label>`
       + `<select class="ompick" data-i="${i}">${omPickOptions(tb)}</select>`
@@ -2976,9 +3024,8 @@ function omRenderTableRows(){
       + `<input type="number" min="0" step="1" data-i="${i}" data-f="cleanup_retention_days" value="${tb.cleanup_retention_days==null?"":omEsc(tb.cleanup_retention_days)}" placeholder="Target default" />`
       + omPolicyEditor(tb,i)
       + `<div style="display:flex;justify-content:flex-end;gap:6px;"><button class="iconbtn" data-reset="${i}" title="Delete the saved cursor and require a new initial load">Reset saved state</button>`
-      + `<button class="iconbtn" data-del="${i}" title="Remove table">✕ remove</button></div>`;
+      + `<button class="iconbtn" data-del="${i}" title="Remove table from this target">Remove table</button></div>`;
     box.appendChild(row);
-  });
   box.querySelectorAll("input").forEach(inp=>{
     inp.oninput = ()=>{ const i=parseInt(inp.dataset.i), f=inp.dataset.f;
       if(state.om.editing.tables[i]) state.om.editing.tables[i][f]=inp.value; };
@@ -3017,8 +3064,10 @@ function omRenderTableRows(){
     };
   });
   box.querySelectorAll("[data-del]").forEach(b=>{
-    b.onclick = ()=>{ const i=parseInt(b.dataset.del); state.om.editing.tables.splice(i,1);
-      if(!state.om.editing.tables.length) state.om.editing.tables=[omNewTable()]; omRenderTableRows(); };
+    b.onclick = ()=>{ const i=parseInt(b.dataset.del), table=state.om.editing.tables[i];
+      if(!confirm(`Remove table "${omTableLabel(table,i)}" from this target? This remains staged until targets are saved.`)) return;
+      state.om.editing.tables.splice(i,1); state.om.selectedTable=state.om.editing.tables.length?Math.min(i,state.om.editing.tables.length-1):null;
+      state.om.dirty=true; omRenderTableRows(); };
   });
   box.querySelectorAll("[data-reset]").forEach(b=>{
     b.onclick = ()=>omResetTable(parseInt(b.dataset.reset));
@@ -3073,7 +3122,7 @@ function omPolicyEditor(tb,index){
       + `<div><label>Output name</label><input class="om-policy-name" data-i="${index}" data-source="${omEsc(source)}" value="${omEsc(alias)}"${kind==="remove"||control?" disabled":""} /></div>`
       + `<div class="om-policy-details">${details}</div></div>`;
   }).join("");
-  return `<div class="panel" style="margin-top:10px;padding:8px;"><b>Column policies</b><div class="hint">Control columns stay pass-through. Removed columns are omitted from the landing-zone schema.</div>${rows}</div>`;
+  return `<details class="panel om-policy-panel" style="margin-top:10px;padding:8px;"><summary><b>Column policies</b> <span class="badge">${columns.length}</span></summary><div class="hint">Control columns stay pass-through. Removed columns are omitted from the landing-zone schema.</div>${rows}</details>`;
 }
 
 function omUpdatePolicy(i,source,kind){
@@ -3257,6 +3306,7 @@ function omGuessWatermark(cols){
 
 function omWriteForm(t){
   state.om.editing = t;
+  $("omEditor").style.display="";
   $("omId").value = t.id||"";
   $("omLandingRoot").value = t.landing_zone_root||"";
   $("omWorkspaceId").value = t.workspace_id||"";
@@ -3271,6 +3321,11 @@ function omWriteForm(t){
   if(t.connection && Array.from(state.connections.keys()).includes(t.connection)) $("omConnection").value = t.connection;
   omRenderTableRows();
   $("omEditTitle").textContent = t.id ? ("Edit target — "+t.id) : "New target";
+  $("btnApplyOmTarget").textContent=t.id ? "Update selected target" : "Add target";
+  $("omEditContext").textContent=t.id
+    ? `Editing target ${t.id}. Table changes below cannot affect another target.`
+    : "Creating a new target. It is not added until you choose Add target.";
+  state.om.dirty=false;
 }
 
 function omReadForm(){
@@ -3313,20 +3368,41 @@ function omReadForm(){
 }
 
 function omEdit(i){
+  if(state.om.dirty && !confirm("Discard staged changes to the current target?")) return;
   const t = JSON.parse(JSON.stringify(state.om.targets[i]));
-  if(!t.tables || !t.tables.length) t.tables=[omNewTable()];
+  if(!Array.isArray(t.tables)) t.tables=[];
+  state.om.editingIndex=i; state.om.selectedTable=t.tables.length?0:null;
   omWriteForm(t);
+  omRenderList();
 }
-function omRemove(i){ state.om.targets.splice(i,1); omRenderList(); }
-function omAddTarget(){ omWriteForm(omNewTarget()); }
+function omRemove(i){
+  const target=state.om.targets[i], count=(target.tables||[]).length;
+  if(!confirm(`Remove target "${target.id||"unnamed"}" and its ${count} table configuration(s)? This remains staged until targets are saved.`)) return;
+  state.om.targets.splice(i,1);
+  if(state.om.editingIndex===i){ state.om.editing=null; state.om.editingIndex=null; state.om.selectedTable=null; state.om.dirty=false; $("omEditor").style.display="none"; }
+  else if(state.om.editingIndex>i) state.om.editingIndex--;
+  omRenderList();
+}
+function omAddTarget(){
+  if(state.om.dirty && !confirm("Discard staged changes to the current target?")) return;
+  state.om.editingIndex=null; state.om.selectedTable=null; omWriteForm(omNewTarget()); omRenderList();
+}
+function omCloseEditor(){
+  if(state.om.dirty && !confirm("Discard staged changes to the current target?")) return;
+  state.om.editing=null; state.om.editingIndex=null; state.om.selectedTable=null; state.om.dirty=false;
+  $("omEditor").style.display="none"; omRenderList();
+}
 
 function omApplyTarget(){
   const s = $("omEditStatus"); s.className="status";
   let t; try{ t = omReadForm(); }catch(e){ s.className="status err"; s.textContent=e.message; return; }
   if(!t.id){ s.className="status err"; s.textContent="Target id is required."; return; }
   if(!t.landing_zone_root){ s.className="status err"; s.textContent="Landing zone root is required."; return; }
-  const idx = state.om.targets.findIndex(x=>x.id===t.id);
-  if(idx>=0) state.om.targets[idx]=JSON.parse(JSON.stringify(t)); else state.om.targets.push(JSON.parse(JSON.stringify(t)));
+  const duplicate = state.om.targets.findIndex((x,index)=>x.id===t.id && index!==state.om.editingIndex);
+  if(duplicate>=0){ s.className="status err"; s.textContent=`Another target already uses id "${t.id}".`; return; }
+  if(state.om.editingIndex!=null) state.om.targets[state.om.editingIndex]=JSON.parse(JSON.stringify(t));
+  else { state.om.targets.push(JSON.parse(JSON.stringify(t))); state.om.editingIndex=state.om.targets.length-1; }
+  state.om.dirty=false;
   omRenderList();
   s.className="status ok"; s.textContent=`Target "${t.id}" staged — click "Save targets" to persist.`;
 }
@@ -3345,6 +3421,8 @@ function omTokenizationProblems(targets){
 
 function omShowTokenizationProblem(problem){
   omEdit(problem.targetIndex);
+  state.om.selectedTable=problem.tableIndex;
+  omRenderTableRows();
   const detail=$("omEditStatus");
   detail.className="status err";
   detail.textContent = state.tokenizationKeyRefs.length
@@ -3354,6 +3432,7 @@ function omShowTokenizationProblem(problem){
     const row=[...document.querySelectorAll('.om-policy-row')].find(item=>
       Number(item.dataset.tableIndex)===problem.tableIndex&&item.dataset.policySource===problem.source);
     if(row){
+      const panel=row.closest("details"); if(panel) panel.open=true;
       row.scrollIntoView({behavior:"smooth",block:"center"});
       (row.querySelector('.om-policy-key:not(:disabled)') || row.querySelector('.om-policy-kind'))?.focus();
     }
@@ -3503,7 +3582,7 @@ function omOnBootstrap(builder){
     ? JSON.parse(JSON.stringify(builder.open_mirror_targets)) : [];
   omRenderConnectionOptions();
   omRenderList();
-  if(!state.om.editing) omWriteForm(omNewTarget());
+  if(!state.om.editing) $("omEditor").style.display="none";
 }
 
 function omInit(){
@@ -3511,6 +3590,7 @@ function omInit(){
   wire("btnAddOmTarget", omAddTarget);
   wire("btnSaveOm", omSave);
   wire("btnApplyOmTarget", omApplyTarget);
+  wire("btnCancelOmTarget", omCloseEditor);
   wire("btnHealthOm", omCheckHealth);
   wire("btnPreviewOm", omPreview);
   wire("btnDryRunOm", ()=>omPublish(true));
@@ -3520,20 +3600,28 @@ function omInit(){
   const wsFilter = $("omWsFilter"); if(wsFilter) wsFilter.addEventListener("input", ()=>omRenderWorkspaceOptions(wsFilter.value));
   const wsSel = $("omWorkspace"); if(wsSel) wsSel.addEventListener("change", ()=>omLoadMirroredDbs(wsSel.value));
   const dbSel = $("omMirroredDb"); if(dbSel) dbSel.addEventListener("change", ()=>omPickMirroredDb(dbSel.value));
-  wire("btnAddOmTable", ()=>{ if(!state.om.editing) state.om.editing=omNewTarget();
-    state.om.editing.tables.push(omNewTable()); omRenderTableRows(); });
+  wire("btnAddOmTable", ()=>{ if(!state.om.editing) return;
+    state.om.editing.tables.push(omNewTable()); state.om.selectedTable=state.om.editing.tables.length-1; state.om.dirty=true; omRenderTableRows(); });
   // Changing the source connection invalidates the loaded table list.
   const connSel = $("omConnection");
   if(connSel) connSel.addEventListener("change", ()=>{
+    const previous=state.om.editing&&state.om.editing.connection||"default";
+    const configured=(state.om.editing&&state.om.editing.tables||[]).filter(table=>table.name||table.source_table);
+    if(connSel.value!==previous && configured.length && !confirm(`Change source connection and clear ${configured.length} staged table configuration(s)?`)){
+      connSel.value=previous; return;
+    }
+    if(connSel.value!==previous && state.om.editing){ state.om.editing.connection=connSel.value; state.om.editing.tables=[]; state.om.selectedTable=null; state.om.dirty=true; }
     if(state.om.tableConn && state.om.tableConn !== connSel.value){
       state.om.tableList = null; state.om.tableConn = null;
       const s = $("omTablesStatus"); if(s){ s.className="status"; s.textContent=""; }
       omRenderTableRows();
     }
   });
+  const editor=$("omEditor");
+  if(editor) editor.addEventListener("input", ()=>{ state.om.dirty=true; });
+  if(editor) editor.addEventListener("change", event=>{ if(event.target!==connSel) state.om.dirty=true; });
   omRenderConnectionOptions();
   omRenderList();
-  if(!state.om.editing) omWriteForm(omNewTarget());
   omPollPublishJob();
 }
 

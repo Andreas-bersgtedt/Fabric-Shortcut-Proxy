@@ -264,6 +264,11 @@ static std::atomic<bool> g_draining{false};
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_image_ready{false};
 static std::atomic<SocketHandle> g_listen_socket{kInvalidSocket};
+static volatile std::sig_atomic_t g_shutdown_requested = 0;
+
+static void request_shutdown(int) {
+    g_shutdown_requested = 1;
+}
 
 // Forward decl: lazy on-miss materialization request to the Manager. Defined with
 // the HTTP client further below (register/heartbeat share the same transport).
@@ -1228,18 +1233,8 @@ int main(int argc, char** argv) {
         log_line("network init failed");
         return 1;
     }
-    std::signal(SIGTERM, [](int) {
-        g_draining = true;
-        g_running = false;
-        SocketHandle socket = g_listen_socket.exchange(kInvalidSocket);
-        if (socket != kInvalidSocket) close_socket(socket);
-    });
-    std::signal(SIGINT, [](int) {
-        g_draining = true;
-        g_running = false;
-        SocketHandle socket = g_listen_socket.exchange(kInvalidSocket);
-        if (socket != kInvalidSocket) close_socket(socket);
-    });
+    std::signal(SIGTERM, request_shutdown);
+    std::signal(SIGINT, request_shutdown);
 
     initialize_object_index();
 
@@ -1292,6 +1287,11 @@ int main(int argc, char** argv) {
     }
 
     while (g_running) {
+        if (g_shutdown_requested) {
+            g_draining = true;
+            g_running = false;
+            break;
+        }
         sockaddr_in caddr;
 #ifdef _WIN32
         int clen = sizeof(caddr);
@@ -1299,6 +1299,11 @@ int main(int argc, char** argv) {
         socklen_t clen = sizeof(caddr);
 #endif
         SocketHandle client = accept(srv, (sockaddr*)&caddr, &clen);
+        if (g_shutdown_requested) {
+            g_draining = true;
+            g_running = false;
+            break;
+        }
         if (client == kInvalidSocket) continue;
 
         set_socket_timeouts(client, CFG.socket_timeout_ms);

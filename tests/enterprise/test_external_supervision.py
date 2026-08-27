@@ -7,12 +7,14 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import httpx
+import pytest
 
 import config
 from enterprise.control.contract import RegisterRequest
 from enterprise.control.manager_app import create_manager_app
 
 
+@pytest.mark.asyncio
 async def test_external_supervision_has_no_children_and_becomes_ready_on_heartbeat(monkeypatch):
     monkeypatch.setattr(config, "AGENT_SUPERVISION_MODE", "external")
     app = create_manager_app()

@@ -36,7 +36,9 @@ def publish_serving_image(store, *, generation_id: str | None = None) -> dict:
 
     objects = _snapshot_objects()
     generation_id = generation_id or uuid.uuid4().hex
-    if not generation_id.replace("-", "").isalnum():
+    if not generation_id or not generation_id.isascii() or not all(
+        char.isalnum() or char == "-" for char in generation_id
+    ):
         raise ValueError("generation_id must contain only letters, digits, and hyphens")
     prefix = f"generations/{generation_id}/"
     written = 0

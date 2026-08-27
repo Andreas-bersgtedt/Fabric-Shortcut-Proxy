@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY . .
+RUN pip install --no-cache-dir ".[drivers]" "./enterprise"
+RUN useradd --create-home --uid 10001 appuser
+USER 10001
+
+CMD ["python", "main.py"]

@@ -27,11 +27,14 @@ def test_publish_serving_image_writes_data_and_metadata(monkeypatch):
 
     result = serving_image.publish_serving_image(store)
     assert result["written"] == 4 and result["skipped"] == 0
-    # Every object key is now servable straight from the store.
-    assert store.get("warehouse/db/sales/metadata/v1.metadata.json") == b"{meta}"
-    assert store.get("warehouse/db/sales/metadata/snap.avro") == b"AVRO"
-    assert store.get("warehouse/db/sales/data/split-0-1.parquet") == b"PARQ"
-    assert store.get("warehouse/db/sales/data/split-1-1.parquet") == b"PARQ"
+    assert result["activated"] is True
+    prefix = f"generations/{result['generation_id']}/"
+    assert store.get("CURRENT") == result["generation_id"].encode()
+    assert store.get(prefix + "READY.json")
+    assert store.get(prefix + "warehouse/db/sales/metadata/v1.metadata.json") == b"{meta}"
+    assert store.get(prefix + "warehouse/db/sales/metadata/snap.avro") == b"AVRO"
+    assert store.get(prefix + "warehouse/db/sales/data/split-0-1.parquet") == b"PARQ"
+    assert store.get(prefix + "warehouse/db/sales/data/split-1-1.parquet") == b"PARQ"
 
 
 def test_publish_skips_objects_with_no_bytes(monkeypatch):
@@ -44,3 +47,5 @@ def test_publish_skips_objects_with_no_bytes(monkeypatch):
 
     result = serving_image.publish_serving_image(store)
     assert result["written"] == 0 and result["skipped"] == 1
+    assert result["activated"] is False
+    assert store.exists("CURRENT") is False

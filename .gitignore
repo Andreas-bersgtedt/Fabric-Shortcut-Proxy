@@ -51,6 +51,7 @@ agent-cpp/*.pdb
 agent-cpp/*.ilk
 agent-cpp/build.txt
 agent-cpp/agent
+agent-cpp/tier1_tests
 
 # Editor / OS
 .vscode/

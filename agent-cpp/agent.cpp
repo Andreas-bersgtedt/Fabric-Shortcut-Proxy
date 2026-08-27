@@ -16,6 +16,7 @@
 #include <condition_variable>
 #include <cctype>
 #include <cstdint>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -236,6 +237,7 @@ struct Config {
     std::string host = getenv_str("HOST", "0.0.0.0");
     int port = parse_int_or(getenv_str("PORT", "9400"), 9400, 1, 65535);
     std::string store_dir = getenv_str("STORE_DIR", getenv_str("ARTIFACT_STORE_DIR", "./.artifacts"));
+    std::string index_dir = getenv_str("INDEX_DIR", store_dir);
     std::string bucket = getenv_str("S3_BUCKET", "fabric-iceberg-poc");
     std::string agent_id = getenv_str("AGENT_ID", "cpp-agent-1");
     std::string advertise_host = getenv_str("AGENT_ADVERTISE_HOST", "");
@@ -259,6 +261,8 @@ static Config CFG;
 
 // Set true when the Manager asks us to drain; /readyz then reports 503.
 static std::atomic<bool> g_draining{false};
+static std::atomic<bool> g_running{true};
+static std::atomic<bool> g_image_ready{false};
 
 // Forward decl: lazy on-miss materialization request to the Manager. Defined with
 // the HTTP client further below (register/heartbeat share the same transport).
@@ -286,9 +290,25 @@ static bool key_is_basic_safe(const std::string& key) {
 }
 
 static fs::path canonical_store_root() {
+    fs::path configured(CFG.store_dir);
+    std::ifstream current(configured / "CURRENT");
+    std::string generation;
+    std::getline(current, generation);
+    generation.erase(generation.find_last_not_of(" \t\r\n") + 1);
+    if (!generation.empty() &&
+        generation.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") == std::string::npos &&
+        fs::is_regular_file(configured / "generations" / generation / "READY.json")) {
+        std::ifstream ready(configured / "generations" / generation / "READY.json");
+        std::stringstream contents;
+        contents << ready.rdbuf();
+        if (contents.str().find("\"generation_id\"") != std::string::npos &&
+            contents.str().find(generation) != std::string::npos) {
+            configured /= fs::path("generations") / generation;
+        }
+    }
     std::error_code ec;
-    fs::path root = fs::weakly_canonical(fs::path(CFG.store_dir), ec);
-    if (ec) return fs::path(CFG.store_dir).lexically_normal();
+    fs::path root = fs::weakly_canonical(configured, ec);
+    if (ec) return configured.lexically_normal();
     return root;
 }
 
@@ -333,11 +353,14 @@ static std::mutex g_object_index_mu;
 static const char* kObjectIndexFile = ".cpp-agent-index";
 
 static fs::path object_index_path() {
-    return canonical_store_root() / kObjectIndexFile;
+    return fs::path(CFG.index_dir) / kObjectIndexFile;
 }
 
 static bool write_object_index(const std::vector<IndexedObject>& entries) {
     fs::path path = object_index_path();
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    if (ec) return false;
     fs::path tmp = path;
     tmp += ".tmp";
     std::ofstream out(tmp, std::ios::trunc);
@@ -348,7 +371,6 @@ static bool write_object_index(const std::vector<IndexedObject>& entries) {
     }
     out.close();
     if (!out) return false;
-    std::error_code ec;
     fs::rename(tmp, path, ec);
     if (ec) {
         fs::remove(path, ec);
@@ -373,7 +395,7 @@ static bool load_object_index(std::vector<IndexedObject>& entries) {
                           [](const auto& left, const auto& right) { return left.key < right.key; });
 }
 
-static void rebuild_object_index() {
+static bool rebuild_object_index() {
     std::vector<IndexedObject> entries;
     std::error_code ec;
     fs::path root = canonical_store_root();
@@ -391,23 +413,25 @@ static void rebuild_object_index() {
     }
     std::sort(entries.begin(), entries.end(),
               [](const auto& left, const auto& right) { return left.key < right.key; });
-    write_object_index(entries);
+    if (!write_object_index(entries)) return false;
     std::lock_guard<std::mutex> lock(g_object_index_mu);
     g_object_index = std::move(entries);
+    return true;
 }
 
 static void initialize_object_index() {
-    std::vector<IndexedObject> entries;
-    if (load_object_index(entries)) {
-        std::lock_guard<std::mutex> lock(g_object_index_mu);
-        g_object_index = std::move(entries);
-        log_line("loaded object index entries=" + std::to_string(g_object_index.size()));
+    // A serving generation is valid only if CURRENT selects one with READY.json
+    // and its per-Pod index can be constructed. Legacy flat stores remain
+    // supported when no CURRENT pointer exists.
+    fs::path configured(CFG.store_dir);
+    const bool has_current = fs::exists(configured / "CURRENT");
+    if (has_current && !fs::exists(canonical_store_root() / "READY.json")) {
+        log_line("CURRENT does not select a ready generation");
         return;
     }
     log_line("building object index");
-    rebuild_object_index();
-    std::lock_guard<std::mutex> lock(g_object_index_mu);
-    log_line("built object index entries=" + std::to_string(g_object_index.size()));
+    g_image_ready = rebuild_object_index();
+    log_line(std::string(g_image_ready ? "built" : "failed to build") + " object index");
 }
 
 // ---------------------------------------------------------------------------
@@ -849,10 +873,10 @@ static void handle_connection(SocketHandle client) {
     }
 
     if (req.path == "/readyz") {
-        const bool draining = g_draining.load();
-        send_fixed_response(client, draining ? 503 : 200, draining ? "Service Unavailable" : "OK",
+        const bool ready = !g_draining.load() && g_image_ready.load();
+        send_fixed_response(client, ready ? 200 : 503, ready ? "OK" : "Service Unavailable",
                             "application/json",
-                            std::string("{\"status\":\"") + (draining ? "draining" : "ready") +
+                            std::string("{\"status\":\"") + (ready ? "ready" : "not-ready") +
                                 "\",\"role\":\"agent\",\"impl\":\"cpp\",\"version\":\"" + APP_VERSION + "\"}",
                             head_only);
         close_socket(client);
@@ -861,6 +885,12 @@ static void handle_connection(SocketHandle client) {
 
     if (req.path == "/favicon.ico") {
         send_fixed_response(client, 204, "No Content", "text/plain", "", head_only);
+        close_socket(client);
+        return;
+    }
+    if (!g_image_ready.load()) {
+        send_fixed_response(client, 503, "Service Unavailable", "application/json",
+                            "{\"status\":\"not-ready\"}", head_only);
         close_socket(client);
         return;
     }
@@ -1043,7 +1073,6 @@ static bool try_manager_materialize(const std::string& key) {
     return ok;
 }
 
-static std::atomic<bool> g_running{true};
 static std::atomic<int> g_inflight{0};
 static std::mutex g_conn_mu;
 static std::condition_variable g_conn_cv;
@@ -1055,7 +1084,10 @@ static void index_refresh_loop() {
         for (int elapsed = 0; elapsed < CFG.index_refresh_seconds && g_running; ++elapsed) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
-        if (g_running) rebuild_object_index();
+        if (g_running) {
+            g_image_ready = false;
+            initialize_object_index();
+        }
     }
 }
 
@@ -1210,6 +1242,14 @@ int main(int argc, char** argv) {
         log_line("network init failed");
         return 1;
     }
+    std::signal(SIGTERM, [](int) {
+        g_draining = true;
+        g_running = false;
+    });
+    std::signal(SIGINT, [](int) {
+        g_draining = true;
+        g_running = false;
+    });
 
     initialize_object_index();
 

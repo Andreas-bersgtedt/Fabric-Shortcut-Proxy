@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shortcut-proxy-config
+data:
+  AGENT_SHARD_COUNT: "3"
+  MATERIALIZE_MODE: eager
+  ARTIFACT_STORE_BACKEND: local
+  ARTIFACT_STORE_DIR: /artifacts
+  ARTIFACT_STORE_SERVING: "1"
+  STREAMING_PARQUET: "1"
+  STREAM_BATCH_ROWS: "10000"
+  SOURCE_MAX_CONCURRENCY: "2"
+  MAX_CONCURRENT_GENERATIONS: "2"
+  PIN_MATERIALIZED_SPLITS: "1"
+  STORE_DIR: /artifacts
+  INDEX_DIR: /index
+  AGENT_DRAIN_GRACE_SECONDS: "20"

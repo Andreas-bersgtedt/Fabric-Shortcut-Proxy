@@ -279,6 +279,12 @@ PUBLISH_SERVING_IMAGE: bool = _get_bool("PUBLISH_SERVING_IMAGE", "publish_servin
 # Number of Agents to supervise (Manager)
 AGENT_COUNT: int = _get_int("AGENT_COUNT", "agent_count", 1)
 
+# Manager process lifecycle owner. "local" retains child-process supervision;
+# "external" trusts registered Kubernetes Pods and starts no child processes.
+AGENT_SUPERVISION_MODE: str = _get_str(
+    "AGENT_SUPERVISION_MODE", "agent_supervision_mode", "local"
+).strip().lower()
+
 # This Agent's materialization shard (set by Manager)
 AGENT_SHARD_INDEX: int = _get_int("AGENT_SHARD_INDEX", "agent_shard_index", 0)
 

@@ -52,7 +52,7 @@ from system_config import (
     # Artifact Store
     ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_SERVING, PUBLISH_SERVING_IMAGE,
     # Fleet
-    AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
+    AGENT_COUNT, AGENT_SUPERVISION_MODE, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
     # Control Plane
     MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT, AGENT_HOST_ALLOWLIST,
     AGENT_ADVERTISE_HOST,
@@ -191,6 +191,7 @@ _register("OPEN_MIRROR_FABRIC_RETRY_ATTEMPTS", "open_mirror_fabric_retry_attempt
 _register("TLS_CERT_FILE", "tls_cert_file", "str", TLS_CERT_FILE)
 _register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
+_register("AGENT_SUPERVISION_MODE", "agent_supervision_mode", "str", AGENT_SUPERVISION_MODE)
 _register("ENABLE_GATEWAY", "enable_gateway", "bool", ENABLE_GATEWAY)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 
@@ -628,6 +629,8 @@ def validate_config() -> None:
         problems.append(f"ROLLING_RESTART_HEALTH_TIMEOUT must be > 0 (got {ROLLING_RESTART_HEALTH_TIMEOUT}).")
     if AGENT_COUNT < 1:
         problems.append(f"AGENT_COUNT must be >= 1 (got {AGENT_COUNT}).")
+    if AGENT_SUPERVISION_MODE not in ("local", "external"):
+        problems.append("AGENT_SUPERVISION_MODE must be 'local' or 'external'")
     if AGENT_SHARD_COUNT < 1:
         problems.append(f"AGENT_SHARD_COUNT must be >= 1 (got {AGENT_SHARD_COUNT}).")
     if not (0 <= AGENT_SHARD_INDEX < AGENT_SHARD_COUNT):
@@ -1002,6 +1005,7 @@ _KEY_TO_ATTR: dict[str, str] = {
     "tls_cert_file": "TLS_CERT_FILE",
     "tls_key_file": "TLS_KEY_FILE",
     "agent_count": "AGENT_COUNT",
+    "agent_supervision_mode": "AGENT_SUPERVISION_MODE",
     "shard_strategy": "SHARD_STRATEGY",
     "table_format": "TABLE_FORMAT",
     "metadata_cache_ttl": "METADATA_CACHE_TTL_SECONDS",

@@ -191,3 +191,9 @@ class Registry:
     def count(self) -> int:
         with self._lock:
             return len(self._agents)
+
+    def live_count(self) -> int:
+        """Number of registered agents with an unexpired heartbeat lease."""
+        now = _now()
+        with self._lock:
+            return sum(self._is_alive(agent, now) for agent in self._agents.values())

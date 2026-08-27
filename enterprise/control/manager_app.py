@@ -89,6 +89,8 @@ def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int,
 def _build_supervisors(monitor_token: str = "") -> list[AgentSupervisor]:
     """One supervisor per Agent (count = AGENT_COUNT), each on PORT + i with its
     own materialization shard."""
+    if config.AGENT_SUPERVISION_MODE == "external":
+        return []
     count = max(1, config.AGENT_COUNT)
     return [_make_supervisor(i, count, monitor_token) for i in range(count)]
 
@@ -110,6 +112,8 @@ def _make_supervisor(i: int, count: int, monitor_token: str = "") -> AgentSuperv
 
 
 def create_manager_app() -> FastAPI:
+    if config.AGENT_SUPERVISION_MODE not in {"local", "external"}:
+        raise ValueError("AGENT_SUPERVISION_MODE must be 'local' or 'external'")
     monitor_token = secrets.token_urlsafe(32)
     registry = Registry(
         heartbeat_ms=config.HEARTBEAT_MS,
@@ -179,6 +183,7 @@ def create_manager_app() -> FastAPI:
         log.info("manager_startup", control_host=config.CONTROL_HOST,
                  control_port=config.CONTROL_PORT, agent_count=len(supervisors),
                  agent_ports=agent_ports, gateway=bool(gateway),
+                 supervision_mode=config.AGENT_SUPERVISION_MODE,
                  admin_ui=config.ENABLE_ADMIN_UI, manager_ha=config.MANAGER_HA,
                  manager_auth=manager_auth_active(),
                  tables=[t.name for t in config.TABLES])
@@ -234,7 +239,9 @@ def create_manager_app() -> FastAPI:
         return {"status": "ok", "role": "manager",
                 "is_leader": getattr(app.state, "is_leader", True),
                 "manager_ha": config.MANAGER_HA,
-                "agents_supervised": len(supervisors), "agents_registered": registry.count()}
+                "supervision_mode": config.AGENT_SUPERVISION_MODE,
+                "agents_supervised": len(supervisors), "agents_registered": registry.count(),
+                "agents_alive": registry.live_count()}
 
     @app.get("/readyz")
     async def readyz():
@@ -243,7 +250,11 @@ def create_manager_app() -> FastAPI:
         alive = [s for s in supervisors if s.is_alive]
         looped = [s.name for s in supervisors if s.crash_looped]
         # A standby is "ready" as a warm spare even though it supervises nothing.
-        ready = (not leader) or (len(alive) >= 1 and not looped)
+        live_agents = registry.live_count()
+        ready = (not leader) or (
+            live_agents >= 1 if config.AGENT_SUPERVISION_MODE == "external"
+            else len(alive) >= 1 and not looped
+        )
         return JSONResponse(
             status_code=200 if ready else 503,
             content={
@@ -251,6 +262,9 @@ def create_manager_app() -> FastAPI:
                 "role": "primary" if leader else "standby",
                 "agents_alive": len(alive),
                 "agents_total": len(supervisors),
+                "agents_registered": registry.count(),
+                "agents_registered_alive": live_agents,
+                "supervision_mode": config.AGENT_SUPERVISION_MODE,
                 "crash_looped": looped,
                 "restarts": {s.name: s.restart_count for s in supervisors},
             },
@@ -302,6 +316,10 @@ def create_manager_app() -> FastAPI:
 
     async def _scale_fleet(target: int) -> dict:
         target = int(target)
+        if config.AGENT_SUPERVISION_MODE == "external":
+            return {"ok": False, "count": registry.live_count(), "target": target,
+                    "applied": False, "persisted": False, "agents": [],
+                    "note": "external supervision is enabled; change Kubernetes workload replicas instead"}
         if target < 1:
             raise ValueError("count must be >= 1")
         leader = getattr(app.state, "is_leader", True)

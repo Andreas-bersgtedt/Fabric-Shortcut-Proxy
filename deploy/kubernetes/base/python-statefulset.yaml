@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: python-materializer
+spec:
+  serviceName: python-materializer
+  replicas: 3
+  selector:
+    matchLabels:
+      app: python-materializer
+  template:
+    metadata:
+      labels:
+        app: python-materializer
+    spec:
+      terminationGracePeriodSeconds: 60
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: python-materializer
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: materializer
+          image: fabric-shortcut-proxy-python:latest
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              shard_index="${HOSTNAME##*-}"
+              export AGENT_SHARD_INDEX="$shard_index"
+              if [ "$shard_index" = "0" ]; then export PUBLISH_SERVING_IMAGE=1; else export PUBLISH_SERVING_IMAGE=0; fi
+              exec python main.py
+          envFrom:
+            - configMapRef:
+                name: shortcut-proxy-config
+            - secretRef:
+                name: shortcut-source
+          env:
+            - name: AGENT_ID
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: AGENT_ADVERTISE_HOST
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+          resources:
+            requests: {cpu: "1", memory: 1Gi}
+            limits: {cpu: "4", memory: 4Gi}
+          volumeMounts:
+            - {name: artifacts, mountPath: /artifacts}
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim: {claimName: shortcut-artifacts}

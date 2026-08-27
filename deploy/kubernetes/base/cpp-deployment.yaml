@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpp-agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cpp-agent
+  template:
+    metadata:
+      labels:
+        app: cpp-agent
+    spec:
+      terminationGracePeriodSeconds: 45
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: cpp-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: agent
+          image: fabric-shortcut-proxy-cpp:latest
+          envFrom:
+            - configMapRef:
+                name: shortcut-proxy-config
+          ports:
+            - {containerPort: 9400, name: http}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "2", memory: 512Mi}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          startupProbe:
+            httpGet: {path: /readyz, port: http}
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          volumeMounts:
+            - {name: artifacts, mountPath: /artifacts, readOnly: true}
+            - {name: index, mountPath: /index}
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim: {claimName: shortcut-artifacts}
+        - name: index
+          emptyDir: {}

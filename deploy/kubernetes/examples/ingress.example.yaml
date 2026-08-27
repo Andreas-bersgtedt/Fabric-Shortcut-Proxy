@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shortcut-proxy
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: shortcut-proxy.internal.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shortcut-proxy
+                port:
+                  name: http

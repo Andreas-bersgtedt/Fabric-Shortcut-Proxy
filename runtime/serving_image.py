@@ -14,23 +14,33 @@ metadata objects (which are generated on demand today) so the image is complete.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import uuid
+
 from observability.logging import get_logger
 
 log = get_logger(__name__)
 
 
-def publish_serving_image(store) -> dict:
-    """Publish every current S3 object (data + metadata) to ``store``.
+def publish_serving_image(store, *, generation_id: str | None = None) -> dict:
+    """Publish every current S3 object as one atomically activated generation.
 
-    Returns ``{"written": n, "skipped": m}``. Best‑effort: a per‑object failure is
-    logged and skipped rather than aborting the publish.
+    Objects are first written below ``generations/<id>``.  ``CURRENT`` is changed
+    only after the generation's ``READY.json`` is written, so serving agents never
+    select an incomplete image. Returns ``{"written": n, "skipped": m}``.
     """
     from s3.router import _snapshot_objects
     import cache.lru_cache as cache
 
     objects = _snapshot_objects()
+    generation_id = generation_id or uuid.uuid4().hex
+    if not generation_id.replace("-", "").isalnum():
+        raise ValueError("generation_id must contain only letters, digits, and hyphens")
+    prefix = f"generations/{generation_id}/"
     written = 0
     skipped = 0
+    published: list[tuple[str, bytes]] = []
     for key, meta in objects.items():
         data = meta.get("data")
         if data is None:
@@ -40,11 +50,35 @@ def publish_serving_image(store) -> dict:
             skipped += 1
             continue
         try:
-            store.put(key, data)
+            data = bytes(data)
+            store.put(prefix + key, data)
+            published.append((key, data))
             written += 1
         except Exception as exc:  # noqa: BLE001 - one bad object must not abort the image
             log.warning("serving_image_write_failed", key=key, error=str(exc))
             skipped += 1
 
-    log.info("serving_image_published", written=written, skipped=skipped, objects=len(objects))
-    return {"written": written, "skipped": skipped, "objects": len(objects)}
+    # A partial image is retained for diagnosis but must never be activated.
+    if skipped:
+        log.warning("serving_image_incomplete", generation_id=generation_id,
+                    written=written, skipped=skipped, objects=len(objects))
+        return {"written": written, "skipped": skipped, "objects": len(objects),
+                "generation_id": generation_id, "activated": False}
+
+    checksum = hashlib.sha256()
+    for key, data in sorted(published):
+        checksum.update(key.encode("utf-8"))
+        checksum.update(b"\0")
+        checksum.update(hashlib.sha256(data).digest())
+    ready = json.dumps({
+        "generation_id": generation_id,
+        "object_count": written,
+        "metadata_checksum": checksum.hexdigest(),
+    }, sort_keys=True).encode("utf-8")
+    store.put(prefix + "READY.json", ready)
+    # ArtifactStore.put is an atomic replacement for the filesystem backend.
+    store.put("CURRENT", generation_id.encode("utf-8"))
+    log.info("serving_image_published", generation_id=generation_id,
+             written=written, skipped=skipped, objects=len(objects))
+    return {"written": written, "skipped": skipped, "objects": len(objects),
+            "generation_id": generation_id, "activated": True}

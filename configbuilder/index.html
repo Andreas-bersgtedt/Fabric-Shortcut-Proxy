@@ -3278,6 +3278,7 @@ async function omPickTable(i, value){
   row.source_table = picked.source;
   if(!row.name) row.name = picked.name;
   if(!row.target_table) row.target_table = picked.name;
+  if(!row.schema) row.schema = picked.schema||"";
   omRenderTableRows();  // reflect source_table/name immediately
   // Auto-detect the key column for the picked table.
   const s = $("omTablesStatus"); s.className="status"; s.textContent="Detecting key for "+picked.source+"…";

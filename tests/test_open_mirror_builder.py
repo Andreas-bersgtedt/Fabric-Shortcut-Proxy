@@ -321,6 +321,7 @@ def test_index_has_open_mirror_tab():
     assert "editingIndex" in html
     assert "Discard staged changes" in html
     assert "if(!state.om.editing) omWriteForm(omNewTarget());" not in html
+    assert 'if(!row.schema) row.schema = picked.schema||"";' in html
     assert "Another target already uses id" in html
     assert "omKeyOptions" in html
     assert "omWatermarkOptions" in html

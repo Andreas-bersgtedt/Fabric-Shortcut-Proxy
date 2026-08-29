@@ -113,6 +113,13 @@ static std::string getenv_str(const char* name, const std::string& def) {
     return (v && *v) ? std::string(v) : def;
 }
 
+static bool getenv_bool(const char* name, bool def) {
+    std::string value = getenv_str(name, def ? "1" : "0");
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value == "1" || value == "true" || value == "yes" || value == "on";
+}
+
 static bool parse_i64(const std::string& s, long long& out) {
     if (s.empty()) return false;
 
@@ -238,6 +245,8 @@ struct Config {
     std::string host = getenv_str("HOST", "0.0.0.0");
     int port = parse_int_or(getenv_str("PORT", "9400"), 9400, 1, 65535);
     std::string store_dir = getenv_str("STORE_DIR", getenv_str("ARTIFACT_STORE_DIR", "./.artifacts"));
+    std::string index_file = getenv_str("INDEX_FILE", "");
+    bool require_generation = getenv_bool("REQUIRE_GENERATION", false);
     std::string bucket = getenv_str("S3_BUCKET", "fabric-iceberg-poc");
     std::string agent_id = getenv_str("AGENT_ID", "cpp-agent-1");
     std::string advertise_host = getenv_str("AGENT_ADVERTISE_HOST", "");
@@ -344,6 +353,7 @@ static std::vector<IndexedObject> g_object_index;
 static const char* kObjectIndexFile = ".cpp-agent-index";
 
 static fs::path object_index_path() {
+    if (!CFG.index_file.empty()) return fs::path(CFG.index_file);
     return canonical_store_root() / kObjectIndexFile;
 }
 
@@ -461,6 +471,7 @@ static bool activate_current_generation() {
     fs::path store_root = canonical_store_root();
     std::string current;
     if (!read_file_text(store_root / "CURRENT", current)) {
+        if (CFG.require_generation) return false;
         rebuild_object_index();
         std::lock_guard<std::mutex> lock(g_object_index_mu);
         g_active_root = store_root;
@@ -542,6 +553,11 @@ static void initialize_object_index() {
             g_generation_ready = false;
             log_line("no valid generation is ready");
         }
+        return;
+    }
+    if (CFG.require_generation) {
+        g_generation_ready = false;
+        log_line("CURRENT is required but no generation is active");
         return;
     }
     std::vector<IndexedObject> entries;
@@ -1322,6 +1338,8 @@ static void print_usage(const char* prog) {
         "  STORE_DIR / ARTIFACT_STORE_DIR (./.artifacts)\n"
         "                                 Artifact store directory to serve from (shared with\n"
         "                                 the Manager under lazy mode).\n"
+        "  INDEX_FILE ()                  Per-Pod legacy object index path.\n"
+        "  REQUIRE_GENERATION (0)         Stay unready until CURRENT is valid.\n"
         "  S3_BUCKET (fabric-iceberg-poc) Advertised bucket name.\n"
         "  AGENT_ID (cpp-agent-1)         Identity used for Manager registration.\n"
         "  AGENT_ADVERTISE_HOST ()        Routable host advertised to the Manager/gateway.\n"
@@ -1339,12 +1357,13 @@ static void print_usage(const char* prog) {
         "Endpoints: GET/HEAD /{bucket}/{key} (range-aware), GET /{bucket}?list-type=2,\n"
         "           GET /healthz, GET /readyz (503 while draining).\n\n"
         "Effective configuration (from the current environment):\n"
-        "  host=%s port=%d store_dir=%s bucket=%s\n"
+        "  host=%s port=%d store_dir=%s bucket=%s require_generation=%s\n"
         "  agent_id=%s manager_url=%s\n"
         "  materialize_mode=%s materialize_timeout_ms=%d\n"
         "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d index_refresh_seconds=%d drain_grace_ms=%d\n",
         APP_VERSION, prog,
         CFG.host.c_str(), CFG.port, CFG.store_dir.c_str(), CFG.bucket.c_str(),
+        CFG.require_generation ? "true" : "false",
         CFG.agent_id.c_str(), CFG.manager_url.empty() ? "(standalone)" : CFG.manager_url.c_str(),
         CFG.materialize_mode.c_str(), CFG.materialize_timeout_ms,
         CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.index_refresh_seconds, CFG.drain_grace_ms);

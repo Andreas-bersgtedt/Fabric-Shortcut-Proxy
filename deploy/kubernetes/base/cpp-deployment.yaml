@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-cpp-agent
+  namespace: fabric-shortcut-proxy
+  labels:
+    app.kubernetes.io/name: fsp-cpp-agent
+    app.kubernetes.io/part-of: fabric-shortcut-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-cpp-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsp-cpp-agent
+        app.kubernetes.io/component: serving
+        app.kubernetes.io/part-of: fabric-shortcut-proxy
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-cpp-agent
+      containers:
+        - name: agent
+          image: fabric-shortcut-proxy-cpp:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOST
+              value: 0.0.0.0
+            - name: PORT
+              value: "9400"
+            - name: STORE_DIR
+              value: /artifacts
+            - name: INDEX_FILE
+              value: /var/lib/fsp/objects.index
+            - name: REQUIRE_GENERATION
+              value: "1"
+            - name: INDEX_REFRESH_SECONDS
+              value: "5"
+            - name: AGENT_DRAIN_GRACE_SECONDS
+              value: "15"
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: fsp-common
+                  key: S3_BUCKET
+            - name: AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: 9400
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "2"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+              readOnly: true
+            - name: index
+              mountPath: /var/lib/fsp
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: fsp-artifacts
+        - name: index
+          emptyDir: {}

@@ -12,7 +12,6 @@ def reset_sigv4_from_environment(monkeypatch):
     import config
 
     raw = os.environ.get("REQUIRE_SIGV4")
-    if raw is not None:
-        enabled = raw.strip().lower() in {"1", "true", "yes", "on"}
-        monkeypatch.setattr(config, "REQUIRE_SIGV4", enabled, raising=False)
+    enabled = raw.strip().lower() in {"1", "true", "yes", "on"} if raw is not None else False
+    monkeypatch.setattr(config, "REQUIRE_SIGV4", enabled, raising=False)
     yield

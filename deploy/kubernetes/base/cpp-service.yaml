@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: shortcut-proxy
+  namespace: fabric-shortcut-proxy
+  labels:
+    app.kubernetes.io/name: fsp-cpp-agent
+    app.kubernetes.io/part-of: fabric-shortcut-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fsp-cpp-agent
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

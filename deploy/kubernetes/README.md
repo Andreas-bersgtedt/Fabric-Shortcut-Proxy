@@ -46,6 +46,19 @@ kubectl -n fabric-shortcut-proxy get pods,pvc,service,hpa
 
 If the cluster has no default RWX class, set `storageClassName` in `base/artifact-pvc.yaml` or add it through a Kustomize overlay.
 
+## Local kind proof
+
+The `overlays/kind` overlay adds a seeded PostgreSQL source, a single-node hostPath RWX volume, the smoke client, and smaller resource requests. It also removes the HPA because a default kind cluster has no Metrics Server.
+
+```powershell
+kind create cluster --config deploy/kubernetes/overlays/kind/cluster.yaml
+kind load docker-image fabric-shortcut-proxy-python:dev fabric-shortcut-proxy-cpp:dev --name fsp-proof
+kubectl apply -k deploy/kubernetes/overlays/kind
+kubectl -n fabric-shortcut-proxy get pods -w
+```
+
+The checked-in kind Secret contains only a disposable local password. Do not copy it into a shared or remote cluster.
+
 ## Verify
 
 Watch the materializers first. All three should start together, and each log should report a different shard index.

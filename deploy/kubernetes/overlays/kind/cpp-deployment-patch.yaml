@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-cpp-agent
+  namespace: fabric-shortcut-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: agent
+          imagePullPolicy: Never
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi

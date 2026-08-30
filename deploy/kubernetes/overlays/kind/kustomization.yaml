@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - artifact-pv.yaml
+  - postgres.yaml
+  - source-secret.yaml
+  - smoke-client.yaml
+patches:
+  - path: artifact-pvc-patch.yaml
+  - path: python-statefulset-patch.yaml
+  - path: cpp-deployment-patch.yaml
+  - path: cpp-hpa-delete.yaml

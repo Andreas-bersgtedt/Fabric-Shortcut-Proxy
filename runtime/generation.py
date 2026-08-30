@@ -96,15 +96,21 @@ def acquire_generation(
 
 
 def join_generation(store, shard_count: int, *, timeout_seconds: float) -> GenerationContext:
-    """Wait for shard 0's live STAGING generation, rejecting stale build records."""
+    """Wait for shard 0's live generation, rejecting stale build records.
+
+    A worker may start after a small generation has already become ACTIVE.  The
+    coordinator record remains the authoritative lease in that case, while the
+    build record is intentionally replaced by serving-image metadata.
+    """
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         build = _read_json(store, BUILD_KEY)
         lease = _read_json(store, COORDINATOR_KEY)
-        if build and lease and build.get("state") == "STAGING":
-            context = _context(build)
+        if build and lease and build.get("state") in {"STAGING", "ACTIVE"}:
+            context = _context(lease)
             if (
                 context.shard_count == shard_count
+                and context.generation_id == build.get("generation_id")
                 and context.lease_token == lease.get("lease_token")
                 and context.fence == int(lease.get("fence", -1))
                 and context.expires_at_ms > int(time.time() * 1000)

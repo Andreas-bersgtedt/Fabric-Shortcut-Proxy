@@ -55,3 +55,24 @@ def test_generation_records_best_effort_source_consistency():
     assert acquired.source_consistency == "best_effort"
     assert joined.source_consistency == "best_effort"
     assert json.loads(store.get(COORDINATOR_KEY))["source_consistency"] == "best_effort"
+
+
+def test_late_worker_joins_active_generation():
+    store = MemoryStore()
+    acquired = acquire_generation(store, 3)
+    store.put(
+        ".fsp/generation-build.json",
+        json.dumps(
+            {
+                "version": 1,
+                "state": "ACTIVE",
+                "generation_id": acquired.generation_id,
+                "fence": acquired.fence,
+                "lease_token": acquired.lease_token,
+                "object_count": 5,
+                "index_sha256": "abc123",
+            }
+        ).encode(),
+    )
+
+    assert join_generation(store, 3, timeout_seconds=0.1) == acquired

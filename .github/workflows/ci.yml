@@ -250,6 +250,33 @@ jobs:
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-manager --timeout=180s
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-cpp-agent --timeout=180s
 
+      - name: Verify Manager restart re-registers Agents
+        run: |
+          kubectl -n fabric-shortcut-proxy run fsp-manager-proof-client --image=curlimages/curl:8.10.1 --restart=Never --command -- sleep 300
+          kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod/fsp-manager-proof-client --timeout=120s
+          manager_ip=$(kubectl -n fabric-shortcut-proxy get service fsp-manager -o jsonpath='{.spec.clusterIP}')
+          get_agents() {
+            kubectl -n fabric-shortcut-proxy exec fsp-manager-proof-client -- \
+              curl -fsS --retry 5 --retry-all-errors -u agent:fsp-proof-manager-password "http://$manager_ip:9200/agents"
+          }
+          for i in $(seq 1 60); do
+            before=$(get_agents || true)
+            before_count=$(python -c 'import json,sys; print(len(json.load(sys.stdin).get("agents", [])))' <<< "$before" 2>/dev/null || echo 0)
+            if [ "$before_count" -ge 3 ]; then break; fi
+            sleep 1
+          done
+          test "$before_count" -ge 3
+          manager_pod=$(kubectl -n fabric-shortcut-proxy get pod -l app.kubernetes.io/name=fsp-manager -o jsonpath='{.items[0].metadata.name}')
+          kubectl -n fabric-shortcut-proxy delete pod "$manager_pod" --wait=true
+          kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-manager --timeout=180s
+          for i in $(seq 1 60); do
+            after=$(get_agents || true)
+            after_count=$(python -c 'import json,sys; print(len(json.load(sys.stdin).get("agents", [])))' <<< "$after" 2>/dev/null || echo 0)
+            if [ "$after_count" -ge 3 ]; then break; fi
+            sleep 1
+          done
+          test "$after_count" -ge 3
+
       - name: Scan C++ Service with PyIceberg
         run: |
           kubectl -n fabric-shortcut-proxy port-forward service/shortcut-proxy 9012:80 > port-forward.log 2>&1 &

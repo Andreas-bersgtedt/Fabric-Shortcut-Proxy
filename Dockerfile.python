@@ -6,6 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 ARG FSP_EXTRAS=postgres
+ARG FSP_ENTERPRISE=0
 ARG PIP_INDEX_URL=https://pypi.org/simple
 
 RUN groupadd --gid 10001 fsp \
@@ -17,6 +18,9 @@ RUN if [ -n "${FSP_EXTRAS}" ]; then \
         PIP_INDEX_URL="${PIP_INDEX_URL}" python -m pip install --no-cache-dir ".[${FSP_EXTRAS}]"; \
     else \
         PIP_INDEX_URL="${PIP_INDEX_URL}" python -m pip install --no-cache-dir .; \
+    fi \
+    && if [ "${FSP_ENTERPRISE}" = "1" ]; then \
+        PIP_INDEX_URL="${PIP_INDEX_URL}" python -m pip install --no-cache-dir ./enterprise; \
     fi
 
 USER 10001:10001

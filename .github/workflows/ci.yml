@@ -238,7 +238,7 @@ jobs:
 
       - name: Build and load fleet images
         run: |
-          docker build -f Dockerfile.python -t fabric-shortcut-proxy-python:dev .
+          docker build --build-arg FSP_ENTERPRISE=1 -f Dockerfile.python -t fabric-shortcut-proxy-python:dev .
           docker build -f agent-cpp/Dockerfile -t fabric-shortcut-proxy-cpp:dev .
           kind load docker-image fabric-shortcut-proxy-python:dev fabric-shortcut-proxy-cpp:dev --name fsp-proof
 
@@ -247,6 +247,7 @@ jobs:
           kubectl apply -k deploy/kubernetes/overlays/kind
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/postgres --timeout=180s
           kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod -l app.kubernetes.io/name=fsp-materializer --timeout=300s
+          kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-manager --timeout=180s
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-cpp-agent --timeout=180s
 
       - name: Scan C++ Service with PyIceberg

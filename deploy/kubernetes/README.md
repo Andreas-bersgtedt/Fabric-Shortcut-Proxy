@@ -17,7 +17,7 @@ The base uses PostgreSQL because `Dockerfile.python` installs the `postgres` ext
 Run from the repository root:
 
 ```powershell
-docker build -f Dockerfile.python -t fabric-shortcut-proxy-python:dev .
+docker build --build-arg FSP_ENTERPRISE=1 -f Dockerfile.python -t fabric-shortcut-proxy-python:dev .
 docker build -f agent-cpp/Dockerfile -t fabric-shortcut-proxy-cpp:dev .
 ```
 

@@ -4,6 +4,8 @@ resources:
   - namespace.yaml
   - artifact-pvc.yaml
   - common-configmap.yaml
+  - manager-deployment.yaml
+  - manager-service.yaml
   - python-headless-service.yaml
   - python-statefulset.yaml
   - cpp-deployment.yaml

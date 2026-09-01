@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-manager
+  namespace: fabric-shortcut-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          env:
+            - name: TLS_CERT_FILE
+              value: /tls/tls.crt
+            - name: TLS_KEY_FILE
+              value: /tls/tls.key
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+          volumeMounts:
+            - name: manager-tls
+              mountPath: /tls
+              readOnly: true
+      volumes:
+        - name: manager-tls
+          secret:
+            secretName: fsp-manager-tls

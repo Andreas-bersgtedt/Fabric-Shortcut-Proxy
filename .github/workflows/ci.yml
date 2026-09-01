@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
   pull_request:
@@ -244,7 +245,16 @@ jobs:
 
       - name: Deploy hybrid fleet
         run: |
-          kubectl apply -k deploy/kubernetes/overlays/kind
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout ca.key -out ca.crt -subj '/CN=fsp-manager-ca'
+          openssl req -newkey rsa:2048 -nodes -keyout tls.key -out tls.csr \
+            -subj '/CN=fsp-manager'
+          openssl x509 -req -in tls.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+            -out tls.crt -days 1 -extfile <(printf 'subjectAltName=DNS:fsp-manager')
+          kubectl create namespace fabric-shortcut-proxy
+          kubectl -n fabric-shortcut-proxy create secret generic fsp-manager-tls \
+            --from-file=tls.crt --from-file=tls.key --from-file=ca.crt
+          kubectl apply -k deploy/kubernetes/overlays/kind-tls
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/postgres --timeout=180s
           kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod -l app.kubernetes.io/name=fsp-materializer --timeout=300s
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-manager --timeout=180s

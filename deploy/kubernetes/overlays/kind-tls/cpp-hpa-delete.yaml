@@ -1,0 +1,6 @@
+$patch: delete
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fsp-cpp-agent
+  namespace: fabric-shortcut-proxy

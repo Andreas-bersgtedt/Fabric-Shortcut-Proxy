@@ -50,6 +50,14 @@ kubectl -n fabric-shortcut-proxy get pods,pvc,service,hpa
 
 If the cluster has no default RWX class, set `storageClassName` in `base/artifact-pvc.yaml` or add it through a Kustomize overlay.
 
+## Manager TLS
+
+The base overlay keeps Manager traffic cluster-private over HTTP. Apply
+`overlays/tls` when Agent-to-Manager traffic must be encrypted. It starts TLS on
+the Manager, configures Python Agents with CA verification, and gives C++ Agents
+a loopback TLS proxy. See `overlays/tls/README.md` for the certificate Secret
+contract and deployment commands.
+
 ## Local kind proof
 
 The `overlays/kind` overlay adds a seeded PostgreSQL source, a single-node hostPath RWX volume, the smoke client, and smaller resource requests. It also removes the HPA because a default kind cluster has no Metrics Server.

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fsp-manager-stunnel
+  namespace: fabric-shortcut-proxy
+data:
+  stunnel.conf: |
+    foreground = yes
+    [manager]
+    client = yes
+    accept = 127.0.0.1:9201
+    connect = fsp-manager:9443
+    CAfile = /tls/ca.crt
+    verifyChain = yes
+    checkHost = fsp-manager

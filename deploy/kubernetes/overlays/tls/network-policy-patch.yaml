@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: manager-control-ingress
+  namespace: fabric-shortcut-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - fsp-materializer
+                  - fsp-cpp-agent
+      ports:
+        - protocol: TCP
+          port: 9200

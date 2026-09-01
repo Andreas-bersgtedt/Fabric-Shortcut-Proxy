@@ -252,6 +252,8 @@ struct Config {
     std::string agent_id = getenv_str("AGENT_ID", "cpp-agent-1");
     std::string advertise_host = getenv_str("AGENT_ADVERTISE_HOST", "");
     std::string manager_url = getenv_str("MANAGER_URL", "");
+    std::string manager_auth_username = getenv_str("MANAGER_AUTH_USERNAME", "");
+    std::string manager_auth_password = getenv_str("MANAGER_AUTH_PASSWORD", "");
     int heartbeat_ms = parse_int_or(getenv_str("HEARTBEAT_MS", "2000"), 2000, 200, 600000);
     int socket_timeout_ms = parse_int_or(getenv_str("SOCKET_TIMEOUT_MS", "10000"), 10000, 1000, 60000);
     int max_inflight = parse_int_or(getenv_str("MAX_INFLIGHT", "256"), 256, 1, 100000);
@@ -1110,6 +1112,31 @@ static bool parse_url(const std::string& url, std::string& host, int& port, std:
     return !host.empty();
 }
 
+static std::string base64_encode(const std::string& value) {
+    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    encoded.reserve(((value.size() + 2) / 3) * 4);
+    for (size_t index = 0; index < value.size(); index += 3) {
+        const unsigned int first = static_cast<unsigned char>(value[index]);
+        const bool has_second = index + 1 < value.size();
+        const bool has_third = index + 2 < value.size();
+        const unsigned int second = has_second ? static_cast<unsigned char>(value[index + 1]) : 0;
+        const unsigned int third = has_third ? static_cast<unsigned char>(value[index + 2]) : 0;
+        const unsigned int block = (first << 16) | (second << 8) | third;
+        encoded.push_back(alphabet[(block >> 18) & 0x3f]);
+        encoded.push_back(alphabet[(block >> 12) & 0x3f]);
+        encoded.push_back(has_second ? alphabet[(block >> 6) & 0x3f] : '=');
+        encoded.push_back(has_third ? alphabet[block & 0x3f] : '=');
+    }
+    return encoded;
+}
+
+static std::string manager_auth_header() {
+    if (CFG.manager_auth_username.empty() || CFG.manager_auth_password.empty()) return "";
+    return "Authorization: Basic "
+        + base64_encode(CFG.manager_auth_username + ":" + CFG.manager_auth_password) + "\r\n";
+}
+
 static int http_post(const std::string& host, int port, const std::string& path,
                      const std::string& body, std::string& resp_body, int timeout_ms = 0) {
     struct addrinfo hints;
@@ -1139,6 +1166,7 @@ static int http_post(const std::string& host, int port, const std::string& path,
     r << "POST " << path << " HTTP/1.1\r\n"
       << "Host: " << host << ":" << port << "\r\n"
       << "Content-Type: application/json\r\n"
+            << manager_auth_header()
       << "Content-Length: " << body.size() << "\r\n"
       << "Connection: close\r\n\r\n" << body;
     std::string reqs = r.str();

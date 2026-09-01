@@ -25,7 +25,11 @@ Push both images to a registry for a remote cluster, then replace the two `image
 
 ## Configure the source
 
-Copy `examples/source-secret.example.yaml` outside the repository, replace the connection string, and apply it. Do not commit the populated Secret.
+Copy `examples/source-secret.example.yaml` outside the repository, replace the
+connection string, and apply it. Do not commit the populated Secret. When using
+Manager integration, set `MANAGER_AUTH_USERNAME` and `MANAGER_AUTH_PASSWORD` in
+this Secret, configure the Manager with the same values, and set `MANAGER_URL` on
+each Agent workload.
 
 ```powershell
 kubectl apply -f deploy/kubernetes/base/namespace.yaml

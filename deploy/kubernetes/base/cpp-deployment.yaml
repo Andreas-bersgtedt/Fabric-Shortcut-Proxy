@@ -61,6 +61,18 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: MANAGER_AUTH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: fsp-source
+                  key: MANAGER_AUTH_USERNAME
+                  optional: true
+            - name: MANAGER_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fsp-source
+                  key: MANAGER_AUTH_PASSWORD
+                  optional: true
           ports:
             - name: http
               containerPort: 9400

@@ -15,6 +15,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cctype>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -271,6 +272,11 @@ static Config CFG;
 // Set true when the Manager asks us to drain; /readyz then reports 503.
 static std::atomic<bool> g_draining{false};
 static std::atomic<bool> g_generation_ready{false};
+static volatile std::sig_atomic_t g_termination_requested = 0;
+
+static void request_termination(int) {
+    g_termination_requested = 1;
+}
 
 // Forward decl: lazy on-miss materialization request to the Manager. Defined with
 // the HTTP client further below (register/heartbeat share the same transport).
@@ -1383,6 +1389,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    std::signal(SIGTERM, request_termination);
+    std::signal(SIGINT, request_termination);
+
     initialize_object_index();
 
     SocketHandle srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -1433,6 +1442,21 @@ int main(int argc, char** argv) {
     }
 
     while (g_running) {
+        if (g_termination_requested) {
+            g_draining = true;
+            log_line("termination signal received -> readyz 503, draining requests");
+            break;
+        }
+
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(srv, &readable);
+        timeval timeout{};
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 200000;
+        int ready = select(static_cast<int>(srv) + 1, &readable, nullptr, nullptr, &timeout);
+        if (ready <= 0) continue;
+
         sockaddr_in caddr;
 #ifdef _WIN32
         int clen = sizeof(caddr);
@@ -1459,6 +1483,13 @@ int main(int argc, char** argv) {
         g_conn_cv.notify_one();
     }
 
+    close_socket(srv);
+    srv = kInvalidSocket;
+    const auto drain_deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(CFG.drain_grace_ms);
+    while (g_inflight.load() > 0 && std::chrono::steady_clock::now() < drain_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
     g_running = false;
     g_conn_cv.notify_all();
     for (auto& worker : workers) {
@@ -1466,7 +1497,6 @@ int main(int argc, char** argv) {
     }
     if (ctl.joinable()) ctl.join();
     if (index_refresher.joinable()) index_refresher.join();
-    close_socket(srv);
     net_cleanup();
     return 0;
 }

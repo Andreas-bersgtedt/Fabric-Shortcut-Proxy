@@ -52,6 +52,11 @@ def publish_serving_image(
             if data is None:
                 data = cache.peek_parquet(key)
             if data is None:
+                try:
+                    data = store.get(key)
+                except Exception:
+                    data = None
+            if data is None:
                 raise GenerationError(f"generation object has no bytes: {key}")
             digest = hashlib.sha256(data).hexdigest()
             staged_key = _generation_key(context.generation_id, key)

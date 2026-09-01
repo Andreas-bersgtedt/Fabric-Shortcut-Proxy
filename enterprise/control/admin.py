@@ -166,12 +166,17 @@ def create_admin_router(
     @router.post("/_manager/api/agents/{name}/{action}")
     async def agent_action(name: str, action: str, request: Request) -> dict:
         _check_token(request)
-        sup = _by_name(name)
-        if sup is None:
-            raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
         action = action.lower()
         if action not in _ACTIONS:
             raise HTTPException(status_code=400, detail=f"unknown action {action!r}; expected one of {_ACTIONS}")
+        if config.MANAGER_SUPERVISION_MODE == "external" and action != "drain":
+            raise HTTPException(
+                status_code=409,
+                detail="Kubernetes owns Agent lifecycle; use Deployment or StatefulSet replicas instead",
+            )
+        sup = _by_name(name)
+        if sup is None:
+            raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
 
         if action == "drain":
             ok = registry.queue_command(name, ControlCommand(kind="drain", drain=Drain()))
@@ -199,6 +204,11 @@ def create_admin_router(
     @router.post("/_manager/api/rolling-restart")
     async def rolling_restart_action(request: Request) -> dict:
         _check_token(request)
+        if config.MANAGER_SUPERVISION_MODE == "external":
+            raise HTTPException(
+                status_code=409,
+                detail="Kubernetes owns Agent lifecycle; use a Deployment rollout instead",
+            )
         from enterprise.control.rolling import rolling_restart
         # Fire-and-forget: recycle Agents one at a time so >= N-1 keep serving.
         # The console's fleet poll shows them cycling.
@@ -216,6 +226,11 @@ def create_admin_router(
         @router.post("/_manager/api/scale")
         async def scale_action(request: Request) -> dict:
             _check_token(request)
+            if config.MANAGER_SUPERVISION_MODE == "external":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Kubernetes owns Agent lifecycle; scale the Deployment or StatefulSet instead",
+                )
             body = await request.json()
             try:
                 count = int(body.get("count"))

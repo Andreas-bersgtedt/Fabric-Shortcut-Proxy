@@ -2,6 +2,7 @@ import http.client
 import os
 import pathlib
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -145,6 +146,39 @@ class CppAgentHardeningTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(body), 16 * 1024 * 1024)
         self.assertLess(after - before, 4096)
+
+    def test_generation_required_agent_stays_unready_without_current(self):
+        port = self.port + 1
+        env = os.environ.copy()
+        env.update({
+            "PORT": str(port),
+            "STORE_DIR": str(self.store),
+            "S3_BUCKET": BUCKET,
+            "REQUIRE_GENERATION": "1",
+        })
+        process = subprocess.Popen(
+            [str(AGENT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
+        )
+        try:
+            for _ in range(50):
+                try:
+                    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                    connection.request("GET", "/readyz")
+                    status = connection.getresponse().status
+                    connection.close()
+                    self.assertEqual(status, 503)
+                    return
+                except OSError:
+                    time.sleep(0.1)
+            self.fail("generation-required agent did not start")
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+
+    def test_termination_signal_exits_cleanly(self):
+        os.kill(self.process.pid, signal.SIGTERM)
+        self.process.wait(timeout=5)
+        self.assertEqual(self.process.returncode, 0)
 
 
 if __name__ == "__main__":

@@ -188,3 +188,26 @@ async def test_external_manager_readiness_uses_registered_agents(monkeypatch):
             response = await client.get("/readyz")
             assert response.status_code == 200
             assert response.json()["supervision_mode"] == "external"
+
+
+async def test_external_manager_rejects_local_lifecycle_actions(monkeypatch):
+    from enterprise.control.manager_app import create_manager_app
+    monkeypatch.setattr(config, "MANAGER_SUPERVISION_MODE", "external", raising=False)
+    monkeypatch.setattr(config, "ENABLE_ADMIN_UI", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "test-manager", raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "test-password", raising=False)
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    app = create_manager_app()
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://mgr",
+                                     auth=("test-manager", "test-password")) as client:
+            scale = await client.post("/_manager/api/scale", json={"count": 2})
+            start = await client.post("/_manager/api/agents/external-1/start")
+            rolling = await client.post("/_manager/api/rolling-restart")
+
+    assert scale.status_code == 409
+    assert start.status_code == 409
+    assert rolling.status_code == 409

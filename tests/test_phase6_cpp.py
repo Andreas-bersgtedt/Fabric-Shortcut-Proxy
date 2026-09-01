@@ -49,3 +49,23 @@ def test_publish_fails_closed_when_object_has_no_bytes(monkeypatch):
         serving_image.publish_serving_image(store)
     with pytest.raises(ObjectNotFound):
         store.get("CURRENT")
+
+
+def test_publish_reads_split_bytes_from_shared_store_when_not_cached(monkeypatch):
+    store = MemoryStore()
+    split_key = "warehouse/db/sales/data/split-1-1.parquet"
+    store.put(split_key, b"owner-parquet-bytes")
+    import s3.router as router
+    monkeypatch.setattr(
+        router,
+        "_snapshot_objects",
+        lambda: {split_key: {"data": None}},
+        raising=True,
+    )
+    import cache.lru_cache as cache
+    monkeypatch.setattr(cache, "peek_parquet", lambda key: None, raising=True)
+
+    result = serving_image.publish_serving_image(store)
+
+    prefix = f"generations/{result['generation_id']}/"
+    assert store.get(prefix + split_key) == b"owner-parquet-bytes"

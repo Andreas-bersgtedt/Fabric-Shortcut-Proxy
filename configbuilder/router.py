@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import hmac
 import os
 import pathlib
 import uuid
@@ -439,6 +440,43 @@ async def apply_config(request: Request) -> JSONResponse:
                 if live_result["restart_required"] else ""
             )
         ),
+    })
+
+
+@router.post("/api/manager/restart")
+async def restart_manager(request: Request) -> JSONResponse:
+    """Restart the Manager after re-authenticating with the current admin password."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - empty body is handled as a missing password
+        body = {}
+    password = str(body.get("password") or "") if isinstance(body, dict) else ""
+    if not config.MANAGER_AUTH_ENABLED or not config.MANAGER_AUTH_PASSWORD:
+        return JSONResponse({"ok": False, "error": "manager authentication is not configured"}, status_code=503)
+    if not hmac.compare_digest(password, str(config.MANAGER_AUTH_PASSWORD)):
+        return JSONResponse({"ok": False, "error": "current admin password is required"}, status_code=401)
+
+    callback = getattr(request.app.state, "restart_manager", None)
+    if callable(callback):
+        result = callback()
+        if asyncio.iscoroutine(result):
+            result = await result
+        return JSONResponse(result or {"ok": True, "action": "restart"})
+
+    async def _do_restart() -> None:
+        await asyncio.sleep(0.3)
+        server = getattr(request.app.state, "uvicorn_server", None)
+        if server is not None:
+            server.should_exit = True
+            return
+        os._exit(0)
+
+    asyncio.create_task(_do_restart())
+    log.info("config_builder_manager_restart_requested")
+    return JSONResponse({
+        "ok": True,
+        "action": "restart",
+        "note": "Manager restart requested. Kubernetes or the service supervisor will start it again.",
     })
 
 

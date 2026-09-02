@@ -151,6 +151,36 @@ async def test_save_endpoint_allows_secret_replace_and_clear(tmp_path, monkeypat
         assert after_clear["secret_access_key"] == ""
 
 
+async def test_restart_manager_requires_current_admin_password(monkeypatch):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "current-password", raising=False)
+    called = {"count": 0}
+
+    def fake_restart():
+        called["count"] += 1
+        return {"ok": True, "action": "restart"}
+
+    app = _cb_app()
+    app.state.restart_manager = fake_restart
+    async with _client(app) as c:
+        missing = await c.post("/_config/api/manager/restart", json={})
+        assert missing.status_code == 401
+        wrong = await c.post("/_config/api/manager/restart", json={"password": "wrong"})
+        assert wrong.status_code == 401
+        ok = await c.post("/_config/api/manager/restart", json={"password": "current-password"})
+        assert ok.status_code == 200 and ok.json()["action"] == "restart"
+        assert called["count"] == 1
+
+
+async def test_restart_manager_requires_manager_auth(monkeypatch):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "", raising=False)
+    app = _cb_app()
+    async with _client(app) as c:
+        response = await c.post("/_config/api/manager/restart", json={"password": "anything"})
+        assert response.status_code == 503
+
+
 # ---------------------------------------------------------------------------
 # Manager live-scale endpoint
 # ---------------------------------------------------------------------------

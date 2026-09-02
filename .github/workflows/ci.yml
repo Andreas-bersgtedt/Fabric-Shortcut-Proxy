@@ -271,7 +271,7 @@ jobs:
 
       - name: Verify Manager restart re-registers Agents
         run: |
-          kubectl -n fabric-shortcut-proxy run fsp-manager-proof-client --image=curlimages/curl:8.10.1 --restart=Never --command -- sleep 300
+          kubectl -n fabric-shortcut-proxy run fsp-manager-proof-client --image=curlimages/curl:8.10.1 --restart=Never --labels=fabric-shortcut-proxy.io/manager-client=true --command -- sleep 300
           kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod/fsp-manager-proof-client --timeout=120s
           manager_ip=$(kubectl -n fabric-shortcut-proxy get service fsp-manager -o jsonpath='{.spec.clusterIP}')
           get_agents() {

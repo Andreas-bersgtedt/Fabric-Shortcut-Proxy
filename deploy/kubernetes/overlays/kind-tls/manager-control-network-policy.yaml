@@ -14,4 +14,7 @@ spec:
               - key: app.kubernetes.io/name
                 operator: In
                 values: [fsp-materializer, fsp-cpp-agent]
+        - podSelector:
+            matchLabels:
+              fabric-shortcut-proxy.io/manager-client: "true"
       ports: [{protocol: TCP, port: 9200}]

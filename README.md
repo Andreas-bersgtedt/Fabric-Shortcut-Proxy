@@ -94,8 +94,8 @@ s3emulator/
 │   ├── agent_link.py            Agent register/heartbeat/drain link to the Manager
 │   ├── retention.py             Retention GC (prunes orphaned Parquet splits)
 │   └── control/                 Manager control plane: registry, gateway, LB renderer, HA
-├── config.py                All tunables (env / config.json / defaults) + validation
-├── config.example.json      Template for the optional config.json
+├── config.py                Settings registry (env / split config files / defaults) + validation
+├── config.*.example.json    Templates for split deployment config files
 ├── Manager.ps1              Bootstrap: venv + deps + launch Manager/Agent cluster
 ├── Manager.sh               Linux/macOS bootstrap for Manager/Agent cluster
 ├── validate_pyiceberg.py    Reference-reader validation (pyiceberg)
@@ -159,7 +159,7 @@ s3emulator/
     ├── test_metadata.py         metadata.json / manifest structure
     ├── test_parquet_gen.py      Parquet generation
     ├── test_autoschema.py       Reflected-schema type mapping
-    ├── test_config_file.py      config.json precedence
+    ├── test_config_file.py      split config-file precedence
     ├── test_config_builder.py   Config-builder API
     ├── test_hardening.py        Phase 1/2: range reads, config, snapshot
     ├── test_metrics_health.py   H1/H2 metrics + health
@@ -375,18 +375,27 @@ DB_URL=mssql+aioodbc://user:pass@host/db?driver=ODBC+Driver+18+for+SQL+Server&Tr
 ```
 
 If `KEY_COLUMN` is unset, the source table's **primary key** is auto-detected.
-You only edit `config.py` to expose **multiple** tables (still schema-free) or to
-override a reflected type.
+Use `config.tables.json` to expose **multiple** tables without editing Python. Edit
+`config.py` only for code-level defaults or local development overrides.
 
-### Config file (`config.json`)
+### Split config files
 
-Instead of environment variables you can drop a `config.json` next to `main.py`
-(copy [config.example.json](config.example.json)). It can define **everything,
-including multiple tables**, with no Python:
+Instead of environment variables you can place split `config.*.json` files next to
+`main.py`, or set `FSP_CONFIG_DIR` to a mounted config directory. Copy the matching
+`config.*.example.json` templates. Multiple tables need no Python edits:
 
-```json
+```jsonc
+// config.connection.json
 {
-  "db_url": "postgresql+asyncpg://user:pass@host:5432/db",
+  "connection": {
+    "db_url": "postgresql+asyncpg://user:pass@host:5432/db"
+  }
+}
+```
+
+```jsonc
+// config.tables.json
+{
   "tables": [
     { "name": "orders",    "source_table": "public.orders",    "key_column": "order_id" },
     { "name": "customers", "source_table": "public.customers", "key_column": "customer_id", "num_splits": 4 }
@@ -394,9 +403,9 @@ including multiple tables**, with no Python:
 }
 ```
 
-Precedence is **env var > config.json > default**. Point `CONFIG_FILE` at a
-different path if you like. `config.json` is gitignored (it holds your
-connection string).
+Precedence is **environment variable > split config file > default**. The real
+`config.*.json` files are gitignored; do not commit populated connection strings
+or keys.
 
 ### Config Builder UI
 

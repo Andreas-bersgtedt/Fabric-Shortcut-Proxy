@@ -173,7 +173,7 @@ Content-addressing fixes exactly that, uniformly, with no source signal.
 - New chunk paths are cold; superseded parquet is evicted from
   [cache/lru_cache.py](../cache/lru_cache.py) (memory) and its F5 disk file deleted.
 
-### 7.4 Config (env / config.json)
+### 7.4 Config (env / split config files)
 | Key | Default | Meaning |
 |---|---|---|
 | `AUTO_REFRESH` | `0` | Enable the freshness poller |

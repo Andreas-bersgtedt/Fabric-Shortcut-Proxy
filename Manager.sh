@@ -10,7 +10,7 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 STAMP_FILE="$VENV_DIR/.deps-installed"
 # Bump when the required dependency SET changes so existing venvs auto-reinstall.
-DEPS_VERSION="drivers+objectstore+azure+onelake-v1"
+DEPS_VERSION="drivers+objectstore+azure+keyvault+onelake-v2"
 
 ARG_CONTROL_PORT=""
 ARG_CONTROL_HOST=""

@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0]: 2026-09-02
+
 ### Added
+
+- Enterprise AKS deployment guidance now documents the private Manager, OPDG,
+  Key Vault, Open Mirror, private DNS, and data-plane endpoint pattern with
+  Mermaid diagrams and placeholder-only commands.
+- The Config Builder System tab now includes a password-protected Manager restart
+  control. It requires the current Manager admin password and lets Kubernetes or
+  the service supervisor start the Manager again.
+- The Manager Fleet view now shows externally registered AKS agents, including
+  runtime, edition, operating system, version, serving tables, heartbeat age, and
+  memory reported by the agent heartbeat.
+- Fleet operators can forget dead external agent records without restarting the
+  Manager. The endpoint refuses to remove agents that still have a live heartbeat.
+- PowerShell and Bash helpers can inject the Azure service-principal client secret
+  into the AKS Manager without writing the secret to a config file.
 - The Config Builder Open Mirror editor now saves target and per-table cleanup retention values.
 - Open Mirror targets now have a read-only **Check health** action that validates configuration,
   runtime credential freshness, source connectivity, table control columns, Fabric mirroring
@@ -15,6 +31,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Manager Monitor now includes a Data File Manager for Open Mirror cleanup. It inspects
   Fabric's `_FilesReadyToDelete` folders, applies per-target or per-table retention, defaults to
   dry-run inspection, and deletes only eligible processed folders after explicit confirmation.
+
+### Changed
+
+- The Python container image installs the `postgres`, `azureblob`, `keyvault`, and
+  `onelake` extras by default. SQL Server images can also install Microsoft ODBC
+  Driver 18 with the `FSP_INSTALL_MSSQL_ODBC` build argument.
+- Manager launchers now use a new dependency stamp for the driver, object-store,
+  Azure Blob, Key Vault, and OneLake dependency set, so existing virtual
+  environments reinstall when needed.
+- Manager configuration, connection configuration, system configuration, and Open
+  Mirror target loading now honor `FSP_CONFIG_DIR`, so AKS deployments can mount
+  writable configuration at `/config` while keeping the application image read-only.
+- Open Mirror state is stored under the Manager config volume in Kubernetes through
+  `OPEN_MIRROR_STATE_DIR=/config/.open_mirror_state`.
+- Lite, Enterprise, Manager, and Agent version metadata now report `2.7.0`.
+
+### Fixed
+
+- Manager Monitor and cluster health now include externally registered agents when
+  the Manager runs in Kubernetes external supervision mode.
+- Open Mirror targets saved under `FSP_CONFIG_DIR` are visible to the Manager after
+  restart, and optional landing-zone row counting no longer turns OneLake listing
+  errors into a dashboard failure.
+- SQL Server `odbc_connect` URLs now derive canonical S3 path segments from the
+  ODBC `Server` and `Database` fields instead of falling back to `local/default`.
+- Manager readiness probes use `/healthz`, avoiding false negatives when `/readyz`
+  is waiting for registered agents.
 
 ## [2.6.0]: 2026-08-27
 
@@ -437,6 +480,7 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
+[2.7.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.6.0...2.7.0
 [2.6.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.3...2.6.0
 [2.5.3]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.2...2.5.3
 [2.5.2]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.1...2.5.2

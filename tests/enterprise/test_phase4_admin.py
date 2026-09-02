@@ -202,6 +202,21 @@ async def test_drain_external_registered_agent_without_supervisor():
         assert len(rec.commands) == 1 and rec.commands[0].kind == "drain"
 
 
+async def test_forget_removes_only_dead_registered_agent(monkeypatch):
+    reg = _registry_with(("dead-agent", 9000), ("live-agent", 9001), host="192.0.2.10")
+    monkeypatch.setattr(reg, "is_alive", lambda agent_id: agent_id == "live-agent")
+    app = _app(reg, [])
+    async with _client(app) as c:
+        live = await c.delete("/_manager/api/agents/live-agent")
+        assert live.status_code == 409
+        missing = await c.delete("/_manager/api/agents/missing-agent")
+        assert missing.status_code == 404
+        dead = await c.delete("/_manager/api/agents/dead-agent")
+        assert dead.status_code == 200 and dead.json()["ok"] is True
+        assert reg.get("dead-agent") is None
+        assert reg.get("live-agent") is not None
+
+
 async def test_unknown_agent_and_action():
     reg = _registry_with(("agent-1", 9100))
     app = _app(reg, [FakeSupervisor("agent-1", 9100, 0, 1)])

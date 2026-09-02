@@ -247,6 +247,19 @@ def create_admin_router(
         return {"ok": True, "action": action, "agent": name,
                 "pid": sup.pid, "process_alive": sup.is_alive}
 
+    @router.delete("/_manager/api/agents/{name}")
+    async def forget_agent(name: str, request: Request) -> dict:
+        """Remove a dead external Agent record from the Manager registry."""
+        _check_token(request)
+        rec = registry.get(name)
+        if rec is None:
+            raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
+        if registry.is_alive(name):
+            raise HTTPException(status_code=409, detail="refusing to forget an Agent with a live heartbeat")
+        ok = registry.remove(name)
+        log.info("admin_forget_agent", agent=name, removed=ok)
+        return {"ok": ok, "action": "forget", "agent": name}
+
     @router.post("/_manager/api/rolling-restart")
     async def rolling_restart_action(request: Request) -> dict:
         _check_token(request)
@@ -622,6 +635,7 @@ function render(d) {
     const startDisabled = lifecycleDisabled || (a.process_alive && !a.crash_looped ? "disabled" : "");
     const stopDisabled = lifecycleDisabled || (a.process_alive ? "" : "disabled");
     const drainDisabled = a.registered && !a.dead ? "" : "disabled";
+    const forgetDisabled = a.registered && a.dead ? "" : "disabled";
     const typeText = [a.runtime, a.edition, a.version].filter(Boolean).join(" / ") || '<span class="muted">—</span>';
     const osText = a.os ? `<div class="muted">${a.os}</div>` : "";
     return `<tr>
@@ -640,6 +654,7 @@ function render(d) {
         <button class="stop" ${stopDisabled} onclick="act('${a.name}','stop')">Stop</button>
         <button ${stopDisabled} onclick="act('${a.name}','restart')">Restart</button>
         <button ${drainDisabled} onclick="act('${a.name}','drain')">Drain</button>
+        <button ${forgetDisabled} onclick="forgetAgent('${a.name}')">Forget</button>
       </td></tr>`;
   }).join("");
 }
@@ -654,6 +669,18 @@ async function act(name, action) {
     if (!r.ok) { msg(`${action} ${name} failed: ${d.detail || r.status}`, "err"); }
     else { msg(d.note || `${action} ${name}: ok`, "good"); }
   } catch (e) { msg(`${action} ${name} error: ${e}`, "err"); }
+  setTimeout(refresh, 400);
+}
+
+async function forgetAgent(name) {
+  if (!confirm(`Forget dead Agent ${name}?`)) return;
+  msg(`forget ${name}…`);
+  try {
+    const r = await fetch(`/_manager/api/agents/${name}`, { method: "DELETE", headers: headers() });
+    const d = await r.json();
+    if (!r.ok) { msg(`forget ${name} failed: ${d.detail || r.status}`, "err"); }
+    else { msg(`forgot ${name}`, "good"); }
+  } catch (e) { msg(`forget ${name} error: ${e}`, "err"); }
   setTimeout(refresh, 400);
 }
 

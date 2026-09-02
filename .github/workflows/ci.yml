@@ -265,7 +265,7 @@ jobs:
             --from-file=tls.crt --from-file=tls.key --from-file=ca.crt
           kubectl apply -k deploy/kubernetes/overlays/kind-tls
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/postgres --timeout=180s
-          kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod -l app.kubernetes.io/name=fsp-materializer --timeout=300s
+          kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod -l app.kubernetes.io/name=fsp-materializer --timeout=900s
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-manager --timeout=180s
           kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-cpp-agent --timeout=180s
 

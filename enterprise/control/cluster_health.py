@@ -73,8 +73,10 @@ def aggregate_health(registry, supervisors, *, now: float | None = None) -> dict
     alerts = []
     cpu_values = []
     memory_values = []
+    supervised_ids = set()
 
     for supervisor in supervisors:
+        supervised_ids.add(supervisor.name)
         record = by_id.get(supervisor.name)
         if record is None:
             agent = {
@@ -141,6 +143,56 @@ def aggregate_health(registry, supervisors, *, now: float | None = None) -> dict
                 "Inspect the Agent logs before restarting it.",
             ))
         agents.append(agent)
+
+    for record in records:
+        agent_id = record["agent_id"]
+        if agent_id in supervised_ids:
+            continue
+        age = record["seconds_since_heartbeat"]
+        health = record.get("health", {})
+        cpu = float(health.get("cpu_pct", 0.0) or 0.0)
+        memory = int(health.get("mem_bytes", 0) or 0)
+        cpu_values.append(cpu)
+        memory_values.append(memory)
+        alive = registry.is_alive(agent_id) if registry is not None else False
+        status = "Healthy" if alive else "Critical"
+        if not alive:
+            alerts.append(_alert(
+                f"agent-heartbeat-{agent_id}", "Critical",
+                f"Agent {agent_id} heartbeat is stale.",
+                "Check the Agent process and control-plane connectivity.",
+            ))
+        elif age > 2:
+            status = "Warning"
+            alerts.append(_alert(
+                f"agent-heartbeat-{agent_id}", "Warning",
+                f"Agent {agent_id} heartbeat is delayed.",
+                "Inspect Agent logs and network latency.",
+            ))
+        if cpu >= 98:
+            status = "Critical"
+            alerts.append(_alert(
+                f"agent-cpu-{agent_id}", "Critical",
+                f"Agent {agent_id} CPU usage is {cpu:.1f}%.",
+                "Reduce load or add Agent capacity.",
+            ))
+        elif cpu >= 90 and status != "Critical":
+            status = "Warning"
+            alerts.append(_alert(
+                f"agent-cpu-{agent_id}", "Warning",
+                f"Agent {agent_id} CPU usage is {cpu:.1f}%.",
+                "Review workload and capacity.",
+            ))
+        agents.append({
+            "agent_id": agent_id,
+            "status": status,
+            "heartbeat": age,
+            "health": health,
+            "serving_tables": record.get("serving_tables", []),
+            "restart_count": None,
+            "crash_looped": False,
+            "alive": alive,
+        })
 
     if not agents:
         status = "Critical"

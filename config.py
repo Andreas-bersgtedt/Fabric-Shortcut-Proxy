@@ -77,6 +77,11 @@ from connection_config import (
 )
 
 
+def _config_path(filename: str) -> str:
+    config_dir = os.environ.get("FSP_CONFIG_DIR", "").strip()
+    return os.path.join(config_dir, filename) if config_dir else filename
+
+
 def effective_db_url(connection_id: str | None = "default") -> str:
     """Return the SQLAlchemy URL for a connection id.
 
@@ -112,7 +117,7 @@ def _load_config_file() -> dict:
     """
     data = {}
     for section in ("performance", "freshness", "tables"):
-        section_path = f"config.{section}.json"
+        section_path = _config_path(f"config.{section}.json")
         try:
             with open(section_path, "r", encoding="utf-8-sig") as fh:
                 section_data = json.load(fh)
@@ -1252,14 +1257,15 @@ def effective_settings(*, redact_secrets: bool = True) -> list[dict]:
         target = _SETTINGS_TO_FILE_MAP.get(key)
         if not target:
             return _MISSING
-        if target not in _file_cache:
+        target_path = _config_path(target)
+        if target_path not in _file_cache:
             try:
-                with open(target, "r", encoding="utf-8-sig") as fh:
+                with open(target_path, "r", encoding="utf-8-sig") as fh:
                     loaded = json.load(fh)
-                _file_cache[target] = loaded if isinstance(loaded, dict) else {}
+                _file_cache[target_path] = loaded if isinstance(loaded, dict) else {}
             except (OSError, ValueError):
-                _file_cache[target] = {}
-        data = _file_cache[target]
+                _file_cache[target_path] = {}
+        data = _file_cache[target_path]
         section = target.split("config.")[-1].split(".json")[0]
         sect = data.get(section, data)
         if isinstance(sect, dict) and key in sect:
@@ -1674,9 +1680,11 @@ def write_config_updates(updates: dict) -> dict:
     
     for target_file, file_settings in settings_by_file.items():
         try:
+            target_path = _config_path(target_file)
+            os.makedirs(os.path.dirname(target_path) or ".", exist_ok=True)
             # Read existing config from the file
             try:
-                with open(target_file, "r", encoding="utf-8-sig") as fh:
+                with open(target_path, "r", encoding="utf-8-sig") as fh:
                     existing = json.load(fh)
                 if not isinstance(existing, dict):
                     existing = {}
@@ -1706,12 +1714,12 @@ def write_config_updates(updates: dict) -> dict:
             if open_mirror_targets_marker is not None:
                 existing["open_mirror"] = {"open_mirror_targets": open_mirror_targets_marker}
 
-            tmp = f"{target_file}.tmp"
+            tmp = f"{target_path}.tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(existing, fh, indent=2, sort_keys=True)
                 fh.flush()
                 os.fsync(fh.fileno())
-            os.replace(tmp, target_file)
+            os.replace(tmp, target_path)
 
         except (OSError, ValueError) as exc:
             raise ValueError(f"Failed to write {target_file}: {exc}") from exc

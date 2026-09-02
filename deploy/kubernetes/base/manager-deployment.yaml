@@ -47,12 +47,16 @@ spec:
               value: external
             - name: ENABLE_GATEWAY
               value: "0"
+            - name: FSP_CONFIG_DIR
+              value: /config
+            - name: CREDENTIAL_STORE_PATH
+              value: /config/credentials.json
           ports:
             - name: control
               containerPort: 9200
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: /healthz
               port: control
             periodSeconds: 5
           livenessProbe:
@@ -73,3 +77,10 @@ spec:
             capabilities:
               drop:
                 - ALL
+          volumeMounts:
+            - name: artifacts
+              mountPath: /config
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: fsp-artifacts

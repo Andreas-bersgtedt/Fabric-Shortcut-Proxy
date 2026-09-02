@@ -19,6 +19,11 @@ import os
 import sys
 
 
+def _config_path(filename: str) -> str:
+    config_dir = os.environ.get("FSP_CONFIG_DIR", "").strip()
+    return os.path.join(config_dir, filename) if config_dir else filename
+
+
 # ---------------------------------------------------------------------------
 # JSON Config loading — config.system.json only
 # ---------------------------------------------------------------------------
@@ -30,7 +35,7 @@ def _load_config_file() -> dict:
       1. config.system.json
       2. empty dict (no fallback to monolithic config.json)
     """
-    section_path = "config.system.json"
+    section_path = _config_path("config.system.json")
     try:
         with open(section_path, "r", encoding="utf-8-sig") as fh:
             data = json.load(fh)

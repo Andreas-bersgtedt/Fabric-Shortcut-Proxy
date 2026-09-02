@@ -94,6 +94,7 @@ def test_fleet_snapshot_combines_supervisor_and_registry():
     a1 = next(a for a in snap["agents"] if a["name"] == "agent-1")
     assert a1["port"] == 9100 and a1["shard_index"] == 0 and a1["shard_count"] == 2
     assert a1["registered"] is True and a1["process_alive"] is True
+    assert a1["runtime"] == "python" and a1["edition"] == "enterprise" and a1["version"] == "v"
     a2 = next(a for a in snap["agents"] if a["name"] == "agent-2")
     assert a2["process_alive"] is False
 
@@ -104,6 +105,30 @@ def test_fleet_snapshot_gateway_off():
     assert snap["gateway_enabled"] is False
     assert snap["gateway_targets"] == 0
     assert snap["ready"] is True
+
+
+def test_fleet_snapshot_includes_external_registered_agent():
+    reg = _registry_with(("fsp-materializer-smoke", 9000), host="192.0.2.10")
+    rec = reg.get("fsp-materializer-smoke")
+    rec.serving_tables = ["SO_Header"]
+    rec.epochs = {"SO_Header": 1}
+    rec.health.mem_bytes = 650313728
+
+    snap = fleet_snapshot(reg, [])
+
+    assert snap["ready"] is True
+    assert snap["agents_total"] == 1
+    assert snap["agents_alive"] == 1
+    assert snap["agents_registered_alive"] == 1
+    agent = snap["agents"][0]
+    assert agent["name"] == "fsp-materializer-smoke"
+    assert agent["supervised"] is False
+    assert agent["process_alive"] is True
+    assert agent["serving_tables"] == ["SO_Header"]
+    assert agent["runtime"] == "python"
+    assert agent["edition"] == "enterprise"
+    assert agent["os"] == "linux"
+    assert agent["version"] == "v"
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +190,16 @@ async def test_drain_queues_command():
         # agent-2 is supervised but not registered -> nothing to queue
         r = await c.post("/_manager/api/agents/agent-2/drain")
         assert r.status_code == 200 and r.json()["ok"] is False
+
+
+async def test_drain_external_registered_agent_without_supervisor():
+    reg = _registry_with(("fsp-materializer-smoke", 9000), host="192.0.2.10")
+    app = _app(reg, [])
+    async with _client(app) as c:
+        r = await c.post("/_manager/api/agents/fsp-materializer-smoke/drain")
+        assert r.status_code == 200 and r.json()["ok"] is True
+        rec = reg.get("fsp-materializer-smoke")
+        assert len(rec.commands) == 1 and rec.commands[0].kind == "drain"
 
 
 async def test_unknown_agent_and_action():

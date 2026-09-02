@@ -75,6 +75,16 @@ def test_write_config_updates_rejects_bad(monkeypatch, tmp_path):
         config.write_config_updates({"num_splits": "not-an-int"})
 
 
+def test_write_config_updates_uses_config_dir(monkeypatch, tmp_path):
+    config_dir = tmp_path / "mounted-config"
+    monkeypatch.setenv("FSP_CONFIG_DIR", str(config_dir))
+
+    config.write_config_updates({"agent_count": 4})
+
+    saved = json.loads((config_dir / "config.system.json").read_text())
+    assert saved["system"]["agent_count"] == 4
+
+
 def test_manager_auth_settings_persist_to_system(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     clean, errors = config.validate_setting_updates(

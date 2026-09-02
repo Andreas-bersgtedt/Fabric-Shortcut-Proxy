@@ -31,6 +31,7 @@ proxy's read path — the target only describes the Fabric landing-zone sink.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 
@@ -218,6 +219,10 @@ def target_from_dict(d: dict) -> OpenMirrorTarget:
 
 def _load_raw(path: str = _CONFIG_FILE) -> dict:
     """Load the raw ``config.open_mirror.json`` document (empty when absent)."""
+    if path == _CONFIG_FILE:
+        config_dir = os.environ.get("FSP_CONFIG_DIR", "").strip()
+        if config_dir:
+            path = os.path.join(config_dir, path)
     try:
         with open(path, "r", encoding="utf-8-sig") as fh:
             data = json.load(fh)

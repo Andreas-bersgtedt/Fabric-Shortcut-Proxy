@@ -51,6 +51,8 @@ spec:
               value: /config
             - name: CREDENTIAL_STORE_PATH
               value: /config/credentials.json
+            - name: OPEN_MIRROR_STATE_DIR
+              value: /config/.open_mirror_state
           ports:
             - name: control
               containerPort: 9200

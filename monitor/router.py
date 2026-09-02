@@ -224,7 +224,7 @@ async def open_mirror_summary(*, include_landing_zone_count: bool = False) -> di
                     landing_zone_rows = await asyncio.to_thread(
                         _landing_zone_rows, target, table
                     )
-                except (OSError, RuntimeError, ValueError) as exc:
+                except Exception as exc:  # noqa: BLE001 - optional live count must not break status
                     log.warning("open_mirror_landing_zone_count_failed",
                                 target=target.id, table=table.name, error=str(exc))
             published_rows_total = state.published_rows_total if state else 0
@@ -242,7 +242,7 @@ async def open_mirror_summary(*, include_landing_zone_count: bool = False) -> di
                         last_batch_rows = _parquet_rows(
                             backend.read_bytes(state.committed.file)
                         ) if state.committed.file else 0
-                    except (OSError, RuntimeError, ValueError) as exc:
+                    except Exception as exc:  # noqa: BLE001 - optional live count must not break status
                         log.warning("open_mirror_last_batch_count_failed",
                                     target=target.id, table=table.name, error=str(exc))
             tables.append({

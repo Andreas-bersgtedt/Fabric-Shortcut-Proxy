@@ -15,6 +15,7 @@ spec:
           image: dweomer/stunnel:latest
           args:
             - /etc/stunnel/stunnel.conf
+          command: [stunnel]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

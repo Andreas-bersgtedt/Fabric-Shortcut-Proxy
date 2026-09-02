@@ -12,7 +12,7 @@ spec:
           command:
             - /bin/sh
             - -ec
-            - chown -R 10001:10001 /artifacts && chmod 0770 /artifacts
+            - chown -R 10001:10001 /artifacts && chmod 0777 /artifacts
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

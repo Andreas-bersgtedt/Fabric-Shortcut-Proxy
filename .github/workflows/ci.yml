@@ -241,7 +241,16 @@ jobs:
         run: |
           docker build --build-arg FSP_ENTERPRISE=1 -f Dockerfile.python -t fabric-shortcut-proxy-python:dev .
           docker build -f agent-cpp/Dockerfile -t fabric-shortcut-proxy-cpp:dev .
-          kind load docker-image fabric-shortcut-proxy-python:dev fabric-shortcut-proxy-cpp:dev --name fsp-proof
+          load_image() {
+            local image="$1"
+            if kind load docker-image "$image" --name fsp-proof; then
+              return 0
+            fi
+            echo "kind load failed for $image; importing through the node containerd" >&2
+            docker save "$image" | docker exec -i fsp-proof-control-plane ctr -n k8s.io images import -
+          }
+          load_image fabric-shortcut-proxy-python:dev
+          load_image fabric-shortcut-proxy-cpp:dev
 
       - name: Deploy hybrid fleet
         run: |

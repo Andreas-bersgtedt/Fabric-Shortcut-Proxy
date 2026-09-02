@@ -10,7 +10,7 @@ This deployment runs three Python materializers and two C++ serving replicas aga
 - Network access from the materializer Pods to the source database
 - A source account with read-only access
 
-The base installs the `postgres`, `azureblob`, and `onelake` Python extras by default so Azure Identity, Azure Blob/ADLS, and OneLake-backed Open Mirroring work in the production image. Set the `FSP_EXTRAS` build argument for a leaner or different packaged driver set. SQL Server containers also require the Microsoft ODBC driver at the operating-system layer.
+The base installs the `postgres`, `azureblob`, `keyvault`, and `onelake` Python extras by default so Azure Identity, Key Vault, Azure Blob/ADLS, and OneLake-backed Open Mirroring work in the production image. Set the `FSP_EXTRAS` build argument for a leaner or different packaged driver set. SQL Server containers also require the Microsoft ODBC driver at the operating-system layer.
 
 ## Build images
 

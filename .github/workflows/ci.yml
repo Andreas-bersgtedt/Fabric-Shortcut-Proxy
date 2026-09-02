@@ -276,7 +276,7 @@ jobs:
           manager_ip=$(kubectl -n fabric-shortcut-proxy get service fsp-manager -o jsonpath='{.spec.clusterIP}')
           get_agents() {
             kubectl -n fabric-shortcut-proxy exec fsp-manager-proof-client -- \
-              curl -fsS --retry 5 --retry-all-errors -u agent:fsp-proof-manager-password "http://$manager_ip:9200/agents"
+              curl -kfsS --retry 5 --retry-all-errors -u agent:fsp-proof-manager-password "https://$manager_ip:9443/agents"
           }
           for i in $(seq 1 60); do
             before=$(get_agents || true)

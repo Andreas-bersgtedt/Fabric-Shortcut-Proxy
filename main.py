@@ -149,6 +149,7 @@ async def lifespan(app: FastAPI):
             sys.stderr.flush()
             os._exit(78)
 
+    _generation_context = None
     if config.AUTO_REFRESH:
         # Data-freshness path (content-addressed snapshots + background poller).
         # Each chunk is named by the hash of its rows, so a new snapshot (and new
@@ -242,8 +243,36 @@ async def lifespan(app: FastAPI):
         from db.executor import execute_split_query, stream_split_query
         from parquet.generator import rows_to_parquet, stream_rows_to_parquet
         from iceberg.stats import collect_split_stats
+        from runtime.split_completion import (
+            apply_split_completion as _apply_split_completion,
+            publish_split_completion as _publish_split_completion,
+            read_split_completion as _read_split_completion,
+        )
+        from runtime.generation import acquire_generation, assign_generation, join_generation
 
         _mat_sem = asyncio.Semaphore(config.MAX_CONCURRENT_GENERATIONS)
+        if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
+            from runtime.artifact_store import build_store as _generation_store_factory
+            _generation_store = _generation_store_factory(
+                config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR
+            )
+            if config.AGENT_SHARD_INDEX == 0:
+                _generation_context = acquire_generation(
+                    _generation_store,
+                    config.AGENT_SHARD_COUNT,
+                    lease_seconds=3600,
+                    source_consistency=config.GENERATION_SOURCE_CONSISTENCY,
+                )
+            else:
+                _generation_context = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: join_generation(
+                        _generation_store,
+                        config.AGENT_SHARD_COUNT,
+                        timeout_seconds=config.MATERIALIZE_WAIT_SECONDS,
+                    ),
+                )
+            assign_generation(snapshots, _generation_context)
 
         # Size-weighted split ownership (devplan/shardweight.md). When enabled with
         # >1 shard and a shared store, compute a per-table LPT assignment from the
@@ -284,15 +313,14 @@ async def lifespan(app: FastAPI):
                     return owner == config.AGENT_SHARD_INDEX
             return split.split_index % n == config.AGENT_SHARD_INDEX
 
-        async def _wait_for_store(key: str) -> bytes | None:
-            """Poll the artifact store for a split another shard is generating.
-            Runs OUTSIDE the generation semaphore so it never blocks owned work."""
+        async def _wait_for_completion(split):
+            """Poll for another shard's completion without loading its Parquet."""
             deadline = asyncio.get_event_loop().time() + config.MATERIALIZE_WAIT_SECONDS
             while asyncio.get_event_loop().time() < deadline:
                 await asyncio.sleep(0.25)
-                got = _cache.warm_parquet(key)
-                if got is not None:
-                    return got
+                completion = _read_split_completion(split)
+                if completion is not None:
+                    return completion
             return None
 
         def _apply_warm(split, warm: bytes) -> int:
@@ -300,24 +328,26 @@ async def lifespan(app: FastAPI):
             split.record_count = _pq.read_metadata(_io.BytesIO(warm)).num_rows
             if config.ICEBERG_MANIFEST_STATS:
                 split.stats = collect_split_stats(warm, split.table.schema)
+            if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
+                _publish_split_completion(split, warm)
             if config.PIN_MATERIALIZED_SPLITS:
                 _cache.pin_parquet(split.object_key, warm)
             return split.record_count
 
         async def _materialize(split) -> int:
             key = split.object_key
+            if not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
+                completion = await _wait_for_completion(split)
+                if completion is None:
+                    raise TimeoutError(
+                        f"timed out waiting for owner completion: table={split.table.name} "
+                        f"split={split.split_index}"
+                    )
+                return _apply_split_completion(split, completion)
             # Fast path: already durable (disk/artifact store) -> zero regeneration.
             warm = _cache.warm_parquet(key)
             if warm is not None:
                 return _apply_warm(split, warm)
-            # Distributed materialization: a non-owner waits for the owning shard
-            # to publish this split to the shared store (no SQL here).
-            if not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
-                warm = await _wait_for_store(key)
-                if warm is not None:
-                    return _apply_warm(split, warm)
-                log.warning("materialize_wait_timeout_fallback_generate",
-                            split_index=split.split_index, table=split.table.name)
             # Generate (owner, or non-owner fallback) under the concurrency guard.
             async with _mat_sem:
                 warm = _cache.warm_parquet(key)   # another writer may have won the race
@@ -341,14 +371,16 @@ async def lifespan(app: FastAPI):
                         rows, split_index=split.split_index, columns=split.table.schema
                     )
                     nrows = len(rows)
-                if config.PIN_MATERIALIZED_SPLITS:
-                    _cache.pin_parquet(split.object_key, pq_bytes)
-                else:
-                    _cache.put_parquet(split.object_key, pq_bytes)
                 split.record_count = nrows
                 split.file_size_in_bytes = len(pq_bytes)
                 if config.ICEBERG_MANIFEST_STATS:
                     split.stats = collect_split_stats(pq_bytes, split.table.schema)
+                if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
+                    _publish_split_completion(split, pq_bytes)
+                if config.PIN_MATERIALIZED_SPLITS:
+                    _cache.pin_parquet(split.object_key, pq_bytes)
+                else:
+                    _cache.put_parquet(split.object_key, pq_bytes)
                 return nrows
 
         if config.MATERIALIZE_MODE in ("lazy", "virtual"):
@@ -446,11 +478,14 @@ async def lifespan(app: FastAPI):
     # Phase 6: publish a complete servable image (data + metadata) to the store so
     # a stateless/C++ Agent can serve every object as opaque bytes. Requires the
     # store serving tier; default off.
-    if config.PUBLISH_SERVING_IMAGE and config.ARTIFACT_STORE_SERVING:
+    if (config.PUBLISH_SERVING_IMAGE and config.ARTIFACT_STORE_SERVING
+            and config.AGENT_SHARD_INDEX == 0):
         from runtime.artifact_store import build_store
         from runtime.serving_image import publish_serving_image
         _img_store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
-        await asyncio.get_event_loop().run_in_executor(None, publish_serving_image, _img_store)
+        await asyncio.get_event_loop().run_in_executor(
+            None, publish_serving_image, _img_store, _generation_context
+        )
 
     # Cluster mode (Phase 1): if a Manager is configured, register + heartbeat.
     # Standalone (empty MANAGER_URL) skips this entirely — behavior unchanged.
@@ -569,7 +604,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fabric Shortcut Proxy (POC)",
     description="Virtual Iceberg-over-S3 proxy that serves SQL pushdown as Parquet",
-    version="2.6.0",
+    version="2.7.0",
     lifespan=lifespan,
 )
 

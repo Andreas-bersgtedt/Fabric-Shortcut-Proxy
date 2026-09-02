@@ -19,6 +19,11 @@ import os
 import sys
 
 
+def _config_path(filename: str) -> str:
+    config_dir = os.environ.get("FSP_CONFIG_DIR", "").strip()
+    return os.path.join(config_dir, filename) if config_dir else filename
+
+
 # ---------------------------------------------------------------------------
 # JSON Config loading — config.system.json only
 # ---------------------------------------------------------------------------
@@ -30,7 +35,7 @@ def _load_config_file() -> dict:
       1. config.system.json
       2. empty dict (no fallback to monolithic config.json)
     """
-    section_path = "config.system.json"
+    section_path = _config_path("config.system.json")
     try:
         with open(section_path, "r", encoding="utf-8-sig") as fh:
             data = json.load(fh)
@@ -279,6 +284,12 @@ PUBLISH_SERVING_IMAGE: bool = _get_bool("PUBLISH_SERVING_IMAGE", "publish_servin
 # Number of Agents to supervise (Manager)
 AGENT_COUNT: int = _get_int("AGENT_COUNT", "agent_count", 1)
 
+# Manager process ownership: local spawns Agent children; external only accepts
+# registrations from Agents managed by Kubernetes or another orchestrator.
+MANAGER_SUPERVISION_MODE: str = _get_str(
+    "MANAGER_SUPERVISION_MODE", "manager_supervision_mode", "local"
+).strip().lower()
+
 # This Agent's materialization shard (set by Manager)
 AGENT_SHARD_INDEX: int = _get_int("AGENT_SHARD_INDEX", "agent_shard_index", 0)
 
@@ -294,6 +305,13 @@ ENABLE_GATEWAY: bool = _get_bool("ENABLE_GATEWAY", "enable_gateway", False)
 
 # Non-owner Agent: max wait for a sharded split to appear in the store
 MATERIALIZE_WAIT_SECONDS: float = float(_get_int("MATERIALIZE_WAIT_SECONDS", "materialize_wait_seconds", 30))
+
+# Cross-worker source-read contract. "best_effort" allows each split query to
+# observe the source independently. "snapshot" is reserved for a future shared,
+# source-specific snapshot token and currently fails validation.
+GENERATION_SOURCE_CONSISTENCY: str = _get_str(
+    "GENERATION_SOURCE_CONSISTENCY", "generation_source_consistency", "best_effort"
+).strip().lower()
 
 # ---------------------------------------------------------------------------
 # Control Plane (Phase 1)
@@ -373,9 +391,9 @@ ADMIN_TOKEN: str = _get_str("ADMIN_TOKEN", "admin_token", "").strip()
 # Manager auth (standalone HTTP Basic gate over the whole control-plane surface)
 # ---------------------------------------------------------------------------
 # When enabled with a non-empty password, the Manager port requires HTTP Basic
-# credentials for the operator surface (/_manager, /_config, /_monitor, /agents,
-# root). Machine + liveness endpoints (/control, /healthz, /readyz) stay open so
-# the fleet keeps registering and load balancers can probe.
+# credentials for the operator and control-plane surfaces. Agent control calls
+# use the same Basic credentials; only /healthz, /readyz, and /favicon.ico stay
+# open for probes.
 MANAGER_AUTH_ENABLED: bool = _get_bool("MANAGER_AUTH_ENABLED", "manager_auth_enabled", True)
 MANAGER_AUTH_USERNAME: str = _get_str("MANAGER_AUTH_USERNAME", "manager_auth_username", "admin").strip()
 MANAGER_AUTH_PASSWORD: str = _get_str("MANAGER_AUTH_PASSWORD", "manager_auth_password", "")

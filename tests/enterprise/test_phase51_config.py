@@ -75,6 +75,16 @@ def test_write_config_updates_rejects_bad(monkeypatch, tmp_path):
         config.write_config_updates({"num_splits": "not-an-int"})
 
 
+def test_write_config_updates_uses_config_dir(monkeypatch, tmp_path):
+    config_dir = tmp_path / "mounted-config"
+    monkeypatch.setenv("FSP_CONFIG_DIR", str(config_dir))
+
+    config.write_config_updates({"agent_count": 4})
+
+    saved = json.loads((config_dir / "config.system.json").read_text())
+    assert saved["system"]["agent_count"] == 4
+
+
 def test_manager_auth_settings_persist_to_system(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     clean, errors = config.validate_setting_updates(
@@ -139,6 +149,36 @@ async def test_save_endpoint_allows_secret_replace_and_clear(tmp_path, monkeypat
         assert clr.status_code == 200 and clr.json()["ok"]
         after_clear = json.loads((tmp_path / "config.system.json").read_text())["system"]
         assert after_clear["secret_access_key"] == ""
+
+
+async def test_restart_manager_requires_current_admin_password(monkeypatch):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "current-password", raising=False)
+    called = {"count": 0}
+
+    def fake_restart():
+        called["count"] += 1
+        return {"ok": True, "action": "restart"}
+
+    app = _cb_app()
+    app.state.restart_manager = fake_restart
+    async with _client(app) as c:
+        missing = await c.post("/_config/api/manager/restart", json={})
+        assert missing.status_code == 401
+        wrong = await c.post("/_config/api/manager/restart", json={"password": "wrong"})
+        assert wrong.status_code == 401
+        ok = await c.post("/_config/api/manager/restart", json={"password": "current-password"})
+        assert ok.status_code == 200 and ok.json()["action"] == "restart"
+        assert called["count"] == 1
+
+
+async def test_restart_manager_requires_manager_auth(monkeypatch):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "", raising=False)
+    app = _cb_app()
+    async with _client(app) as c:
+        response = await c.post("/_config/api/manager/restart", json={"password": "anything"})
+        assert response.status_code == 503
 
 
 # ---------------------------------------------------------------------------

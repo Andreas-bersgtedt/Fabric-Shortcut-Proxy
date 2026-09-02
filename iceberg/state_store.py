@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+from urllib.parse import unquote_plus
 
 from sqlalchemy.engine import make_url
 
@@ -105,6 +106,23 @@ def _split_source_table(source_table: str) -> tuple[str, str]:
     return "default", source_table or "table"
 
 
+def _odbc_connect_identity(value: str | None) -> tuple[str | None, str | None]:
+    if not value:
+        return None, None
+    parts = {}
+    for item in unquote_plus(value).split(";"):
+        key, sep, raw = item.partition("=")
+        if sep:
+            parts[key.strip().lower()] = raw.strip().strip("{}")
+    server = parts.get("server") or parts.get("addr") or parts.get("address")
+    database = parts.get("database") or parts.get("initial catalog")
+    if server and server.lower().startswith("tcp:"):
+        server = server[4:]
+    if server and "," in server:
+        server = server.split(",", 1)[0]
+    return server, database
+
+
 def _connection_identity(table: "config.TableDef | None" = None) -> tuple[str, str]:
     """Return ``(server, database)`` for a table's source connection.
 
@@ -115,8 +133,9 @@ def _connection_identity(table: "config.TableDef | None" = None) -> tuple[str, s
     conn_id = getattr(table, "connection_id", "default") if table is not None else "default"
     try:
         u = make_url(config.effective_db_url(conn_id))
-        server = _safe_segment(u.host, "local")
-        database = _safe_segment(u.database, "default")
+        odbc_server, odbc_database = _odbc_connect_identity(u.query.get("odbc_connect"))
+        server = _safe_segment(u.host or odbc_server, "local")
+        database = _safe_segment(u.database or odbc_database, "default")
         return server, database
     except Exception:  # noqa: BLE001 - config validation handles malformed URLs
         return "local", "default"

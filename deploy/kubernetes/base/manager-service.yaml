@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsp-manager
+  namespace: fabric-shortcut-proxy
+  labels:
+    app.kubernetes.io/name: fsp-manager
+    app.kubernetes.io/part-of: fabric-shortcut-proxy
+spec:
+  type: ClusterIP
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: fsp-manager
+  ports:
+    - name: control
+      port: 9200
+      targetPort: control

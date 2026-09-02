@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fabric-shortcut-proxy
+  labels:
+    app.kubernetes.io/part-of: fabric-shortcut-proxy
+    fabric-shortcut-proxy.io/data-plane-access: "true"

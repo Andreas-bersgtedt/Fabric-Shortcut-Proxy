@@ -49,45 +49,90 @@ def fleet_snapshot(
 
     agents: list[dict] = []
     alive_procs = 0
+    supervised_ids = set()
     for sup in supervisors:
-        env = sup.env or {}
-        alive = sup.is_alive
-        if alive:
-            alive_procs += 1
-        rec = public.get(sup.name)
-        agents.append({
-            "name": sup.name,
-            "pid": sup.pid,
-            "supervised": sup.is_running,
-            "process_alive": alive,
-            "crash_looped": sup.crash_looped,
-            "restart_count": sup.restart_count,
-            "port": int(env["PORT"]) if str(env.get("PORT", "")).isdigit() else None,
-            "shard_index": int(env.get("AGENT_SHARD_INDEX", 0) or 0),
-            "shard_count": int(env.get("AGENT_SHARD_COUNT", 1) or 1),
-            "shard_strategy": str(env.get("SHARD_STRATEGY", "modulo") or "modulo"),
-            "registered": rec is not None,
-            "heartbeat_age": rec["seconds_since_heartbeat"] if rec else None,
-            "serving_tables": rec["serving_tables"] if rec else [],
-            "epochs": rec["epochs"] if rec else {},
-            "pending_commands": rec["pending_commands"] if rec else 0,
-            "dead": sup.name in dead,
-            # Memory monitoring
-            "rss_mb": round(sup.rss_mb, 2),
-            "avg_rss_mb": round(sup.avg_rss_mb, 2),
-            "peak_rss_mb": round(sup.peak_rss_mb, 2),
-            "memory_alert_threshold_mb": sup.memory_alert_threshold_mb,
-            "memory_restart_threshold_mb": sup.memory_restart_threshold_mb,
-        })
+      supervised_ids.add(sup.name)
+      env = sup.env or {}
+      alive = sup.is_alive
+      if alive:
+        alive_procs += 1
+      rec = public.get(sup.name)
+      agents.append({
+        "name": sup.name,
+        "pid": sup.pid,
+        "supervised": sup.is_running,
+        "process_alive": alive,
+        "crash_looped": sup.crash_looped,
+        "restart_count": sup.restart_count,
+        "port": int(env["PORT"]) if str(env.get("PORT", "")).isdigit() else None,
+        "shard_index": int(env.get("AGENT_SHARD_INDEX", 0) or 0),
+        "shard_count": int(env.get("AGENT_SHARD_COUNT", 1) or 1),
+        "shard_strategy": str(env.get("SHARD_STRATEGY", "modulo") or "modulo"),
+        "registered": rec is not None,
+            "runtime": "python",
+            "edition": "enterprise",
+            "os": rec["os"] if rec else None,
+            "version": rec["version"] if rec else None,
+        "heartbeat_age": rec["seconds_since_heartbeat"] if rec else None,
+        "serving_tables": rec["serving_tables"] if rec else [],
+        "epochs": rec["epochs"] if rec else {},
+        "pending_commands": rec["pending_commands"] if rec else 0,
+        "dead": sup.name in dead,
+        # Memory monitoring
+        "rss_mb": round(sup.rss_mb, 2),
+        "avg_rss_mb": round(sup.avg_rss_mb, 2),
+        "peak_rss_mb": round(sup.peak_rss_mb, 2),
+        "memory_alert_threshold_mb": sup.memory_alert_threshold_mb,
+        "memory_restart_threshold_mb": sup.memory_restart_threshold_mb,
+      })
+
+    external_alive = 0
+    for agent_id, rec in public.items():
+      if agent_id in supervised_ids:
+        continue
+      is_dead = agent_id in dead
+      alive = not is_dead
+      if alive:
+        external_alive += 1
+      health = rec.get("health", {}) or {}
+      rss_mb = int(health.get("mem_bytes", 0) or 0) / (1024 * 1024)
+      agents.append({
+        "name": agent_id,
+        "pid": None,
+        "supervised": False,
+        "process_alive": alive,
+        "crash_looped": False,
+        "restart_count": 0,
+        "port": rec.get("port"),
+        "shard_index": None,
+        "shard_count": None,
+        "shard_strategy": "external",
+        "registered": True,
+            "runtime": "python",
+            "edition": "enterprise",
+            "os": rec.get("os"),
+            "version": rec.get("version"),
+        "heartbeat_age": rec["seconds_since_heartbeat"],
+        "serving_tables": rec["serving_tables"],
+        "epochs": rec["epochs"],
+        "pending_commands": rec["pending_commands"],
+        "dead": is_dead,
+        "rss_mb": round(rss_mb, 2),
+        "avg_rss_mb": round(rss_mb, 2),
+        "peak_rss_mb": round(rss_mb, 2),
+        "memory_alert_threshold_mb": 0,
+        "memory_restart_threshold_mb": 0,
+      })
 
     registered = registry.count()
     alive_registered = registered - len(dead)
-    ready = alive_procs >= 1 and not any(s.crash_looped for s in supervisors)
+    total_alive = alive_procs + external_alive
+    ready = total_alive >= 1 and not any(s.crash_looped for s in supervisors)
     return {
         "role": "manager",
         "ready": ready,
-        "agents_total": len(supervisors),
-        "agents_alive": alive_procs,
+      "agents_total": len(agents),
+      "agents_alive": total_alive,
         "agents_registered": registered,
         "agents_registered_alive": alive_registered,
         "gateway_enabled": gateway is not None,
@@ -166,12 +211,14 @@ def create_admin_router(
     @router.post("/_manager/api/agents/{name}/{action}")
     async def agent_action(name: str, action: str, request: Request) -> dict:
         _check_token(request)
-        sup = _by_name(name)
-        if sup is None:
-            raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
         action = action.lower()
         if action not in _ACTIONS:
             raise HTTPException(status_code=400, detail=f"unknown action {action!r}; expected one of {_ACTIONS}")
+        if config.MANAGER_SUPERVISION_MODE == "external" and action != "drain":
+            raise HTTPException(
+                status_code=409,
+                detail="Kubernetes owns Agent lifecycle; use Deployment or StatefulSet replicas instead",
+            )
 
         if action == "drain":
             ok = registry.queue_command(name, ControlCommand(kind="drain", drain=Drain()))
@@ -181,6 +228,10 @@ def create_admin_router(
                 "note": "queued; the Agent drains on its next heartbeat" if ok
                         else "agent not registered — nothing queued",
             }
+
+        sup = _by_name(name)
+        if sup is None:
+            raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
 
         if action == "stop":
             registry.remove(name)          # drop from gateway rotation immediately
@@ -196,9 +247,27 @@ def create_admin_router(
         return {"ok": True, "action": action, "agent": name,
                 "pid": sup.pid, "process_alive": sup.is_alive}
 
+    @router.delete("/_manager/api/agents/{name}")
+    async def forget_agent(name: str, request: Request) -> dict:
+        """Remove a dead external Agent record from the Manager registry."""
+        _check_token(request)
+        rec = registry.get(name)
+        if rec is None:
+            raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
+        if registry.is_alive(name):
+            raise HTTPException(status_code=409, detail="refusing to forget an Agent with a live heartbeat")
+        ok = registry.remove(name)
+        log.info("admin_forget_agent", agent=name, removed=ok)
+        return {"ok": ok, "action": "forget", "agent": name}
+
     @router.post("/_manager/api/rolling-restart")
     async def rolling_restart_action(request: Request) -> dict:
         _check_token(request)
+        if config.MANAGER_SUPERVISION_MODE == "external":
+            raise HTTPException(
+                status_code=409,
+                detail="Kubernetes owns Agent lifecycle; use a Deployment rollout instead",
+            )
         from enterprise.control.rolling import rolling_restart
         # Fire-and-forget: recycle Agents one at a time so >= N-1 keep serving.
         # The console's fleet poll shows them cycling.
@@ -216,6 +285,11 @@ def create_admin_router(
         @router.post("/_manager/api/scale")
         async def scale_action(request: Request) -> dict:
             _check_token(request)
+            if config.MANAGER_SUPERVISION_MODE == "external":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Kubernetes owns Agent lifecycle; scale the Deployment or StatefulSet instead",
+                )
             body = await request.json()
             try:
                 count = int(body.get("count"))
@@ -384,7 +458,7 @@ _ADMIN_HTML = r"""<!doctype html>
     <div style="overflow-x:auto">
       <table>
         <thead><tr>
-          <th>Agent</th><th>State</th><th>PID</th><th>Port</th><th>Shard</th>
+          <th>Agent</th><th>Type</th><th>State</th><th>PID</th><th>Port</th><th>Shard</th>
           <th>Restarts</th><th>Heartbeat</th><th>Memory (MB)</th><th>Serving</th><th>Actions</th>
         </tr></thead>
         <tbody id="rows"></tbody>
@@ -521,6 +595,7 @@ function stateCell(a) {
   if (a.crash_looped) { dot = "red"; label = "crash‑loop"; }
   else if (!a.process_alive) { dot = "red"; label = "stopped"; }
   else if (a.dead || !a.registered) { dot = "amber"; label = a.registered ? "no heartbeat" : "unregistered"; }
+  else if (!a.supervised) { label = "external"; }
   return `<span class="dot ${dot}"></span>${label}`;
 }
 
@@ -556,14 +631,20 @@ function render(d) {
     const memClass = a.memory_restart_threshold_mb > 0 && a.rss_mb >= a.memory_restart_threshold_mb 
       ? 'err' : (a.memory_alert_threshold_mb > 0 && a.rss_mb >= a.memory_alert_threshold_mb ? 'muted' : '');
     const memText = `<span class="${memClass}">${a.rss_mb.toFixed(1)} / ${a.peak_rss_mb.toFixed(1)}</span><span class="muted"> avg ${a.avg_rss_mb.toFixed(1)}</span>`;
-    const startDisabled = a.process_alive && !a.crash_looped ? "disabled" : "";
-    const stopDisabled = a.process_alive ? "" : "disabled";
+    const lifecycleDisabled = !a.supervised ? "disabled" : "";
+    const startDisabled = lifecycleDisabled || (a.process_alive && !a.crash_looped ? "disabled" : "");
+    const stopDisabled = lifecycleDisabled || (a.process_alive ? "" : "disabled");
+    const drainDisabled = a.registered && !a.dead ? "" : "disabled";
+    const forgetDisabled = a.registered && a.dead ? "" : "disabled";
+    const typeText = [a.runtime, a.edition, a.version].filter(Boolean).join(" / ") || '<span class="muted">—</span>';
+    const osText = a.os ? `<div class="muted">${a.os}</div>` : "";
     return `<tr>
       <td><b>${a.name}</b></td>
+      <td>${typeText}${osText}</td>
       <td>${stateCell(a)}</td>
       <td>${a.pid ?? '<span class="muted">—</span>'}</td>
       <td>${a.port ?? "—"}</td>
-      <td>${a.shard_index}/${a.shard_count}${a.shard_strategy==="weighted"?' <span class="muted">(weighted)</span>':''}</td>
+      <td>${a.shard_index == null ? '<span class="muted">external</span>' : `${a.shard_index}/${a.shard_count}${a.shard_strategy==="weighted"?' <span class="muted">(weighted)</span>':''}`}</td>
       <td>${a.restart_count}</td>
       <td>${hb}</td>
       <td>${memText}</td>
@@ -572,7 +653,8 @@ function render(d) {
         <button ${startDisabled} onclick="act('${a.name}','start')">Start</button>
         <button class="stop" ${stopDisabled} onclick="act('${a.name}','stop')">Stop</button>
         <button ${stopDisabled} onclick="act('${a.name}','restart')">Restart</button>
-        <button ${stopDisabled} onclick="act('${a.name}','drain')">Drain</button>
+        <button ${drainDisabled} onclick="act('${a.name}','drain')">Drain</button>
+        <button ${forgetDisabled} onclick="forgetAgent('${a.name}')">Forget</button>
       </td></tr>`;
   }).join("");
 }
@@ -587,6 +669,18 @@ async function act(name, action) {
     if (!r.ok) { msg(`${action} ${name} failed: ${d.detail || r.status}`, "err"); }
     else { msg(d.note || `${action} ${name}: ok`, "good"); }
   } catch (e) { msg(`${action} ${name} error: ${e}`, "err"); }
+  setTimeout(refresh, 400);
+}
+
+async function forgetAgent(name) {
+  if (!confirm(`Forget dead Agent ${name}?`)) return;
+  msg(`forget ${name}…`);
+  try {
+    const r = await fetch(`/_manager/api/agents/${name}`, { method: "DELETE", headers: headers() });
+    const d = await r.json();
+    if (!r.ok) { msg(`forget ${name} failed: ${d.detail || r.status}`, "err"); }
+    else { msg(`forgot ${name}`, "good"); }
+  } catch (e) { msg(`forget ${name} error: ${e}`, "err"); }
   setTimeout(refresh, 400);
 }
 

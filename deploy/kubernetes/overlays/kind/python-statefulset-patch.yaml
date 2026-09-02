@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fsp-materializer
+  namespace: fabric-shortcut-proxy
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: initialize-artifact-volume
+          image: busybox:1.36.1
+          command:
+            - /bin/sh
+            - -ec
+            - chown -R 10001:10001 /artifacts && chmod 0777 /artifacts
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - FOWNER
+            runAsNonRoot: false
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+      containers:
+        - name: materializer
+          imagePullPolicy: Never
+          env:
+            - name: NUM_SPLITS
+              value: "12"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

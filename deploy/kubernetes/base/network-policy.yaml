@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cpp-agent-private-ingress
+  namespace: fabric-shortcut-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-cpp-agent
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              fabric-shortcut-proxy.io/data-plane-access: "true"
+          podSelector:
+            matchLabels:
+              fabric-shortcut-proxy.io/data-plane-client: "true"
+      ports:
+        - protocol: TCP
+          port: 9400

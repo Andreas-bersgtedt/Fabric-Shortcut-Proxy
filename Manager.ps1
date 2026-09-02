@@ -268,7 +268,7 @@ $VenvDir = Join-Path $ProjectRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $StampFile = Join-Path $VenvDir ".deps-installed"
 # Bump when the required dependency SET changes so existing venvs auto-reinstall.
-$DepsVersion = "drivers+objectstore+azure+onelake-v1"
+$DepsVersion = "drivers+objectstore+azure+keyvault+onelake-v2"
 
 function Write-Step {
     param([string]$Message)

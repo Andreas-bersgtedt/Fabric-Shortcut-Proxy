@@ -2,10 +2,13 @@ import http.client
 import os
 import pathlib
 import shutil
+import signal
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -145,6 +148,80 @@ class CppAgentHardeningTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(body), 16 * 1024 * 1024)
         self.assertLess(after - before, 4096)
+
+    def test_generation_required_agent_stays_unready_without_current(self):
+        port = self.port + 1
+        env = os.environ.copy()
+        env.update({
+            "PORT": str(port),
+            "STORE_DIR": str(self.store),
+            "S3_BUCKET": BUCKET,
+            "REQUIRE_GENERATION": "1",
+        })
+        process = subprocess.Popen(
+            [str(AGENT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
+        )
+        try:
+            for _ in range(50):
+                try:
+                    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                    connection.request("GET", "/readyz")
+                    status = connection.getresponse().status
+                    connection.close()
+                    self.assertEqual(status, 503)
+                    return
+                except OSError:
+                    time.sleep(0.1)
+            self.fail("generation-required agent did not start")
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+
+    def test_control_registration_uses_manager_basic_auth(self):
+        received = {}
+        registered = threading.Event()
+
+        class ControlHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received["authorization"] = self.headers.get("Authorization")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"lease_id":"test-lease","heartbeat_ms":600000}')
+                registered.set()
+
+            def log_message(self, format, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ControlHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        port = self.port + 2
+        env = os.environ.copy()
+        env.update({
+            "PORT": str(port),
+            "STORE_DIR": str(self.store),
+            "S3_BUCKET": BUCKET,
+            "MANAGER_URL": f"http://127.0.0.1:{server.server_port}",
+            "MANAGER_AUTH_USERNAME": "agent-user",
+            "MANAGER_AUTH_PASSWORD": "agent-password",
+        })
+        process = subprocess.Popen(
+            [str(AGENT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
+        )
+        try:
+            self.assertTrue(registered.wait(timeout=5), "agent did not register")
+            self.assertEqual(received["authorization"], "Basic YWdlbnQtdXNlcjphZ2VudC1wYXNzd29yZA==")
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+            server.shutdown()
+            server.server_close()
+
+    def test_termination_signal_exits_cleanly(self):
+        os.kill(self.process.pid, signal.SIGTERM)
+        self.process.wait(timeout=5)
+        self.assertEqual(self.process.returncode, 0)
 
 
 if __name__ == "__main__":

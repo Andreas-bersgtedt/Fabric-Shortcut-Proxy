@@ -816,6 +816,16 @@
       <span class="status" id="scaleStatus" style="display:inline; margin-left:8px;"></span>
     </div>
 
+    <div id="managerRestartPanel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+      <b>Manager restart</b>
+      <div class="hint">Restart the Manager after saving settings that require a restart. Re-enter the current admin password to continue.</div>
+      <div class="tablebar" style="margin-top:8px;">
+        <input id="managerRestartPassword" type="password" autocomplete="current-password" placeholder="Current admin password" />
+        <button class="btn primary" id="btnRestartManager">Restart Manager</button>
+      </div>
+      <div class="status" id="managerRestartStatus"></div>
+    </div>
+
     <div class="tablebar" style="margin-top:10px;">
       <input id="liveSearch" placeholder="Filter settings…" />
       <button class="btn ghost" id="btnReloadLive">Reload</button>
@@ -3902,6 +3912,26 @@ async function applyScale(){
   }catch(e){ liveFlash($("scaleStatus"), "Scale error: "+e); }
 }
 
+async function restartManager(){
+  const password = $("managerRestartPassword").value;
+  if(!password){ liveFlash($("managerRestartStatus"), "Enter the current admin password."); return; }
+  if(!confirm("Restart the Manager now? The Config UI will disconnect briefly.")) return;
+  const button = $("btnRestartManager");
+  button.disabled = true;
+  liveFlash($("managerRestartStatus"), "Restarting Manager…", true);
+  try{
+    const r = await fetch("/_config/api/manager/restart", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({password})
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){ liveFlash($("managerRestartStatus"), "Restart failed: "+(d.error||d.detail||r.status)); button.disabled=false; return; }
+    $("managerRestartPassword").value = "";
+    liveFlash($("managerRestartStatus"), "Restart requested. Refresh this page in a few seconds.", true);
+  }catch(e){ liveFlash($("managerRestartStatus"), "Restart request error: "+e); button.disabled=false; }
+}
+
 function collectAdvancedChanges(){
   const out={};
   document.querySelectorAll('#allSettings [data-key]').forEach(inp=>{
@@ -4013,6 +4043,7 @@ $("btnApplySettings").onclick = applySettings;
 $("btnSaveSettings").onclick = saveSettings;
 $("btnScale").onclick = applyScale;
 $("btnSaveFleetSize").onclick = saveFleetSize;
+$("btnRestartManager").onclick = restartManager;
 $("btnSaveS3Secret").onclick = saveS3Secret;
 $("btnClearS3Secret").onclick = clearS3Secret;
 $("btnApplyAdvanced").onclick = applyAdvanced;

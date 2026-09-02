@@ -15,6 +15,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cctype>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +32,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "tier1/sha256.hpp"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -109,6 +112,13 @@ static void set_socket_timeouts(SocketHandle s, int ms) {
 static std::string getenv_str(const char* name, const std::string& def) {
     const char* v = std::getenv(name);
     return (v && *v) ? std::string(v) : def;
+}
+
+static bool getenv_bool(const char* name, bool def) {
+    std::string value = getenv_str(name, def ? "1" : "0");
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value == "1" || value == "true" || value == "yes" || value == "on";
 }
 
 static bool parse_i64(const std::string& s, long long& out) {
@@ -236,10 +246,14 @@ struct Config {
     std::string host = getenv_str("HOST", "0.0.0.0");
     int port = parse_int_or(getenv_str("PORT", "9400"), 9400, 1, 65535);
     std::string store_dir = getenv_str("STORE_DIR", getenv_str("ARTIFACT_STORE_DIR", "./.artifacts"));
+    std::string index_file = getenv_str("INDEX_FILE", "");
+    bool require_generation = getenv_bool("REQUIRE_GENERATION", false);
     std::string bucket = getenv_str("S3_BUCKET", "fabric-iceberg-poc");
     std::string agent_id = getenv_str("AGENT_ID", "cpp-agent-1");
     std::string advertise_host = getenv_str("AGENT_ADVERTISE_HOST", "");
     std::string manager_url = getenv_str("MANAGER_URL", "");
+    std::string manager_auth_username = getenv_str("MANAGER_AUTH_USERNAME", "");
+    std::string manager_auth_password = getenv_str("MANAGER_AUTH_PASSWORD", "");
     int heartbeat_ms = parse_int_or(getenv_str("HEARTBEAT_MS", "2000"), 2000, 200, 600000);
     int socket_timeout_ms = parse_int_or(getenv_str("SOCKET_TIMEOUT_MS", "10000"), 10000, 1000, 60000);
     int max_inflight = parse_int_or(getenv_str("MAX_INFLIGHT", "256"), 256, 1, 100000);
@@ -259,6 +273,12 @@ static Config CFG;
 
 // Set true when the Manager asks us to drain; /readyz then reports 503.
 static std::atomic<bool> g_draining{false};
+static std::atomic<bool> g_generation_ready{false};
+static volatile std::sig_atomic_t g_termination_requested = 0;
+
+static void request_termination(int) {
+    g_termination_requested = 1;
+}
 
 // Forward decl: lazy on-miss materialization request to the Manager. Defined with
 // the HTTP client further below (register/heartbeat share the same transport).
@@ -292,6 +312,15 @@ static fs::path canonical_store_root() {
     return root;
 }
 
+static fs::path g_active_root;
+static std::string g_active_generation;
+static std::mutex g_object_index_mu;
+
+static fs::path active_store_root() {
+    std::lock_guard<std::mutex> lock(g_object_index_mu);
+    return g_active_root.empty() ? canonical_store_root() : g_active_root;
+}
+
 static bool resolve_key_path(const std::string& raw_key, fs::path& out_path) {
     if (!key_is_basic_safe(raw_key)) return false;
     if (raw_key.front() == '/' || raw_key.front() == '\\') return false;
@@ -314,7 +343,7 @@ static bool resolve_key_path(const std::string& raw_key, fs::path& out_path) {
     fs::path rel(key);
     if (rel.is_absolute()) return false;
 
-    fs::path root = canonical_store_root();
+    fs::path root = active_store_root();
     std::error_code ec;
     fs::path cand = fs::weakly_canonical(root / rel, ec);
     if (ec) return false;
@@ -329,10 +358,10 @@ struct IndexedObject {
 };
 
 static std::vector<IndexedObject> g_object_index;
-static std::mutex g_object_index_mu;
 static const char* kObjectIndexFile = ".cpp-agent-index";
 
 static fs::path object_index_path() {
+    if (!CFG.index_file.empty()) return fs::path(CFG.index_file);
     return canonical_store_root() / kObjectIndexFile;
 }
 
@@ -396,16 +425,161 @@ static void rebuild_object_index() {
     g_object_index = std::move(entries);
 }
 
+static bool read_file_text(const fs::path& path, std::string& value) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    value.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return in.good() || in.eof();
+}
+
+static bool file_sha256(const fs::path& path, std::string& digest) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    fsp::Sha256 sha;
+    char buffer[1024 * 1024];
+    while (in) {
+        in.read(buffer, sizeof(buffer));
+        std::streamsize count = in.gcount();
+        if (count > 0) {
+            sha.update(reinterpret_cast<const uint8_t*>(buffer), static_cast<size_t>(count));
+        }
+    }
+    if (!in.eof()) return false;
+    digest = sha.hex();
+    return true;
+}
+
+static bool json_string_value(const std::string& text, const std::string& name, std::string& value) {
+    std::string marker = "\"" + name + "\"";
+    size_t pos = text.find(marker);
+    if (pos == std::string::npos) return false;
+    pos = text.find(':', pos + marker.size());
+    if (pos == std::string::npos) return false;
+    pos = text.find('"', pos + 1);
+    if (pos == std::string::npos) return false;
+    size_t end = text.find('"', pos + 1);
+    if (end == std::string::npos) return false;
+    value = text.substr(pos + 1, end - pos - 1);
+    return !value.empty();
+}
+
+static bool json_i64_value(const std::string& text, const std::string& name, long long& value) {
+    std::string marker = "\"" + name + "\"";
+    size_t pos = text.find(marker);
+    if (pos == std::string::npos) return false;
+    pos = text.find(':', pos + marker.size());
+    if (pos == std::string::npos) return false;
+    size_t start = text.find_first_of("-0123456789", pos + 1);
+    if (start == std::string::npos) return false;
+    size_t end = text.find_first_not_of("0123456789", start + (text[start] == '-' ? 1 : 0));
+    return parse_i64(text.substr(start, end - start), value);
+}
+
+static bool activate_current_generation() {
+    fs::path store_root = canonical_store_root();
+    std::string current;
+    if (!read_file_text(store_root / "CURRENT", current)) {
+        if (CFG.require_generation) return false;
+        rebuild_object_index();
+        std::lock_guard<std::mutex> lock(g_object_index_mu);
+        g_active_root = store_root;
+        g_active_generation.clear();
+        g_generation_ready = true;
+        return true;
+    }
+
+    std::string generation_id, expected_ready_sha;
+    long long current_fence = -1;
+    if (!json_string_value(current, "generation_id", generation_id)
+        || !json_i64_value(current, "fence", current_fence)
+        || !json_string_value(current, "ready_sha256", expected_ready_sha)
+        || !key_is_basic_safe(generation_id)
+        || generation_id.find('/') != std::string::npos
+        || generation_id.find('\\') != std::string::npos) {
+        log_line("CURRENT validation failed");
+        return false;
+    }
+
+    fs::path root = store_root / "generations" / generation_id;
+    std::string ready;
+    if (!read_file_text(root / "READY.json", ready)) return false;
+    if (fsp::sha256_hex(ready) != expected_ready_sha) return false;
+    std::string ready_generation, state, expected_index_sha;
+    long long ready_fence = -1, object_count = -1;
+    if (!json_string_value(ready, "generation_id", ready_generation)
+        || !json_string_value(ready, "state", state)
+        || !json_i64_value(ready, "fence", ready_fence)
+        || !json_i64_value(ready, "object_count", object_count)
+        || !json_string_value(ready, "index_sha256", expected_index_sha)
+        || ready_generation != generation_id || state != "READY"
+        || ready_fence != current_fence || object_count < 0) return false;
+
+    std::string index_digest;
+    if (!file_sha256(root / "OBJECTS.index", index_digest) || index_digest != expected_index_sha) return false;
+    std::ifstream index(root / "OBJECTS.index", std::ios::binary);
+    std::string header;
+    if (!index || !std::getline(index, header) || header != "fsp-generation-index-v1") return false;
+    std::vector<IndexedObject> entries;
+    std::string line;
+    while (std::getline(index, line)) {
+        size_t first = line.find('\t');
+        size_t second = first == std::string::npos ? std::string::npos : line.find('\t', first + 1);
+        if (first == std::string::npos || second == std::string::npos) return false;
+        std::string key = line.substr(0, first);
+        std::string expected_object_sha = line.substr(second + 1);
+        long long declared_size = -1;
+        if (!key_is_basic_safe(key) || key.front() == '/' || key.find("..") != std::string::npos
+            || !parse_i64(line.substr(first + 1, second - first - 1), declared_size)
+            || declared_size < 0) return false;
+        fs::path file = root / fs::path(key);
+        std::error_code ec;
+        fs::path canonical = fs::weakly_canonical(file, ec);
+        if (ec || !path_has_prefix(root, canonical) || !fs::is_regular_file(canonical, ec)
+            || static_cast<long long>(fs::file_size(canonical, ec)) != declared_size) return false;
+        std::string object_digest;
+        if (!file_sha256(canonical, object_digest) || object_digest != expected_object_sha) return false;
+        entries.push_back({key, static_cast<uintmax_t>(declared_size)});
+    }
+    if (!index.eof() || static_cast<long long>(entries.size()) != object_count
+        || !std::is_sorted(entries.begin(), entries.end(),
+                           [](const auto& left, const auto& right) { return left.key < right.key; })) return false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_object_index_mu);
+        g_active_root = fs::weakly_canonical(root);
+        g_active_generation = generation_id;
+        g_object_index = std::move(entries);
+    }
+    g_generation_ready = true;
+    log_line("activated generation=" + generation_id + " objects=" + std::to_string(object_count));
+    return true;
+}
+
 static void initialize_object_index() {
+    if (fs::exists(canonical_store_root() / "CURRENT")) {
+        if (!activate_current_generation()) {
+            g_generation_ready = false;
+            log_line("no valid generation is ready");
+        }
+        return;
+    }
+    if (CFG.require_generation) {
+        g_generation_ready = false;
+        log_line("CURRENT is required but no generation is active");
+        return;
+    }
     std::vector<IndexedObject> entries;
     if (load_object_index(entries)) {
         std::lock_guard<std::mutex> lock(g_object_index_mu);
         g_object_index = std::move(entries);
+        g_active_root = canonical_store_root();
+        g_generation_ready = true;
         log_line("loaded object index entries=" + std::to_string(g_object_index.size()));
         return;
     }
     log_line("building object index");
     rebuild_object_index();
+    g_generation_ready = true;
     std::lock_guard<std::mutex> lock(g_object_index_mu);
     log_line("built object index entries=" + std::to_string(g_object_index.size()));
 }
@@ -850,9 +1024,10 @@ static void handle_connection(SocketHandle client) {
 
     if (req.path == "/readyz") {
         const bool draining = g_draining.load();
-        send_fixed_response(client, draining ? 503 : 200, draining ? "Service Unavailable" : "OK",
+        const bool ready = !draining && g_generation_ready.load();
+        send_fixed_response(client, ready ? 200 : 503, ready ? "OK" : "Service Unavailable",
                             "application/json",
-                            std::string("{\"status\":\"") + (draining ? "draining" : "ready") +
+                            std::string("{\"status\":\"") + (draining ? "draining" : (ready ? "ready" : "not_ready")) +
                                 "\",\"role\":\"agent\",\"impl\":\"cpp\",\"version\":\"" + APP_VERSION + "\"}",
                             head_only);
         close_socket(client);
@@ -937,6 +1112,31 @@ static bool parse_url(const std::string& url, std::string& host, int& port, std:
     return !host.empty();
 }
 
+static std::string base64_encode(const std::string& value) {
+    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    encoded.reserve(((value.size() + 2) / 3) * 4);
+    for (size_t index = 0; index < value.size(); index += 3) {
+        const unsigned int first = static_cast<unsigned char>(value[index]);
+        const bool has_second = index + 1 < value.size();
+        const bool has_third = index + 2 < value.size();
+        const unsigned int second = has_second ? static_cast<unsigned char>(value[index + 1]) : 0;
+        const unsigned int third = has_third ? static_cast<unsigned char>(value[index + 2]) : 0;
+        const unsigned int block = (first << 16) | (second << 8) | third;
+        encoded.push_back(alphabet[(block >> 18) & 0x3f]);
+        encoded.push_back(alphabet[(block >> 12) & 0x3f]);
+        encoded.push_back(has_second ? alphabet[(block >> 6) & 0x3f] : '=');
+        encoded.push_back(has_third ? alphabet[block & 0x3f] : '=');
+    }
+    return encoded;
+}
+
+static std::string manager_auth_header() {
+    if (CFG.manager_auth_username.empty() || CFG.manager_auth_password.empty()) return "";
+    return "Authorization: Basic "
+        + base64_encode(CFG.manager_auth_username + ":" + CFG.manager_auth_password) + "\r\n";
+}
+
 static int http_post(const std::string& host, int port, const std::string& path,
                      const std::string& body, std::string& resp_body, int timeout_ms = 0) {
     struct addrinfo hints;
@@ -966,6 +1166,7 @@ static int http_post(const std::string& host, int port, const std::string& path,
     r << "POST " << path << " HTTP/1.1\r\n"
       << "Host: " << host << ":" << port << "\r\n"
       << "Content-Type: application/json\r\n"
+            << manager_auth_header()
       << "Content-Length: " << body.size() << "\r\n"
       << "Connection: close\r\n\r\n" << body;
     std::string reqs = r.str();
@@ -1038,7 +1239,7 @@ static bool try_manager_materialize(const std::string& key) {
     if (!ok) {
         log_line("materialize request key=" + key + " status=" + std::to_string(st));
     } else {
-        rebuild_object_index();
+        activate_current_generation();
     }
     return ok;
 }
@@ -1055,7 +1256,9 @@ static void index_refresh_loop() {
         for (int elapsed = 0; elapsed < CFG.index_refresh_seconds && g_running; ++elapsed) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
-        if (g_running) rebuild_object_index();
+        if (g_running && !activate_current_generation() && g_active_generation.empty()) {
+            g_generation_ready = false;
+        }
     }
 }
 
@@ -1169,6 +1372,8 @@ static void print_usage(const char* prog) {
         "  STORE_DIR / ARTIFACT_STORE_DIR (./.artifacts)\n"
         "                                 Artifact store directory to serve from (shared with\n"
         "                                 the Manager under lazy mode).\n"
+        "  INDEX_FILE ()                  Per-Pod legacy object index path.\n"
+        "  REQUIRE_GENERATION (0)         Stay unready until CURRENT is valid.\n"
         "  S3_BUCKET (fabric-iceberg-poc) Advertised bucket name.\n"
         "  AGENT_ID (cpp-agent-1)         Identity used for Manager registration.\n"
         "  AGENT_ADVERTISE_HOST ()        Routable host advertised to the Manager/gateway.\n"
@@ -1186,12 +1391,13 @@ static void print_usage(const char* prog) {
         "Endpoints: GET/HEAD /{bucket}/{key} (range-aware), GET /{bucket}?list-type=2,\n"
         "           GET /healthz, GET /readyz (503 while draining).\n\n"
         "Effective configuration (from the current environment):\n"
-        "  host=%s port=%d store_dir=%s bucket=%s\n"
+        "  host=%s port=%d store_dir=%s bucket=%s require_generation=%s\n"
         "  agent_id=%s manager_url=%s\n"
         "  materialize_mode=%s materialize_timeout_ms=%d\n"
         "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d index_refresh_seconds=%d drain_grace_ms=%d\n",
         APP_VERSION, prog,
         CFG.host.c_str(), CFG.port, CFG.store_dir.c_str(), CFG.bucket.c_str(),
+        CFG.require_generation ? "true" : "false",
         CFG.agent_id.c_str(), CFG.manager_url.empty() ? "(standalone)" : CFG.manager_url.c_str(),
         CFG.materialize_mode.c_str(), CFG.materialize_timeout_ms,
         CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.index_refresh_seconds, CFG.drain_grace_ms);
@@ -1210,6 +1416,9 @@ int main(int argc, char** argv) {
         log_line("network init failed");
         return 1;
     }
+
+    std::signal(SIGTERM, request_termination);
+    std::signal(SIGINT, request_termination);
 
     initialize_object_index();
 
@@ -1261,6 +1470,21 @@ int main(int argc, char** argv) {
     }
 
     while (g_running) {
+        if (g_termination_requested) {
+            g_draining = true;
+            log_line("termination signal received -> readyz 503, draining requests");
+            break;
+        }
+
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(srv, &readable);
+        timeval timeout{};
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 200000;
+        int ready = select(static_cast<int>(srv) + 1, &readable, nullptr, nullptr, &timeout);
+        if (ready <= 0) continue;
+
         sockaddr_in caddr;
 #ifdef _WIN32
         int clen = sizeof(caddr);
@@ -1287,6 +1511,13 @@ int main(int argc, char** argv) {
         g_conn_cv.notify_one();
     }
 
+    close_socket(srv);
+    srv = kInvalidSocket;
+    const auto drain_deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(CFG.drain_grace_ms);
+    while (g_inflight.load() > 0 && std::chrono::steady_clock::now() < drain_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
     g_running = false;
     g_conn_cv.notify_all();
     for (auto& worker : workers) {
@@ -1294,7 +1525,6 @@ int main(int argc, char** argv) {
     }
     if (ctl.joinable()) ctl.join();
     if (index_refresher.joinable()) index_refresher.join();
-    close_socket(srv);
     net_cleanup();
     return 0;
 }

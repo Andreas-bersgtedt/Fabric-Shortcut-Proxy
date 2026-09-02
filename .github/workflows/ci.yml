@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
   pull_request:
@@ -212,6 +213,129 @@ jobs:
       - name: Stop C++ agent
         if: always()
         run: kill "$(cat cpp-agent.pid)" || true
+
+  kubernetes-kind:
+    name: Kubernetes hybrid fleet Kind proof
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install validator dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pyiceberg[pyarrow]>=0.6"
+
+      - name: Install Kind
+        uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: fsp-proof
+          config: deploy/kubernetes/overlays/kind/cluster.yaml
+
+      - name: Build and load fleet images
+        run: |
+          docker build --build-arg FSP_ENTERPRISE=1 -f Dockerfile.python -t fabric-shortcut-proxy-python:dev .
+          docker build -f agent-cpp/Dockerfile -t fabric-shortcut-proxy-cpp:dev .
+          load_image() {
+            local image="$1"
+            if kind load docker-image "$image" --name fsp-proof; then
+              return 0
+            fi
+            echo "kind load failed for $image; importing through the node containerd" >&2
+            docker save "$image" | docker exec -i fsp-proof-control-plane ctr -n k8s.io images import -
+          }
+          load_image fabric-shortcut-proxy-python:dev
+          load_image fabric-shortcut-proxy-cpp:dev
+
+      - name: Deploy hybrid fleet
+        run: |
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout ca.key -out ca.crt -subj '/CN=fsp-manager-ca'
+          openssl req -newkey rsa:2048 -nodes -keyout tls.key -out tls.csr \
+            -subj '/CN=fsp-manager'
+          openssl x509 -req -in tls.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+            -out tls.crt -days 1 -extfile <(printf 'subjectAltName=DNS:fsp-manager')
+          kubectl create namespace fabric-shortcut-proxy
+          kubectl -n fabric-shortcut-proxy create secret generic fsp-manager-tls \
+            --from-file=tls.crt --from-file=tls.key --from-file=ca.crt
+          kubectl apply -k deploy/kubernetes/overlays/kind-tls
+          kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/postgres --timeout=180s
+          kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod -l app.kubernetes.io/name=fsp-materializer --timeout=900s
+          kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-manager --timeout=180s
+          kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-cpp-agent --timeout=180s
+
+      - name: Verify Manager restart re-registers Agents
+        run: |
+          kubectl -n fabric-shortcut-proxy run fsp-manager-proof-client --image=curlimages/curl:8.10.1 --restart=Never --labels=fabric-shortcut-proxy.io/manager-client=true --command -- sleep 300
+          kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod/fsp-manager-proof-client --timeout=120s
+          manager_ip=$(kubectl -n fabric-shortcut-proxy get service fsp-manager -o jsonpath='{.spec.clusterIP}')
+          get_agents() {
+            kubectl -n fabric-shortcut-proxy exec fsp-manager-proof-client -- \
+              curl -kfsS --retry 5 --retry-all-errors -u agent:fsp-proof-manager-password "https://$manager_ip:9443/agents"
+          }
+          for i in $(seq 1 60); do
+            before=$(get_agents || true)
+            before_count=$(python -c 'import json,sys; print(len(json.load(sys.stdin).get("agents", [])))' <<< "$before" 2>/dev/null || echo 0)
+            if [ "$before_count" -ge 3 ]; then break; fi
+            sleep 1
+          done
+          test "$before_count" -ge 3
+          manager_pod=$(kubectl -n fabric-shortcut-proxy get pod -l app.kubernetes.io/name=fsp-manager -o jsonpath='{.items[0].metadata.name}')
+          kubectl -n fabric-shortcut-proxy delete pod "$manager_pod" --wait=true
+          kubectl -n fabric-shortcut-proxy wait --for=condition=available deployment/fsp-manager --timeout=180s
+          for i in $(seq 1 60); do
+            after=$(get_agents || true)
+            after_count=$(python -c 'import json,sys; print(len(json.load(sys.stdin).get("agents", [])))' <<< "$after" 2>/dev/null || echo 0)
+            if [ "$after_count" -ge 3 ]; then break; fi
+            sleep 1
+          done
+          test "$after_count" -ge 3
+
+      - name: Scan C++ Service with PyIceberg
+        run: |
+          kubectl -n fabric-shortcut-proxy port-forward service/shortcut-proxy 9012:80 > port-forward.log 2>&1 &
+          echo $! > port-forward.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9012/readyz > /dev/null; then break; fi
+            sleep 1
+          done
+          S3EMU_SERVER=http://127.0.0.1:9012 EXPECTED_ROWS=1200 python validate_pyiceberg.py
+
+      - name: Verify NetworkPolicy isolation
+        run: |
+          kubectl -n fabric-shortcut-proxy run fsp-allowed-client --image=curlimages/curl:8.10.1 --restart=Never --labels=fabric-shortcut-proxy.io/data-plane-client=true --command -- sleep 120
+          kubectl -n fabric-shortcut-proxy run fsp-denied-client --image=curlimages/curl:8.10.1 --restart=Never --command -- sleep 120
+          kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod/fsp-allowed-client --timeout=120s
+          kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod/fsp-denied-client --timeout=120s
+          service_ip=$(kubectl -n fabric-shortcut-proxy get service shortcut-proxy -o jsonpath='{.spec.clusterIP}')
+          kubectl -n fabric-shortcut-proxy exec fsp-allowed-client -- curl -fsS --max-time 5 "http://$service_ip/readyz"
+          ! kubectl -n fabric-shortcut-proxy exec fsp-denied-client -- curl -fsS --max-time 5 "http://$service_ip/readyz"
+
+      - name: Verify range reads survive a C++ Pod deletion
+        run: |
+          service_ip=$(kubectl -n fabric-shortcut-proxy get service shortcut-proxy -o jsonpath='{.spec.clusterIP}')
+          key=$(kubectl -n fabric-shortcut-proxy exec fsp-allowed-client -- sh -c "curl -fsS 'http://$service_ip/fabric-iceberg-poc?list-type=2' | sed -n 's:.*<Key>\\(.*\\)</Key>.*:\\1:p' | head -n 1")
+          test -n "$key"
+          target=$(kubectl -n fabric-shortcut-proxy get pods -l app.kubernetes.io/name=fsp-cpp-agent -o jsonpath='{.items[0].metadata.name}')
+          (for i in $(seq 1 80); do kubectl -n fabric-shortcut-proxy exec fsp-allowed-client -- curl -fsS --retry 5 --retry-all-errors --retry-delay 1 -H "Range: bytes=0-63" "http://$service_ip/fabric-iceberg-poc/$key" > /dev/null; done) &
+          reader_pid=$!
+          sleep 1
+          kubectl -n fabric-shortcut-proxy delete pod "$target" --wait=false
+          wait "$reader_pid"
+          kubectl -n fabric-shortcut-proxy rollout status deployment/fsp-cpp-agent --timeout=180s
+
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          kubectl -n fabric-shortcut-proxy get pods,pvc,service
+          kubectl -n fabric-shortcut-proxy logs statefulset/fsp-materializer --all-containers=true --prefix=true || true
+          kubectl -n fabric-shortcut-proxy logs deployment/fsp-cpp-agent --all-containers=true --prefix=true || true
+          test ! -f port-forward.pid || kill "$(cat port-forward.pid)" || true
 
   dead-code-report:
     name: dead code report (vulture, non-blocking)

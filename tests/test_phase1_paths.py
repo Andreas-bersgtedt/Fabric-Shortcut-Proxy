@@ -27,6 +27,24 @@ def test_active_table_path_canonical(monkeypatch):
     assert p == "warehouse/db/pg-host/salesdb/sales/orders"
 
 
+def test_active_table_path_canonical_from_odbc_connect(monkeypatch):
+    monkeypatch.setattr(config, "OBJECT_PATH_LAYOUT", "canonical", raising=False)
+    monkeypatch.setattr(
+        config,
+        "DB_URL",
+        "mssql+aioodbc:///?odbc_connect="
+        "Driver%3D%7BODBC+Driver+18+for+SQL+Server%7D%3B"
+        "Server%3Dtcp%3Asql-host.database.windows.net%2C1433%3B"
+        "Database%3DSalesDB%3BEncrypt%3Dyes",
+        raising=False,
+    )
+    t = TableDef(name="orders", source_table="sales.orders", num_splits=2)
+
+    p = ss.active_table_path(t, "warehouse/db")
+
+    assert p == "warehouse/db/sql-host.database.windows.net/SalesDB/sales/orders"
+
+
 def test_alias_to_active_key_when_canonical(monkeypatch):
     monkeypatch.setattr(config, "OBJECT_PATH_LAYOUT", "canonical", raising=False)
     monkeypatch.setattr(config, "ENABLE_LEGACY_PATH_ALIASES", True, raising=False)

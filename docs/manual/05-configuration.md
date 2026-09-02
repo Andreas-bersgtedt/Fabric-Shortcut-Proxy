@@ -13,7 +13,7 @@ Settings resolve with this precedence, highest first:
 
 1. **Environment variable** (for example `DB_URL`, `PORT`, `KEY_COLUMN`).
 2. **External JSON file** (`config.system.json`, `config.connection.json`, and the table
-   registry; legacy single `config.json` is still honored).
+  registry in `config.tables.json`).
 3. **Built-in default** from `config.py`.
 
 An environment variable always overrides the same key in a JSON file, which overrides the
@@ -43,9 +43,8 @@ committed `*.example.json` template; the real files are gitignored.
 | `config.mounts.json` | Storage-proxy mount table (references credential ids, not secrets) | `config.mounts.example.json` |
 | `config.open_mirror.json` | Open Mirroring targets and table policies | `config.open_mirror.example.json` |
 
-A legacy single `config.json` (template `config.example.json`) still works and is picked up
-automatically, or point `CONFIG_FILE` at a specific path. Copy a template, edit it, and
-place it next to `main.py`:
+Copy a template, edit it, and place the real `config.*.json` file next to `main.py`, or set
+`FSP_CONFIG_DIR` to the mounted directory that contains the files:
 
 ```powershell
 Copy-Item config.connection.example.json config.connection.json

@@ -52,6 +52,33 @@ def _agent_base_urls(supervisors) -> list[str]:
     return urls
 
 
+def _registered_agent_base_urls(registry) -> list[str]:
+    """Base URL of every live externally registered Agent."""
+    if registry is None:
+        return []
+    urls: list[str] = []
+    for record in registry.list_public():
+        agent_id = record.get("agent_id")
+        if not agent_id or not registry.is_alive(agent_id):
+            continue
+        host = _dial_host(str(record.get("host") or record.get("bind_host") or ""))
+        port = record.get("port")
+        if host and str(port).isdigit():
+            urls.append(f"http://{host}:{int(port)}")
+    return urls
+
+
+def _fleet_agent_base_urls(supervisors, registry=None) -> list[str]:
+    """Base URLs for all live Agents, whether supervised locally or external."""
+    urls = _agent_base_urls(supervisors)
+    seen = set(urls)
+    for url in _registered_agent_base_urls(registry):
+        if url not in seen:
+            urls.append(url)
+            seen.add(url)
+    return urls
+
+
 def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str = "") -> APIRouter:
     router = APIRouter(prefix="/_monitor")
 
@@ -73,7 +100,7 @@ def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str =
 
     @router.get("/api/summary")
     async def summary() -> JSONResponse:
-        bases = _agent_base_urls(supervisors)
+        bases = _fleet_agent_base_urls(supervisors, registry)
         summaries = []
         if bases:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -109,10 +136,10 @@ def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str =
             include_landing_zone_count=include_landing_zone_count
         )
         if local.get("targets"):
-            local["agents_total"] = len(_agent_base_urls(supervisors))
+            local["agents_total"] = len(_fleet_agent_base_urls(supervisors, registry))
             return JSONResponse(local)
 
-        bases = _agent_base_urls(supervisors)
+        bases = _fleet_agent_base_urls(supervisors, registry)
         payloads = []
         if bases:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -207,7 +234,7 @@ def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str =
 
     @router.post("/api/reset")
     async def reset() -> JSONResponse:
-        bases = _agent_base_urls(supervisors)
+        bases = _fleet_agent_base_urls(supervisors, registry)
         n = 0
         if bases:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -229,7 +256,7 @@ def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str =
         query = (q or "").strip() or None
         tagged: list[str] = [f"[manager] {ln}" for ln in get_buffer().tail(query=query)]
 
-        bases = _agent_base_urls(supervisors)
+        bases = _fleet_agent_base_urls(supervisors, registry)
         if bases:
             path = "/_monitor/api/logs?limit=1000"
             if query:

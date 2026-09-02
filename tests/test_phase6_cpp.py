@@ -6,8 +6,10 @@ import os
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("S3_BUCKET", "test-bucket")
 
+import pytest
+
 from runtime import serving_image
-from runtime.artifact_store import MemoryStore
+from runtime.artifact_store import MemoryStore, ObjectNotFound
 
 
 def test_publish_serving_image_writes_data_and_metadata(monkeypatch):
@@ -26,15 +28,16 @@ def test_publish_serving_image_writes_data_and_metadata(monkeypatch):
                         lambda k: b"PARQ" if k.endswith(".parquet") else None, raising=True)
 
     result = serving_image.publish_serving_image(store)
-    assert result["written"] == 4 and result["skipped"] == 0
-    # Every object key is now servable straight from the store.
-    assert store.get("warehouse/db/sales/metadata/v1.metadata.json") == b"{meta}"
-    assert store.get("warehouse/db/sales/metadata/snap.avro") == b"AVRO"
-    assert store.get("warehouse/db/sales/data/split-0-1.parquet") == b"PARQ"
-    assert store.get("warehouse/db/sales/data/split-1-1.parquet") == b"PARQ"
+    assert result["written"] == 4 and result["state"] == "ACTIVE"
+    prefix = f"generations/{result['generation_id']}/"
+    assert store.get(prefix + "warehouse/db/sales/metadata/v1.metadata.json") == b"{meta}"
+    assert store.get(prefix + "warehouse/db/sales/metadata/snap.avro") == b"AVRO"
+    assert store.get(prefix + "warehouse/db/sales/data/split-0-1.parquet") == b"PARQ"
+    assert store.get(prefix + "warehouse/db/sales/data/split-1-1.parquet") == b"PARQ"
+    assert result["generation_id"].encode() in store.get("CURRENT")
 
 
-def test_publish_skips_objects_with_no_bytes(monkeypatch):
+def test_publish_fails_closed_when_object_has_no_bytes(monkeypatch):
     store = MemoryStore()
     import s3.router as router
     monkeypatch.setattr(router, "_snapshot_objects",
@@ -42,5 +45,27 @@ def test_publish_skips_objects_with_no_bytes(monkeypatch):
     import cache.lru_cache as cache
     monkeypatch.setattr(cache, "peek_parquet", lambda k: None, raising=True)
 
+    with pytest.raises(RuntimeError, match="has no bytes"):
+        serving_image.publish_serving_image(store)
+    with pytest.raises(ObjectNotFound):
+        store.get("CURRENT")
+
+
+def test_publish_reads_split_bytes_from_shared_store_when_not_cached(monkeypatch):
+    store = MemoryStore()
+    split_key = "warehouse/db/sales/data/split-1-1.parquet"
+    store.put(split_key, b"owner-parquet-bytes")
+    import s3.router as router
+    monkeypatch.setattr(
+        router,
+        "_snapshot_objects",
+        lambda: {split_key: {"data": None}},
+        raising=True,
+    )
+    import cache.lru_cache as cache
+    monkeypatch.setattr(cache, "peek_parquet", lambda key: None, raising=True)
+
     result = serving_image.publish_serving_image(store)
-    assert result["written"] == 0 and result["skipped"] == 1
+
+    prefix = f"generations/{result['generation_id']}/"
+    assert store.get(prefix + split_key) == b"owner-parquet-bytes"

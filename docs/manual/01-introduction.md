@@ -80,7 +80,7 @@ The project ships as two distributions built from one repository.
 | **Enterprise (cluster)** | `fabric-shortcut-proxy-enterprise` | `python -m enterprise.manager` | Manager control plane supervising one or more agents, gateway load balancing, leader-lease HA, retention GC |
 
 The enterprise wheel is pinned to the exact Lite core version it was built against
-(`fabric-shortcut-proxy==2.6.0`). The `Manager.ps1` and `Manager.sh` launchers bootstrap
+(`fabric-shortcut-proxy==2.7.0`). The `Manager.ps1` and `Manager.sh` launchers bootstrap
 the virtual environment and start the cluster edition. A Lite-only install runs the
 standalone proxy unchanged.
 

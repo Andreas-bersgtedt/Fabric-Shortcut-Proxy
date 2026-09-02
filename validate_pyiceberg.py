@@ -15,6 +15,7 @@ from pyiceberg.io import InputFile, InputStream, OutputFile, FileIO
 
 SERVER = os.environ.get("S3EMU_SERVER", "http://127.0.0.1:9000")
 BUCKET = os.environ.get("S3EMU_BUCKET", "fabric-iceberg-poc")
+EXPECTED_ROWS = int(os.environ.get("EXPECTED_ROWS", "50000"))
 
 
 def _to_http(location: str) -> str:
@@ -117,7 +118,7 @@ def main() -> None:
     print(f"ROWS SCANNED = {arrow.num_rows}")
     print(f"COLUMNS = {arrow.column_names}")
     print(arrow.slice(0, 3).to_pydict())
-    print("\nSUCCESS: pyiceberg read the table" if arrow.num_rows == 50000 else "\nUNEXPECTED ROW COUNT")
+    print("\nSUCCESS: pyiceberg read the table" if arrow.num_rows == EXPECTED_ROWS else "\nUNEXPECTED ROW COUNT")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-manager
+  namespace: fabric-shortcut-proxy
+  labels:
+    app.kubernetes.io/name: fsp-manager
+    app.kubernetes.io/part-of: fabric-shortcut-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsp-manager
+        app.kubernetes.io/component: control-plane
+        app.kubernetes.io/part-of: fabric-shortcut-proxy
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: fabric-shortcut-proxy-python:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - enterprise.manager
+          envFrom:
+            - configMapRef:
+                name: fsp-common
+            - secretRef:
+                name: fsp-source
+          env:
+            - name: CONTROL_HOST
+              value: 0.0.0.0
+            - name: CONTROL_PORT
+              value: "9200"
+            - name: MANAGER_SUPERVISION_MODE
+              value: external
+            - name: ENABLE_GATEWAY
+              value: "0"
+            - name: FSP_CONFIG_DIR
+              value: /config
+            - name: CREDENTIAL_STORE_PATH
+              value: /config/credentials.json
+            - name: OPEN_MIRROR_STATE_DIR
+              value: /config/.open_mirror_state
+          ports:
+            - name: control
+              containerPort: 9200
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: control
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: control
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: artifacts
+              mountPath: /config
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: fsp-artifacts

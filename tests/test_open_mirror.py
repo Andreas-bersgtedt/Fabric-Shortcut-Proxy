@@ -80,6 +80,24 @@ def test_load_targets_reads_open_mirror_section(tmp_path):
     assert len(targets) == 1 and targets[0].id == "x"
 
 
+def test_load_targets_uses_config_dir(tmp_path, monkeypatch):
+    config_dir = tmp_path / "mounted-config"
+    config_dir.mkdir()
+    (config_dir / "config.open_mirror.json").write_text(json.dumps({
+        "open_mirror": {"open_mirror_targets": [{
+            "id": "mounted", "connection": "default",
+            "landing_zone_root": "/tmp/lz",
+            "tables": [{"name": "t", "source_table": "s.t", "target_table": "t", "key_column": "id"}],
+        }]}
+    }), encoding="utf-8")
+    monkeypatch.setenv("FSP_CONFIG_DIR", str(config_dir))
+    monkeypatch.chdir(tmp_path)
+
+    targets = load_targets()
+
+    assert len(targets) == 1 and targets[0].id == "mounted"
+
+
 def test_load_targets_missing_file_is_empty(tmp_path):
     assert load_targets(str(tmp_path / "nope.json")) == []
 

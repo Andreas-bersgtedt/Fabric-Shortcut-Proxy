@@ -8,8 +8,21 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from enterprise.control.cluster_health import aggregate_health
 from enterprise.control.monitor_agg import merge_summaries
-from enterprise.control.monitor_proxy import create_monitor_proxy_router
+from enterprise.control.monitor_proxy import create_monitor_proxy_router, _fleet_agent_base_urls
+
+
+class _FakeRegistry:
+    def __init__(self, records, alive_ids=None):
+        self._records = records
+        self._alive_ids = set(alive_ids or [])
+
+    def list_public(self):
+        return list(self._records)
+
+    def is_alive(self, agent_id):
+        return agent_id in self._alive_ids
 
 
 def _agent_summary(*, table="sales", requests=0, data_requests=0, cache_hit=None,
@@ -117,6 +130,37 @@ def test_merge_recent_queries_sorted_and_capped():
     m = merge_summaries(summaries)
     assert len(m["recent_queries"]) == 60
     assert m["recent_queries"][0]["ts"] == 69.0     # newest first
+
+
+def test_monitor_discovers_external_registered_agents():
+    registry = _FakeRegistry(
+        [
+            {"agent_id": "live", "host": "192.0.2.10", "bind_host": "192.0.2.10", "port": 9000},
+            {"agent_id": "dead", "host": "192.0.2.11", "bind_host": "192.0.2.11", "port": 9000},
+        ],
+        alive_ids={"live"},
+    )
+
+    assert _fleet_agent_base_urls([], registry) == ["http://192.0.2.10:9000"]
+
+
+def test_cluster_health_includes_external_registered_agents():
+    registry = _FakeRegistry(
+        [{
+            "agent_id": "fsp-materializer-smoke",
+            "seconds_since_heartbeat": 0.5,
+            "health": {"cpu_pct": 7.0, "mem_bytes": 1234},
+            "serving_tables": ["SO_Header"],
+        }],
+        alive_ids={"fsp-materializer-smoke"},
+    )
+
+    snapshot = aggregate_health(registry, [])
+
+    assert snapshot["status"] == "Healthy"
+    assert snapshot["agents"][0]["agent_id"] == "fsp-materializer-smoke"
+    assert snapshot["agents"][0]["serving_tables"] == ["SO_Header"]
+    assert snapshot["resources"]["memory_bytes"] == 1234
 
 
 # ---- proxy router (no live agents => empty-but-valid) ---------------------

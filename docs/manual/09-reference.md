@@ -156,6 +156,7 @@ Chapter 8 has the full table with methods and query parameters.
 | `s3proxy` | `boto3` | Native S3 / MinIO mounts |
 | `azureblob` | `azure-storage-blob`, `azure-identity` | Azure Blob / ADLS mounts |
 | `keyvault` | `azure-keyvault-secrets`, `azure-identity` | Entra ID identity + Azure Key Vault credential store (issue #16) |
+| `onelake` | `azure-storage-file-datalake`, `azure-identity` | Open Mirroring writes to OneLake landing zones |
 | `dev` | `pyiceberg`, `botocore`, `httpx` | Tests and reference-reader validation |
 
 `cryptography` and `python-multipart` are core dependencies because the encrypted credential

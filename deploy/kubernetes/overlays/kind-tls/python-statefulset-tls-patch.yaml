@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fsp-materializer
+  namespace: fabric-shortcut-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: materializer
+          env:
+            - {name: MANAGER_URL, value: https://fsp-manager:9443}
+            - {name: SSL_CERT_FILE, value: /tls/ca.crt}
+          volumeMounts: [{name: manager-tls, mountPath: /tls, readOnly: true}]
+      volumes: [{name: manager-tls, secret: {secretName: fsp-manager-tls}}]

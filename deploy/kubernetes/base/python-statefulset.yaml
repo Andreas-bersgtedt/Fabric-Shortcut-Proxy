@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fsp-materializer
+  namespace: fabric-shortcut-proxy
+  labels:
+    app.kubernetes.io/name: fsp-materializer
+    app.kubernetes.io/part-of: fabric-shortcut-proxy
+spec:
+  serviceName: fsp-materializer
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-materializer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsp-materializer
+        app.kubernetes.io/component: materializer
+        app.kubernetes.io/part-of: fabric-shortcut-proxy
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-materializer
+      containers:
+        - name: materializer
+          image: fabric-shortcut-proxy-python:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              shard_index="${HOSTNAME##*-}"
+              export AGENT_SHARD_INDEX="${shard_index}"
+              if [ "${shard_index}" = "0" ]; then
+                export PUBLISH_SERVING_IMAGE=1
+              else
+                export PUBLISH_SERVING_IMAGE=0
+              fi
+              exec python -m main
+          envFrom:
+            - configMapRef:
+                name: fsp-common
+            - secretRef:
+                name: fsp-source
+          env:
+            - name: HOST
+              value: 0.0.0.0
+            - name: PORT
+              value: "9000"
+          ports:
+            - name: health
+              containerPort: 9000
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - kill -0 1
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - kill -0 1
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: fsp-artifacts

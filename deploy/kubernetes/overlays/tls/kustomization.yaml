@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - stunnel-configmap.yaml
+  - network-policy-patch.yaml
+patches:
+  - path: manager-deployment-patch.yaml
+  - path: manager-service-patch.yaml
+  - path: cpp-deployment-patch.yaml
+  - path: python-statefulset-patch.yaml

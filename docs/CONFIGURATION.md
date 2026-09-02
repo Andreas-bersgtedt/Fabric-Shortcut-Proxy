@@ -17,14 +17,16 @@ and [planner/dialects.py](../planner/dialects.py).
 Settings resolve with this precedence (highest wins):
 
 1. **Environment variable**
-2. **External JSON file** (`config.json`, or `$CONFIG_FILE`)
+2. **External JSON file** (`config.system.json`, `config.connection.json`,
+   `config.performance.json`, `config.freshness.json`, `config.tables.json`,
+   `config.mounts.json`, or `config.open_mirror.json`)
 3. Built-in default
 
 | Surface | What it controls | How to set it |
-|---|---|---|
+| --- | --- | --- |
 | **Environment variables** | Connection string, source table, **key column**, bucket, port, splits, flags | `DB_URL`, `DB_SOURCE_TABLE`, `KEY_COLUMN`, … |
-| **`config.json`** | Everything above **plus the full `tables` registry**: no Python | Copy [config.example.json](../config.example.json) → `config.json` |
-| **`config.py` → `TABLES`** | The table registry (alternative to `config.json`) | Edit [config.py](../config.py) |
+| **Split `config.*.json` files** | Settings grouped by concern plus the full `tables` registry: no Python edits | Copy the matching `config.*.example.json` template |
+| **`config.py` → `TABLES`** | Code-level table defaults for local development | Edit [config.py](../config.py) |
 
 At startup the proxy:
 1. Reads `DB_URL` and auto-selects the SQL **dialect** from its scheme.
@@ -35,19 +37,43 @@ At startup the proxy:
   `db/<server>/<database>/<schema>/<object>/…`.
 
 > A **single table** needs only environment variables. **Multiple tables** are
-> cleanest via `config.json` (no Python editing at all).
+> cleanest via `config.tables.json` plus `config.connection.json` (no Python editing at all).
 
-### 1.1 Using `config.json` (recommended for multi-table)
+### 1.1 Using split config files (recommended for multi-table)
 
-Copy the template and edit it, everything, including multiple tables, is
-JSON-driven and schema-free:
+Copy the templates and edit the generated files. Connections, tables, and runtime settings
+are JSON-driven and schema-free:
 
 ```jsonc
-// config.json  (place next to main.py, or point CONFIG_FILE at it)
+// config.connection.json
 {
-  "db_url": "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb",
-  "num_splits": 8,
-  "require_sigv4": false,
+  "connection": {
+    "db_url": "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb"
+  }
+}
+```
+
+```jsonc
+// config.performance.json
+{
+  "performance": {
+    "num_splits": 8
+  }
+}
+```
+
+```jsonc
+// config.system.json
+{
+  "system": {
+    "require_sigv4": false
+  }
+}
+```
+
+```jsonc
+// config.tables.json
+{
   "tables": [
     { "name": "orders",    "source_table": "public.orders",    "key_column": "order_id" },
     { "name": "customers", "source_table": "public.customers", "key_column": "customer_id", "num_splits": 4 }
@@ -56,16 +82,14 @@ JSON-driven and schema-free:
 ```
 
 ```powershell
-.\Manager.ps1 -SkipInstall        # config.json is picked up automatically (Windows)
+.\Manager.ps1 -SkipInstall        # split config files are picked up automatically (Windows)
 # Linux/macOS:
 bash ./Manager.sh --skip-install
-# or point at a specific file:
-$env:CONFIG_FILE = "C:\deploy\prod.config.json"; .\Manager.ps1 -SkipInstall
-# Linux/macOS:
-CONFIG_FILE=/deploy/prod.config.json bash ./Manager.sh --skip-install
+# or point at a directory of mounted config files:
+$env:FSP_CONFIG_DIR = "C:\deploy\fsp-config"; .\Manager.ps1 -SkipInstall
 ```
 
-`config.json` is gitignored (it holds your connection string). Environment
+The real `config.*.json` files are gitignored. Environment
 variables still override individual keys, e.g. `$env:DB_URL=…` wins over the
 file's `db_url`. Full key list is in §8; per-table fields in §5.2.
 
@@ -324,8 +348,8 @@ $env:S3EMU_SERVER = "http://127.0.0.1:9000"
 
 ## 5. PostgreSQL: multi table
 
-Multiple tables is the one case that needs `config.py`, but still **no column
-schemas**, just a short list.
+Multiple tables use `config.tables.json`; no Python editing or hand-written column
+schemas are required.
 
 ### 5.1 Source
 
@@ -340,11 +364,29 @@ CREATE TABLE public.customers (
 );
 ```
 
-### 5.2 Register both tables: `config.json` (no Python)
+### 5.2 Register both tables with split config files (no Python)
 
-```json
+```jsonc
+// config.connection.json
 {
-  "db_url": "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb",
+  "connection": {
+    "db_url": "postgresql+asyncpg://appuser:secret@pg-host:5432/salesdb"
+  }
+}
+```
+
+```jsonc
+// config.performance.json
+{
+  "performance": {
+    "num_splits": 8
+  }
+}
+```
+
+```jsonc
+// config.tables.json
+{
   "tables": [
     { "name": "orders",    "source_table": "public.orders",    "key_column": "order_id",    "num_splits": 8 },
     { "name": "customers", "source_table": "public.customers", "key_column": "customer_id", "num_splits": 4 }
@@ -359,7 +401,7 @@ Per-table JSON fields:
 | `source_table` | yes | Table/view; schema-qualified allowed |
 | `name` | no | Defaults to the source table's last segment; canonical path is derived from source identity |
 | `key_column` | no | Integer split key; defaults to the primary key |
-| `num_splits` | no | Defaults to the top-level `num_splits` / `NUM_SPLITS` |
+| `num_splits` | no | Defaults to `config.performance.json` `num_splits` or `NUM_SPLITS` |
 | `schema` | no | Explicit override: `[{ "field_id", "name", "type", "nullable" }]` |
 | `connection` | no | Source connection id (see §5.4). Defaults to `default` |
 
@@ -525,7 +567,7 @@ TABLES: list[TableDef] = [
 ]
 ```
 
-Or the equivalent `config.json` `tables` array (see §5.2), the JSON keys are the
+Or the equivalent `config.tables.json` `tables` array (see §5.2), the JSON keys are the
 same for any dialect.
 
 ### 7.3 Launch
@@ -564,10 +606,10 @@ Create one Fabric shortcut per table.
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy when both are set |
 
 > The single-table shortcut above is env-only. **Multiple** tables use the
-> `tables` array in `config.json` (§1.1) or the `TABLES` list in `config.py`
-> (both schema-free). Every environment variable also has a `config.json` key
-> (lower-case, without the `S3_`/`DB_` prefix, e.g. `DB_URL`→`db_url`,
-> `S3_BUCKET`→`bucket`, `KEY_COLUMN`→`key_column`, `NUM_SPLITS`→`num_splits`).
+> `tables` array in `config.tables.json` (§1.1) or the `TABLES` list in `config.py`
+> (both schema-free). Environment variables still override the matching split-file keys,
+> for example `DB_URL` overrides `config.connection.json` and `S3_BUCKET` overrides
+> `config.system.json`.
 
 ---
 
@@ -693,14 +735,14 @@ Parquet files are identical; only the *table metadata* differs.
 | `iceberg` *(default)* | Iceberg v2 metadata (`metadata.json` + Avro manifests + `version-hint.text`) | Fabric **virtualizes** Iceberg → Delta on its side. That conversion adds 5 s–2 min of lag, refreshes *at most* once per ~2 min, and is where most conversion-time bugs live. |
 | `delta` | A native Delta log (`_delta_log/NNNNNNNNNNNNNNNNNNNN.json`) + the same `data/*.parquet` | Fabric reads the Delta table **directly, no Iceberg→Delta conversion layer**, so lower lag and fewer conversion failure modes. |
 
-Set it once (env or `config.json`):
+Set it once through the environment or `config.system.json`:
 
 ```powershell
 $env:TABLE_FORMAT="delta"; python main.py
 ```
 ```jsonc
-// config.json
-{ "db_url": "…", "table_format": "delta", "tables": [ … ] }
+// config.system.json
+{ "system": { "table_format": "delta" } }
 ```
 
 Everything else is unchanged: the same content-addressed splits, split **pinning**

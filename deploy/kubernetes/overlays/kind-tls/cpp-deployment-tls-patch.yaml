@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-cpp-agent
+  namespace: fabric-shortcut-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: agent
+          env: [{name: MANAGER_URL, value: http://127.0.0.1:9201}]
+        - name: manager-tls-proxy
+          image: dweomer/stunnel:latest
+          args: [/etc/stunnel/stunnel.conf]
+          command: [stunnel]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: stunnel-config, mountPath: /etc/stunnel, readOnly: true}
+            - {name: manager-tls, mountPath: /tls, readOnly: true}
+      volumes:
+        - {name: stunnel-config, configMap: {name: fsp-manager-stunnel}}
+        - {name: manager-tls, secret: {secretName: fsp-manager-tls}}

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fsp-artifacts
+  namespace: fabric-shortcut-proxy
+spec:
+  storageClassName: manual
+  volumeName: fsp-artifacts-kind

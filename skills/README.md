@@ -3,6 +3,7 @@
 These project skills provide on-demand operational workflows for the Fabric Shortcut Proxy.
 Load the skill that matches the task:
 
+- [Rapid POC](./fsp-rapid-poc/SKILL.md): deploy a quick Lite, local kind, or AKS validation proof.
 - [Deployment](./fsp-deployment/SKILL.md): install or deploy the proxy locally, on Linux, Windows, or AKS.
 - [Infrastructure prerequisites](./fsp-infrastructure-prerequisites/SKILL.md): prepare AKS, Key Vault, jump boxes, private networking, and SSH tunnels.
 - [Source connectivity](./fsp-source-connectivity/SKILL.md): install database drivers and validate source reachability and authentication.

@@ -53,6 +53,10 @@ also creates `fsp-materializer-internal`, an Azure internal LoadBalancer on port
 the `aks-app` subnet. Use its assigned private frontend IP for the Agent private DNS A record;
 do not point external clients at a Pod IP or at the Manager's port `9200`.
 
+Stopping and starting AKS causes a temporary outage but normally preserves this Service and its
+frontend. Deleting and recreating the Service can allocate a different private IP. Keep clients
+on a private DNS hostname, and reserve or pin the frontend IP when a fixed address is required.
+
 ```powershell
 kubectl apply -k deploy/kubernetes/overlays/aks-validation
 kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide

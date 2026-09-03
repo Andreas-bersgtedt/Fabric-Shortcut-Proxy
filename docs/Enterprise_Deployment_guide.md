@@ -378,6 +378,11 @@ configure the Fabric shortcut or OPDG to use `http(s)://<agent-private-fqdn>:900
 a pod IP, the Manager frontend, or a previously assigned private IP. The Azure frontend IP is
 the source of truth after a Service recreation.
 
+Stopping and starting the existing AKS cluster causes a data-plane outage while nodes and Agent
+pods return, but it does not normally recreate the Service frontend. Deleting and recreating the
+`LoadBalancer` Service can change the private IP. Use the private DNS hostname for clients and
+reserve or pin the frontend IP when the endpoint must remain fixed.
+
 For AKS pods, use the pod IP for registration:
 
 ```yaml

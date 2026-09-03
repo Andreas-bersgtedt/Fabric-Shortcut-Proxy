@@ -73,6 +73,11 @@ kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal \
 
 The Service selects only ready Agent pods through the Kubernetes readiness gate and uses the `aks-app` subnet annotation. Read the assigned `EXTERNAL-IP` from the Service and publish the Agent hostname to private DNS. Do not hardcode a pod IP or reuse an old frontend IP after recreating the Service.
 
+An AKS stop/start causes a temporary data-plane outage while nodes and Agent pods recover, but it
+normally preserves this Service frontend. A Service deletion and recreation can allocate a new
+private IP. Use the DNS hostname for clients, and reserve or pin the frontend IP when a fixed
+address is required.
+
 For Fabric Spark Managed VNet access, place a Standard internal Load Balancer or the Service frontend behind a Private Link Service, then approve the Fabric managed private endpoint connection.
 
 ```bash

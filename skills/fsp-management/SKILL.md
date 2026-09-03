@@ -76,6 +76,13 @@ For HA, use the same shared artifact store and distinct control ports for the wa
 - Treat the artifact store as persistent state. Avoid cleanup during routine restarts.
 - Capture commit/image, effective config source, logs, health responses, and object-read results during changes.
 
+## AKS Restart Check
+
+Stopping and starting AKS causes a temporary outage but normally preserves the Kubernetes Service
+and its LoadBalancer frontend. After startup, wait for ready Agent endpoints before testing
+Fabric. If a Service was recreated, compare its `EXTERNAL-IP` with the private DNS A record;
+update DNS or restore the reserved frontend IP before reopening the gateway.
+
 ## References
 
 - [Operations manual](../../docs/manual/08-operations.md)

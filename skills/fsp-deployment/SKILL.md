@@ -58,6 +58,14 @@ For systemd, run the service as a dedicated user with a protected environment fi
 3. Check Manager health, Agent registration, readiness, logs, and a representative object read.
 4. Roll back to the recorded image/commit if readiness or object reads regress. Do not delete the shared artifact store during a code rollback.
 
+## AKS Endpoint Durability
+
+An AKS stop/start causes downtime while nodes and Agent pods recover, but normally preserves the
+Kubernetes Service and its Azure LoadBalancer frontend. Deleting and recreating the
+`LoadBalancer` Service can allocate a new private IP. Use the Agent private DNS hostname for
+clients, record `EXTERNAL-IP` after Service changes, and reserve or pin the frontend IP when a
+fixed address is required. Never use a pod IP.
+
 ## References
 
 - [Installation manual](../../docs/manual/04-installation.md)

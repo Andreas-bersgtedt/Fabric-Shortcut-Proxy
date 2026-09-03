@@ -229,6 +229,11 @@ The client endpoint must be `http(s)://<agent-private-fqdn>:9000`; never use a p
 frontend address. The existing Manager endpoint on port `9200` is administrative unless
 Manager gateway mode is enabled.
 
+An AKS stop/start causes a temporary outage while nodes and Agent pods recover, but it normally
+preserves the Service frontend. Deleting and recreating the `LoadBalancer` Service can allocate
+a different private IP. Keep the client on the DNS hostname, reserve or pin the frontend IP for
+deployments that require a fixed address, and recheck the DNS record after any Service change.
+
 ```bash
 # Proxy is healthy and the source is reachable (run on the proxy host)
 curl -s http://127.0.0.1:9000/healthz            # {"status":"ok"}

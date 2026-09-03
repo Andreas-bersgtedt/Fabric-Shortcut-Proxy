@@ -74,6 +74,7 @@ Install `cryptography` in the active venv, keep `FSP_CRED_KEY` stable, and verif
 - If `/healthz` works but `/readyz` is `503`, inspect source DB reachability, schema reflection, snapshot/materialization errors, or missing ready Agents.
 - If localhost works but a private endpoint fails, test DNS resolution, route, NSG/firewall, the `fsp-materializer-internal` Service frontend and port `9000`, internal LoadBalancer health probes, and TLS termination.
 - If the gateway still targets `10.60.2.16`, treat it as stale until the current `EXTERNAL-IP` of `fsp-materializer-internal` is confirmed and the private DNS A record is updated.
+- A stopped and restarted AKS cluster can be temporarily unavailable while nodes and Agent pods recover. A changed IP after the outage points to Service or LoadBalancer recreation; compare `EXTERNAL-IP` with private DNS before investigating application authentication.
 - In AKS, check Service selectors and EndpointSlices before changing application code. Never point production DNS at a pod IP.
 - Manager `/healthz` is process health; Manager `/readyz` can be fleet readiness and may be non-200 with zero registered Agents.
 

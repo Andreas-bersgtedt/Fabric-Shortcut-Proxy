@@ -16,6 +16,28 @@ Run under a dedicated low-privilege account. On Linux, wrap the launcher in a sy
 run it as a service under a gMSA or local service account
 ([installation/Windows_Deployment.md](../installation/Windows_Deployment.md)).
 
+### AKS stop/start and endpoint durability
+
+Stopping an AKS cluster stops the nodes and causes a service outage. Starting the same cluster
+does not normally delete Kubernetes Services or their Azure LoadBalancer frontends, so the
+internal Agent endpoint should return after the Agent pods become ready. During startup, wait
+for `/readyz` and Service endpoints before testing Fabric.
+
+Deleting and recreating the `LoadBalancer` Service is different. Azure can assign a new private
+frontend IP, leaving a manually configured gateway or DNS record pointed at the old address.
+Use a private DNS hostname for the Fabric endpoint, record the Service `EXTERNAL-IP` after every
+Service change, and reserve or pin the frontend IP when the deployment requires a fixed address.
+Never use a pod IP as the gateway endpoint.
+
+After a cluster restart or Service change, verify:
+
+```bash
+kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
+kubectl -n fabric-shortcut-proxy get endpointslice \
+  -l kubernetes.io/service-name=fsp-materializer-internal -o wide
+curl -fsS http://<agent-private-fqdn>:9000/healthz
+```
+
 ## 8.2 Operational endpoints
 
 | Endpoint | Method | Purpose |

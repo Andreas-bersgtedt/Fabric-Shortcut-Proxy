@@ -46,8 +46,8 @@ For systemd, run the service as a dedicated user with a protected environment fi
 1. Build and push the image to a private ACR.
 2. Provision the private AKS cluster, namespace, identity/RBAC, ConfigMap, Secrets, Manager config volume, and RWX artifact volume.
 3. Deploy Manager on port `9200` and Agents on the S3 data-plane port, normally `9000`.
-4. Expose the data plane through an internal LoadBalancer, private ingress, or gateway. Do not use a pod IP as a production DNS target.
-5. Configure private DNS and verify paths from the jump host, OPDG host, AKS pods, source SQL endpoint, Key Vault, ACR, and OneLake as applicable.
+4. Expose the data plane through the AKS overlay's `fsp-materializer-internal` internal LoadBalancer Service on port `9000`, private ingress, or gateway. Do not use a pod IP as a production DNS target.
+5. Create a private DNS A record for the Agent hostname pointing to the internal LoadBalancer frontend. Verify paths from the jump host, OPDG host, AKS pods, source SQL endpoint, Key Vault, ACR, and OneLake as applicable.
 6. Use `/healthz` for process liveness and `/readyz` for readiness. In a Manager deployment, `/readyz` can represent fleet readiness and may remain non-200 until an Agent registers.
 7. Verify an authenticated S3 `HEAD`/`GET` against a known object before connecting Fabric.
 

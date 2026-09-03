@@ -359,6 +359,25 @@ Use `/healthz` for Manager readiness. `/readyz` is fleet readiness and can retur
 
 The Python agent must advertise a routable IP or DNS name that the Manager and gateway can use.
 
+The checked-in AKS validation overlay creates two Services for the Python StatefulSet:
+
+- `fsp-materializer` remains headless for stable StatefulSet identity and internal Manager
+  registration.
+- `fsp-materializer-internal` is an Azure internal `LoadBalancer` on port `9000`, restricted to
+  the `aks-app` subnet. This is the data-plane endpoint for OPDG or other private clients.
+
+Apply and record the assigned frontend before configuring private DNS:
+
+```bash
+kubectl apply -k deploy/kubernetes/overlays/aks-validation
+kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
+```
+
+Create an A record such as `<agent-private-fqdn>` pointing to that Service `EXTERNAL-IP`, and
+configure the Fabric shortcut or OPDG to use `http(s)://<agent-private-fqdn>:9000`. Do not use
+a pod IP, the Manager frontend, or a previously assigned private IP. The Azure frontend IP is
+the source of truth after a Service recreation.
+
 For AKS pods, use the pod IP for registration:
 
 ```yaml
@@ -659,7 +678,7 @@ flowchart TD
   secrets --> config[Use Config UI to save sources, tables, Key Vault, Open Mirror]
   config --> restart[Restart Manager from System tab]
   restart --> validate[Validate Fleet, Monitor, S3 shortcut, Key Vault, Open Mirror]
-  validate --> expose[Create stable private data-plane endpoint and DNS]
+  validate --> expose[Create stable private Agent endpoint and DNS]
   expose --> opdg[Configure OPDG and Fabric shortcut]
 ```
 

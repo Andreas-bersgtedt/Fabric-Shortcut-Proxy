@@ -48,6 +48,18 @@ kubectl apply -k deploy/kubernetes/base
 kubectl -n fabric-shortcut-proxy get pods,pvc,service,hpa
 ```
 
+The AKS validation overlay keeps `fsp-materializer` as the StatefulSet's headless service and
+also creates `fsp-materializer-internal`, an Azure internal LoadBalancer on port `9000` in
+the `aks-app` subnet. Use its assigned private frontend IP for the Agent private DNS A record;
+do not point external clients at a Pod IP or at the Manager's port `9200`.
+
+```powershell
+kubectl apply -k deploy/kubernetes/overlays/aks-validation
+kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
+Resolve-DnsName <agent-private-fqdn>
+Test-NetConnection <agent-private-fqdn> -Port 9000
+```
+
 If the cluster has no default RWX class, set `storageClassName` in `base/artifact-pvc.yaml` or add it through a Kustomize overlay.
 
 ## Manager TLS
@@ -92,7 +104,8 @@ A Pod without the `fabric-shortcut-proxy.io/data-plane-client: "true"` label is 
 
 ## Current limits
 
-- The base Service is cluster-private and does not configure TLS or external ingress.
+- The base Agent LoadBalancer is private and does not configure TLS or public ingress. The
+	Manager Service remains cluster-private on port `9200`.
 - The C++ data plane does not verify SigV4. Keep it behind private networking and an authenticated gateway.
 - Source-wide snapshot consistency is not implemented. The supported setting is `best_effort`.
 - The base assumes one fixed three-worker generation epoch. Do not change the StatefulSet replica count during publication.

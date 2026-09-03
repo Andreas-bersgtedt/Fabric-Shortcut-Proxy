@@ -216,6 +216,19 @@ sections above.
 
 ## 6. Verify
 
+For an AKS deployment using the repository manifests, expose the Agent with the dedicated
+internal Service before creating the Fabric shortcut:
+
+```bash
+kubectl apply -k deploy/kubernetes/overlays/aks-validation
+kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
+```
+
+Publish the Service `EXTERNAL-IP` behind a private DNS name such as `<agent-private-fqdn>`.
+The client endpoint must be `http(s)://<agent-private-fqdn>:9000`; never use a pod IP or an old
+frontend address. The existing Manager endpoint on port `9200` is administrative unless
+Manager gateway mode is enabled.
+
 ```bash
 # Proxy is healthy and the source is reachable (run on the proxy host)
 curl -s http://127.0.0.1:9000/healthz            # {"status":"ok"}

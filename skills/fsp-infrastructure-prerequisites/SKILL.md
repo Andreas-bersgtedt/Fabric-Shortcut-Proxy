@@ -33,10 +33,11 @@ Keep the Manager control plane private to administrators. Give Fabric or OPDG on
 2. Create or identify a private ACR and grant the AKS kubelet identity pull permission.
 3. Create or identify Key Vault and choose managed identity, service principal, or default Azure credential. Grant only the required secret read/write permissions.
 4. Create the private AKS cluster, namespace, node pools, and workload identity/RBAC model.
-5. Provision persistent storage: Manager configuration storage and an RWX artifact volume such as Azure NetApp Files where multiple Agents require shared artifacts.
-6. Create private endpoints and DNS links for ACR, Key Vault, source SQL, and other private services. Verify that AKS resolves private addresses, not public addresses.
-7. Peer the admin and AKS VNets in both directions. Add NSG/firewall rules for only the required paths.
-8. Prepare the jump box with Azure CLI, `kubectl`, Docker, Git, and network test tools. Use private AKS API access where required.
+4. Provision persistent storage: Manager configuration storage and an RWX artifact volume such as Azure NetApp Files where multiple Agents require shared artifacts.
+5. Create private endpoints and DNS links for ACR, Key Vault, source SQL, and other private services. Verify that AKS resolves private addresses, not public addresses.
+6. Peer the admin and AKS VNets in both directions. Add NSG/firewall rules for only the required paths.
+7. Prepare the jump box with Azure CLI, `kubectl`, Docker, Git, and network test tools. Use private AKS API access where required.
+8. Deploy the AKS overlay's `fsp-materializer-internal` Service, which creates an Azure internal LoadBalancer on port `9000` in the `aks-app` subnet. Reserve or record its frontend IP, then create the Agent private DNS A record.
 9. Prepare the OPDG host, if using a Fabric S3-compatible shortcut, and confirm it can resolve and reach the private data-plane name on port `9000`.
 
 ## Private Networking Checks
@@ -62,7 +63,17 @@ Expected results are private DNS answers, reachable TCP ports, and no public rou
 
 ## Internal Load Balancer and Private Link
 
-For an AKS data plane, use an internal LoadBalancer, private ingress, or gateway service with a readiness probe on `/readyz`. For Fabric Spark Managed VNet access, use a Standard internal Load Balancer plus Private Link Service, then approve the Fabric managed private endpoint connection.
+For the AKS data plane, apply the AKS validation overlay. It preserves `fsp-materializer` as the StatefulSet's headless service and adds `fsp-materializer-internal` as the dedicated Azure internal LoadBalancer on port `9000`:
+
+```bash
+kubectl apply -k deploy/kubernetes/overlays/aks-validation
+kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal \
+  -o wide
+```
+
+The Service selects only ready Agent pods through the Kubernetes readiness gate and uses the `aks-app` subnet annotation. Read the assigned `EXTERNAL-IP` from the Service and publish the Agent hostname to private DNS. Do not hardcode a pod IP or reuse an old frontend IP after recreating the Service.
+
+For Fabric Spark Managed VNet access, place a Standard internal Load Balancer or the Service frontend behind a Private Link Service, then approve the Fabric managed private endpoint connection.
 
 ```bash
 az network private-link-service show -g <resource-group> -n <pls-name> \

@@ -4,6 +4,8 @@ These project skills provide on-demand operational workflows for the Fabric Shor
 Load the skill that matches the task:
 
 - [Deployment](./fsp-deployment/SKILL.md): install or deploy the proxy locally, on Linux, Windows, or AKS.
+- [Infrastructure prerequisites](./fsp-infrastructure-prerequisites/SKILL.md): prepare AKS, Key Vault, jump boxes, private networking, and SSH tunnels.
+- [Source connectivity](./fsp-source-connectivity/SKILL.md): install database drivers and validate source reachability and authentication.
 - [Management](./fsp-management/SKILL.md): operate the Manager/Agent fleet, health endpoints, scaling, and rollout controls.
 - [Configuration](./fsp-configuration/SKILL.md): configure connections, tables, mounts, security, and the Config Builder.
 - [Troubleshooting](./fsp-troubleshooting/SKILL.md): diagnose startup, readiness, connectivity, authentication, and data-path failures.

@@ -6,6 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 ARG FSP_EXTRAS=postgres,azureblob,keyvault,onelake
+ARG FSP_MODULE_PROFILE=default
 ARG FSP_ENTERPRISE=0
 ARG FSP_INSTALL_MSSQL_ODBC=0
 ARG PIP_INDEX_URL=https://pypi.org/simple
@@ -26,6 +27,9 @@ RUN groupadd --gid 10001 fsp \
     && useradd --uid 10001 --gid fsp --create-home --home-dir /home/fsp fsp
 
 WORKDIR /app
+LABEL org.opencontainers.image.title="Fabric Shortcut Proxy" \
+    io.fabric-shortcut-proxy.module-profile="${FSP_MODULE_PROFILE}" \
+    io.fabric-shortcut-proxy.module-extras="${FSP_EXTRAS}"
 COPY . .
 RUN if [ -n "${FSP_EXTRAS}" ]; then \
         PIP_INDEX_URL="${PIP_INDEX_URL}" python -m pip install --no-cache-dir ".[${FSP_EXTRAS}]"; \

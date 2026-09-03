@@ -182,6 +182,70 @@ async def settings() -> JSONResponse:
     return JSONResponse({"settings": config.settings_catalog()})
 
 
+@router.get("/api/modules/catalog")
+async def module_catalog() -> JSONResponse:
+    """Return the allowlisted optional module catalog and runtime status."""
+    from module_registry import module_status
+    return JSONResponse(module_status())
+
+
+@router.get("/api/modules/status")
+async def module_status_endpoint() -> JSONResponse:
+    """Return desired, installed, and active module states."""
+    from module_registry import module_status
+    return JSONResponse(module_status())
+
+
+@router.post("/api/modules/plan")
+async def module_plan_endpoint(request: Request) -> JSONResponse:
+    """Preview a desired module profile without writing or installing packages."""
+    from module_registry import module_plan
+    body = await request.json()
+    desired = body.get("desired") if isinstance(body, dict) else None
+    if not isinstance(desired, list):
+        return JSONResponse({"ok": False, "error": 'body must be {"desired": [...]}'}, status_code=400)
+    return JSONResponse({"ok": True, **module_plan(desired)})
+
+
+@router.post("/api/modules/desired")
+async def save_module_profile(request: Request) -> JSONResponse:
+    """Persist an allowlisted desired module profile; installation is restart-bound."""
+    from module_registry import save_desired_profile
+    body = await request.json()
+    desired = body.get("desired") if isinstance(body, dict) else None
+    if not isinstance(desired, list):
+        return JSONResponse({"ok": False, "error": 'body must be {"desired": [...]}'}, status_code=400)
+    try:
+        result = save_desired_profile(desired)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": True, **result, "restart_required": True,
+                         "note": "Profile saved. Install dependencies and restart through the deployment workflow."})
+
+
+@router.get("/api/modules/operation")
+async def module_operation_status() -> JSONResponse:
+    """Return the current controlled dependency operation state."""
+    from module_installer import status
+    return JSONResponse(status())
+
+
+@router.post("/api/modules/install")
+async def install_modules(request: Request) -> JSONResponse:
+    """Start an allowlisted dependency install; never execute browser package input."""
+    from module_installer import start_install
+    body = await request.json()
+    desired = body.get("desired") if isinstance(body, dict) else None
+    if not isinstance(desired, list):
+        return JSONResponse({"ok": False, "error": 'body must be {"desired": [...]}'}, status_code=400)
+    try:
+        result = start_install(desired)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    return JSONResponse({"ok": True, **result,
+                         "note": "Installation started. Restart the Manager explicitly after it succeeds."}, status_code=202)
+
+
 @router.get("/api/keyvault")
 async def keyvault_status() -> JSONResponse:
     """Non-secret Key Vault / Entra ID config + live status for the builder panel."""

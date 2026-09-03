@@ -782,6 +782,19 @@
     <h2>System configuration</h2>
     <div class="hint">Review the effective value and source for every setting. Changed values are highlighted before you apply them; each setting identifies whether it applies immediately or after restart.</div>
 
+    <div id="modulePanel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+      <b>Optional modules</b>
+      <div class="hint">Choose the capabilities this deployment should install next. Package changes require a controlled install and restart; this panel does not run pip.</div>
+      <div class="status" id="moduleStatus">Loading module status...</div>
+      <div id="moduleRows"></div>
+      <div class="actions">
+        <button class="btn primary" id="btnSaveModules" type="button">Save desired profile</button>
+        <button class="btn ghost" id="btnInstallModules" type="button">Install selected modules</button>
+        <button class="btn ghost" id="btnReloadModules" type="button">Reload modules</button>
+      </div>
+      <div class="status" id="moduleSaveStatus"></div>
+    </div>
+
     <div id="legacySecretPanel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>S3 secret key</b> <span id="s3SecretState" class="hint" style="margin-left:6px;">(checking...)</span>
       <div class="hint">Write-only field. Value is never shown back; status only.</div>
@@ -3932,6 +3945,100 @@ async function restartManager(){
   }catch(e){ liveFlash($("managerRestartStatus"), "Restart request error: "+e); button.disabled=false; }
 }
 
+let moduleState = null;
+
+function renderModules(){
+  const rows = $("moduleRows");
+  rows.innerHTML = "";
+  if(!moduleState || !moduleState.modules){ rows.innerHTML = '<div class="hint">Module status unavailable.</div>'; return; }
+  for(const module of moduleState.modules){
+    const row = document.createElement("div");
+    row.className = "setrow";
+    const label = document.createElement("label");
+    label.textContent = module.id;
+    label.title = module.capability;
+    const select = document.createElement("select");
+    select.dataset.moduleId = module.id;
+    [true, false].forEach(value => {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = value ? "enabled" : "disabled";
+      option.selected = module.desired === value;
+      option.disabled = module.required && !value;
+      select.appendChild(option);
+    });
+    const help = document.createElement("span");
+    help.className = "sethelp";
+    const state = `${module.installed ? "installed" : "missing"} / ${module.active ? "active" : module.detail}`;
+    help.textContent = `${module.capability}; ${state}${module.required ? `; required: ${module.required_reason}` : ""}`;
+    row.append(label, select, help);
+    rows.appendChild(row);
+  }
+}
+
+async function loadModules(){
+  liveFlash($("moduleStatus"), "Loading module status...", true);
+  try{
+    const response = await fetch("/_config/api/modules/status", {cache:"no-store"});
+    const data = await response.json();
+    if(!response.ok) throw new Error(data.error || response.status);
+    moduleState = data;
+    renderModules();
+    liveFlash($("moduleStatus"), `Interpreter: ${data.interpreter}; profile: ${data.desired.length ? data.desired.join(", ") : "core only"}`, true);
+  }catch(error){ liveFlash($("moduleStatus"), "Module status failed: "+error, false); }
+}
+
+async function saveModules(){
+  const desired = [...document.querySelectorAll("#moduleRows [data-module-id]")]
+    .filter(input => input.value === "true").map(input => input.dataset.moduleId);
+  liveFlash($("moduleSaveStatus"), "Planning module profile...", true);
+  try{
+    const planResponse = await fetch("/_config/api/modules/plan", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({desired})});
+    const plan = await planResponse.json();
+    if(!planResponse.ok) throw new Error(plan.error || planResponse.status);
+    if(plan.blocked.length) throw new Error("Required modules cannot be disabled: "+plan.blocked.join(", "));
+    const changes = [...plan.add, ...plan.remove];
+    if(changes.length && !confirm(`Save module profile?\n\nChanges: ${changes.join(", ")}\n\nInstallation and restart are separate steps.`)) return;
+    const response = await fetch("/_config/api/modules/desired", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({desired})});
+    const data = await response.json();
+    if(!response.ok) throw new Error(data.error || response.status);
+    liveFlash($("moduleSaveStatus"), "Desired profile saved. Install dependencies and restart before using changed capabilities.", true);
+    await loadModules();
+  }catch(error){ liveFlash($("moduleSaveStatus"), "Module profile failed: "+error, false); }
+}
+
+async function installModules(){
+  const desired = [...document.querySelectorAll("#moduleRows [data-module-id]")]
+    .filter(input => input.value === "true").map(input => input.dataset.moduleId);
+  if(!confirm("Install the selected allowlisted modules into this Manager environment? The Manager will not restart automatically.")) return;
+  liveFlash($("moduleSaveStatus"), "Starting dependency installation...", true);
+  try{
+    const response = await fetch("/_config/api/modules/install", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({desired})});
+    const data = await response.json();
+    if(!response.ok) throw new Error(data.error || response.status);
+    liveFlash($("moduleSaveStatus"), "Installation started. Poll operation status, then restart the Manager after success.", true);
+    pollModuleOperation();
+  }catch(error){ liveFlash($("moduleSaveStatus"), "Installation failed to start: "+error, false); }
+}
+
+async function pollModuleOperation(){
+  try{
+    const response = await fetch("/_config/api/modules/operation", {cache:"no-store"});
+    const operation = await response.json();
+    if(operation.status === "running"){
+      liveFlash($("moduleSaveStatus"), "Installing selected modules...", true);
+      setTimeout(pollModuleOperation, 1500);
+      return;
+    }
+    if(operation.status === "succeeded"){
+      liveFlash($("moduleSaveStatus"), "Modules installed. Restart the Manager explicitly before using changed capabilities.", true);
+    } else if(operation.status === "failed") {
+      liveFlash($("moduleSaveStatus"), "Module installation failed: "+(operation.error || "see operation output"), false);
+    }
+    await loadModules();
+  }catch(error){ liveFlash($("moduleSaveStatus"), "Operation status failed: "+error, false); }
+}
+
 function collectAdvancedChanges(){
   const out={};
   document.querySelectorAll('#allSettings [data-key]').forEach(inp=>{
@@ -4048,6 +4155,9 @@ $("btnSaveS3Secret").onclick = saveS3Secret;
 $("btnClearS3Secret").onclick = clearS3Secret;
 $("btnApplyAdvanced").onclick = applyAdvanced;
 $("btnSaveAdvanced").onclick = saveAdvanced;
+$("btnSaveModules").onclick = saveModules;
+$("btnInstallModules").onclick = installModules;
+$("btnReloadModules").onclick = loadModules;
 $("btnCreateBackup").onclick = createEncryptedBackup;
 $("btnRestoreBackup").onclick = restoreEncryptedBackup;
 document.querySelectorAll("[data-source-kind]").forEach(button=>{
@@ -4071,6 +4181,7 @@ new MutationObserver(records => {
   }));
 }).observe(document.body, {childList:true, subtree:true});
 loadCurrent().then(renderOverview);
+loadModules();
 initTabs();
 setSourceKind("database");
 </script>

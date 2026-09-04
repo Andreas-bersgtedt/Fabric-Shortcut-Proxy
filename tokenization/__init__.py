@@ -5,9 +5,11 @@ from tokenization.policy import (
     TokenizationPolicy,
     TokenizationPolicyError,
     TokenizationPolicyRegistry,
+    TokenizationSelection,
     algorithm_specs,
     legacy_policy,
     policy_fingerprint,
+    selection_from_transform,
 )
 
 __all__ = [
@@ -15,7 +17,9 @@ __all__ = [
     "AlgorithmSpec",
     "TokenizationPolicyError",
     "TokenizationPolicyRegistry",
+    "TokenizationSelection",
     "algorithm_specs",
     "legacy_policy",
     "policy_fingerprint",
+    "selection_from_transform",
 ]

@@ -7,8 +7,10 @@ from tokenization.policy import (
     TokenizationPolicy,
     TokenizationPolicyError,
     TokenizationPolicyRegistry,
+    TokenizationSelection,
     legacy_policy,
     policy_fingerprint,
+    selection_from_transform,
 )
 
 
@@ -47,6 +49,25 @@ def test_random_legacy_transform_has_no_key():
     assert policy.kind == "random_token"
     assert policy.transform_kind == "random_token"
     assert policy.key_ref is None
+
+
+def test_table_selector_contains_only_action_and_policy_id():
+    transform = config.ColumnTransform(
+        kind="deterministic_hash", key_ref="customer-pii-v1"
+    )
+    selection = selection_from_transform(transform)
+    assert selection.to_dict() == {
+        "action": "durable_token", "policy_id": "legacy-inline"
+    }
+    assert TokenizationSelection("keep").to_dict() == {"action": "keep"}
+    assert TokenizationSelection("remove").to_dict() == {"action": "remove"}
+
+
+def test_table_selector_rejects_policy_details_on_keep_or_remove():
+    with pytest.raises(TokenizationPolicyError, match="must not reference"):
+        TokenizationSelection("keep", policy_id="secret-policy")
+    with pytest.raises(TokenizationPolicyError, match="requires a policy_id"):
+        TokenizationSelection("random_token")
 
 
 def test_registry_rejects_unknown_and_disabled_policies():

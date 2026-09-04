@@ -20,6 +20,35 @@ class TokenizationPolicyError(ValueError):
 
 
 @dataclass(frozen=True)
+class TokenizationSelection:
+    """Safe table-side choice that contains no algorithm or secret settings."""
+
+    action: str
+    policy_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.action not in {"keep", "remove", "durable_token", "random_token"}:
+            raise TokenizationPolicyError(
+                "action must be 'keep', 'remove', 'durable_token', or 'random_token'"
+            )
+        if self.action in {"keep", "remove"} and self.policy_id is not None:
+            raise TokenizationPolicyError(
+                f"{self.action} selection must not reference a policy"
+            )
+        if self.action in {"durable_token", "random_token"}:
+            if not self.policy_id or any(ch.isspace() for ch in self.policy_id):
+                raise TokenizationPolicyError(
+                    f"{self.action} selection requires a policy_id without whitespace"
+                )
+
+    def to_dict(self) -> dict:
+        result = {"action": self.action}
+        if self.policy_id is not None:
+            result["policy_id"] = self.policy_id
+        return result
+
+
+@dataclass(frozen=True)
 class AlgorithmSpec:
     """Approved algorithm metadata used by policy validation and Arrow."""
 
@@ -176,6 +205,15 @@ def legacy_policy(
         domain=transform.domain or default_domain,
         normalization=transform.normalization,
     )
+
+
+def selection_from_transform(transform: "ColumnTransform") -> TokenizationSelection:
+    """Convert the current inline transform to a table-side selector."""
+    if transform.kind == "deterministic_hash":
+        return TokenizationSelection("durable_token", policy_id="legacy-inline")
+    if transform.kind == "random_token":
+        return TokenizationSelection("random_token", policy_id="legacy-inline")
+    raise TokenizationPolicyError(f"unsupported legacy transform: {transform.kind!r}")
 
 
 def policy_fingerprint(policy: TokenizationPolicy) -> str:

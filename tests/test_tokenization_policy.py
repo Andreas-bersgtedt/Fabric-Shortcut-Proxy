@@ -203,6 +203,58 @@ async def test_config_builder_policy_catalog_reports_malformed_file(tmp_path, mo
     assert response.json()["ok"] is False
 
 
+async def test_config_builder_policy_mutation_requires_admin_and_never_stores_secret(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    path = tmp_path / "central-policies.json"
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    payload = {
+        "policy_id": "customer-pii-v1", "kind": "durable_token",
+        "key_ref": "customer-pii-v1", "domain": "customer-email",
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        denied = await client.post("/_config/api/tokenization/policies", json=payload)
+        allowed = await client.post(
+            "/_config/api/tokenization/policies", json=payload,
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert "admin-test-token" not in path.read_text(encoding="utf-8")
+    assert allowed.json()["policy"]["key_ref"] == "customer-pii-v1"
+
+
+async def test_config_builder_policy_mutation_rejects_secret_field(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    path = tmp_path / "central-policies.json"
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/_config/api/tokenization/policies",
+            json={"policy_id": "bad", "kind": "durable_token", "key_ref": "k", "secret": "x"},
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+    assert response.status_code == 400
+    assert "key material" in response.json()["error"]
+
+
 def test_policy_fingerprint_is_stable_and_secret_free():
     policy = TokenizationPolicy(
         policy_id="customer-pii-v1",

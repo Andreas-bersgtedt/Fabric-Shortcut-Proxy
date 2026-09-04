@@ -207,6 +207,10 @@ class TokenizationPolicyRegistry:
             )
         self._policies[policy.policy_id] = policy
 
+    def replace(self, policy: TokenizationPolicy) -> None:
+        """Insert or replace a policy for controlled administrative updates."""
+        self._policies[policy.policy_id] = policy
+
     def has(self, policy_id: str) -> bool:
         """Return whether a policy ID is registered, including disabled policies."""
         return policy_id in self._policies

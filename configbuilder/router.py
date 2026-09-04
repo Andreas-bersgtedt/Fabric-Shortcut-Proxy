@@ -284,6 +284,34 @@ async def tokenization_policies() -> JSONResponse:
     })
 
 
+def _check_tokenization_admin(request: Request) -> None:
+    """Require the transitional admin token for central policy mutations."""
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    supplied = request.headers.get("x-admin-token", "")
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        raise PermissionError("tokenization policy administrator authorization required")
+
+
+@router.post("/api/tokenization/policies")
+async def save_tokenization_policy(request: Request) -> JSONResponse:
+    """Create or replace one central policy; secret values are never accepted."""
+    try:
+        _check_tokenization_admin(request)
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    try:
+        from tokenization import TokenizationPolicy, load_default_registry, save_registry
+        body = await request.json()
+        policy = TokenizationPolicy.from_dict(body)
+        registry = load_default_registry()
+        registry.replace(policy)
+        save_registry(os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"), registry)
+    except (ValueError, TypeError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("tokenization_policy_saved", policy_id=policy.policy_id, enabled=policy.enabled)
+    return JSONResponse({"ok": True, "policy": policy.to_public(), "restart_required": True})
+
+
 @router.post("/api/keyvault/test")
 async def keyvault_test(request: Request) -> JSONResponse:
     """Live Key Vault connectivity test for the 'Test Key Vault' button.

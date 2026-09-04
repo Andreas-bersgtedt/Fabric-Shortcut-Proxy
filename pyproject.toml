@@ -95,6 +95,7 @@ packages = [
     "s3",
     "security",
     "storage",
+    "tokenization",
 ]
 
 [tool.setuptools.package-data]

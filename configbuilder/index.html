@@ -585,6 +585,36 @@
       <div id="tokenizationPolicies" class="connlist"></div>
       <div class="status" id="tokenizationPoliciesStatus"></div>
     </div>
+    <div class="card" id="userManagementPanel">
+      <h2>User management</h2>
+      <div class="hint">Create and disable identity metadata for the protected management API. Authentication credentials are supplied by the deployment identity provider and are not stored here.</div>
+      <label for="userAdminToken">Administrator token</label>
+      <input id="userAdminToken" type="password" autocomplete="off" placeholder="Required for user administration" />
+      <div class="row">
+        <section>
+          <label for="newUserId">User ID</label>
+          <input id="newUserId" placeholder="support-operator" />
+        </section>
+        <section>
+          <label for="newUserRole">Role</label>
+          <select id="newUserRole">
+            <option value="monitor_troubleshooter">Monitor / Troubleshooter</option>
+            <option value="viewer">Viewer</option>
+            <option value="config_operator">Config Operator</option>
+            <option value="tokenization_administrator">Tokenization Administrator</option>
+            <option value="security_administrator">Security Administrator</option>
+            <option value="user_administrator">User Administrator</option>
+            <option value="system_administrator">System Administrator</option>
+          </select>
+        </section>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="btnLoadUsers">Load users</button>
+        <button class="btn primary" id="btnCreateUser">Create user</button>
+      </div>
+      <div id="userManagementList" class="connlist"></div>
+      <div class="status" id="userManagementStatus"></div>
+    </div>
     <div class="card" id="backupRestorePanel">
       <h2>Backup and restore</h2>
       <div class="hint">Create a portable encrypted backup of all configuration, database credentials, storage secrets, access keys and ACLs, and Open Mirroring state (including any pending recovery payload). Source datasets, generated caches, logs, environment-only secrets, external TLS files, and remote Key Vault contents are not copied.</div>
@@ -1379,6 +1409,47 @@ async function loadTokenizationPolicies(){
     status.textContent = error.message || "Unable to load tokenization policies.";
     status.className = "status err";
   }
+}
+
+async function loadManagedUsers(){
+  const box=$("userManagementList"); const status=$("userManagementStatus");
+  const token=$("userAdminToken").value.trim();
+  if(!box || !token){ if(status) status.textContent="Enter the administrator token to load users."; return; }
+  try{
+    const response=await fetch("/_config/api/authorization/users", {headers:{"X-Admin-Token":token},cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok || !data.ok) throw new Error(data.error||"Unable to load users");
+    box.innerHTML="";
+    for(const user of data.users||[]){
+      const row=document.createElement("div"); row.className="conn-row";
+      const label=document.createElement("strong"); label.textContent=user.user_id;
+      const detail=document.createElement("span"); detail.className="hint";
+      detail.textContent=(user.enabled?"enabled":"disabled")+" · "+(user.roles||[]).join(", ");
+      const disable=document.createElement("button"); disable.className="btn ghost"; disable.textContent="Disable";
+      disable.disabled=!user.enabled; disable.onclick=()=>disableManagedUser(user.user_id);
+      row.append(label,detail,disable); box.appendChild(row);
+    }
+    status.textContent=`${(data.users||[]).length} user record${(data.users||[]).length===1?"":"s"} loaded.`;
+    status.className="status ok";
+  }catch(error){ box.textContent="User records are unavailable."; status.textContent=error.message||"Unable to load users."; status.className="status err"; }
+}
+
+async function createManagedUser(){
+  const token=$("userAdminToken").value.trim(); const userId=$("newUserId").value.trim();
+  const role=$("newUserRole").value; const status=$("userManagementStatus");
+  if(!token || !userId){ status.textContent="Administrator token and user ID are required."; status.className="status err"; return; }
+  const response=await fetch("/_config/api/authorization/users", {method:"POST",headers:{"Content-Type":"application/json","X-Admin-Token":token},body:JSON.stringify({user_id:userId,roles:[role]})});
+  const data=await response.json();
+  status.textContent=data.ok?"User record created.":(data.error||"Unable to create user."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok){ $("newUserId").value=""; await loadManagedUsers(); }
+}
+
+async function disableManagedUser(userId){
+  const token=$("userAdminToken").value.trim(); const status=$("userManagementStatus");
+  const response=await fetch("/_config/api/authorization/users/"+encodeURIComponent(userId), {method:"DELETE",headers:{"X-Admin-Token":token}});
+  const data=await response.json();
+  status.textContent=data.ok?"User record disabled.":(data.error||"Unable to disable user."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadManagedUsers();
 }
 
 // ---- connect / test ----
@@ -3730,6 +3801,8 @@ renderConnList();
 loadSettings();
 loadTokenizationKeyReferences();
 loadTokenizationPolicies();
+$("btnLoadUsers").onclick=loadManagedUsers;
+$("btnCreateUser").onclick=createManagedUser;
 loadMounts();
 loadAccessKeys();
 omInit();

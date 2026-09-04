@@ -84,7 +84,9 @@ def _required_from_config() -> dict[str, str]:
     serialized = json.dumps(tables).lower()
     if "deterministic_hash" in serialized or "random_token" in serialized:
         required["objectstore"] = "configured tokenization or object-store reader"
-    if platform.system().lower() in ("linux", "darwin"):
+    if platform.system().lower() in ("linux", "darwin") and (
+        required or _read_json("config.connection.json") or _read_json("config.mounts.json")
+    ):
         required["credentials"] = "non-Windows encrypted credential backend"
     return required
 

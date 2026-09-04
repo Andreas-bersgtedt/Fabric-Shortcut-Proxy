@@ -211,7 +211,9 @@ class KeyVaultSecretSource:
         proves connectivity + read permission. Any transport/auth error fails.
         Returns ``(ok, detail)``.
         """
-        if not sdk_available():
+        if not self._cfg.enabled:
+            return False, "no Key Vault URI configured"
+        if self._client is None and not sdk_available():
             return False, _INSTALL_HINT
         try:
             self.get_by_name(secret_name_for("db_url", self._cfg))

@@ -423,8 +423,8 @@ async def save_config(request: Request) -> JSONResponse:
     try:
         from security.keyvault import write_back_config_secrets
         write_back_config_secrets(clean)
-    except Exception:  # noqa: BLE001 - write-back must never break the save
-        pass
+    except Exception as exc:  # noqa: BLE001 - write-back must never break the save
+        log.warning("config_builder_keyvault_writeback_failed", error=str(exc))
     log.info("config_saved", path=result["path"], changed=result["changed"])
     return JSONResponse({
         "ok": True,
@@ -472,8 +472,8 @@ async def apply_config(request: Request) -> JSONResponse:
     try:
         from security.keyvault import write_back_config_secrets
         write_back_config_secrets(clean)
-    except Exception:  # noqa: BLE001 - write-back must never break the apply
-        pass
+    except Exception as exc:  # noqa: BLE001 - write-back must never break the apply
+        log.warning("config_builder_keyvault_writeback_failed", error=str(exc))
 
     if isinstance(updates.get("connections"), list):
         restored_ids = {

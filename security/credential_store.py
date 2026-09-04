@@ -171,6 +171,8 @@ def _restrict_perms(path: str) -> None:
         try:
             os.chmod(path, 0o600)
         except OSError:
+            # Best-effort permission hardening only; Unix-only safety fixups are
+            # not required to make the store functional.
             pass
 
 

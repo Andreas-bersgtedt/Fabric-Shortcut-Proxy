@@ -125,6 +125,14 @@ def test_probe_reports_outage():
     assert ok is False and "network down" in detail
 
 
+def test_probe_reports_missing_sdk_when_enabled_and_sdk_absent(monkeypatch):
+    cfg = keyvault.KeyVaultConfig(vault_uri="https://v")
+    src = keyvault.KeyVaultSecretSource(cfg)
+    monkeypatch.setattr(keyvault, "sdk_available", lambda: False)
+    ok, detail = src.probe()
+    assert ok is False and "azure-keyvault-secrets" in detail
+
+
 def test_probe_ok_with_injected_client():
     src, _ = _source({})
     assert src.probe() == (True, "ok")

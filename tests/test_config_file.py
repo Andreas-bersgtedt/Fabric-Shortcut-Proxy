@@ -140,6 +140,22 @@ def test_tabledef_central_policy_selector_fails_closed(tmp_path, monkeypatch):
         })
 
 
+def test_tabledef_central_policy_selector_rejects_disabled_policy(tmp_path, monkeypatch):
+    policy_file = tmp_path / "tokenization.json"
+    policy_file.write_text(json.dumps({"policies": [{
+        "policy_id": "retired-v1", "kind": "durable_token",
+        "key_ref": "customer-pii-v1", "enabled": False,
+    }]}), encoding="utf-8")
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(policy_file))
+    with pytest.raises(ValueError, match="disabled"):
+        config._tabledef_from_json({
+            "source_table": "dbo.customers", "key_column": "id", "schema": [
+                {"field_id": 1, "name": "email", "type": "string",
+                 "tokenization": {"action": "durable_token", "policy_id": "retired-v1"}},
+            ],
+        })
+
+
 def test_column_transform_validation():
     with pytest.raises(ValueError, match="requires a non-empty key_ref"):
         config.ColumnTransform(kind="deterministic_hash")

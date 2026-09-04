@@ -171,3 +171,26 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert created.json()["user"]["user_id"] == "support"
     assert disabled.status_code == 200
     assert last_admin.status_code == 409
+
+
+async def test_config_mutations_require_config_write_when_enforced(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        denied = await client.post("/_config/api/save", json={"settings": {"bucket": "x"}})
+        allowed = await client.post(
+            "/_config/api/save", json={"settings": {"unknown_setting": True}},
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+    assert denied.status_code == 401
+    assert allowed.status_code == 400
+    assert "unknown_setting" in allowed.text

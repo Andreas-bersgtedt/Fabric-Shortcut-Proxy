@@ -20,7 +20,7 @@ import os
 import pathlib
 import uuid
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import config
@@ -297,6 +297,20 @@ def _check_tokenization_admin(request: Request) -> None:
         raise PermissionError(str(exc)) from exc
 
 
+def _check_config_write(request: Request) -> None:
+    """Optionally enforce the named config.write permission on mutations."""
+    if os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() != "1":
+        return
+    from security.authorization import AuthorizationError, require_request_permission
+
+    try:
+        require_request_permission(
+            request.headers.get("x-admin-token", ""), "config.write"
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=401, detail="authentication required") from exc
+
+
 @router.post("/api/tokenization/policies")
 async def save_tokenization_policy(request: Request) -> JSONResponse:
     """Create or replace one central policy; secret values are never accepted."""
@@ -530,6 +544,7 @@ async def save_config(request: Request) -> JSONResponse:
     (``restart_required``) — except ``agent_count``, which the Manager can also
     apply live via ``POST /_manager/api/scale``.
     """
+    _check_config_write(request)
     body = await request.json()
     updates = body.get("settings") if isinstance(body, dict) else None
     if not isinstance(updates, dict) or not updates:
@@ -571,6 +586,7 @@ async def apply_config(request: Request) -> JSONResponse:
 
     Request body: ``{"settings": {"key": value, ...}}``
     """
+    _check_config_write(request)
     body = await request.json()
     updates = body.get("settings") if isinstance(body, dict) else None
     if not isinstance(updates, dict) or not updates:

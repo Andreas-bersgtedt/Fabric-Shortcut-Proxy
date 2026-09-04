@@ -322,6 +322,7 @@
     </div>
     <div class="hint" id="credHint" style="margin-top:8px;">Save source stores non-secret properties in configuration and encrypts its password in the Manager credential store when needed.</div>
     <div class="status" id="connStatus"></div>
+    <div class="status" id="connWarnings" role="status"></div>
   </div>
   </div>
 </div>
@@ -1461,6 +1462,11 @@ async function testActiveConnection(){
   const data = await api("/_config/api/connect", conn);
   $("btnConnect").disabled = false;
   if(!data.ok){ s.className="status err"; s.textContent="Connection failed: " + (data.error||"unknown error"); return null; }
+  const warningBox=$("connWarnings");
+  if(warningBox){
+    warningBox.textContent=(data.warnings||[]).join(" ");
+    warningBox.className="status "+((data.warnings||[]).length?"warn":"");
+  }
   const connId = conn.id || "default";
   state.activeConnId = connId;
   const c = state.connections.get(connId) || newConn(connId);

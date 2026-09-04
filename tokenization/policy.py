@@ -183,6 +183,25 @@ class TokenizationPolicyRegistry:
     def list_public(self) -> list[dict]:
         return [self._policies[key].to_public() for key in sorted(self._policies)]
 
+    def resolve_selection(self, selection: TokenizationSelection) -> TokenizationPolicy:
+        """Resolve a table selection and enforce action/policy-kind agreement."""
+        if selection.action in {"keep", "remove"}:
+            raise TokenizationPolicyError(
+                f"{selection.action} selection does not resolve a token policy"
+            )
+        policy = self.get(selection.policy_id)
+        if policy.kind != selection.action:
+            raise TokenizationPolicyError(
+                f"policy {selection.policy_id!r} is {policy.kind!r}, "
+                f"not {selection.action!r}"
+            )
+        return policy
+
+    def selection(self, policy_id: str) -> TokenizationSelection:
+        """Return the safe table-side selector for an enabled policy."""
+        policy = self.get(policy_id)
+        return TokenizationSelection(policy.kind, policy_id=policy.policy_id)
+
 
 def legacy_policy(
     transform: "ColumnTransform",

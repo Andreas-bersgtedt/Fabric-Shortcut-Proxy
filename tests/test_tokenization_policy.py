@@ -91,6 +91,23 @@ def test_registry_rejects_unknown_and_disabled_policies():
         registry.get("disabled")
 
 
+def test_registry_enforces_selector_policy_kind():
+    registry = TokenizationPolicyRegistry([
+        TokenizationPolicy(policy_id="durable", kind="durable_token", key_ref="k"),
+        TokenizationPolicy(policy_id="random", kind="random_token"),
+    ])
+    assert registry.resolve_selection(
+        TokenizationSelection("durable_token", "durable")
+    ).policy_id == "durable"
+    assert registry.selection("random").to_dict() == {
+        "action": "random_token", "policy_id": "random"
+    }
+    with pytest.raises(TokenizationPolicyError, match="not 'random_token'"):
+        registry.resolve_selection(TokenizationSelection("random_token", "durable"))
+    with pytest.raises(TokenizationPolicyError, match="does not resolve"):
+        registry.resolve_selection(TokenizationSelection("keep"))
+
+
 def test_policy_fingerprint_is_stable_and_secret_free():
     policy = TokenizationPolicy(
         policy_id="customer-pii-v1",

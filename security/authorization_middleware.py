@@ -39,12 +39,21 @@ def _permission(path: str, method: str) -> str | None:
 
 
 def _context(request: Request) -> dict[str, str]:
-    """Build a bounded resource context from explicit operator context headers."""
+    """Build bounded context from route-owned identifiers only.
+
+    Caller-supplied context headers and query parameters are intentionally not
+    authorization inputs; routes must not let a client claim a broader scope.
+    """
     context: dict[str, str] = {}
-    for key in ("tenant", "environment", "source", "connection", "table", "mount", "policy_namespace"):
-        value = request.headers.get(f"x-fsp-context-{key}") or request.query_params.get(key)
-        if value and len(value) <= 200:
-            context[key] = value
+    path = request.url.path
+    if path.startswith("/_config/api/tokenization/policies/"):
+        policy_id = path.rsplit("/", 1)[-1]
+        if policy_id and len(policy_id) <= 200:
+            context["policy_namespace"] = policy_id
+    if path.startswith("/_config/api/authorization/users/"):
+        user_id = path.rsplit("/", 1)[-1]
+        if user_id and len(user_id) <= 200:
+            context["user"] = user_id
     return context
 
 

@@ -245,6 +245,20 @@ def test_authorization_route_map_separates_security_from_config():
     assert _permission("/_config/api/tokenization/policies", "POST") == "tokenization.policy.admin"
 
 
+def test_authorization_context_ignores_caller_supplied_scope_claims():
+    from starlette.requests import Request
+    from security.authorization_middleware import _context
+
+    scope = {
+        "type": "http", "path": "/_config/api/tokenization/policies/policy-v1",
+        "query_string": b"environment=production", "headers": [
+            (b"x-fsp-context-environment", b"production"),
+        ],
+    }
+    context = _context(Request(scope))
+    assert context == {"policy_namespace": "policy-v1"}
+
+
 async def test_authorization_middleware_enforces_operator_functions(monkeypatch):
     import httpx
     from fastapi import FastAPI

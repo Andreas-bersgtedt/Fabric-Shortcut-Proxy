@@ -65,6 +65,18 @@ def _credentials_ok(header: str) -> bool:
     return user_ok and pw_ok
 
 
+def _session_ok(request: Request) -> bool:
+    """Accept a valid local identity session alongside legacy Basic auth."""
+    token = request.cookies.get("fsp_session", "")
+    if not token:
+        return False
+    try:
+        from security.identity import identity_provider
+        return identity_provider().resolve_session(token) is not None
+    except (OSError, ValueError):
+        return False
+
+
 class ManagerAuthMiddleware(BaseHTTPMiddleware):
     """Require HTTP Basic credentials for the Manager's operator surface."""
 
@@ -75,6 +87,6 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if not config.MANAGER_AUTH_PASSWORD:
             return _misconfigured()
-        if not _credentials_ok(request.headers.get("authorization", "")):
+        if not _credentials_ok(request.headers.get("authorization", "")) and not _session_ok(request):
             return _unauthorized()
         return await call_next(request)

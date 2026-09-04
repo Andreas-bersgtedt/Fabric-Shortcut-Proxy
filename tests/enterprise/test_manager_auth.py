@@ -92,6 +92,22 @@ async def test_correct_credentials_pass(_enable_auth):
         assert r.status_code == 200 and r.json() == {"ok": True}
 
 
+async def test_valid_local_session_also_passes_manager_basic_gate(_enable_auth, tmp_path, monkeypatch):
+    from security.authorization import User
+    from security.identity import IdentityProvider, identity_provider
+
+    identity_path = tmp_path / "identities.json"
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
+    provider = IdentityProvider(str(identity_path))
+    provider.create_or_replace(User("ops", roles=("monitor_troubleshooter",)), "correct horse battery staple")
+    session_provider = identity_provider()
+    user = session_provider.authenticate("ops", "correct horse battery staple")
+    session = session_provider.create_session(user)
+    async with _client(_app()) as c:
+        response = await c.get("/_manager/api/fleet", cookies={"fsp_session": session})
+    assert response.status_code == 200
+
+
 async def test_health_exempt_control_protected(_enable_auth):
     async with _client(_app()) as c:
         assert (await c.get("/healthz")).status_code == 200

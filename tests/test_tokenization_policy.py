@@ -156,6 +156,53 @@ def test_default_registry_uses_operator_selected_path(tmp_path, monkeypatch):
     assert load_default_registry().list_public() == registry.list_public()
 
 
+async def test_config_builder_policy_catalog_is_secret_free(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    path = tmp_path / "central-policies.json"
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
+    save_registry(str(path), TokenizationPolicyRegistry([
+        TokenizationPolicy(
+            policy_id="customer-pii-v1", kind="durable_token",
+            key_ref="customer-pii-v1", domain="customer-email",
+        ),
+    ]))
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/_config/api/tokenization/policies")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["algorithms"] == ["blake2b", "sha256"]
+    assert body["policies"][0]["key_ref"] == "customer-pii-v1"
+    assert "uat-secret" not in response.text
+
+
+async def test_config_builder_policy_catalog_reports_malformed_file(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    path = tmp_path / "central-policies.json"
+    path.write_text("{broken", encoding="utf-8")
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/_config/api/tokenization/policies")
+    assert response.status_code == 503
+    assert response.json()["ok"] is False
+
+
 def test_policy_fingerprint_is_stable_and_secret_free():
     policy = TokenizationPolicy(
         policy_id="customer-pii-v1",

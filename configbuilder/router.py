@@ -267,6 +267,23 @@ async def tokenization_key_references() -> JSONResponse:
     return JSONResponse({"ok": True, "references": references})
 
 
+@router.get("/api/tokenization/policies")
+async def tokenization_policies() -> JSONResponse:
+    """Return the central policy catalog without returning secret values."""
+    from tokenization import algorithm_specs, load_default_registry
+
+    try:
+        registry = load_default_registry()
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+    return JSONResponse({
+        "ok": True,
+        "path": os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"),
+        "algorithms": [spec.name for spec in algorithm_specs()],
+        "policies": registry.list_public(),
+    })
+
+
 @router.post("/api/keyvault/test")
 async def keyvault_test(request: Request) -> JSONResponse:
     """Live Key Vault connectivity test for the 'Test Key Vault' button.

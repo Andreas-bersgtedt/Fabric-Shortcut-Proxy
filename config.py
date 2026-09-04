@@ -391,6 +391,7 @@ class ColumnDef:
     nullable: bool = True
     source: str | None = None
     transform: ColumnTransform | None = None
+    policy_id: str | None = None
 
     @property
     def source_name(self) -> str:
@@ -476,10 +477,29 @@ def column_defs_from_json(raw_schema, *, context: str = "Column") -> list[Column
     if not isinstance(raw_schema, list):
         raise TypeError(f"{context} schema must be a list")
 
-    def _transform(c: dict) -> ColumnTransform | None:
+    def _transform(c: dict) -> tuple[ColumnTransform | None, str | None, bool]:
+        selection = c.get("tokenization")
+        if selection is not None:
+            from tokenization import TokenizationSelection, load_default_registry
+
+            if not isinstance(selection, dict):
+                raise ValueError(
+                    f"{context} {c.get('name')!r} tokenization must be an object"
+                )
+            action = str(selection.get("action", "")).strip().lower()
+            policy_id = selection.get("policy_id")
+            selected = TokenizationSelection(
+                action, policy_id=(str(policy_id).strip() if policy_id is not None else None)
+            )
+            if selected.action == "keep":
+                return None, None, False
+            if selected.action == "remove":
+                return None, None, True
+            policy = load_default_registry().resolve_selection(selected)
+            return policy.to_legacy_transform(), policy.policy_id, False
         raw = c.get("transform")
         if not raw:
-            return None
+            return None, None, False
         if not isinstance(raw, dict):
             raise ValueError(
                 f"{context} {c.get('name')!r} transform must be an object"
@@ -489,19 +509,23 @@ def column_defs_from_json(raw_schema, *, context: str = "Column") -> list[Column
             key_ref=(str(raw["key_ref"]).strip() if raw.get("key_ref") else None),
             domain=(str(raw["domain"]) if raw.get("domain") is not None else None),
             normalization=str(raw.get("normalization", "none")).strip().lower(),
-        )
+        ), None, False
 
-    return [
-        ColumnDef(
+    columns = []
+    for c in raw_schema:
+        transform, policy_id, removed = _transform(c)
+        if removed:
+            continue
+        columns.append(ColumnDef(
             field_id=int(c["field_id"]),
             name=c["name"],
             iceberg_type=c.get("type") or c.get("iceberg_type"),
             nullable=bool(c.get("nullable", True)),
             source=(str(c["source"]) if c.get("source") else None),
-            transform=_transform(c),
-        )
-        for c in raw_schema
-    ]
+            transform=transform,
+            policy_id=policy_id,
+        ))
+    return columns
 
 
 def _tabledef_from_json(d: dict) -> "TableDef":

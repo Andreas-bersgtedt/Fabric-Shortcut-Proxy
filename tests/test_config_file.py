@@ -95,6 +95,46 @@ def test_tabledef_from_json_with_tokenization(monkeypatch):
     assert config.resolve_tokenization_key("customer-pii-v1") == "uat-secret"
 
 
+def test_tabledef_from_json_with_central_policy_selectors(tmp_path, monkeypatch):
+    policy_file = tmp_path / "tokenization.json"
+    policy_file.write_text(json.dumps({"policies": [{
+        "policy_id": "customer-pii-v1", "kind": "durable_token",
+        "key_ref": "customer-pii-v1", "domain": "customer-email",
+        "normalization": "trim_lower",
+    }]}), encoding="utf-8")
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(policy_file))
+    table = config._tabledef_from_json({
+        "name": "customers_safe", "source_table": "dbo.customers",
+        "key_column": "customer_id", "schema": [
+            {"field_id": 1, "name": "customer_id", "type": "long"},
+            {"field_id": 2, "name": "email_token", "source": "email", "type": "string",
+             "tokenization": {"action": "durable_token", "policy_id": "customer-pii-v1"}},
+            {"field_id": 3, "name": "ssn", "type": "string",
+             "tokenization": {"action": "remove"}},
+        ],
+    })
+    assert [column.name for column in table.schema] == ["customer_id", "email_token"]
+    token = table.schema[1]
+    assert token.policy_id == "customer-pii-v1"
+    assert token.transform.kind == "deterministic_hash"
+    assert token.transform.normalization == "trim_lower"
+
+
+def test_tabledef_central_policy_selector_fails_closed(tmp_path, monkeypatch):
+    policy_file = tmp_path / "tokenization.json"
+    policy_file.write_text(json.dumps({"policies": [{
+        "policy_id": "random-v1", "kind": "random_token",
+    }]}), encoding="utf-8")
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(policy_file))
+    with pytest.raises(ValueError, match="not 'durable_token'"):
+        config._tabledef_from_json({
+            "source_table": "dbo.customers", "key_column": "id", "schema": [
+                {"field_id": 1, "name": "email", "type": "string",
+                 "tokenization": {"action": "durable_token", "policy_id": "random-v1"}},
+            ],
+        })
+
+
 def test_column_transform_validation():
     with pytest.raises(ValueError, match="requires a non-empty key_ref"):
         config.ColumnTransform(kind="deterministic_hash")

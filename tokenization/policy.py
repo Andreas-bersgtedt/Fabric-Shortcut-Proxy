@@ -119,6 +119,21 @@ class TokenizationPolicy:
         """Return the legacy transform kind used by current execution paths."""
         return "deterministic_hash" if self.kind == "durable_token" else "random_token"
 
+    def to_legacy_transform(self) -> "ColumnTransform":
+        """Adapt a central policy for current planner/tokenizer consumers."""
+        if self.kind == "durable_token":
+            kind = "deterministic_hash"
+        else:
+            kind = "random_token"
+        from config import ColumnTransform
+
+        return ColumnTransform(
+            kind=kind,
+            key_ref=self.key_ref,
+            domain=self.domain,
+            normalization=self.normalization,
+        )
+
     def to_public(self) -> dict:
         """Return policy metadata without secret material."""
         return {

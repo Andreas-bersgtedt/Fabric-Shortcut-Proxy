@@ -1,6 +1,6 @@
-from security.authorization import UserDirectory
+from security.authorization import UserDirectory, default_user_directory_path
 
-__all__ = ["UserDirectory"]
+__all__ = ["UserDirectory", "default_user_directory_path"]
 """Security utilities for credential management and protection."""
 from security.credentials import (
     scrub_secrets,

@@ -226,3 +226,18 @@ class UserDirectory:
                     os.remove(temporary)
                 except OSError:
                     pass
+
+
+def default_user_directory_path() -> str:
+    """Return the operator-selected user directory path."""
+    return os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+
+
+def authenticate_admin_token(supplied_token: str) -> User | None:
+    """Map the transitional admin token to a non-persisted system admin user."""
+    import hmac
+
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    if expected and supplied_token and hmac.compare_digest(supplied_token, expected):
+        return User("admin-token", roles=("system_administrator",))
+    return None

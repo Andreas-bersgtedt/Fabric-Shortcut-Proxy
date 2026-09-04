@@ -8,6 +8,7 @@ from security.authorization import (
     User,
     UserDirectory,
     authorize,
+    authenticate_admin_token,
     require,
 )
 
@@ -81,3 +82,46 @@ def test_user_directory_rejects_credentials_and_unknown_user():
         User.from_dict({"user_id": "ops", "password_hash": "x"})
     with pytest.raises(PermissionError, match="user not found"):
         UserDirectory().get("missing")
+
+
+def test_admin_token_authentication_is_constant_time_and_system_admin(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    user = authenticate_admin_token("admin-test-token")
+    assert user is not None
+    assert user.user_id == "admin-token"
+    assert user.can("users.admin")
+    assert authenticate_admin_token("wrong") is None
+
+
+async def test_authorization_endpoints_require_admin_and_hide_user_secrets(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    user_path = tmp_path / "users.json"
+    UserDirectory([
+        User("ops-user", roles=("monitor_troubleshooter",)),
+    ]).save(str(user_path))
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        denied = await client.get("/_config/api/authorization/users")
+        me = await client.get(
+            "/_config/api/authorization/me",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+        users = await client.get(
+            "/_config/api/authorization/users",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+    assert denied.status_code == 401
+    assert me.status_code == 200
+    assert "system.admin" in me.json()["permissions"]
+    assert users.status_code == 200
+    assert users.json()["users"][0]["user_id"] == "ops-user"
+    assert "password" not in users.text.lower()

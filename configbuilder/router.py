@@ -312,6 +312,33 @@ async def save_tokenization_policy(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "policy": policy.to_public(), "restart_required": True})
 
 
+@router.get("/api/authorization/me")
+async def authorization_me(request: Request) -> JSONResponse:
+    """Return the authenticated transitional admin identity and permissions."""
+    from security.authorization import authenticate_admin_token
+
+    user = authenticate_admin_token(request.headers.get("x-admin-token", ""))
+    if user is None:
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    return JSONResponse({"ok": True, "user": user.to_public(),
+                         "permissions": sorted(user.permissions())})
+
+
+@router.get("/api/authorization/users")
+async def authorization_users(request: Request) -> JSONResponse:
+    """List safe user metadata for the authenticated transitional administrator."""
+    from security.authorization import UserDirectory, authenticate_admin_token
+
+    user = authenticate_admin_token(request.headers.get("x-admin-token", ""))
+    if user is None:
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        users = UserDirectory.load(os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json"))
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+    return JSONResponse({"ok": True, "users": users.list_public()})
+
+
 @router.post("/api/keyvault/test")
 async def keyvault_test(request: Request) -> JSONResponse:
     """Live Key Vault connectivity test for the 'Test Key Vault' button.

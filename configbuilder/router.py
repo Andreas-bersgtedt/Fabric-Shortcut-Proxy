@@ -349,7 +349,16 @@ async def bootstrap_builder() -> JSONResponse:
             }
             if column.source:
                 item["source"] = column.source
-            if column.transform:
+            if getattr(column, "policy_id", None):
+                item["tokenization"] = {
+                    "action": (
+                        "durable_token"
+                        if column.transform and column.transform.kind == "deterministic_hash"
+                        else "random_token"
+                    ),
+                    "policy_id": column.policy_id,
+                }
+            elif column.transform:
                 transform = {
                     "kind": column.transform.kind,
                     "normalization": column.transform.normalization,
@@ -657,7 +666,16 @@ def _open_mirror_targets_payload() -> list[dict]:
             "type": column.iceberg_type,
             "nullable": column.nullable,
         }
-        if column.transform:
+        if getattr(column, "policy_id", None):
+            payload["tokenization"] = {
+                "action": (
+                    "durable_token"
+                    if column.transform and column.transform.kind == "deterministic_hash"
+                    else "random_token"
+                ),
+                "policy_id": column.policy_id,
+            }
+        elif column.transform:
             payload["transform"] = {
                 "kind": column.transform.kind,
                 "key_ref": column.transform.key_ref,

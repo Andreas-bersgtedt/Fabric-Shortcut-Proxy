@@ -1738,7 +1738,9 @@ function storagePolicyColumns(draft){
     const transformed=column.policy==="deterministic_hash"||column.policy==="random_token";
     const item={field_id:column.field_id,name:column.name.trim(),type:transformed?"string":column.type,nullable:column.nullable};
     if(column.name!==column.source||transformed) item.source=column.source;
-    if(column.policy==="deterministic_hash") item.transform={kind:"deterministic_hash",key_ref:column.key_ref.trim(),domain:column.domain,normalization:column.normalization};
+    if(column.policy_id && (column.policy==="deterministic_hash" || column.policy==="random_token")){
+      item.tokenization={action:column.policy==="deterministic_hash"?"durable_token":"random_token",policy_id:column.policy_id};
+    }else if(column.policy==="deterministic_hash") item.transform={kind:"deterministic_hash",key_ref:column.key_ref.trim(),domain:column.domain,normalization:column.normalization};
     else if(column.policy==="random_token") item.transform={kind:"random_token"};
     return item;
   });
@@ -1777,13 +1779,16 @@ function stub(t){ return { name:t.name, schema:t.schema||null,
 
 function policyColumn(column, index){
   const transform = column.transform || null;
+  const tokenization = column.tokenization || null;
+  const policy = tokenization ? String(tokenization.action || "keep") : (transform ? transform.kind : "keep");
   return {
     field_id: Number(column.field_id) || index + 1,
     source: String(column.source || column.name || ""),
     name: String(column.name || column.source || ""),
     type: String(column.type || column.iceberg_type || "string"),
     nullable: column.nullable !== false,
-    policy: transform ? transform.kind : "keep",
+    policy,
+    policy_id: tokenization && tokenization.policy_id ? String(tokenization.policy_id) : "",
     key_ref: transform && transform.key_ref ? String(transform.key_ref) : "",
     domain: transform && transform.domain != null ? String(transform.domain) : "",
     normalization: transform && transform.normalization ? transform.normalization : "none",
@@ -1848,8 +1853,8 @@ function policyErrors(entry){
   if(names.some(name=>!name)) errors.push("Every kept column needs an output name.");
   if(new Set(names).size!==names.length) errors.push("Output names must be unique.");
   for(const column of kept){
-    if(column.policy==="deterministic_hash" && !column.key_ref.trim()){
-      errors.push(`${column.source}: deterministic tokens require a key reference.`);
+    if(column.policy==="deterministic_hash" && !column.policy_id && !column.key_ref.trim()){
+      errors.push(`${column.source}: deterministic tokens require a central policy or key reference.`);
     }
   }
   const random = kept.some(column=>column.policy==="random_token");
@@ -1893,6 +1898,11 @@ function tokenizationKeyOptionHtml(currentReference){
   return options.join("");
 }
 
+function centralPoliciesFor(kind){
+  const wanted = kind === "deterministic_hash" ? "durable_token" : "random_token";
+  return state.tokenizationPolicies.filter(policy=>policy.kind===wanted && policy.enabled!==false);
+}
+
 function renderPolicyEditor(entry, opts){
   opts = opts || {};
   const onEdit = opts.onEdit || (()=>{});
@@ -1919,6 +1929,10 @@ function renderPolicyEditor(entry, opts){
     policy.title = tokenCapable ? "Select how this source column is exposed" : "Tokenization is not supported for this source";
     policy.onchange=()=>{
       column.policy=policy.value;
+      if(column.policy==="keep" || column.policy==="remove") column.policy_id="";
+      if(column.policy_id && column.policy!=="deterministic_hash" && column.policy!=="random_token") column.policy_id="";
+      const available=centralPoliciesFor(column.policy);
+      if(available.length && !available.some(item=>item.policy_id===column.policy_id)) column.policy_id=available[0].policy_id;
       if(column.policy!=="keep" && column.policy!=="remove" && column.name===column.source) column.name=column.source+"_token";
       if(column.policy==="deterministic_hash" && !column.domain) column.domain=entry.name+"."+column.source;
       rerender();
@@ -1928,6 +1942,21 @@ function renderPolicyEditor(entry, opts){
     row.append(source, output, policy, type);
     if(column.policy==="deterministic_hash"){
       const detail=document.createElement("div"); detail.className="policy-detail";
+      const central=centralPoliciesFor(column.policy);
+      if(central.length){
+        const policySelect=document.createElement("select"); policySelect.title="Select an approved central tokenization policy";
+        for(const item of central){
+          const option=document.createElement("option"); option.value=item.policy_id; option.textContent=item.policy_id;
+          option.selected=item.policy_id===column.policy_id; policySelect.appendChild(option);
+        }
+        if(!column.policy_id) column.policy_id=central[0].policy_id;
+        policySelect.value=column.policy_id;
+        policySelect.onchange=()=>{ column.policy_id=policySelect.value; onEdit(); rerender(); };
+        detail.append(policySelect);
+        const policyNote=document.createElement("div"); policyNote.className="policy-note";
+        policyNote.textContent="Central policy controls algorithm, key reference, domain, and normalization.";
+        detail.appendChild(policyNote); row.appendChild(detail); editor.appendChild(row); continue;
+      }
       const keyRef=tokenizationKeySelect(column.key_ref, value=>{
         column.key_ref=value; onEdit(); rerender();
       });
@@ -2146,7 +2175,9 @@ function tableConfig(entry){
       const item={field_id:column.field_id, name:column.name.trim(),
         type:transformed ? "string" : column.type, nullable:column.nullable};
       if(column.name!==column.source || transformed) item.source=column.source;
-      if(column.policy==="deterministic_hash"){
+      if(column.policy_id && (column.policy==="deterministic_hash" || column.policy==="random_token")){
+        item.tokenization={action:column.policy==="deterministic_hash"?"durable_token":"random_token",policy_id:column.policy_id};
+      }else if(column.policy==="deterministic_hash"){
         item.transform={kind:"deterministic_hash", key_ref:column.key_ref.trim(),
           domain:column.domain, normalization:column.normalization};
       }else if(column.policy==="random_token"){

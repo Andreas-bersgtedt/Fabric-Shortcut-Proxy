@@ -6,6 +6,7 @@ from security.authorization import (
     AuthorizationError,
     PermissionGrant,
     User,
+    UserDirectory,
     authorize,
     require,
 )
@@ -58,3 +59,25 @@ def test_user_rejects_unknown_role_and_invalid_grant():
         User("ops", roles=("root",))
     with pytest.raises(ValueError, match="unknown permission"):
         PermissionGrant("security.keys.read")
+
+
+def test_user_directory_round_trips_secret_free_identity_metadata(tmp_path):
+    directory = UserDirectory([
+        User(
+            "ops-user", roles=("monitor_troubleshooter",),
+            grants=(PermissionGrant("troubleshoot.read", {"environment": "prod"}),),
+        ),
+    ])
+    path = tmp_path / "users.json"
+    directory.save(str(path))
+    loaded = UserDirectory.load(str(path))
+    assert loaded.list_public() == directory.list_public()
+    assert "password" not in path.read_text(encoding="utf-8").lower()
+    assert loaded.get("ops-user").can("troubleshoot.read", {"environment": "prod"})
+
+
+def test_user_directory_rejects_credentials_and_unknown_user():
+    with pytest.raises(ValueError, match="credentials or tokens"):
+        User.from_dict({"user_id": "ops", "password_hash": "x"})
+    with pytest.raises(PermissionError, match="user not found"):
+        UserDirectory().get("missing")

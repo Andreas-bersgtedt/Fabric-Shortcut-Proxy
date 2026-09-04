@@ -1,3 +1,6 @@
+from security.authorization import UserDirectory
+
+__all__ = ["UserDirectory"]
 """Security utilities for credential management and protection."""
 from security.credentials import (
     scrub_secrets,

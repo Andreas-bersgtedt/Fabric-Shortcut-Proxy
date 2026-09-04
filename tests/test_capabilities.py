@@ -43,6 +43,14 @@ def test_tokenization_backend_topology_prefers_native_then_arrow_then_none():
     assert "plaintext" in impala.tokenization_warning("deterministic_hash", "arrow")
 
 
+def test_flavor_warnings_include_arrow_operational_impact(monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "TOKENIZATION_FALLBACK", "arrow", raising=False)
+    warnings = __import__("db.capabilities", fromlist=["flavor_warnings"]).flavor_warnings("impala")
+    assert any("plaintext source values" in warning for warning in warnings)
+
+
 def test_databricks_requires_http_path():
     assert missing_required_fields("databricks", {}) == ["http_path"]
     assert missing_required_fields("databricks", {"http_path": "/sql/1.0/warehouses/x"}) == []

@@ -258,4 +258,13 @@ def flavor_warnings(dialect: str | None) -> list[str]:
             "Primary-key reflection may be unavailable; set key_column explicitly"
             " for deterministic split planning."
         )
+    try:
+        import config
+        fallback = getattr(config, "TOKENIZATION_FALLBACK", TOKENIZATION_NONE)
+        for kind in ("deterministic_hash", "random_token"):
+            warning = caps.tokenization_warning(kind, fallback)
+            if warning and warning not in out:
+                out.append(warning)
+    except (AttributeError, ImportError):
+        pass
     return out

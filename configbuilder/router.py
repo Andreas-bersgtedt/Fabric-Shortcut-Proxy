@@ -446,9 +446,10 @@ async def save_authorization_user(request: Request) -> JSONResponse:
         path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
         directory = UserDirectory.load(path)
         directory.replace(user)
-        directory.save(path)
-        from security.identity import identity_provider
+        from security.identity import hash_password, identity_provider
+        hash_password(password)
         identity_provider().create_or_replace(user, password)
+        directory.save(path)
     except (TypeError, ValueError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     log.info("authorization_user_saved", user_id=user.user_id, enabled=user.enabled)

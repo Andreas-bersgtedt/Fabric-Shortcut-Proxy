@@ -183,6 +183,32 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     ) is None
 
 
+async def test_user_creation_validates_password_before_metadata_write(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    user_path = tmp_path / "users.json"
+    identity_path = tmp_path / "identities.json"
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/_config/api/authorization/users",
+            json={"user_id": "invalid", "roles": ["viewer"], "password": "short"},
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+    assert response.status_code == 400
+    assert not user_path.exists()
+    assert not identity_path.exists()
+
+
 async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI

@@ -177,7 +177,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert disabled.status_code == 200
     assert last_admin.status_code == 409
 
-    from security.identity import IdentityProvider
+    from security.identity import IdentityProvider, identity_provider
     assert IdentityProvider(str(tmp_path / "identities.json")).authenticate(
         "support", "correct horse battery staple"
     ) is None
@@ -212,7 +212,7 @@ async def test_user_creation_validates_password_before_metadata_write(tmp_path, 
 async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
-    from security.identity import IdentityProvider
+    from security.identity import IdentityProvider, identity_provider
 
     identity_path = tmp_path / "identities.json"
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
@@ -320,6 +320,50 @@ async def test_authorization_middleware_enforces_operator_functions(monkeypatch)
     assert allowed.status_code == 200, allowed.text
     assert allowed.json()["user"] == "admin-token"
     assert write.status_code == 200
+
+
+async def test_monitor_troubleshooter_session_is_read_only_across_route_groups(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI, Request
+    from security.authorization_middleware import AuthorizationMiddleware
+    from security.identity import IdentityProvider, identity_provider
+
+    monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
+    identity_path = tmp_path / "identities.json"
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
+    provider = IdentityProvider(str(identity_path))
+    provider.create_or_replace(
+        User("ops", roles=("monitor_troubleshooter",)),
+        "correct horse battery staple",
+    )
+    user = provider.authenticate("ops", "correct horse battery staple")
+    session_provider = identity_provider()
+    session = session_provider.create_session(user)
+    app = FastAPI()
+    app.add_middleware(AuthorizationMiddleware)
+
+    @app.get("/_monitor/api/summary")
+    async def summary():
+        return {"ok": True}
+
+    @app.post("/_config/api/save")
+    async def save():
+        return {"ok": True}
+
+    @app.get("/_config/api/credentials")
+    async def credentials():
+        return {"ok": True}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        cookies={"fsp_session": session},
+    ) as client:
+        monitor = await client.get("/_monitor/api/summary")
+        config_write = await client.post("/_config/api/save")
+        credentials_read = await client.get("/_config/api/credentials")
+    assert monitor.status_code == 200
+    assert config_write.status_code == 403
+    assert credentials_read.status_code == 403
 
 
 async def test_config_mutations_require_config_write_when_enforced(monkeypatch):

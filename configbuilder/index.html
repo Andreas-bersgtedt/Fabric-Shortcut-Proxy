@@ -579,6 +579,12 @@
     </div>
   </div>
   <div id="securityContent" class="security-stack">
+    <div class="card" id="tokenizationPoliciesPanel">
+      <h2>Tokenization policies</h2>
+      <div class="hint">Approved token policies are managed centrally. Table and mount editors may reference policy IDs without exposing key values.</div>
+      <div id="tokenizationPolicies" class="connlist"></div>
+      <div class="status" id="tokenizationPoliciesStatus"></div>
+    </div>
     <div class="card" id="backupRestorePanel">
       <h2>Backup and restore</h2>
       <div class="hint">Create a portable encrypted backup of all configuration, database credentials, storage secrets, access keys and ACLs, and Open Mirroring state (including any pending recovery payload). Source datasets, generated caches, logs, environment-only secrets, external TLS files, and remote Key Vault contents are not copied.</div>
@@ -990,6 +996,7 @@ const state = {
   credBackend: "",           // encryption backend the Manager store is using
   credAvailable: false,      // whether the Manager can encrypt/persist credentials
   tokenizationKeyRefs: [],   // configured FSP_TOKENIZATION_KEY_* references (values are never returned)
+  tokenizationPolicies: [],  // central policy metadata (never contains key values)
   showHiddenPrimary: false,  // reveal the empty default card even when auto-hidden
   sourceCatalog: [],
   addTable: { sourceId:"", objects:[], metadata:null, draft:null },
@@ -1337,6 +1344,41 @@ async function loadTokenizationKeyReferences(){
   renderSelected();
   if(state.addTable.draft) renderAddTableMetadata();
   if(state.om.editing) omRenderTableRows();
+}
+
+async function loadTokenizationPolicies(){
+  const box = $("tokenizationPolicies");
+  const status = $("tokenizationPoliciesStatus");
+  if(!box) return;
+  try{
+    const response = await fetch("/_config/api/tokenization/policies", {cache:"no-store"});
+    const data = await response.json();
+    if(!response.ok || !data.ok) throw new Error(data.error || "Unable to load tokenization policies");
+    state.tokenizationPolicies = data.policies || [];
+    box.innerHTML = "";
+    if(!state.tokenizationPolicies.length){
+      box.textContent = "No central tokenization policies are configured.";
+      return;
+    }
+    for(const policy of state.tokenizationPolicies){
+      const row = document.createElement("div");
+      row.className = "conn-row";
+      const label = document.createElement("strong");
+      label.textContent = policy.policy_id;
+      const detail = document.createElement("span");
+      detail.className = "hint";
+      detail.textContent = `${policy.kind} · ${policy.algorithm} · ${policy.normalization}`;
+      row.append(label, detail);
+      box.appendChild(row);
+    }
+    status.textContent = `${state.tokenizationPolicies.length} central policy${state.tokenizationPolicies.length===1?"":"ies"} available.`;
+    status.className = "status ok";
+  }catch(error){
+    state.tokenizationPolicies = [];
+    box.textContent = "Central tokenization policies are unavailable.";
+    status.textContent = error.message || "Unable to load tokenization policies.";
+    status.className = "status err";
+  }
 }
 
 // ---- connect / test ----
@@ -3656,6 +3698,7 @@ writeFormFromConn(state.connections.get(state.activeConnId));
 renderConnList();
 loadSettings();
 loadTokenizationKeyReferences();
+loadTokenizationPolicies();
 loadMounts();
 loadAccessKeys();
 omInit();

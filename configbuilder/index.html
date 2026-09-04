@@ -2056,7 +2056,7 @@ function renderPolicyEditor(entry, opts){
     const type = document.createElement("span"); type.className="rows";
     type.textContent=(column.policy==="deterministic_hash" || column.policy==="random_token") ? "string" : column.type;
     row.append(source, output, policy, type);
-    if(column.policy==="deterministic_hash"){
+    if(column.policy==="deterministic_hash" || column.policy==="random_token"){
       const detail=document.createElement("div"); detail.className="policy-detail";
       const central=centralPoliciesFor(column.policy);
       if(central.length){
@@ -2072,6 +2072,11 @@ function renderPolicyEditor(entry, opts){
         const policyNote=document.createElement("div"); policyNote.className="policy-note";
         policyNote.textContent="Central policy controls algorithm, key reference, domain, and normalization.";
         detail.appendChild(policyNote); row.appendChild(detail); editor.appendChild(row); continue;
+      }
+      if(column.policy==="random_token"){
+        const note=document.createElement("div"); note.className="policy-note";
+        note.textContent="No approved random-token policies are configured.";
+        detail.appendChild(note); row.appendChild(detail); editor.appendChild(row); continue;
       }
       const keyRef=tokenizationKeySelect(column.key_ref, value=>{
         column.key_ref=value; onEdit(); rerender();

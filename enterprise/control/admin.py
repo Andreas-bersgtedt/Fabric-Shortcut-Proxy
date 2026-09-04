@@ -177,6 +177,25 @@ def create_admin_router(
     async def manager_page() -> str:
         return _ADMIN_HTML
 
+    @router.get("/_manager/api/authorization/me")
+    async def manager_authorization(request: Request) -> dict:
+      """Expose safe current-principal permissions for the Manager UI."""
+      import os
+      from security.authorization import authenticate_request
+
+      user = getattr(request.state, "user", None)
+      if user is None:
+        user = authenticate_request(
+          request.headers.get("x-admin-token", ""),
+          request.cookies.get("fsp_session", ""),
+        )
+      if user is None and os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() != "1":
+        return {"ok": True, "enforced": False, "permissions": ["*"]}
+      if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+      return {"ok": True, "user": user.to_public(),
+          "enforced": True, "permissions": sorted(user.permissions())}
+
     @router.get("/_manager/api/fleet")
     async def fleet() -> dict:
         return fleet_snapshot(registry, supervisors, gateway=gateway, token_required=token_required)
@@ -445,8 +464,10 @@ _ADMIN_HTML = r"""<!doctype html>
     <div class="cards" id="cards"></div>
     <p id="msg"></p>
     <div style="margin:0 0 12px">
-      <button onclick="rollingRestart()">Rolling restart (one at a time)</button>
-      <button class="stop" onclick="shutdownManager()">Shutdown Manager + all Agents</button>
+      <div id="lifecycleActions">
+        <button onclick="rollingRestart()">Rolling restart (one at a time)</button>
+        <button class="stop" onclick="shutdownManager()">Shutdown Manager + all Agents</button>
+      </div>
     </div>
     <div style="margin:0 0 12px">
       <label><input type="checkbox" id="showMemoryTrends" onchange="toggleMemoryTrends()"/> Show memory trends</label>
@@ -552,6 +573,26 @@ const $ = (id) => document.getElementById(id);
 let tokenRequired = false;
 let monitorTimer = null;
 let fleetTimer = null;
+let managerPermissions = new Set();
+let managerAuthzEnforced = false;
+
+function can(permission) {
+  return !managerAuthzEnforced || managerPermissions.has("*") || managerPermissions.has(permission);
+}
+
+async function loadManagerAuthorization() {
+  try {
+    const response = await fetch("/_manager/api/authorization/me", { cache: "no-store" });
+    const data = await response.json();
+    managerAuthzEnforced = data.enforced === true;
+    managerPermissions = new Set(data.permissions || []);
+    const lifecycle = document.getElementById("lifecycleActions");
+    if (lifecycle) lifecycle.style.display = can("system.admin") ? "" : "none";
+  } catch (_) {
+    managerAuthzEnforced = true;
+    managerPermissions = new Set();
+  }
+}
 
 // ====== TAB MANAGEMENT ======
 function switchTab(tabName) {
@@ -650,11 +691,11 @@ function render(d) {
       <td>${memText}</td>
       <td>${serving}</td>
       <td>
-        <button ${startDisabled} onclick="act('${a.name}','start')">Start</button>
+        ${can("system.admin") ? `<button ${startDisabled} onclick="act('${a.name}','start')">Start</button>
         <button class="stop" ${stopDisabled} onclick="act('${a.name}','stop')">Stop</button>
         <button ${stopDisabled} onclick="act('${a.name}','restart')">Restart</button>
         <button ${drainDisabled} onclick="act('${a.name}','drain')">Drain</button>
-        <button ${forgetDisabled} onclick="forgetAgent('${a.name}')">Forget</button>
+        <button ${forgetDisabled} onclick="forgetAgent('${a.name}')">Forget</button>` : '<span class="muted">Read-only</span>'}
       </td></tr>`;
   }).join("");
 }
@@ -1109,7 +1150,7 @@ async function refreshAndMem() {
 }
 refresh = refreshAndMem;
 
-refresh(); loop();
+loadManagerAuthorization().finally(() => { refresh(); loop(); });
 </script>
 </body>
 </html>

@@ -590,6 +590,12 @@ def validate_config() -> None:
     """Validate required configuration at startup; raise ``ValueError`` on error."""
     problems: list[str] = []
 
+    if TOKENIZATION_FALLBACK not in ("none", "arrow"):
+        problems.append(
+            "TOKENIZATION_FALLBACK must be 'none' or 'arrow' "
+            f"(got {TOKENIZATION_FALLBACK!r})."
+        )
+
     if not DB_URL:
         problems.append("DB_URL must be set (a SQLAlchemy async URL).")
     if not BUCKET_NAME:
@@ -758,7 +764,9 @@ def validate_config() -> None:
                         "a column transform."
                     )
                 if col.transform.kind == "deterministic_hash":
-                    if not capabilities.supports_deterministic_tokenization:
+                    if capabilities.tokenization_backend(
+                        "deterministic_hash", TOKENIZATION_FALLBACK
+                    ) == "none":
                         problems.append(
                             f"Table {t.name!r}: deterministic_hash is not supported "
                             f"for dialect {capabilities.flavor!r}."
@@ -769,7 +777,9 @@ def validate_config() -> None:
                         problems.append(f"Table {t.name!r}: {exc}")
                 if (
                     col.transform.kind == "random_token"
-                    and not capabilities.supports_random_tokenization
+                    and capabilities.tokenization_backend(
+                        "random_token", TOKENIZATION_FALLBACK
+                    ) == "none"
                 ):
                     problems.append(
                         f"Table {t.name!r}: random_token is not supported for "
@@ -822,7 +832,9 @@ def validate_config() -> None:
                     if transform is None:
                         continue
                     if transform.kind == "deterministic_hash":
-                        if not capabilities.supports_deterministic_tokenization:
+                        if capabilities.tokenization_backend(
+                            "deterministic_hash", TOKENIZATION_FALLBACK
+                        ) == "none":
                             problems.append(
                                 f"Open Mirror table {table.name!r}: deterministic_hash "
                                 f"is not supported for dialect {capabilities.flavor!r}."
@@ -833,7 +845,9 @@ def validate_config() -> None:
                             problems.append(f"Open Mirror table {table.name!r}: {exc}")
                     elif (
                         transform.kind == "random_token"
-                        and not capabilities.supports_random_tokenization
+                        and capabilities.tokenization_backend(
+                            "random_token", TOKENIZATION_FALLBACK
+                        ) == "none"
                     ):
                         problems.append(
                             f"Open Mirror table {table.name!r}: random_token is not "

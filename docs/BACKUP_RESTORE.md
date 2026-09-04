@@ -1,6 +1,6 @@
 # Encrypted Backup and Restore
 
-Version 2.7.0 includes portable, password-protected backup and restore in the Config Builder.
+Version 2.7.1 includes portable, password-protected backup and restore in the Config Builder.
 Open `/_config`, select **Security**, and use the **Backup and restore** controls.
 
 ## Backup scope

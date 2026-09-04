@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1]: 2026-09-04
+
+### Added
+- Controlled module-management visibility and desired-profile handling for the Manager and Config Builder.
+- A single-flight, allowlist-only installer flow with redacted operation state and explicit restart requirement.
+- Docker metadata labeling for module profiles to support immutable AKS image-based deployment workflows.
+
+### Changed
+- Lite, Enterprise, Manager, and Agent version metadata now report `2.7.1`.
+- The module-management plan moves deployment dependency selection into a persisted desired profile rather than implicit app-wide installation.
+
+### Fixed
+- Local module-profile artifacts remain generated state only and are not treated as repository-tracked deployment config.
+
 ## [2.7.0]: 2026-09-02
 
 ### Added

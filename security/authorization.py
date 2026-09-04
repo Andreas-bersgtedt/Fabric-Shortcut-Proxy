@@ -258,22 +258,29 @@ def authenticate_admin_token(supplied_token: str) -> User | None:
     return None
 
 
-def authenticate_request(supplied_token: str) -> User | None:
+def authenticate_request(supplied_token: str, session_token: str = "") -> User | None:
     """Authenticate a request through the current transitional provider.
 
     A future identity/session provider should replace this adapter without
     changing permission checks in route handlers.
     """
-    return authenticate_admin_token(supplied_token)
+    user = authenticate_admin_token(supplied_token)
+    if user is not None:
+        return user
+    if session_token:
+        from security.identity import identity_provider
+        return identity_provider().resolve_session(session_token)
+    return None
 
 
 def require_request_permission(
     supplied_token: str,
     permission: str,
     context: Mapping[str, str] | None = None,
+    session_token: str = "",
 ) -> AuthorizationDecision:
     """Authenticate and require one named function permission."""
-    user = authenticate_request(supplied_token)
+    user = authenticate_request(supplied_token, session_token)
     if user is None:
         raise AuthorizationError("authentication required")
     return require(user, permission, context)

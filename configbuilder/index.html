@@ -193,6 +193,14 @@
   </div>
   <a class="navbtn" href="/_manager">Back to Manager</a>
 </header>
+<div class="card" id="sessionPanel" style="margin:12px 24px 0;max-width:1240px;margin-left:auto;margin-right:auto;">
+  <div class="row">
+    <section><label for="sessionUserId">User ID</label><input id="sessionUserId" autocomplete="username" placeholder="operator" /></section>
+    <section><label for="sessionPassword">Password</label><input id="sessionPassword" type="password" autocomplete="current-password" placeholder="Local identity password" /></section>
+  </div>
+  <div class="actions"><button class="btn primary" id="btnLogin">Sign in</button><button class="btn ghost" id="btnLogout" style="display:none;">Sign out</button><span class="hint" id="sessionIdentity">Not signed in</span></div>
+  <div class="status" id="sessionStatus"></div>
+</div>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
 
 <div class="tabs" role="tablist" aria-label="Configuration sections">
@@ -1054,6 +1062,8 @@ const state = {
   credAvailable: false,      // whether the Manager can encrypt/persist credentials
   tokenizationKeyRefs: [],   // configured FSP_TOKENIZATION_KEY_* references (values are never returned)
   tokenizationPolicies: [],  // central policy metadata (never contains key values)
+  permissions: new Set(),
+  authzEnforced: false,
   showHiddenPrimary: false,  // reveal the empty default card even when auto-hidden
   sourceCatalog: [],
   addTable: { sourceId:"", objects:[], metadata:null, draft:null },
@@ -1488,6 +1498,45 @@ async function loadManagedUsers(){
     status.textContent=`${(data.users||[]).length} user record${(data.users||[]).length===1?"":"s"} loaded.`;
     status.className="status ok";
   }catch(error){ box.textContent="User records are unavailable."; status.textContent=error.message||"Unable to load users."; status.className="status err"; }
+}
+
+async function refreshAuthorization(){
+  const status=$("sessionStatus");
+  try{
+    const authStatus=await fetch("/_config/api/authorization/status", {cache:"no-store"}).then(response=>response.json());
+    state.authzEnforced=authStatus.enforced===true;
+    const response=await fetch("/_config/api/authorization/me", {cache:"no-store"});
+    if(!response.ok) throw new Error("Not signed in");
+    const data=await response.json(); state.permissions=new Set(data.permissions||[]);
+    $("sessionIdentity").textContent=data.user.user_id+" · "+[...state.permissions].join(", ");
+    $("btnLogin").style.display="none"; $("btnLogout").style.display="inline-block";
+    applyPermissionVisibility();
+  }catch(error){ state.permissions=new Set(); $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
+}
+
+function applyPermissionVisibility(){
+  const locked = state.authzEnforced;
+  const rules={sources:"config.read",tables:"config.read",openmirror:"config.read",security:"security.metadata.read",operational:"monitor.read"};
+  Object.entries(rules).forEach(([tab,permission])=>{
+    const button=$("tab-"+(tab==="operational"?"operational":tab));
+    if(button) button.hidden=locked&&!state.permissions.has(permission);
+  });
+  document.querySelectorAll("[data-requires-permission]").forEach(element=>{
+    element.hidden=locked&&!state.permissions.has(element.dataset.requiresPermission);
+  });
+}
+
+async function signIn(){
+  const status=$("sessionStatus");
+  const response=await fetch("/_config/api/authorization/login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:$("sessionUserId").value.trim(),password:$("sessionPassword").value})});
+  const data=await response.json();
+  if(!data.ok){ status.textContent=data.error||"Sign-in failed."; status.className="status err"; return; }
+  $("sessionPassword").value=""; status.textContent="Signed in."; status.className="status ok"; await refreshAuthorization();
+}
+
+async function signOut(){
+  await fetch("/_config/api/authorization/logout", {method:"POST"});
+  $("btnLogin").style.display="inline-block"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
 }
 
 async function createManagedUser(){
@@ -3870,6 +3919,9 @@ loadTokenizationPolicies();
 $("btnLoadUsers").onclick=loadManagedUsers;
 $("btnCreateUser").onclick=createManagedUser;
 $("btnSavePolicy").onclick=saveTokenizationPolicy;
+$("btnLogin").onclick=signIn;
+$("btnLogout").onclick=signOut;
+refreshAuthorization();
 loadMounts();
 loadAccessKeys();
 omInit();

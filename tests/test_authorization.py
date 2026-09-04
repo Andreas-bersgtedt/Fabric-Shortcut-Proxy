@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import Request
 
 from security.authorization import (
     AuthorizationError,
@@ -143,13 +144,17 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
 
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
     user_path = tmp_path / "users.json"
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(tmp_path / "identities.json"))
     UserDirectory([User("admin", roles=("system_administrator",))]).save(str(user_path))
     monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
     from configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
-    payload = {"user_id": "support", "roles": ["monitor_troubleshooter"]}
+    payload = {
+        "user_id": "support", "roles": ["monitor_troubleshooter"],
+        "password": "correct horse battery staple",
+    }
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -171,6 +176,104 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert created.json()["user"]["user_id"] == "support"
     assert disabled.status_code == 200
     assert last_admin.status_code == 409
+
+
+async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from security.identity import IdentityProvider
+
+    identity_path = tmp_path / "identities.json"
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
+    IdentityProvider(str(identity_path)).create_or_replace(
+        User("ops", roles=("monitor_troubleshooter",)),
+        "correct horse battery staple",
+    )
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        login = await client.post(
+            "/_config/api/authorization/login",
+            json={"user_id": "ops", "password": "correct horse battery staple"},
+        )
+        me = await client.get("/_config/api/authorization/me")
+        logout = await client.post("/_config/api/authorization/logout")
+        after = await client.get("/_config/api/authorization/me")
+    assert login.status_code == 200
+    assert "fsp_session" in login.cookies
+    assert me.status_code == 200
+    assert "monitor.read" in me.json()["permissions"]
+    assert "config.write" not in me.json()["permissions"]
+    assert logout.status_code == 200
+    assert after.status_code == 401
+
+
+async def test_authorization_status_reports_only_enforcement_mode(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/_config/api/authorization/status")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "enforced": True}
+
+
+def test_authorization_route_map_separates_security_from_config():
+    from security.authorization_middleware import _permission
+
+    assert _permission("/_config/api/credentials", "GET") == "security.metadata.read"
+    assert _permission("/_config/api/credentials", "POST") == "security.credentials.admin"
+    assert _permission("/_config/api/access-keys/key", "DELETE") == "security.credentials.admin"
+    assert _permission("/_config/api/save", "POST") == "config.write"
+    assert _permission("/_config/api/tokenization/policies", "GET") == "tokenization.policy.read"
+    assert _permission("/_config/api/tokenization/policies", "POST") == "tokenization.policy.admin"
+
+
+async def test_authorization_middleware_enforces_operator_functions(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from security.authorization_middleware import AuthorizationMiddleware
+
+    monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    app = FastAPI()
+    app.add_middleware(AuthorizationMiddleware)
+
+    @app.get("/_config/api/safe-read")
+    async def safe_read(request: Request):
+        return {"ok": True, "user": request.state.user.user_id}
+
+    @app.post("/_config/api/safe-write")
+    async def safe_write():
+        return {"ok": True}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        denied = await client.get("/_config/api/safe-read")
+        allowed = await client.get(
+            "/_config/api/safe-read",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+        write = await client.post(
+            "/_config/api/safe-write",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+    assert denied.status_code == 401
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["user"] == "admin-token"
+    assert write.status_code == 200
 
 
 async def test_config_mutations_require_config_write_when_enforced(monkeypatch):

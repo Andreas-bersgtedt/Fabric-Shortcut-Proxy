@@ -292,6 +292,7 @@ def _check_tokenization_admin(request: Request) -> None:
         require_request_permission(
             request.headers.get("x-admin-token", ""),
             "tokenization.policy.admin",
+            session_token=request.cookies.get("fsp_session", ""),
         )
     except AuthorizationError as exc:
         raise PermissionError(str(exc)) from exc
@@ -352,10 +353,12 @@ async def disable_tokenization_policy(policy_id: str, request: Request) -> JSONR
 
 @router.get("/api/authorization/me")
 async def authorization_me(request: Request) -> JSONResponse:
-    """Return the authenticated transitional admin identity and permissions."""
-    from security.authorization import authenticate_admin_token
+    """Return the authenticated identity and effective permissions."""
+    from security.authorization import authenticate_request
 
-    user = authenticate_admin_token(request.headers.get("x-admin-token", ""))
+    user = authenticate_request(
+        request.headers.get("x-admin-token", ""), request.cookies.get("fsp_session", "")
+    )
     if user is None:
         return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
     return JSONResponse({"ok": True, "user": user.to_public(),
@@ -365,10 +368,12 @@ async def authorization_me(request: Request) -> JSONResponse:
 @router.get("/api/authorization/users")
 async def authorization_users(request: Request) -> JSONResponse:
     """List safe user metadata for the authenticated transitional administrator."""
-    from security.authorization import UserDirectory, authenticate_admin_token
+    from security.authorization import UserDirectory, authenticate_request, require
 
-    user = authenticate_admin_token(request.headers.get("x-admin-token", ""))
-    if user is None:
+    user = authenticate_request(
+        request.headers.get("x-admin-token", ""), request.cookies.get("fsp_session", "")
+    )
+    if user is None or not user.can("users.admin"):
         return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
     try:
         users = UserDirectory.load(os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json"))
@@ -377,19 +382,73 @@ async def authorization_users(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "users": users.list_public()})
 
 
+@router.post("/api/authorization/login")
+async def authorization_login(request: Request) -> JSONResponse:
+    """Authenticate a local user and issue a revocable HttpOnly session cookie."""
+    from security.identity import identity_provider
+
+    try:
+        body = await request.json()
+        user_id = str(body.get("user_id", "")).strip()
+        password = str(body.get("password", ""))
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "error": "invalid login request"}, status_code=400)
+    user = identity_provider().authenticate(user_id, password)
+    if user is None:
+        return JSONResponse({"ok": False, "error": "invalid credentials"}, status_code=401)
+    token = identity_provider().create_session(user)
+    response = JSONResponse({"ok": True, "user": user.to_public(),
+                             "permissions": sorted(user.permissions())})
+    response.set_cookie(
+        "fsp_session", token, httponly=True, samesite="strict",
+        secure=request.url.scheme == "https", max_age=8 * 60 * 60,
+    )
+    return response
+
+
+@router.get("/api/authorization/status")
+async def authorization_status() -> JSONResponse:
+    """Expose only whether route authorization is enabled, never credentials."""
+    return JSONResponse({
+        "ok": True,
+        "enforced": os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() == "1",
+    })
+
+
+@router.post("/api/authorization/logout")
+async def authorization_logout(request: Request) -> JSONResponse:
+    """Revoke the current local session and clear its cookie."""
+    from security.identity import identity_provider
+
+    token = request.cookies.get("fsp_session", "")
+    identity_provider().revoke_session(token)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("fsp_session")
+    return response
+
+
 @router.post("/api/authorization/users")
 async def save_authorization_user(request: Request) -> JSONResponse:
     """Create or replace safe user metadata for the transitional administrator."""
-    from security.authorization import User, UserDirectory, authenticate_admin_token
+    from security.authorization import User, UserDirectory, authenticate_request
 
-    if authenticate_admin_token(request.headers.get("x-admin-token", "")) is None:
+    user = authenticate_request(
+        request.headers.get("x-admin-token", ""), request.cookies.get("fsp_session", "")
+    )
+    if user is None or not user.can("users.admin"):
         return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
     try:
-        user = User.from_dict(await request.json())
+        body = await request.json()
+        password = str(body.pop("password", "")) if isinstance(body, dict) else ""
+        if not password:
+            raise ValueError("password is required for a login-enabled user")
+        user = User.from_dict(body)
         path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
         directory = UserDirectory.load(path)
         directory.replace(user)
         directory.save(path)
+        from security.identity import identity_provider
+        identity_provider().create_or_replace(user, password)
     except (TypeError, ValueError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     log.info("authorization_user_saved", user_id=user.user_id, enabled=user.enabled)
@@ -399,9 +458,12 @@ async def save_authorization_user(request: Request) -> JSONResponse:
 @router.delete("/api/authorization/users/{user_id}")
 async def disable_authorization_user(user_id: str, request: Request) -> JSONResponse:
     """Disable a user while preserving the last enabled administrator."""
-    from security.authorization import AuthorizationError, UserDirectory, authenticate_admin_token
+    from security.authorization import AuthorizationError, UserDirectory, authenticate_request
 
-    if authenticate_admin_token(request.headers.get("x-admin-token", "")) is None:
+    user = authenticate_request(
+        request.headers.get("x-admin-token", ""), request.cookies.get("fsp_session", "")
+    )
+    if user is None or not user.can("users.admin"):
         return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
     try:
         path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")

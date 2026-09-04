@@ -27,6 +27,7 @@ from fastapi import FastAPI, Request
 
 import config
 from enterprise.control.auth import ManagerAuthMiddleware, manager_auth_active
+from security.authorization_middleware import AuthorizationMiddleware
 from enterprise.control.registry import Registry
 from enterprise.control.server import ControlService
 from enterprise.control.supervisor import AgentSupervisor
@@ -238,6 +239,7 @@ def create_manager_app() -> FastAPI:
     # Standalone HTTP Basic gate over the operator surface. Health probes remain
     # open; authenticated Agent credentials are sent for internal control calls.
     app.add_middleware(ManagerAuthMiddleware)
+    app.add_middleware(AuthorizationMiddleware)
     app.include_router(create_control_router(service))
 
     @app.get("/healthz")

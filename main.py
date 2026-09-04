@@ -617,6 +617,9 @@ app.add_middleware(
     allow_methods=["GET", "HEAD", "PUT", "DELETE", "POST"],
     allow_headers=["*"],
 )
+from security.authorization_middleware import AuthorizationMiddleware
+
+app.add_middleware(AuthorizationMiddleware)
 
 
 # ---------------------------------------------------------------------------

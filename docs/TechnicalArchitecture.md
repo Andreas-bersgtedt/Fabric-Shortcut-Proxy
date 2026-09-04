@@ -1,9 +1,14 @@
 # Technical Architecture
 
-Detailed architecture for the Fabric Shortcut Proxy. The first diagram is the
-high-level view (as in [README.md](../README.md)); the sections that follow drill
-into each process with its granular components and control/data flow. Every
-diagram is grounded in the actual modules referenced beneath it.
+Reference architecture for the Fabric Shortcut Proxy, grounded in the code that
+currently ships in this repository. The diagrams below are intentionally
+repo-aligned: they describe the active runtime modules and control/data flows,
+not a speculative future-state design.
+
+The first diagram is the high-level view (as in [README.md](../README.md)); the
+sections that follow drill into each process with its granular components and
+control/data flow. Every diagram is grounded in the actual modules referenced
+beneath it.
 
 > Companion docs: [README.md](../README.md) (setup), [CONFIGURATION.md](CONFIGURATION.md)
 > (settings), [SECURITY.md](SECURITY.md) (auth/TLS/audit),

@@ -136,6 +136,8 @@ class KeyVaultSecretSource:
         if self._client is None:
             if not self._cfg.enabled:
                 raise KeyVaultUnavailable("no Key Vault URI configured")
+            if not sdk_available():
+                raise KeyVaultUnavailable(_INSTALL_HINT)
             _require_sdk()
             from azure.keyvault.secrets import SecretClient
             credential = get_credential(
@@ -209,6 +211,8 @@ class KeyVaultSecretSource:
         proves connectivity + read permission. Any transport/auth error fails.
         Returns ``(ok, detail)``.
         """
+        if not sdk_available():
+            return False, _INSTALL_HINT
         try:
             self.get_by_name(secret_name_for("db_url", self._cfg))
             return True, "ok"

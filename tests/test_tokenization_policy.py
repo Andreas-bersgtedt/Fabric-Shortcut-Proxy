@@ -4,12 +4,14 @@ import config
 import pytest
 from tokenization.policy import (
     algorithm_specs,
+    default_registry_path,
     TokenizationPolicy,
     TokenizationPolicyError,
     TokenizationPolicyRegistry,
     TokenizationSelection,
     legacy_policy,
     load_registry,
+    load_default_registry,
     policy_fingerprint,
     save_registry,
     selection_from_transform,
@@ -141,6 +143,17 @@ def test_registry_file_round_trip_and_missing_file(tmp_path):
     ])
     save_registry(str(path), registry)
     assert load_registry(str(path)).list_public() == registry.list_public()
+
+
+def test_default_registry_uses_operator_selected_path(tmp_path, monkeypatch):
+    path = tmp_path / "central-policies.json"
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
+    registry = TokenizationPolicyRegistry([
+        TokenizationPolicy(policy_id="support-v1", kind="random_token")
+    ])
+    save_registry(str(path), registry)
+    assert default_registry_path() == str(path)
+    assert load_default_registry().list_public() == registry.list_public()
 
 
 def test_policy_fingerprint_is_stable_and_secret_free():

@@ -192,6 +192,10 @@ class TokenizationPolicyRegistry:
             )
         self._policies[policy.policy_id] = policy
 
+    def has(self, policy_id: str) -> bool:
+        """Return whether a policy ID is registered, including disabled policies."""
+        return policy_id in self._policies
+
     def get(self, policy_id: str) -> TokenizationPolicy:
         try:
             policy = self._policies[policy_id]
@@ -309,3 +313,13 @@ def save_registry(path: str, registry: TokenizationPolicyRegistry) -> None:
                 os.remove(temporary)
             except OSError:
                 pass
+
+
+def default_registry_path() -> str:
+    """Return the operator-selected policy file without importing application config."""
+    return os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json")
+
+
+def load_default_registry() -> TokenizationPolicyRegistry:
+    """Load the configured central policy registry."""
+    return load_registry(default_registry_path())

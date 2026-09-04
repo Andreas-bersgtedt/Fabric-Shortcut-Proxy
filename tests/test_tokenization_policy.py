@@ -3,6 +3,7 @@ from __future__ import annotations
 import config
 import pytest
 from tokenization.policy import (
+    algorithm_specs,
     TokenizationPolicy,
     TokenizationPolicyError,
     TokenizationPolicyRegistry,
@@ -85,6 +86,19 @@ def test_policy_fingerprint_is_stable_and_secret_free():
 
 def test_policy_rejects_unsupported_algorithm_and_invalid_kind():
     with pytest.raises(TokenizationPolicyError, match="algorithm"):
-        TokenizationPolicy(policy_id="b2", kind="durable_token", algorithm="blake2b", key_ref="k")
+        TokenizationPolicy(policy_id="bad", kind="durable_token", algorithm="sha512", key_ref="k")
     with pytest.raises(TokenizationPolicyError, match="kind"):
         TokenizationPolicy(policy_id="bad", kind="deterministic_hash", key_ref="k")
+
+
+def test_blake2b_is_arrow_ready_without_native_claim(monkeypatch):
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+    policy = TokenizationPolicy(
+        policy_id="customer-pii-b2-v1",
+        kind="durable_token",
+        algorithm="blake2b",
+        key_ref="customer-pii-v1",
+        digest_size=32,
+    )
+    assert len(policy.deterministic_token("alice@example.com")) == 64
+    assert "blake2b" in {spec.name for spec in algorithm_specs()}

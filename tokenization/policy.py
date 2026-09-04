@@ -20,6 +20,27 @@ class TokenizationPolicyError(ValueError):
 
 
 @dataclass(frozen=True)
+class AlgorithmSpec:
+    """Approved algorithm metadata used by policy validation and Arrow."""
+
+    name: str
+    min_digest_size: int
+    max_digest_size: int
+    native_dialects: tuple[str, ...] = ()
+
+
+_ALGORITHMS = {
+    "sha256": AlgorithmSpec("sha256", 32, 32),
+    "blake2b": AlgorithmSpec("blake2b", 1, 64),
+}
+
+
+def algorithm_specs() -> tuple[AlgorithmSpec, ...]:
+    """Return approved algorithms without exposing any key material."""
+    return tuple(_ALGORITHMS[name] for name in sorted(_ALGORITHMS))
+
+
+@dataclass(frozen=True)
 class TokenizationPolicy:
     """Secret-free description of one approved tokenization policy."""
 
@@ -41,7 +62,8 @@ class TokenizationPolicy:
             raise TokenizationPolicyError(
                 "kind must be 'durable_token' or 'random_token'"
             )
-        if self.algorithm not in {"sha256"}:
+        spec = _ALGORITHMS.get(self.algorithm)
+        if spec is None:
             raise TokenizationPolicyError(
                 f"unsupported tokenization algorithm: {self.algorithm!r}"
             )
@@ -49,8 +71,11 @@ class TokenizationPolicy:
             raise TokenizationPolicyError(
                 f"unsupported tokenization normalization: {self.normalization!r}"
             )
-        if self.digest_size != 32:
-            raise TokenizationPolicyError("sha256 policies must use a 32-byte digest")
+        if not spec.min_digest_size <= self.digest_size <= spec.max_digest_size:
+            raise TokenizationPolicyError(
+                f"{self.algorithm} digest_size must be between "
+                f"{spec.min_digest_size} and {spec.max_digest_size} bytes"
+            )
         if self.framing_version != 1:
             raise TokenizationPolicyError("unsupported tokenization framing version")
         if self.kind == "durable_token" and not self.key_ref:
@@ -90,9 +115,12 @@ class TokenizationPolicy:
             normalized = normalized.lower()
         key = config.resolve_tokenization_key(self.key_ref)
         domain = self.domain or self.policy_id
-        return hashlib.sha256(
-            f"{key}|{domain}|{normalized}".encode("utf-8")
-        ).hexdigest().upper()
+        payload = f"{key}|{domain}|{normalized}".encode("utf-8")
+        if self.algorithm == "sha256":
+            digest = hashlib.sha256(payload).digest()
+        else:
+            digest = hashlib.blake2b(payload, digest_size=self.digest_size).digest()
+        return digest.hex().upper()
 
 
 class TokenizationPolicyRegistry:
@@ -143,6 +171,7 @@ def legacy_policy(
     return TokenizationPolicy(
         policy_id=policy_id,
         kind=kind,
+        algorithm="sha256",
         key_ref=transform.key_ref,
         domain=transform.domain or default_domain,
         normalization=transform.normalization,

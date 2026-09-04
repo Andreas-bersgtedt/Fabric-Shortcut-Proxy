@@ -256,3 +256,24 @@ def authenticate_admin_token(supplied_token: str) -> User | None:
     if expected and supplied_token and hmac.compare_digest(supplied_token, expected):
         return User("admin-token", roles=("system_administrator",))
     return None
+
+
+def authenticate_request(supplied_token: str) -> User | None:
+    """Authenticate a request through the current transitional provider.
+
+    A future identity/session provider should replace this adapter without
+    changing permission checks in route handlers.
+    """
+    return authenticate_admin_token(supplied_token)
+
+
+def require_request_permission(
+    supplied_token: str,
+    permission: str,
+    context: Mapping[str, str] | None = None,
+) -> AuthorizationDecision:
+    """Authenticate and require one named function permission."""
+    user = authenticate_request(supplied_token)
+    if user is None:
+        raise AuthorizationError("authentication required")
+    return require(user, permission, context)

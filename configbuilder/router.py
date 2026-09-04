@@ -286,10 +286,15 @@ async def tokenization_policies() -> JSONResponse:
 
 def _check_tokenization_admin(request: Request) -> None:
     """Require the transitional admin token for central policy mutations."""
-    expected = os.environ.get("ADMIN_TOKEN", "")
-    supplied = request.headers.get("x-admin-token", "")
-    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
-        raise PermissionError("tokenization policy administrator authorization required")
+    from security.authorization import AuthorizationError, require_request_permission
+
+    try:
+        require_request_permission(
+            request.headers.get("x-admin-token", ""),
+            "tokenization.policy.admin",
+        )
+    except AuthorizationError as exc:
+        raise PermissionError(str(exc)) from exc
 
 
 @router.post("/api/tokenization/policies")

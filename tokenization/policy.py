@@ -211,6 +211,23 @@ class TokenizationPolicyRegistry:
         """Insert or replace a policy for controlled administrative updates."""
         self._policies[policy.policy_id] = policy
 
+    def disable(self, policy_id: str) -> None:
+        """Disable a policy while retaining its metadata for historical identity."""
+        policy = self._policies.get(policy_id)
+        if policy is None:
+            raise TokenizationPolicyError(f"unknown tokenization policy: {policy_id!r}")
+        self._policies[policy_id] = TokenizationPolicy(
+            policy_id=policy.policy_id,
+            kind=policy.kind,
+            algorithm=policy.algorithm,
+            key_ref=policy.key_ref,
+            domain=policy.domain,
+            normalization=policy.normalization,
+            digest_size=policy.digest_size,
+            framing_version=policy.framing_version,
+            enabled=False,
+        )
+
     def has(self, policy_id: str) -> bool:
         """Return whether a policy ID is registered, including disabled policies."""
         return policy_id in self._policies

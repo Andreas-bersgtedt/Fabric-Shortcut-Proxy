@@ -331,6 +331,25 @@ async def save_tokenization_policy(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "policy": policy.to_public(), "restart_required": True})
 
 
+@router.delete("/api/tokenization/policies/{policy_id}")
+async def disable_tokenization_policy(policy_id: str, request: Request) -> JSONResponse:
+    """Disable a policy without deleting its historical metadata."""
+    try:
+        _check_tokenization_admin(request)
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    try:
+        from tokenization import load_default_registry, save_registry
+        registry = load_default_registry()
+        registry.disable(policy_id)
+        save_registry(os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"), registry)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    log.info("tokenization_policy_disabled", policy_id=policy_id)
+    return JSONResponse({"ok": True, "policy_id": policy_id, "enabled": False,
+                         "restart_required": True})
+
+
 @router.get("/api/authorization/me")
 async def authorization_me(request: Request) -> JSONResponse:
     """Return the authenticated transitional admin identity and permissions."""

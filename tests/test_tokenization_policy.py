@@ -232,6 +232,38 @@ async def test_config_builder_policy_mutation_requires_admin_and_never_stores_se
     assert allowed.json()["policy"]["key_ref"] == "customer-pii-v1"
 
 
+async def test_config_builder_policy_disable_is_admin_only_and_retains_metadata(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    path = tmp_path / "central-policies.json"
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    registry = TokenizationPolicyRegistry([
+        TokenizationPolicy(
+            policy_id="support-v1", kind="random_token", domain="support",
+        ),
+    ])
+    save_registry(str(path), registry)
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        denied = await client.delete("/_config/api/tokenization/policies/support-v1")
+        disabled = await client.delete(
+            "/_config/api/tokenization/policies/support-v1",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+        catalog = await client.get("/_config/api/tokenization/policies")
+    assert denied.status_code == 401
+    assert disabled.status_code == 200
+    assert catalog.json()["policies"][0]["enabled"] is False
+    assert catalog.json()["policies"][0]["domain"] == "support"
+
+
 async def test_config_builder_policy_mutation_rejects_secret_field(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
@@ -289,6 +321,16 @@ async def test_config_builder_supports_multiple_named_policies(tmp_path, monkeyp
     ]
     assert policies[0]["kind"] == "durable_token"
     assert policies[1]["kind"] == "random_token"
+
+
+def test_registry_disables_policy_without_deleting_metadata():
+    registry = TokenizationPolicyRegistry([
+        TokenizationPolicy(policy_id="support-v1", kind="random_token"),
+    ])
+    registry.disable("support-v1")
+    assert registry.list_public()[0]["enabled"] is False
+    with pytest.raises(TokenizationPolicyError, match="disabled"):
+        registry.get("support-v1")
 
 
 def test_policy_fingerprint_is_stable_and_secret_free():

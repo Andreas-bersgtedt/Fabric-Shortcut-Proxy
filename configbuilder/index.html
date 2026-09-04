@@ -584,6 +584,32 @@
       <h2>Tokenization policies</h2>
       <div class="hint">Approved token policies are managed centrally. Table and mount editors may reference policy IDs without exposing key values.</div>
       <div id="tokenizationPolicies" class="connlist"></div>
+      <details style="margin-top:12px;">
+        <summary>Create or replace policy</summary>
+        <label for="policyAdminToken">Administrator token</label>
+        <input id="policyAdminToken" type="password" autocomplete="off" placeholder="Required for policy administration" />
+        <div class="row">
+          <section>
+            <label for="policyId">Policy ID</label>
+            <input id="policyId" placeholder="customer-pii-v1" />
+          </section>
+          <section>
+            <label for="policyKind">Token type</label>
+            <select id="policyKind"><option value="durable_token">Durable token</option><option value="random_token">Random token</option></select>
+          </section>
+        </div>
+        <div class="row">
+          <section><label for="policyAlgorithm">Algorithm</label><select id="policyAlgorithm"><option value="sha256">SHA-256</option><option value="blake2b">BLAKE2b</option></select></section>
+          <section><label for="policyDigestSize">Digest bytes</label><input id="policyDigestSize" type="number" min="1" max="64" value="32" /></section>
+        </div>
+        <label for="policyKeyRef">Key reference</label>
+        <input id="policyKeyRef" placeholder="customer-pii-v1 (durable only)" />
+        <div class="row">
+          <section><label for="policyDomain">Domain</label><input id="policyDomain" placeholder="customer-email" /></section>
+          <section><label for="policyNormalization">Normalization</label><select id="policyNormalization"><option value="none">none</option><option value="trim">trim</option><option value="trim_lower">trim_lower</option></select></section>
+        </div>
+        <div class="actions"><button class="btn primary" id="btnSavePolicy">Save policy</button></div>
+      </details>
       <div class="status" id="tokenizationPoliciesStatus"></div>
     </div>
     <div class="card" id="userManagementPanel">
@@ -1410,6 +1436,19 @@ async function loadTokenizationPolicies(){
     status.textContent = error.message || "Unable to load tokenization policies.";
     status.className = "status err";
   }
+}
+
+async function saveTokenizationPolicy(){
+  const status=$("tokenizationPoliciesStatus");
+  const token=$("policyAdminToken").value.trim();
+  const kind=$("policyKind").value; const policyId=$("policyId").value.trim();
+  if(!token || !policyId){ status.textContent="Administrator token and policy ID are required."; status.className="status err"; return; }
+  const payload={policy_id:policyId,kind,algorithm:$("policyAlgorithm").value,digest_size:parseInt($("policyDigestSize").value||"32",10),normalization:$("policyNormalization").value,domain:$("policyDomain").value.trim()||null,enabled:true};
+  if(kind==="durable_token") payload.key_ref=$("policyKeyRef").value.trim();
+  const response=await fetch("/_config/api/tokenization/policies", {method:"POST",headers:{"Content-Type":"application/json","X-Admin-Token":token},body:JSON.stringify(payload)});
+  const data=await response.json();
+  status.textContent=data.ok?"Tokenization policy saved.":(data.error||"Unable to save tokenization policy."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadTokenizationPolicies();
 }
 
 async function loadManagedUsers(){
@@ -3809,6 +3848,7 @@ loadTokenizationKeyReferences();
 loadTokenizationPolicies();
 $("btnLoadUsers").onclick=loadManagedUsers;
 $("btnCreateUser").onclick=createManagedUser;
+$("btnSavePolicy").onclick=saveTokenizationPolicy;
 loadMounts();
 loadAccessKeys();
 omInit();

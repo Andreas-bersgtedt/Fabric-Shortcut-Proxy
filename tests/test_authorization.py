@@ -84,6 +84,16 @@ def test_user_directory_rejects_credentials_and_unknown_user():
         UserDirectory().get("missing")
 
 
+def test_user_directory_protects_last_enabled_system_admin():
+    directory = UserDirectory([
+        User("admin", roles=("system_administrator",)),
+        User("second", roles=("system_administrator",)),
+    ])
+    directory.disable("second")
+    with pytest.raises(PermissionError, match="last enabled"):
+        directory.disable("admin")
+
+
 def test_admin_token_authentication_is_constant_time_and_system_admin(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
     user = authenticate_admin_token("admin-test-token")
@@ -125,3 +135,39 @@ async def test_authorization_endpoints_require_admin_and_hide_user_secrets(tmp_p
     assert users.status_code == 200
     assert users.json()["users"][0]["user_id"] == "ops-user"
     assert "password" not in users.text.lower()
+
+
+async def test_authorization_user_mutations_are_admin_only_and_preserve_last_admin(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    user_path = tmp_path / "users.json"
+    UserDirectory([User("admin", roles=("system_administrator",))]).save(str(user_path))
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    payload = {"user_id": "support", "roles": ["monitor_troubleshooter"]}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        denied = await client.post("/_config/api/authorization/users", json=payload)
+        created = await client.post(
+            "/_config/api/authorization/users", json=payload,
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+        disabled = await client.delete(
+            "/_config/api/authorization/users/support",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+        last_admin = await client.delete(
+            "/_config/api/authorization/users/admin",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+    assert denied.status_code == 401
+    assert created.status_code == 200
+    assert created.json()["user"]["user_id"] == "support"
+    assert disabled.status_code == 200
+    assert last_admin.status_code == 409

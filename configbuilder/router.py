@@ -339,6 +339,45 @@ async def authorization_users(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "users": users.list_public()})
 
 
+@router.post("/api/authorization/users")
+async def save_authorization_user(request: Request) -> JSONResponse:
+    """Create or replace safe user metadata for the transitional administrator."""
+    from security.authorization import User, UserDirectory, authenticate_admin_token
+
+    if authenticate_admin_token(request.headers.get("x-admin-token", "")) is None:
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        user = User.from_dict(await request.json())
+        path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+        directory = UserDirectory.load(path)
+        directory.replace(user)
+        directory.save(path)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("authorization_user_saved", user_id=user.user_id, enabled=user.enabled)
+    return JSONResponse({"ok": True, "user": user.to_public()})
+
+
+@router.delete("/api/authorization/users/{user_id}")
+async def disable_authorization_user(user_id: str, request: Request) -> JSONResponse:
+    """Disable a user while preserving the last enabled administrator."""
+    from security.authorization import AuthorizationError, UserDirectory, authenticate_admin_token
+
+    if authenticate_admin_token(request.headers.get("x-admin-token", "")) is None:
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+        directory = UserDirectory.load(path)
+        directory.disable(user_id)
+        directory.save(path)
+    except AuthorizationError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("authorization_user_disabled", user_id=user_id)
+    return JSONResponse({"ok": True, "user_id": user_id, "enabled": False})
+
+
 @router.post("/api/keyvault/test")
 async def keyvault_test(request: Request) -> JSONResponse:
     """Live Key Vault connectivity test for the 'Test Key Vault' button.

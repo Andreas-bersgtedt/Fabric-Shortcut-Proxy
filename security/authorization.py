@@ -179,6 +179,21 @@ class UserDirectory:
     def replace(self, user: User) -> None:
         self._users[user.user_id] = user
 
+    def disable(self, user_id: str) -> None:
+        """Disable a user without allowing the last enabled admin to be removed."""
+        user = self.get(user_id)
+        if not user.enabled:
+            return
+        enabled_admins = sum(
+            other.enabled and "system_administrator" in other.roles
+            for other in self._users.values()
+        )
+        if "system_administrator" in user.roles and enabled_admins <= 1:
+            raise AuthorizationError("cannot disable the last enabled system administrator")
+        self._users[user_id] = User(
+            user.user_id, roles=user.roles, grants=user.grants, enabled=False
+        )
+
     def get(self, user_id: str) -> User:
         try:
             return self._users[user_id]

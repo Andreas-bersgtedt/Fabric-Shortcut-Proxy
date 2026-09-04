@@ -1424,8 +1424,13 @@ async function loadTokenizationPolicies(){
       label.textContent = policy.policy_id;
       const detail = document.createElement("span");
       detail.className = "hint";
-      detail.textContent = `${policy.kind} · ${policy.algorithm} · ${policy.normalization}`;
-      row.append(label, detail);
+      detail.textContent = `${policy.enabled===false?"disabled":"enabled"} · ${policy.kind} · ${policy.algorithm} · ${policy.normalization}`;
+      const disable = document.createElement("button");
+      disable.className = "btn ghost";
+      disable.textContent = "Disable";
+      disable.disabled = policy.enabled === false;
+      disable.onclick = () => disableTokenizationPolicy(policy.policy_id);
+      row.append(label, detail, disable);
       box.appendChild(row);
     }
     status.textContent = `${state.tokenizationPolicies.length} central policy${state.tokenizationPolicies.length===1?"":"ies"} available.`;
@@ -1436,6 +1441,17 @@ async function loadTokenizationPolicies(){
     status.textContent = error.message || "Unable to load tokenization policies.";
     status.className = "status err";
   }
+}
+
+async function disableTokenizationPolicy(policyId){
+  const status=$("tokenizationPoliciesStatus");
+  const token=$("policyAdminToken").value.trim();
+  if(!token){ status.textContent="Enter the administrator token to disable a policy."; status.className="status err"; return; }
+  const response=await fetch("/_config/api/tokenization/policies/"+encodeURIComponent(policyId), {method:"DELETE",headers:{"X-Admin-Token":token}});
+  const data=await response.json();
+  status.textContent=data.ok?"Tokenization policy disabled.":(data.error||"Unable to disable tokenization policy.");
+  status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadTokenizationPolicies();
 }
 
 async function saveTokenizationPolicy(){

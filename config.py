@@ -218,6 +218,7 @@ _register("FSP_REQUIRE_KEYVAULT", "require_keyvault", "bool", REQUIRE_KEYVAULT)
 _register("FSP_KEYVAULT_REFRESH_SECONDS", "keyvault_refresh_seconds", "int", KEYVAULT_REFRESH_SECONDS)
 _register("FSP_KEYVAULT_CACHE_TTL", "keyvault_cache_ttl", "int", KEYVAULT_CACHE_TTL)
 _register("FSP_KEYVAULT_WRITE_BACK", "keyvault_write_back", "bool", KEYVAULT_WRITE_BACK)
+_register("TOKENIZATION_FALLBACK", "tokenization_fallback", "str", "none")
 
 # Register memory monitoring settings
 _register("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", "int", 800)
@@ -335,6 +336,9 @@ REFRESH_POLL_SECONDS: int = _get_int("REFRESH_POLL_SECONDS", "refresh_poll_secon
 REFRESH_STRATEGY: str = _get_str("REFRESH_STRATEGY", "refresh_strategy", "auto", _FRESH_CFG)
 REFRESH_ALLOW_FULL_PULL: bool = _get_bool("REFRESH_ALLOW_FULL_PULL", "refresh_allow_full_pull", False, _FRESH_CFG)
 REFRESH_TTL_SECONDS: int = _get_int("REFRESH_TTL_SECONDS", "refresh_ttl_seconds", 1200, _FRESH_CFG)
+TOKENIZATION_FALLBACK: str = _get_str(
+    "TOKENIZATION_FALLBACK", "tokenization_fallback", "none", _FILE_CFG
+).strip().lower()
 
 # ---------------------------------------------------------------------------
 # Iceberg table schema definition

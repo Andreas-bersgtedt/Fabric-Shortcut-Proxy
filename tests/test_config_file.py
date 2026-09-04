@@ -32,6 +32,11 @@ def test_get_str_and_bool_from_json(monkeypatch):
     assert config._get_bool("FAKE_BOOL_ENV3", "missing", True) is True
 
 
+def test_tokenization_fallback_setting_is_explicit(monkeypatch):
+    monkeypatch.setattr(config, "_FILE_CFG", {"tokenization_fallback": "arrow"})
+    assert config._get_str("TOKENIZATION_FALLBACK", "tokenization_fallback", "none") == "arrow"
+
+
 # ---------------------------------------------------------------------------
 # Table parsing
 # ---------------------------------------------------------------------------

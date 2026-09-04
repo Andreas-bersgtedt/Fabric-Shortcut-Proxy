@@ -33,6 +33,16 @@ def test_tokenization_capabilities_by_dialect():
     assert matrix["sqlite"]["supports_random_tokenization"] is False
 
 
+def test_tokenization_backend_topology_prefers_native_then_arrow_then_none():
+    mssql = capabilities_for_dialect("mssql")
+    impala = capabilities_for_dialect("impala")
+    assert mssql.tokenization_backend("deterministic_hash") == "native"
+    assert impala.tokenization_backend("deterministic_hash") == "none"
+    assert impala.tokenization_backend("deterministic_hash", "arrow") == "arrow"
+    assert impala.tokenization_warning("deterministic_hash") is None
+    assert "plaintext" in impala.tokenization_warning("deterministic_hash", "arrow")
+
+
 def test_databricks_requires_http_path():
     assert missing_required_fields("databricks", {}) == ["http_path"]
     assert missing_required_fields("databricks", {"http_path": "/sql/1.0/warehouses/x"}) == []

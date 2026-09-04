@@ -12,6 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+TOKENIZATION_NATIVE = "native"
+TOKENIZATION_ARROW = "arrow"
+TOKENIZATION_NONE = "none"
+TOKENIZATION_FALLBACKS = (TOKENIZATION_NONE, TOKENIZATION_ARROW)
+
+
 @dataclass(frozen=True)
 class FlavorCapabilities:
     flavor: str
@@ -46,6 +52,29 @@ class FlavorCapabilities:
             "supports_stats_histogram": self.supports_stats_histogram,
             "required_connection_fields": list(self.required_connection_fields),
         }
+
+    def tokenization_backend(self, kind: str, fallback: str = TOKENIZATION_NONE) -> str:
+        """Return the selected backend without silently enabling fallback."""
+        native = (
+            self.supports_deterministic_tokenization
+            if kind == "deterministic_hash"
+            else self.supports_random_tokenization
+        )
+        if native:
+            return TOKENIZATION_NATIVE
+        if fallback == TOKENIZATION_ARROW:
+            return TOKENIZATION_ARROW
+        return TOKENIZATION_NONE
+
+    def tokenization_warning(self, kind: str, fallback: str = TOKENIZATION_NONE) -> str | None:
+        """Describe the operational cost when Arrow replaces native pushdown."""
+        if self.tokenization_backend(kind, fallback) != TOKENIZATION_ARROW:
+            return None
+        return (
+            f"{self.flavor} {kind} uses Arrow fallback: plaintext source values "
+            "cross into the proxy, increasing proxy CPU/memory and source-to-proxy "
+            "data transfer while reducing safe throughput."
+        )
 
 
 _CAPABILITIES: dict[str, FlavorCapabilities] = {

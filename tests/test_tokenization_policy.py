@@ -255,6 +255,42 @@ async def test_config_builder_policy_mutation_rejects_secret_field(tmp_path, mon
     assert "key material" in response.json()["error"]
 
 
+async def test_config_builder_supports_multiple_named_policies(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    path = tmp_path / "central-policies.json"
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    durable = {
+        "policy_id": "customer-email-v1", "kind": "durable_token",
+        "key_ref": "customer-pii-v1", "domain": "customer-email",
+        "normalization": "trim_lower",
+    }
+    random = {
+        "policy_id": "support-note-v1", "kind": "random_token",
+        "algorithm": "sha256", "digest_size": 32,
+    }
+    headers = {"X-Admin-Token": "admin-test-token"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        first = await client.post("/_config/api/tokenization/policies", json=durable, headers=headers)
+        second = await client.post("/_config/api/tokenization/policies", json=random, headers=headers)
+        catalog = await client.get("/_config/api/tokenization/policies")
+    assert first.status_code == second.status_code == 200
+    policies = catalog.json()["policies"]
+    assert [policy["policy_id"] for policy in policies] == [
+        "customer-email-v1", "support-note-v1"
+    ]
+    assert policies[0]["kind"] == "durable_token"
+    assert policies[1]["kind"] == "random_token"
+
+
 def test_policy_fingerprint_is_stable_and_secret_free():
     policy = TokenizationPolicy(
         policy_id="customer-pii-v1",

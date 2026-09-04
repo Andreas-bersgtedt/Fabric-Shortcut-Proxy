@@ -251,7 +251,7 @@ async def keyvault_status() -> JSONResponse:
     """Non-secret Key Vault / Entra ID config + live status for the builder panel."""
     from security import keyvault as kv
     st = kv.status_snapshot()
-    st["sdk_installed"] = kv.sdk_available()
+    st["sdk_installed"] = bool(st.get("enabled")) and kv.sdk_available()
     return JSONResponse(st)
 
 

@@ -38,7 +38,9 @@ def test_settings_catalog_categorizes_keyvault():
     assert m["auth_mode"]["choices"] == ["default", "managed_identity", "service_principal"]
 
 
-async def test_keyvault_status_disabled_by_default(app):
+async def test_keyvault_status_disabled_by_default(app, monkeypatch):
+    import security.keyvault as kv
+    monkeypatch.setattr(kv, "sdk_available", lambda: True)
     async with _client(app) as c:
         r = await c.get("/_config/api/keyvault")
     assert r.status_code == 200
@@ -57,7 +59,9 @@ async def test_keyvault_test_no_uri_returns_clear_error(app):
     assert "no Key Vault URI" in d["error"]
 
 
-async def test_keyvault_test_without_sdk_reports_install_hint(app):
+async def test_keyvault_test_without_sdk_reports_install_hint(app, monkeypatch):
+    import security.keyvault as kv
+    monkeypatch.setattr(kv, "sdk_available", lambda: False)
     async with _client(app) as c:
         r = await c.post(
             "/_config/api/keyvault/test",

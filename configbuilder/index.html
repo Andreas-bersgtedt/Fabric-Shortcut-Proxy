@@ -1516,13 +1516,17 @@ async function refreshAuthorization(){
 
 function applyPermissionVisibility(){
   const locked = state.authzEnforced;
-  const rules={sources:"config.read",tables:"config.read",openmirror:"config.read",security:"security.metadata.read",operational:"monitor.read"};
+  const rules={sources:"config.read",tables:"config.read",openmirror:"config.read",security:"security.metadata.read",operational:"system.admin"};
   Object.entries(rules).forEach(([tab,permission])=>{
     const button=$("tab-"+(tab==="operational"?"operational":tab));
     if(button) button.hidden=locked&&!state.permissions.has(permission);
   });
   document.querySelectorAll("[data-requires-permission]").forEach(element=>{
     element.hidden=locked&&!state.permissions.has(element.dataset.requiresPermission);
+  });
+  document.querySelectorAll("[data-go-tab]").forEach(element=>{
+    const target=$("tab-"+element.dataset.goTab);
+    element.hidden=Boolean(locked && target && target.hidden);
   });
 }
 

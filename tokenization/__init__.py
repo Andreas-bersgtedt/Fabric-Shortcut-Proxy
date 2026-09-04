@@ -8,7 +8,9 @@ from tokenization.policy import (
     TokenizationSelection,
     algorithm_specs,
     legacy_policy,
+    load_registry,
     policy_fingerprint,
+    save_registry,
     selection_from_transform,
 )
 
@@ -20,6 +22,8 @@ __all__ = [
     "TokenizationSelection",
     "algorithm_specs",
     "legacy_policy",
+    "load_registry",
     "policy_fingerprint",
+    "save_registry",
     "selection_from_transform",
 ]

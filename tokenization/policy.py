@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -131,6 +133,29 @@ class TokenizationPolicy:
             "enabled": self.enabled,
         }
 
+    @classmethod
+    def from_dict(cls, raw: dict) -> "TokenizationPolicy":
+        """Parse one persisted policy without accepting secret values."""
+        if not isinstance(raw, dict):
+            raise TokenizationPolicyError("tokenization policy must be an object")
+        forbidden = {"key", "secret", "secret_value", "token_key"}
+        if forbidden.intersection(raw):
+            raise TokenizationPolicyError("tokenization policy must contain key_ref, not key material")
+        try:
+            return cls(
+                policy_id=str(raw["policy_id"]).strip(),
+                kind=str(raw["kind"]).strip().lower(),
+                algorithm=str(raw.get("algorithm", "sha256")).strip().lower(),
+                key_ref=(str(raw["key_ref"]).strip() if raw.get("key_ref") else None),
+                domain=(str(raw["domain"]) if raw.get("domain") is not None else None),
+                normalization=str(raw.get("normalization", "none")).strip().lower(),
+                digest_size=int(raw.get("digest_size", 32)),
+                framing_version=int(raw.get("framing_version", 1)),
+                enabled=bool(raw.get("enabled", True)),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TokenizationPolicyError(f"invalid tokenization policy: {exc}") from exc
+
     def deterministic_token(self, value: str) -> str:
         """Build the canonical durable token without exposing the key."""
         if self.kind != "durable_token":
@@ -182,6 +207,17 @@ class TokenizationPolicyRegistry:
 
     def list_public(self) -> list[dict]:
         return [self._policies[key].to_public() for key in sorted(self._policies)]
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "TokenizationPolicyRegistry":
+        """Load a registry from ``{"policies": [...]}`` JSON data."""
+        if not isinstance(raw, dict) or not isinstance(raw.get("policies"), list):
+            raise TokenizationPolicyError("tokenization config must contain a policies list")
+        return cls([TokenizationPolicy.from_dict(item) for item in raw["policies"]])
+
+    def to_dict(self) -> dict:
+        """Return the secret-free persisted registry shape."""
+        return {"policies": [self._policies[key].to_public() for key in sorted(self._policies)]}
 
     def resolve_selection(self, selection: TokenizationSelection) -> TokenizationPolicy:
         """Resolve a table selection and enforce action/policy-kind agreement."""
@@ -239,3 +275,37 @@ def policy_fingerprint(policy: TokenizationPolicy) -> str:
     """Return a stable, secret-free identity for cache and snapshot inputs."""
     payload = json.dumps(policy.to_public(), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def load_registry(path: str) -> TokenizationPolicyRegistry:
+    """Load a policy registry from disk, failing closed on malformed JSON."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except FileNotFoundError:
+        return TokenizationPolicyRegistry()
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TokenizationPolicyError(f"unable to load tokenization policies: {exc}") from exc
+    return TokenizationPolicyRegistry.from_dict(raw)
+
+
+def save_registry(path: str, registry: TokenizationPolicyRegistry) -> None:
+    """Atomically save a secret-free policy registry document."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".tokenization-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(registry.to_dict(), fh, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temporary, path)
+    except OSError as exc:
+        raise TokenizationPolicyError(f"unable to save tokenization policies: {exc}") from exc
+    finally:
+        if os.path.exists(temporary):
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass

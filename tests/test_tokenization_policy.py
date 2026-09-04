@@ -9,7 +9,9 @@ from tokenization.policy import (
     TokenizationPolicyRegistry,
     TokenizationSelection,
     legacy_policy,
+    load_registry,
     policy_fingerprint,
+    save_registry,
     selection_from_transform,
 )
 
@@ -106,6 +108,39 @@ def test_registry_enforces_selector_policy_kind():
         registry.resolve_selection(TokenizationSelection("random_token", "durable"))
     with pytest.raises(TokenizationPolicyError, match="does not resolve"):
         registry.resolve_selection(TokenizationSelection("keep"))
+
+
+def test_registry_round_trips_secret_free_json_shape():
+    registry = TokenizationPolicyRegistry([
+        TokenizationPolicy(
+            policy_id="customer-pii-v1", kind="durable_token",
+            key_ref="customer-pii-v1", domain="customer-email",
+            normalization="trim_lower",
+        ),
+        TokenizationPolicy(policy_id="support-v1", kind="random_token"),
+    ])
+    loaded = TokenizationPolicyRegistry.from_dict(registry.to_dict())
+    assert loaded.list_public() == registry.list_public()
+    assert "secret" not in str(registry.to_dict()).lower()
+
+
+def test_policy_json_rejects_secret_material():
+    with pytest.raises(TokenizationPolicyError, match="key material"):
+        TokenizationPolicy.from_dict({
+            "policy_id": "bad", "kind": "durable_token",
+            "key_ref": "customer-pii-v1", "secret": "do-not-store",
+        })
+
+
+def test_registry_file_round_trip_and_missing_file(tmp_path):
+    path = tmp_path / "tokenization.json"
+    empty = load_registry(str(path))
+    assert empty.list_public() == []
+    registry = TokenizationPolicyRegistry([
+        TokenizationPolicy(policy_id="support-v1", kind="random_token")
+    ])
+    save_registry(str(path), registry)
+    assert load_registry(str(path)).list_public() == registry.list_public()
 
 
 def test_policy_fingerprint_is_stable_and_secret_free():

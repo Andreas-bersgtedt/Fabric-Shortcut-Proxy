@@ -470,6 +470,8 @@ async def disable_authorization_user(user_id: str, request: Request) -> JSONResp
         directory = UserDirectory.load(path)
         directory.disable(user_id)
         directory.save(path)
+        from security.identity import identity_provider
+        identity_provider().disable(user_id)
     except AuthorizationError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
     except ValueError as exc:

@@ -177,6 +177,11 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert disabled.status_code == 200
     assert last_admin.status_code == 409
 
+    from security.identity import IdentityProvider
+    assert IdentityProvider(str(tmp_path / "identities.json")).authenticate(
+        "support", "correct horse battery staple"
+    ) is None
+
 
 async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
     import httpx

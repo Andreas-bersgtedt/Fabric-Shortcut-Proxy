@@ -109,7 +109,7 @@ class IdentityProvider:
         raw = self._read()
         identity = raw.get("identities", {}).get(user_id)
         if identity is None:
-            raise ValueError("user not found")
+            return
         identity["enabled"] = False
         self._write(raw)
         with self._lock:

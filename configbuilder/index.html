@@ -549,7 +549,7 @@
     <div class="status" id="mountEditStatus"></div>
   </div>
 
-  <div class="card" id="securityAccessKeys" style="margin-top:16px;">
+  <div class="card" id="securityAccessKeys" data-requires-permission="security.credentials.admin" style="margin-top:16px;">
     <h2>Access keys <span style="font-weight:400;text-transform:none;">(per-key authorization)</span></h2>
     <div class="hint" style="margin-bottom:12px;">Issue scoped S3 access keys so each client/tenant can reach only the buckets it's allowed.
       Keys are stored <b>encrypted</b> in the Manager; the secret is shown <b>once</b> at creation. When any key exists it governs SigV4 auth
@@ -588,7 +588,7 @@
     </div>
   </div>
   <div id="securityContent" class="security-stack">
-    <div class="card" id="tokenizationPoliciesPanel">
+    <div class="card" id="tokenizationPoliciesPanel" data-requires-permission="tokenization.policy.read">
       <h2>Tokenization policies</h2>
       <div class="hint">Approved token policies are managed centrally. Table and mount editors may reference policy IDs without exposing key values.</div>
       <div id="tokenizationPolicies" class="connlist"></div>
@@ -620,7 +620,7 @@
       </details>
       <div class="status" id="tokenizationPoliciesStatus"></div>
     </div>
-    <div class="card" id="userManagementPanel">
+    <div class="card" id="userManagementPanel" data-requires-permission="users.admin">
       <h2>User management</h2>
       <div class="hint">Create and disable identity metadata for the protected management API. Authentication credentials are supplied by the deployment identity provider and are not stored here.</div>
       <label for="userAdminToken">Administrator token</label>
@@ -650,7 +650,7 @@
       <div id="userManagementList" class="connlist"></div>
       <div class="status" id="userManagementStatus"></div>
     </div>
-    <div class="card" id="backupRestorePanel">
+    <div class="card" id="backupRestorePanel" data-requires-permission="security.credentials.admin">
       <h2>Backup and restore</h2>
       <div class="hint">Create a portable encrypted backup of all configuration, database credentials, storage secrets, access keys and ACLs, and Open Mirroring state (including any pending recovery payload). Source datasets, generated caches, logs, environment-only secrets, external TLS files, and remote Key Vault contents are not copied.</div>
       <div class="row">
@@ -866,7 +866,7 @@
       <div class="status" id="moduleSaveStatus"></div>
     </div>
 
-    <div id="legacySecretPanel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <div id="legacySecretPanel" data-requires-permission="security.credentials.admin" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>S3 secret key</b> <span id="s3SecretState" class="hint" style="margin-left:6px;">(checking...)</span>
       <div class="hint">Write-only field. Value is never shown back; status only.</div>
       <div class="tablebar" style="margin-top:8px;">
@@ -877,7 +877,7 @@
       <div class="status" id="s3SecretStatus"></div>
     </div>
 
-    <div id="sigv4Panel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <div id="sigv4Panel" data-requires-permission="security.metadata.read" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>SigV4 diagnostics</b>
       <div class="hint">Effective authentication values used by this running process.</div>
       <div style="margin-top:8px; display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; align-items:center;">
@@ -1519,7 +1519,9 @@ function applyPermissionVisibility(){
   const rules={sources:"config.read",tables:"config.read",openmirror:"config.read",security:"security.metadata.read",operational:"system.admin"};
   Object.entries(rules).forEach(([tab,permission])=>{
     const button=$("tab-"+(tab==="operational"?"operational":tab));
-    if(button) button.hidden=locked&&!state.permissions.has(permission);
+    if(button) button.hidden=locked && (tab!=="security"
+      ? !state.permissions.has(permission)
+      : !["security.metadata.read","security.credentials.admin","tokenization.policy.read","tokenization.policy.admin","users.admin"].some(p=>state.permissions.has(p)));
   });
   document.querySelectorAll("[data-requires-permission]").forEach(element=>{
     element.hidden=locked&&!state.permissions.has(element.dataset.requiresPermission);

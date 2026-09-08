@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import os
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -29,6 +30,13 @@ import config
 _EXEMPT_PREFIXES = ("/healthz", "/readyz", "/favicon.ico")
 
 _REALM = "Fabric Shortcut Proxy Manager"
+
+_IDENTITY_BOOTSTRAP_PATHS = {
+    "/_config",
+    "/_config/",
+    "/_config/api/authorization/login",
+    "/_config/api/authorization/status",
+}
 
 
 def manager_auth_active() -> bool:
@@ -77,6 +85,13 @@ def _session_ok(request: Request) -> bool:
         return False
 
 
+def _identity_bootstrap_allowed(request: Request) -> bool:
+    return (
+        os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() == "1"
+        and request.url.path in _IDENTITY_BOOTSTRAP_PATHS
+    )
+
+
 class ManagerAuthMiddleware(BaseHTTPMiddleware):
     """Require HTTP Basic credentials for the Manager's operator surface."""
 
@@ -87,6 +102,8 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if not config.MANAGER_AUTH_PASSWORD:
             return _misconfigured()
+        if _identity_bootstrap_allowed(request):
+            return await call_next(request)
         if not _credentials_ok(request.headers.get("authorization", "")) and not _session_ok(request):
             return _unauthorized()
         return await call_next(request)

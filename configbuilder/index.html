@@ -3432,6 +3432,12 @@ function omRenderTableRows(){
       omRenderTableRows();
     };
   });
+  box.querySelectorAll("details.om-policy-panel").forEach(panel=>{
+    panel.ontoggle = ()=>{
+      const table=state.om.editing.tables[parseInt(panel.dataset.i)];
+      if(table) table._policiesOpen=panel.open;
+    };
+  });
   box.querySelectorAll("[data-del]").forEach(b=>{
     b.onclick = ()=>{ const i=parseInt(b.dataset.del), table=state.om.editing.tables[i];
       if(!confirm(`Remove table "${omTableLabel(table,i)}" from this target? This remains staged until targets are saved.`)) return;
@@ -3506,7 +3512,7 @@ function omPolicyEditor(tb,index){
       + `<div><label>Output name</label><input class="om-policy-name" data-i="${index}" data-source="${omEsc(source)}" value="${omEsc(alias)}"${kind==="remove"||control?" disabled":""} /></div>`
       + `<div class="om-policy-details">${details}</div></div>`;
   }).join("");
-  return `<details class="panel om-policy-panel" style="margin-top:10px;padding:8px;"><summary><b>Column policies</b> <span class="badge">${columns.length}</span></summary><div class="hint">Control columns stay pass-through. Removed columns are omitted from the landing-zone schema.</div>${rows}</details>`;
+  return `<details class="panel om-policy-panel" data-i="${index}" style="margin-top:10px;padding:8px;"${tb._policiesOpen?" open":""}><summary><b>Column policies</b> <span class="badge">${columns.length}</span></summary><div class="hint">Control columns stay pass-through. Removed columns are omitted from the landing-zone schema.</div>${rows}</details>`;
 }
 
 function omUpdatePolicy(i,source,kind){

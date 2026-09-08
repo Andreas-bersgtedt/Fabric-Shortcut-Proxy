@@ -308,6 +308,8 @@ def test_index_has_open_mirror_tab():
     assert "api/open-mirror/fabric/workspaces" in html
     assert 'id="omMirroredDb"' in html
     assert "Column policies" in html
+    assert 'table._policiesOpen=panel.open' in html
+    assert 'tb._policiesOpen?" open":""' in html
     assert "deterministic_hash" in html
     assert "omUpdatePolicy" in html
     assert "omInspectTable(index);" in html

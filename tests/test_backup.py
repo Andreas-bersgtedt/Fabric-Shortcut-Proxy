@@ -42,6 +42,14 @@ def test_backup_restores_config_credentials_and_mirror_state(tmp_path):
     (source_root / "config.tables.json").write_text(
         json.dumps({"tables": [{"name": "orders"}]}), encoding="utf-8"
     )
+    (source_root / "config.tokenization.json").write_text(
+        json.dumps({"policies": [{
+            "policy_id": "CustomerPIIpolicy",
+            "kind": "durable_token",
+            "key_ref": "customer-pii-v1",
+        }]}),
+        encoding="utf-8",
+    )
     source_state = source_root / ".open_mirror_state"
     source_state.mkdir()
     (source_state / "orders.json").write_text('{"cursor":42}', encoding="utf-8")
@@ -58,7 +66,7 @@ def test_backup_restores_config_credentials_and_mirror_state(tmp_path):
     )
     assert created == {
         "created_at": created["created_at"],
-        "config_files": 2,
+        "config_files": 3,
         "connections": 1,
         "secrets": 1,
         "access_keys": 1,
@@ -82,6 +90,10 @@ def test_backup_restores_config_credentials_and_mirror_state(tmp_path):
 
     assert result["restart_required"] is True
     assert json.loads((destination_root / "config.system.json").read_text())["system"]["port"] == 9000
+    restored_policies = json.loads(
+        (destination_root / "config.tokenization.json").read_text(encoding="utf-8")
+    )["policies"]
+    assert restored_policies[0]["policy_id"] == "CustomerPIIpolicy"
     assert not (destination_root / "config.connection.json").exists()
     assert destination_store.list_ids() == ["warehouse"]
     assert destination_store.get_url("warehouse") == "postgresql://user:password@host/db"

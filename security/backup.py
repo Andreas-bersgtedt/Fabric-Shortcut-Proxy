@@ -26,6 +26,7 @@ _CONFIG_FILES = (
     "config.tables.json",
     "config.mounts.json",
     "config.open_mirror.json",
+    "config.tokenization.json",
 )
 _MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 

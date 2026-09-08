@@ -456,6 +456,25 @@ async def test_tokenization_key_references_hide_values(app, monkeypatch):
     assert "another-secret" not in response.text
 
 
+async def test_reidentification_mapping_status_is_metadata_only(app, monkeypatch, tmp_path):
+    import configbuilder.router as router_module
+
+    monkeypatch.setenv("FSP_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(router_module, "_check_security_permission", lambda *_: None)
+    async with _client(app) as client:
+        response = await client.get("/_config/api/reidentification/mappings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["mappings"] == []
+    assert payload["required_role"] == "auditor"
+    assert payload["restart_required"] is True
+    assert "path" not in payload
+    assert "token" not in json.dumps(payload).lower()
+    assert "value" not in json.dumps(payload).lower()
+
+
 async def test_bootstrap_api_prefills_running_builder_config(app):
     async with _client(app) as c:
         r = await c.get("/_config/api/bootstrap")

@@ -101,6 +101,15 @@ class LookupMappings:
         except KeyError:
             raise ReidentificationMappingError("re-identification mapping is not configured") from None
 
+    def replace(self, mapping: LookupMapping) -> None:
+        self._mappings[(mapping.policy_id, mapping.table_id, mapping.column_id)] = mapping
+
+    def remove(self, policy_id: str, table_id: str, column_id: str) -> None:
+        try:
+            del self._mappings[(policy_id, table_id, column_id)]
+        except KeyError:
+            raise ReidentificationMappingError("re-identification mapping is not configured") from None
+
     def validate(self) -> None:
         """Ensure every mapping names an enabled durable policy and its table column."""
         import config

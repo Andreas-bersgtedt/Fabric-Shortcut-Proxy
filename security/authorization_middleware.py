@@ -67,6 +67,8 @@ def _permission(path: str, method: str) -> str | None:
         return "tokenization.policy.read" if method in {"GET", "HEAD"} else "tokenization.policy.admin"
     if path.startswith("/_config/api/tokenization-keys"):
         return "security.metadata.read" if method in {"GET", "HEAD"} else "security.credentials.admin"
+    if path.startswith("/_config/api/reidentification/mappings"):
+        return "system.admin"
     if any(path.startswith(f"/_config/api/{prefix}") for prefix in (
         "credentials", "s3-credentials", "azure-credentials", "access-keys",
         "backup", "restore",

@@ -13,8 +13,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from observability import audit
+from reidentification.mappings import load_default_mappings
 
 router = APIRouter(prefix="/_reidentify/api/v1")
+
+# Mounting an enabled module validates the administrative mapping contract before
+# any Auditor can reach its route.
+load_default_mappings().validate()
 
 
 @router.post("/lookup")

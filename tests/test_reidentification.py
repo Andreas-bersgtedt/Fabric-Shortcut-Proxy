@@ -6,8 +6,14 @@ import httpx
 
 import config
 import module_registry
+from config import ColumnDef, ColumnTransform, TableDef
 from observability import audit
 from reidentification.gate import enabled
+from reidentification.mappings import (
+    LookupMappings,
+    ReidentificationMappingError,
+    default_mappings_path,
+)
 from reidentification.router import router
 from security.authorization import User
 from security.authorization_middleware import AuthorizationMiddleware
@@ -34,6 +40,52 @@ def test_reidentification_requires_system_and_profile_gates(monkeypatch):
 
     monkeypatch.setattr(module_registry, "desired_profile", lambda: ["reidentification"])
     assert enabled() is True
+
+
+def test_lookup_mapping_requires_matching_enabled_durable_policy(tmp_path, monkeypatch):
+    policy_file = tmp_path / "policies.json"
+    policy_file.write_text(
+        '{"policies":[{"policy_id":"customer-pii-v1","kind":"durable_token",'
+        '"algorithm":"sha256","key_ref":"customer-pii-v1","domain":"customer-email",'
+        '"normalization":"trim_lower","digest_size":32,"framing_version":1,"enabled":true}]}',
+        encoding="utf-8",
+    )
+    table = TableDef(
+        name="customers_safe", source_table="dbo.customers", key_column="customer_id",
+        schema=[
+            ColumnDef(field_id=1, name="customer_id", iceberg_type="long", nullable=False),
+            ColumnDef(
+                field_id=2, name="email_token", source="email", iceberg_type="string",
+                transform=ColumnTransform(
+                    kind="deterministic_hash", key_ref="customer-pii-v1",
+                    domain="customer-email", normalization="trim_lower",
+                ), policy_id="customer-pii-v1",
+            ),
+        ],
+    )
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(policy_file))
+    monkeypatch.setattr(config, "TABLES", [table])
+    mappings = LookupMappings.from_dict({"mappings": [{
+        "policy_id": "customer-pii-v1", "table_id": "customers_safe",
+        "column_id": "email_token", "lookup_column": "email_token_lookup",
+        "clear_text_column": "email", "primary_key_column": "customer_id",
+    }]})
+
+    mappings.validate()
+    assert mappings.list_public()[0]["lookup_column"] == "email_token_lookup"
+    with pytest.raises(ReidentificationMappingError, match="not assigned"):
+        LookupMappings.from_dict({"mappings": [{
+            "policy_id": "customer-pii-v1", "table_id": "customers_safe",
+            "column_id": "missing", "lookup_column": "email_token_lookup",
+            "clear_text_column": "email", "primary_key_column": "customer_id",
+        }]}).validate()
+
+
+def test_lookup_mapping_uses_config_directory_unless_explicit(monkeypatch, tmp_path):
+    monkeypatch.setenv("FSP_CONFIG_DIR", str(tmp_path))
+    assert default_mappings_path() == str(tmp_path / "config.reidentification.json")
+    monkeypatch.setenv("REIDENTIFICATION_MAPPING_FILE", "D:/secure/reidentification.json")
+    assert default_mappings_path() == "D:/secure/reidentification.json"
 
 
 @pytest.mark.asyncio

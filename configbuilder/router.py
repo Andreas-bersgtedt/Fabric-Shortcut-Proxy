@@ -414,9 +414,11 @@ async def authorization_login(request: Request) -> JSONResponse:
 @router.get("/api/authorization/status")
 async def authorization_status() -> JSONResponse:
     """Expose only whether route authorization is enabled, never credentials."""
+    from security.authorization_middleware import authorization_enforced
+
     return JSONResponse({
         "ok": True,
-        "enforced": os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() == "1",
+        "enforced": authorization_enforced(),
     })
 
 

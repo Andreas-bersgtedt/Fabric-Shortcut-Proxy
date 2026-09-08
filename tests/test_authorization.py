@@ -272,10 +272,13 @@ async def test_manager_credentials_create_single_ui_session(tmp_path, monkeypatc
 
 
 async def test_authorization_status_reports_only_enforcement_mode(monkeypatch):
+    import config
     import httpx
     from fastapi import FastAPI
 
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "", raising=False)
     from configbuilder.router import router
 
     app = FastAPI()
@@ -286,6 +289,50 @@ async def test_authorization_status_reports_only_enforcement_mode(monkeypatch):
         response = await client.get("/_config/api/authorization/status")
     assert response.status_code == 200
     assert response.json() == {"ok": True, "enforced": True}
+
+
+async def test_authorization_status_is_enforced_by_manager_auth(monkeypatch):
+    import config
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.delenv("FSP_AUTHZ_ENFORCE", raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret", raising=False)
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/_config/api/authorization/status")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "enforced": True}
+
+
+async def test_manager_auth_enforces_operator_routes_without_authz_flag(monkeypatch):
+    import config
+    import httpx
+    from fastapi import FastAPI
+    from security.authorization_middleware import AuthorizationMiddleware
+
+    monkeypatch.delenv("FSP_AUTHZ_ENFORCE", raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret", raising=False)
+    app = FastAPI()
+    app.add_middleware(AuthorizationMiddleware)
+
+    @app.post("/_config/api/save")
+    async def save():
+        return {"ok": True}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/_config/api/save")
+    assert response.status_code == 401
+
 
 
 def test_authorization_route_map_separates_security_from_config():

@@ -34,6 +34,8 @@ def test_manager_fleet_probe_runs_only_after_session_authentication():
     )
     call_sites = [line.strip() for line in html.splitlines() if "loadManagerFleet();" in line]
     assert call_sites == ["await loadManagerFleet();"]
+    assert '<body class="auth-pending">' in html
+    assert "body.auth-locked > .tab-content" in html
 
 
 def test_build_url_postgres_defaults_and_encoding():

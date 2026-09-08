@@ -11,6 +11,20 @@ from security.identity import identity_provider
 _EXEMPT_PREFIXES = ("/healthz", "/readyz", "/favicon.ico")
 
 
+def authorization_enforced(path: str = "/_config") -> bool:
+    """Require RBAC explicitly, or for Config Builder when Manager auth is active."""
+    import os
+
+    if os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() == "1":
+        return True
+    import config
+    return bool(
+        path.startswith("/_config")
+        and config.MANAGER_AUTH_ENABLED
+        and config.MANAGER_AUTH_PASSWORD
+    )
+
+
 def _permission(path: str, method: str) -> str | None:
     if not (path.startswith("/_config") or path.startswith("/_manager") or path.startswith("/_monitor")):
         return None
@@ -68,8 +82,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         permission = _permission(request.url.path, request.method.upper())
         if permission is None:
             return await call_next(request)
-        import os
-        if os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() != "1":
+        if not authorization_enforced(request.url.path):
             return await call_next(request)
         user = authenticate_request(
             request.headers.get("x-admin-token", ""),

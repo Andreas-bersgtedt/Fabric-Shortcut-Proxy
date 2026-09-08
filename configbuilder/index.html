@@ -20,6 +20,8 @@
   .navbtn:hover { border-color:var(--accent2); color:#dff4ff; }
   .warn-banner { background:#3b2f14; border:1px solid var(--warn); color:#fcd34d;
                  padding:8px 12px; border-radius:8px; margin:12px 24px; font-size:12px; }
+  body.auth-pending > .warn-banner, body.auth-pending > .tabs, body.auth-pending > .tab-content,
+  body.auth-locked > .warn-banner, body.auth-locked > .tabs, body.auth-locked > .tab-content { display:none !important; }
   .tabs { display:grid; grid-template-columns:repeat(6,auto); justify-content:start; gap:0;
           border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg); }
   .tab-btn { appearance:none; background:none; border:none; color:var(--muted); padding:14px 16px;
@@ -185,7 +187,7 @@
   }
 </style>
 </head>
-<body>
+<body class="auth-pending">
 <header>
   <div>
     <h1>Config Builder</h1>
@@ -1508,12 +1510,13 @@ async function refreshAuthorization(){
     const response=await fetch("/_config/api/authorization/me", {cache:"no-store"});
     if(!response.ok) throw new Error("Not signed in");
     const data=await response.json(); state.permissions=new Set(data.permissions||[]);
+    document.body.classList.remove("auth-pending", "auth-locked");
     $("sessionIdentity").textContent=data.user.user_id+" · "+[...state.permissions].join(", ");
     $("sessionCredentials").style.display="none";
     $("btnLogin").style.display="none"; $("btnLogout").style.display="inline-block";
     applyPermissionVisibility();
     await loadManagerFleet();
-  }catch(error){ state.permissions=new Set(); $("sessionCredentials").style.display="grid"; $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
+  }catch(error){ state.permissions=new Set(); document.body.classList.remove("auth-pending"); document.body.classList.toggle("auth-locked", state.authzEnforced); $("sessionCredentials").style.display="grid"; $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
 }
 
 function applyPermissionVisibility(){
@@ -1544,6 +1547,7 @@ async function signIn(){
 
 async function signOut(){
   await fetch("/_config/api/authorization/logout", {method:"POST"});
+  document.body.classList.add("auth-locked");
   $("fleetScale").style.display="none";
   $("sessionCredentials").style.display="grid"; $("btnLogin").style.display="inline-block"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
 }

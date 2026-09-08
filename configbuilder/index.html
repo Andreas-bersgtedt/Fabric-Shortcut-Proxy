@@ -1512,6 +1512,7 @@ async function refreshAuthorization(){
     $("sessionCredentials").style.display="none";
     $("btnLogin").style.display="none"; $("btnLogout").style.display="inline-block";
     applyPermissionVisibility();
+    await loadManagerFleet();
   }catch(error){ state.permissions=new Set(); $("sessionCredentials").style.display="grid"; $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
 }
 
@@ -1543,6 +1544,7 @@ async function signIn(){
 
 async function signOut(){
   await fetch("/_config/api/authorization/logout", {method:"POST"});
+  $("fleetScale").style.display="none";
   $("sessionCredentials").style.display="grid"; $("btnLogin").style.display="inline-block"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
 }
 
@@ -3998,7 +4000,10 @@ async function loadCurrent(){
   renderLive();
   renderS3SecretState();
   renderSigv4Diagnostics();
-  // Detect Manager (fleet endpoint) to enable live scaling.
+}
+
+async function loadManagerFleet(){
+  // Probe only after session authentication; anonymous Basic challenges open a browser dialog.
   try{
     const fr = await fetch("/_manager/api/fleet", {cache:"no-store"});
     if(fr.ok){ const f = await fr.json();

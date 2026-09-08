@@ -28,6 +28,14 @@ _DB = pathlib.Path(__file__).parent / "test_cfgbuilder.db"
 # Pure helpers
 # ---------------------------------------------------------------------------
 
+def test_manager_fleet_probe_runs_only_after_session_authentication():
+    html = (pathlib.Path(__file__).parents[1] / "configbuilder" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    call_sites = [line.strip() for line in html.splitlines() if "loadManagerFleet();" in line]
+    assert call_sites == ["await loadManagerFleet();"]
+
+
 def test_build_url_postgres_defaults_and_encoding():
     url = build_url(dialect="postgresql", host="h", database="db",
                     username="u", password="p@ss:w/rd")

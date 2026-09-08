@@ -274,15 +274,27 @@ async def tokenization_key_references() -> JSONResponse:
     return JSONResponse({"ok": True, "references": sorted(references)})
 
 
+def _request_user(request: Request):
+    from security.authorization import authenticate_request, bearer_token
+
+    user = getattr(request.state, "user", None)
+    if user is not None:
+        return user
+    return authenticate_request(
+        request.headers.get("x-admin-token", ""),
+        request.cookies.get("fsp_session", ""),
+        bearer_token(request.headers.get("authorization", "")),
+    )
+
+
 def _check_security_permission(request: Request, permission: str) -> None:
-    from security.authorization import AuthorizationError, require_request_permission
+    from security.authorization import AuthorizationError, require
 
     try:
-        require_request_permission(
-            request.headers.get("x-admin-token", ""),
-            permission,
-            session_token=request.cookies.get("fsp_session", ""),
-        )
+        user = _request_user(request)
+        if user is None:
+            raise AuthorizationError("authentication required")
+        require(user, permission)
     except AuthorizationError as exc:
         raise PermissionError(str(exc)) from exc
 
@@ -396,14 +408,13 @@ async def tokenization_policies() -> JSONResponse:
 
 def _check_tokenization_admin(request: Request) -> None:
     """Require policy administration through the active session or legacy token."""
-    from security.authorization import AuthorizationError, require_request_permission
+    from security.authorization import AuthorizationError, require
 
     try:
-        require_request_permission(
-            request.headers.get("x-admin-token", ""),
-            "tokenization.policy.admin",
-            session_token=request.cookies.get("fsp_session", ""),
-        )
+        user = _request_user(request)
+        if user is None:
+            raise AuthorizationError("authentication required")
+        require(user, "tokenization.policy.admin")
     except AuthorizationError as exc:
         raise PermissionError(str(exc)) from exc
 
@@ -412,14 +423,13 @@ def _check_config_write(request: Request) -> None:
     """Optionally enforce the named config.write permission on mutations."""
     if os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() != "1":
         return
-    from security.authorization import AuthorizationError, require_request_permission
+    from security.authorization import AuthorizationError, require
 
     try:
-        require_request_permission(
-            request.headers.get("x-admin-token", ""),
-            "config.write",
-            session_token=request.cookies.get("fsp_session", ""),
-        )
+        user = _request_user(request)
+        if user is None:
+            raise AuthorizationError("authentication required")
+        require(user, "config.write")
     except AuthorizationError as exc:
         raise HTTPException(status_code=401, detail="authentication required") from exc
 
@@ -466,11 +476,7 @@ async def disable_tokenization_policy(policy_id: str, request: Request) -> JSONR
 @router.get("/api/authorization/me")
 async def authorization_me(request: Request) -> JSONResponse:
     """Return the authenticated identity and effective permissions."""
-    from security.authorization import authenticate_request
-
-    user = authenticate_request(
-        request.headers.get("x-admin-token", ""), request.cookies.get("fsp_session", "")
-    )
+    user = _request_user(request)
     if user is None:
         return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
     return JSONResponse({"ok": True, "user": user.to_public(),
@@ -480,11 +486,9 @@ async def authorization_me(request: Request) -> JSONResponse:
 @router.get("/api/authorization/users")
 async def authorization_users(request: Request) -> JSONResponse:
     """List safe user metadata for the authenticated transitional administrator."""
-    from security.authorization import UserDirectory, authenticate_request, require
+    from security.authorization import UserDirectory
 
-    user = authenticate_request(
-        request.headers.get("x-admin-token", ""), request.cookies.get("fsp_session", "")
-    )
+    user = _request_user(request)
     if user is None or not user.can("users.admin"):
         return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
     try:
@@ -549,25 +553,29 @@ async def authorization_logout(request: Request) -> JSONResponse:
 @router.post("/api/authorization/users")
 async def save_authorization_user(request: Request) -> JSONResponse:
     """Create or replace safe user metadata for the transitional administrator."""
-    from security.authorization import User, UserDirectory, authenticate_request
+    from security.authorization import User, UserDirectory
 
-    user = authenticate_request(
-        request.headers.get("x-admin-token", ""), request.cookies.get("fsp_session", "")
-    )
+    user = _request_user(request)
     if user is None or not user.can("users.admin"):
         return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
     try:
         body = await request.json()
         password = str(body.pop("password", "")) if isinstance(body, dict) else ""
-        if not password:
+        identity_source = str(body.get("identity_source", "local")).strip().lower()
+        if identity_source == "local" and not password:
             raise ValueError("password is required for a login-enabled user")
+        if identity_source == "oidc" and password:
+            raise ValueError("OIDC-only users must not have a local password")
         user = User.from_dict(body)
         path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
         directory = UserDirectory.load(path)
         directory.replace(user)
         from security.identity import hash_password, identity_provider
-        hash_password(password)
-        identity_provider().create_or_replace(user, password)
+        if identity_source == "local":
+            hash_password(password)
+            identity_provider().create_or_replace(user, password)
+        else:
+            identity_provider().disable(user.user_id)
         directory.save(path)
     except (TypeError, ValueError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
@@ -578,11 +586,9 @@ async def save_authorization_user(request: Request) -> JSONResponse:
 @router.delete("/api/authorization/users/{user_id}")
 async def disable_authorization_user(user_id: str, request: Request) -> JSONResponse:
     """Disable a user while preserving the last enabled administrator."""
-    from security.authorization import AuthorizationError, UserDirectory, authenticate_request
+    from security.authorization import AuthorizationError, UserDirectory
 
-    user = authenticate_request(
-        request.headers.get("x-admin-token", ""), request.cookies.get("fsp_session", "")
-    )
+    user = _request_user(request)
     if user is None or not user.can("users.admin"):
         return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
     try:

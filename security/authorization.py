@@ -78,6 +78,7 @@ class User:
     roles: tuple[str, ...] = ()
     grants: tuple[PermissionGrant, ...] = ()
     enabled: bool = True
+    identity_source: str = "local"
 
     def __post_init__(self) -> None:
         if not self.user_id.strip() or any(ch.isspace() for ch in self.user_id):
@@ -85,6 +86,8 @@ class User:
         unknown = set(self.roles) - set(ROLE_PERMISSIONS)
         if unknown:
             raise ValueError(f"unknown roles: {sorted(unknown)}")
+        if self.identity_source not in {"local", "oidc"}:
+            raise ValueError("identity_source must be 'local' or 'oidc'")
 
     def to_public(self) -> dict:
         """Return persisted identity metadata without credentials or tokens."""
@@ -93,6 +96,7 @@ class User:
             "roles": list(self.roles),
             "grants": [grant.to_dict() for grant in self.grants],
             "enabled": self.enabled,
+            "identity_source": self.identity_source,
         }
 
     @classmethod
@@ -107,6 +111,7 @@ class User:
             roles=tuple(str(role).strip() for role in (raw.get("roles") or [])),
             grants=tuple(PermissionGrant.from_dict(grant) for grant in (raw.get("grants") or [])),
             enabled=bool(raw.get("enabled", True)),
+            identity_source=str(raw.get("identity_source", "local")).strip().lower(),
         )
 
     def permissions(self) -> frozenset[str]:
@@ -191,7 +196,8 @@ class UserDirectory:
         if "system_administrator" in user.roles and enabled_admins <= 1:
             raise AuthorizationError("cannot disable the last enabled system administrator")
         self._users[user_id] = User(
-            user.user_id, roles=user.roles, grants=user.grants, enabled=False
+            user.user_id, roles=user.roles, grants=user.grants, enabled=False,
+            identity_source=user.identity_source,
         )
 
     def get(self, user_id: str) -> User:
@@ -258,7 +264,11 @@ def authenticate_admin_token(supplied_token: str) -> User | None:
     return None
 
 
-def authenticate_request(supplied_token: str, session_token: str = "") -> User | None:
+def authenticate_request(
+    supplied_token: str,
+    session_token: str = "",
+    bearer_token: str = "",
+) -> User | None:
     """Authenticate a request through the current transitional provider.
 
     A future identity/session provider should replace this adapter without
@@ -269,8 +279,21 @@ def authenticate_request(supplied_token: str, session_token: str = "") -> User |
         return user
     if session_token:
         from security.identity import identity_provider
-        return identity_provider().resolve_session(session_token)
+        user = identity_provider().resolve_session(session_token)
+        if user is not None:
+            return user
+    if bearer_token:
+        from security.identity import authenticate_oidc_token
+        return authenticate_oidc_token(bearer_token)
     return None
+
+
+def bearer_token(authorization_header: str) -> str:
+    """Return a bearer credential only for a well-formed Authorization header."""
+    scheme, separator, token = authorization_header.partition(" ")
+    if separator and scheme.lower() == "bearer":
+        return token.strip()
+    return ""
 
 
 def require_request_permission(
@@ -278,9 +301,10 @@ def require_request_permission(
     permission: str,
     context: Mapping[str, str] | None = None,
     session_token: str = "",
+    bearer_credential: str = "",
 ) -> AuthorizationDecision:
     """Authenticate and require one named function permission."""
-    user = authenticate_request(supplied_token, session_token)
+    user = authenticate_request(supplied_token, session_token, bearer_credential)
     if user is None:
         raise AuthorizationError("authentication required")
     return require(user, permission, context)

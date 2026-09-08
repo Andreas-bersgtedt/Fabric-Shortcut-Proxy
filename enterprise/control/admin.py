@@ -181,13 +181,14 @@ def create_admin_router(
     async def manager_authorization(request: Request) -> dict:
       """Expose safe current-principal permissions for the Manager UI."""
       import os
-      from security.authorization import authenticate_request
+      from security.authorization import authenticate_request, bearer_token
 
       user = getattr(request.state, "user", None)
       if user is None:
         user = authenticate_request(
           request.headers.get("x-admin-token", ""),
           request.cookies.get("fsp_session", ""),
+          bearer_token(request.headers.get("authorization", "")),
         )
       if user is None and os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() != "1":
         return {"ok": True, "enforced": False, "permissions": ["*"]}

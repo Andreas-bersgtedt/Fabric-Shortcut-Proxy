@@ -120,8 +120,28 @@ async def test_valid_local_session_also_passes_manager_basic_gate(_enable_auth, 
     user = session_provider.authenticate("ops", "correct horse battery staple")
     session = session_provider.create_session(user)
     async with _client(_app()) as c:
-        response = await c.get("/_manager/api/fleet", cookies={"fsp_session": session})
+        c.cookies.set("fsp_session", session)
+        response = await c.get("/_manager/api/fleet")
     assert response.status_code == 200
+
+
+async def test_valid_oidc_bearer_also_passes_manager_basic_gate(_enable_auth, monkeypatch):
+    from security.authorization import User
+
+    monkeypatch.setattr(
+        "security.identity.authenticate_oidc_token",
+        lambda token: User("external-ops", roles=("monitor_troubleshooter",))
+        if token == "signed-token" else None,
+    )
+    async with _client(_app()) as c:
+        allowed = await c.get(
+            "/_manager/api/fleet", headers={"Authorization": "Bearer signed-token"}
+        )
+        denied = await c.get(
+            "/_manager/api/fleet", headers={"Authorization": "Bearer invalid-token"}
+        )
+    assert allowed.status_code == 200
+    assert denied.status_code == 401
 
 
 async def test_identity_login_bootstrap_avoids_browser_basic_challenge(_enable_auth):

@@ -10,6 +10,7 @@ from security.authorization import (
     UserDirectory,
     authorize,
     authenticate_admin_token,
+    authenticate_request,
     require,
 )
 
@@ -102,6 +103,72 @@ def test_admin_token_authentication_is_constant_time_and_system_admin(monkeypatc
     assert user.user_id == "admin-token"
     assert user.can("users.admin")
     assert authenticate_admin_token("wrong") is None
+
+
+def test_signed_oidc_subject_uses_central_rights_and_ignores_token_roles(tmp_path, monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    issuer = "https://identity.example.test/tenant/"
+    audience = "fabric-shortcut-proxy"
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    user_path = tmp_path / "users.json"
+    UserDirectory([
+        User("external-user", roles=("viewer",), identity_source="oidc"),
+        User(
+            "disabled-user", roles=("system_administrator",), enabled=False,
+            identity_source="oidc",
+        ),
+    ]).save(str(user_path))
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(tmp_path / "identities.json"))
+    monkeypatch.setenv("FSP_OIDC_ISSUER", issuer)
+    monkeypatch.setenv("FSP_OIDC_AUDIENCE", audience)
+    monkeypatch.setenv("FSP_OIDC_JWKS_URL", f"{issuer}/keys")
+
+    class StaticJWKClient:
+        def __init__(self, url):
+            assert url in {f"{issuer}/keys", f"{issuer}keys-2"}
+
+        def get_signing_key_from_jwt(self, token):
+            return SimpleNamespace(key=private_key.public_key())
+
+    monkeypatch.setattr(jwt, "PyJWKClient", StaticJWKClient)
+
+    def signed_token(subject):
+        now = int(time.time())
+        return jwt.encode(
+            {
+                "iss": issuer, "aud": audience, "sub": subject,
+                "iat": now, "exp": now + 300,
+                "roles": ["system_administrator"],
+            },
+            private_key,
+            algorithm="RS256",
+        )
+
+    user = authenticate_request("", "expired-session", signed_token("external-user"))
+    assert user is not None
+    assert user.user_id == "external-user"
+    assert user.can("monitor.read")
+    assert not user.can("system.admin")
+    assert authenticate_request("", "", signed_token("unknown-user")) is None
+    assert authenticate_request("", "", signed_token("disabled-user")) is None
+
+    import security.identity as identity
+    discovery_urls = []
+    monkeypatch.delenv("FSP_OIDC_JWKS_URL")
+    monkeypatch.setattr(
+        identity,
+        "_oidc_jwks_uri",
+        lambda url: discovery_urls.append(url) or f"{issuer}keys-2",
+    )
+    identity._oidc_jwk_client.cache_clear()
+    assert authenticate_request("", "", signed_token("external-user")) is not None
+    assert discovery_urls == [f"{issuer.rstrip('/')}/.well-known/openid-configuration"]
 
 
 async def test_authorization_endpoints_require_admin_and_hide_user_secrets(tmp_path, monkeypatch):
@@ -209,6 +276,36 @@ async def test_user_creation_validates_password_before_metadata_write(tmp_path, 
     assert not identity_path.exists()
 
 
+async def test_oidc_user_enrollment_requires_no_local_credential(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    user_path = tmp_path / "users.json"
+    identity_path = tmp_path / "identities.json"
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/_config/api/authorization/users",
+            json={
+                "user_id": "entra-object-id", "roles": ["viewer"],
+                "identity_source": "oidc",
+            },
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+    assert response.status_code == 200
+    assert response.json()["user"]["identity_source"] == "oidc"
+    assert UserDirectory.load(str(user_path)).get("entra-object-id").identity_source == "oidc"
+    assert not identity_path.exists()
+
+
 async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
@@ -300,6 +397,32 @@ async def test_authorization_status_reports_only_enforcement_mode(monkeypatch):
         response = await client.get("/_config/api/authorization/status")
     assert response.status_code == 200
     assert response.json() == {"ok": True, "enforced": True}
+
+
+async def test_oidc_bearer_reaches_config_authorization_route(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.setattr(
+        "security.identity.authenticate_oidc_token",
+        lambda token: User(
+            "external-ops", roles=("monitor_troubleshooter",), identity_source="oidc"
+        ) if token == "signed-token" else None,
+    )
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/_config/api/authorization/me",
+            headers={"Authorization": "Bearer signed-token"},
+        )
+    assert response.status_code == 200
+    assert response.json()["user"]["user_id"] == "external-ops"
+    assert response.json()["permissions"] == ["monitor.read", "troubleshoot.read"]
 
 
 async def test_authorization_status_is_enforced_by_manager_auth(monkeypatch):

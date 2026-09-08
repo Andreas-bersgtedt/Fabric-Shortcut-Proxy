@@ -5,7 +5,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from security.authorization import AuthorizationError, authenticate_request, require
+from security.authorization import (
+    AuthorizationError,
+    authenticate_request,
+    bearer_token,
+    require,
+)
 from security.identity import identity_provider
 
 _EXEMPT_PREFIXES = ("/healthz", "/readyz", "/favicon.ico")
@@ -86,10 +91,13 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if not authorization_enforced(request.url.path):
             return await call_next(request)
-        user = authenticate_request(
-            request.headers.get("x-admin-token", ""),
-            request.cookies.get("fsp_session", ""),
-        )
+        user = getattr(request.state, "user", None)
+        if user is None:
+            user = authenticate_request(
+                request.headers.get("x-admin-token", ""),
+                request.cookies.get("fsp_session", ""),
+                bearer_token(request.headers.get("authorization", "")),
+            )
         if user is None:
             return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
         try:

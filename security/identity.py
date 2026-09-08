@@ -11,6 +11,8 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any
 
 from security.authorization import User
 
@@ -205,3 +207,70 @@ def manager_identity(user_id: str) -> User | None:
     if not hmac.compare_digest(user_id, str(config.MANAGER_AUTH_USERNAME)):
         return None
     return User(user_id, roles=("system_administrator",))
+
+
+def authenticate_oidc_token(token: str) -> User | None:
+    """Validate an OIDC JWT and resolve its subject through the local rights directory."""
+    issuer = os.environ.get("FSP_OIDC_ISSUER", "").strip()
+    audience = os.environ.get("FSP_OIDC_AUDIENCE", "").strip()
+    if not issuer or not audience or not token:
+        return None
+    try:
+        import jwt
+    except ImportError as exc:
+        raise RuntimeError(
+            "OIDC authentication requires the 'oidc' package extra"
+        ) from exc
+
+    jwks_url = os.environ.get(
+        "FSP_OIDC_JWKS_URL", f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    ).strip()
+    if jwks_url.endswith("/.well-known/openid-configuration"):
+        jwks_url = _oidc_jwks_uri(jwks_url)
+    try:
+        signing_key = _oidc_jwk_client(jwks_url).get_signing_key_from_jwt(token)
+        claims: dict[str, Any] = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
+            audience=audience,
+            issuer=issuer,
+            options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+        )
+    except jwt.PyJWTError:
+        return None
+
+    claim_name = os.environ.get("FSP_OIDC_USER_CLAIM", "sub").strip() or "sub"
+    user_id = str(claims.get(claim_name, "")).strip()
+    if not user_id:
+        return None
+    from security.authorization import UserDirectory, default_user_directory_path
+
+    try:
+        user = UserDirectory.load(default_user_directory_path()).get(user_id)
+    except (ValueError, PermissionError):
+        return None
+    return user if user.enabled and user.identity_source == "oidc" else None
+
+
+@lru_cache(maxsize=8)
+def _oidc_jwk_client(jwks_url: str):
+    from jwt import PyJWKClient
+
+    return PyJWKClient(jwks_url)
+
+
+@lru_cache(maxsize=8)
+def _oidc_jwks_uri(discovery_url: str) -> str:
+    """Resolve the signing-key endpoint from OIDC discovery metadata."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(discovery_url, timeout=5) as response:
+            metadata = json.load(response)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("unable to load OIDC discovery metadata") from exc
+    jwks_uri = metadata.get("jwks_uri") if isinstance(metadata, dict) else None
+    if not isinstance(jwks_uri, str) or not jwks_uri.startswith("https://"):
+        raise RuntimeError("OIDC discovery metadata has no secure jwks_uri")
+    return jwks_uri

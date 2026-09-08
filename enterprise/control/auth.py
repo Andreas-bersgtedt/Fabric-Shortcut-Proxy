@@ -88,6 +88,26 @@ def _session_ok(request: Request) -> bool:
         return False
 
 
+def _bearer_ok(request: Request) -> bool:
+    """Validate an OIDC bearer credential and retain its centrally managed user."""
+    from security.authorization import bearer_token
+
+    if getattr(request.state, "user", None) is not None:
+        return True
+    token = bearer_token(request.headers.get("authorization", ""))
+    if not token:
+        return False
+    try:
+        from security.identity import authenticate_oidc_token
+        user = authenticate_oidc_token(token)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if user is None:
+        return False
+    request.state.user = user
+    return True
+
+
 def _identity_bootstrap_allowed(request: Request) -> bool:
     return request.url.path in _IDENTITY_BOOTSTRAP_PATHS
 
@@ -104,7 +124,11 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
             return _misconfigured()
         if _identity_bootstrap_allowed(request):
             return await call_next(request)
-        if not _credentials_ok(request.headers.get("authorization", "")) and not _session_ok(request):
+        if not (
+            _credentials_ok(request.headers.get("authorization", ""))
+            or _session_ok(request)
+            or _bearer_ok(request)
+        ):
             if request.url.path.startswith("/_config"):
                 return _config_unauthorized()
             return _unauthorized()

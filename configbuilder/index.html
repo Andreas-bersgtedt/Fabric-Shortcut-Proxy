@@ -655,8 +655,16 @@
           </select>
         </section>
       </div>
-      <label for="newUserPassword">Temporary password</label>
-      <input id="newUserPassword" type="password" autocomplete="new-password" placeholder="At least 12 characters" />
+      <div class="grid2">
+        <section>
+          <label for="newUserIdentitySource">Identity source</label>
+          <select id="newUserIdentitySource"><option value="local">Local password</option><option value="oidc">OIDC subject</option></select>
+        </section>
+        <section id="newUserPasswordField">
+          <label for="newUserPassword">Temporary password</label>
+          <input id="newUserPassword" type="password" autocomplete="new-password" placeholder="At least 12 characters" />
+        </section>
+      </div>
       <div class="actions">
         <button class="btn ghost" id="btnLoadUsers">Load users</button>
         <button class="btn primary" id="btnCreateUser">Create user</button>
@@ -1562,7 +1570,7 @@ async function loadManagedUsers(){
       const row=document.createElement("div"); row.className="conn-row";
       const label=document.createElement("strong"); label.textContent=user.user_id;
       const detail=document.createElement("span"); detail.className="hint";
-      detail.textContent=(user.enabled?"enabled":"disabled")+" · "+(user.roles||[]).join(", ");
+      detail.textContent=(user.enabled?"enabled":"disabled")+" · "+(user.identity_source||"local")+" · "+(user.roles||[]).join(", ");
       const disable=document.createElement("button"); disable.className="btn ghost"; disable.textContent="Disable";
       disable.disabled=!user.enabled; disable.onclick=()=>disableManagedUser(user.user_id);
       row.append(label,detail,disable); box.appendChild(row);
@@ -1624,9 +1632,9 @@ async function signOut(){
 
 async function createManagedUser(){
   const userId=$("newUserId").value.trim(); const password=$("newUserPassword").value;
-  const role=$("newUserRole").value; const status=$("userManagementStatus");
-  if(!userId || password.length<12){ status.textContent="User ID and a password of at least 12 characters are required."; status.className="status err"; return; }
-  const response=await fetch("/_config/api/authorization/users", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:userId,roles:[role],password})});
+  const role=$("newUserRole").value; const identitySource=$("newUserIdentitySource").value; const status=$("userManagementStatus");
+  if(!userId || (identitySource==="local"&&password.length<12)){ status.textContent=identitySource==="local"?"User ID and a password of at least 12 characters are required.":"User ID is required."; status.className="status err"; return; }
+  const response=await fetch("/_config/api/authorization/users", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:userId,roles:[role],identity_source:identitySource,password:identitySource==="local"?password:""})});
   const data=await response.json();
   status.textContent=data.ok?"User record created.":(data.error||"Unable to create user."); status.className="status "+(data.ok?"ok":"err");
   if(data.ok){ $("newUserId").value=""; $("newUserPassword").value=""; await loadManagedUsers(); }
@@ -4057,6 +4065,7 @@ $("btnGenerateTokenizationKey").onclick=generateTokenizationKey;
 $("btnSaveTokenizationKey").onclick=saveTokenizationKey;
 $("btnLoadUsers").onclick=loadManagedUsers;
 $("btnCreateUser").onclick=createManagedUser;
+$("newUserIdentitySource").onchange=()=>{ const local=$("newUserIdentitySource").value==="local"; $("newUserPasswordField").style.display=local?"":"none"; if(!local) $("newUserPassword").value=""; };
 $("btnSavePolicy").onclick=saveTokenizationPolicy;
 $("policyKind").onchange=renderPolicyKeyReferences;
 $("btnLogin").onclick=signIn;

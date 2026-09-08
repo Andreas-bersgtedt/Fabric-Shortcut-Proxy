@@ -92,6 +92,27 @@ def test_env_overrides_maps_connection_ids(tmp_path):
     assert ov["DB_URL_SO_DATA"] == "mssql+aioodbc://u:pw@h/db"
 
 
+def test_tokenization_key_roundtrip_is_encrypted_and_hydrated(tmp_path, monkeypatch):
+    st = _fake_store(tmp_path)
+    value = "a-secret-tokenization-key-value-1234567890"
+    st.set_tokenization_key("customer-pii-v1", value)
+    assert st.get_tokenization_key("customer-pii-v1") == value
+    assert st.list_tokenization_keys()[0]["env_var"] == "FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1"
+    assert value not in (tmp_path / "credentials.json").read_text(encoding="utf-8")
+    monkeypatch.delenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", raising=False)
+    assert "FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1" in hydrate_environment(st)
+    assert os.environ["FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1"] == value
+    assert st.delete_tokenization_key("customer-pii-v1") is True
+
+
+def test_tokenization_key_environment_override_wins(tmp_path, monkeypatch):
+    st = _fake_store(tmp_path)
+    st.set_tokenization_key("customer-pii-v1", "stored-secret-value-that-is-long-enough")
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "deployment-override")
+    assert hydrate_environment(st) == []
+    assert os.environ["FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1"] == "deployment-override"
+
+
 def test_set_url_rejects_empty(tmp_path):
     st = _fake_store(tmp_path)
     with pytest.raises(ValueError):
@@ -265,6 +286,41 @@ async def test_endpoint_apply_reports_manager_restart_required(cred_app, monkeyp
     assert body["restarted"] == 2
     assert body["manager_restart_required"] is True
     assert "Open Mirroring" in body["note"]
+
+
+async def test_tokenization_key_endpoint_never_returns_secret(cred_app, monkeypatch, tmp_path):
+    from security.authorization import User
+    from security.identity import identity_provider
+
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(tmp_path / "users.json"))
+    monkeypatch.delenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", raising=False)
+    identity = identity_provider()
+    identity.create_or_replace(
+        User("admin", roles=("system_administrator",)),
+        "correct horse battery staple",
+    )
+    session = identity.create_session(
+        identity.authenticate("admin", "correct horse battery staple")
+    )
+
+    async def restart_agents(_request):
+        return 2
+
+    monkeypatch.setattr("configbuilder.router._restart_agents", restart_agents)
+    secret = "tokenization-secret-value-that-must-not-leak"
+    async with _client(cred_app) as client:
+        client.cookies.set("fsp_session", session)
+        response = await client.post("/_config/api/tokenization-keys", json={
+            "key_ref": "customer-pii-v1", "value": secret, "apply": True,
+        })
+        assert response.status_code == 200
+        assert response.json()["restarted"] == 2
+        listed = await client.get("/_config/api/tokenization-keys")
+        assert listed.status_code == 200
+        assert listed.json()["keys"][0]["key_ref"] == "customer-pii-v1"
+        assert secret not in listed.text
+        deleted = await client.delete("/_config/api/tokenization-keys/customer-pii-v1")
+        assert deleted.json()["removed"] is True
 
 
 async def test_endpoint_rejects_empty(cred_app):

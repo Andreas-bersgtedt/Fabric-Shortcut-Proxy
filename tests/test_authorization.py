@@ -355,6 +355,8 @@ def test_authorization_route_map_separates_security_from_config():
     assert _permission("/_config/api/save", "POST") == "config.write"
     assert _permission("/_config/api/tokenization/policies", "GET") == "tokenization.policy.read"
     assert _permission("/_config/api/tokenization/policies", "POST") == "tokenization.policy.admin"
+    assert _permission("/_config/api/tokenization-keys", "GET") == "security.metadata.read"
+    assert _permission("/_config/api/tokenization-keys", "POST") == "security.credentials.admin"
     assert _permission("/_config/api/unknown", "GET") == "config.read"
 
 

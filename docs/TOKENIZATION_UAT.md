@@ -60,7 +60,8 @@ Open **Per-Table Configuration**, expand the SQL Server source, then select
 
 The key reference produces the environment variable name
 `FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1`. The key value is not stored in the
-table configuration.
+table configuration. Save it under **Security > Tokenization keys** to encrypt it
+in the local credential store and optionally mirror it to Key Vault.
 
 For a direct JSON setup, add this entry to the `tables` array in
 `config.tables.json`. Remove other table entries for the simplest UAT.
@@ -109,7 +110,9 @@ The published Iceberg table contains only `customer_id`, `email_token`, and
 
 ## 3. Set the key and start
 
-Set a disposable UAT key in the same PowerShell process that starts the Manager:
+In **Security > Tokenization keys**, enter `customer-pii-v1`, generate a key, and select
+**Save and apply**. Alternatively, set a disposable UAT key in the same PowerShell process
+that starts the Manager; this environment value takes precedence over the encrypted store:
 
 ```powershell
 $env:FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1 = "replace-with-a-long-random-uat-value"

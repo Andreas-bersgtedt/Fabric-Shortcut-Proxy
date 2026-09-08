@@ -129,6 +129,20 @@ def test_named_connection_writes_slugged_name(tmp_path):
     assert dict(src._client.set_calls)["db-url-warehouse-pg"] == "postgresql://u:p@h/wh"
 
 
+def test_tokenization_key_writes_and_deletes_slugged_secret(tmp_path):
+    src, cfg = _source()
+    store = _store(tmp_path)
+    store.write_through = keyvault.write_through_for(src, cfg)
+    store.delete_through = keyvault.delete_through_for(src, cfg)
+    value = "tokenization-key-value-that-is-long-enough"
+
+    store.set_tokenization_key("customer-pii-v1", value)
+    written = dict(src._client.set_calls)["tokenization-customer-pii-v1"]
+    assert json.loads(written) == {"value": value}
+    assert store.delete_tokenization_key("customer-pii-v1") is True
+    assert "tokenization-customer-pii-v1" in src._client.deleted
+
+
 def test_access_key_writes_back_secret_and_acls(tmp_path):
     src, cfg = _source()
     store = _store(tmp_path)

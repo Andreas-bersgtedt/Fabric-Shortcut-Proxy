@@ -379,9 +379,29 @@ def resolve_tokenization_key(key_ref: str) -> str:
     """Resolve a tokenization key without storing it in table configuration."""
     env_var = tokenization_key_env_var(key_ref)
     value = os.environ.get(env_var)
+    if not value and ENABLE_CREDENTIAL_STORE:
+        try:
+            from security.credential_store import CredentialStore
+            store = CredentialStore(CREDENTIAL_STORE_PATH or None)
+            value = store.get_tokenization_key(key_ref)
+            if not value:
+                import system_config as sc
+                from security.keyvault import (
+                    KeyVaultSecretSource,
+                    config_from_settings,
+                    read_through_for,
+                )
+                keyvault_config = config_from_settings(sc)
+                if keyvault_config.enabled and store.available:
+                    source = KeyVaultSecretSource(keyvault_config)
+                    store.read_through = read_through_for(source, keyvault_config)
+                    value = store.get_tokenization_key(key_ref)
+        except Exception:  # noqa: BLE001 - an unavailable store is equivalent to a missing key
+            value = None
     if not value:
         raise ValueError(
-            f"Tokenization key {key_ref!r} is not configured; set {env_var}"
+            f"Tokenization key {key_ref!r} is not configured; set {env_var} "
+            "or save it in the encrypted tokenization key store"
         )
     return value
 

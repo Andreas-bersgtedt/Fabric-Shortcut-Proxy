@@ -34,7 +34,12 @@ from db.reflect import (
 )
 from observability.logging import get_logger
 from security.backup import BackupError, create_backup, restore_backup
-from security.credential_store import CredentialStore, env_var_for, looks_masked
+from security.credential_store import (
+    CredentialStore,
+    env_var_for,
+    looks_masked,
+    tokenization_env_var,
+)
 
 log = get_logger(__name__)
 
@@ -259,12 +264,117 @@ async def keyvault_status() -> JSONResponse:
 async def tokenization_key_references() -> JSONResponse:
     """List configured tokenization key references without returning key values."""
     prefix = "FSP_TOKENIZATION_KEY_"
-    references = sorted({
+    references = {
         name[len(prefix):].lower().replace("_", "-")
         for name, value in os.environ.items()
         if name.upper().startswith(prefix) and value
+    }
+    if config.ENABLE_CREDENTIAL_STORE:
+        references.update(item["key_ref"] for item in _store().list_tokenization_keys())
+    return JSONResponse({"ok": True, "references": sorted(references)})
+
+
+def _check_security_permission(request: Request, permission: str) -> None:
+    from security.authorization import AuthorizationError, require_request_permission
+
+    try:
+        require_request_permission(
+            request.headers.get("x-admin-token", ""),
+            permission,
+            session_token=request.cookies.get("fsp_session", ""),
+        )
+    except AuthorizationError as exc:
+        raise PermissionError(str(exc)) from exc
+
+
+@router.get("/api/tokenization-keys")
+async def list_tokenization_keys(request: Request) -> JSONResponse:
+    """Return encrypted token-key metadata without key values."""
+    try:
+        _check_security_permission(request, "security.metadata.read")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    store = _store()
+    keys = []
+    for item in store.list_tokenization_keys():
+        keys.append({
+            **item,
+            "source": "environment" if os.environ.get(item["env_var"]) else "encrypted_store",
+        })
+    import system_config as sc
+    return JSONResponse({
+        "ok": True,
+        "available": store.available,
+        "backend": store.backend_name,
+        "keys": keys,
+        "keyvault_write_back": bool(getattr(sc, "KEYVAULT_WRITE_BACK", False)),
     })
-    return JSONResponse({"ok": True, "references": references})
+
+
+@router.post("/api/tokenization-keys")
+async def save_tokenization_key(request: Request) -> JSONResponse:
+    """Encrypt a tokenization key locally and optionally mirror it to Key Vault."""
+    try:
+        _check_security_permission(request, "security.credentials.admin")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    key_ref = str(body.get("key_ref") or "").strip()
+    value = str(body.get("value") or "")
+    store = _store()
+    if not store.available:
+        return JSONResponse({"ok": False, "error": "credential store encryption is unavailable"}, status_code=400)
+    try:
+        env_var = tokenization_env_var(key_ref)
+        previous_value = store.get_tokenization_key(key_ref)
+        store.set_tokenization_key(key_ref, value)
+    except (RuntimeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    current_value = os.environ.get(env_var)
+    environment_override = bool(current_value and current_value != previous_value)
+    if not environment_override:
+        os.environ[env_var] = value
+    restarted = (
+        await _restart_agents(request)
+        if bool(body.get("apply")) and not environment_override else 0
+    )
+    log.info("tokenization_key_saved", key_ref=key_ref, backend=store.backend_name,
+             restarted=restarted)
+    return JSONResponse({
+        "ok": True,
+        "key_ref": key_ref,
+        "env_var": env_var,
+        "backend": store.backend_name,
+        "restarted": restarted,
+        "active": not environment_override,
+        "environment_override": environment_override,
+    })
+
+
+@router.delete("/api/tokenization-keys/{key_ref}")
+async def delete_tokenization_key(key_ref: str, request: Request) -> JSONResponse:
+    """Remove a locally stored tokenization key and its Key Vault mirror."""
+    try:
+        _check_security_permission(request, "security.credentials.admin")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    store = _store()
+    try:
+        env_var = tokenization_env_var(key_ref)
+        removed = store.delete_tokenization_key(key_ref)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("tokenization_key_deleted", key_ref=key_ref, removed=removed)
+    return JSONResponse({
+        "ok": True, "key_ref": key_ref, "removed": removed,
+        "manager_restart_required": bool(removed and os.environ.get(env_var)),
+    })
 
 
 @router.get("/api/tokenization/policies")

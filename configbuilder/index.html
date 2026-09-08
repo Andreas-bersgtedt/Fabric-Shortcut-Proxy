@@ -590,6 +590,20 @@
     </div>
   </div>
   <div id="securityContent" class="security-stack">
+    <div class="card" id="tokenizationKeysPanel" data-requires-permission="security.credentials.admin">
+      <h2>Tokenization keys</h2>
+      <div class="hint">Keys are encrypted in the local credential store and mirrored to Key Vault when write-back is enabled. Values are never displayed after saving.</div>
+      <div id="tokenizationKeys" class="connlist"></div>
+      <div class="row" style="margin-top:12px;">
+        <section><label for="tokenizationKeyRef">Key reference</label><input id="tokenizationKeyRef" placeholder="customer-pii-v1" /></section>
+        <section><label for="tokenizationKeyValue">Key value</label><input id="tokenizationKeyValue" type="password" autocomplete="new-password" placeholder="At least 32 characters" /></section>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="btnGenerateTokenizationKey">Generate</button>
+        <button class="btn primary" id="btnSaveTokenizationKey">Save and apply</button>
+      </div>
+      <div class="status" id="tokenizationKeysStatus"></div>
+    </div>
     <div class="card" id="tokenizationPoliciesPanel" data-requires-permission="tokenization.policy.read">
       <h2>Tokenization policies</h2>
       <div class="hint">Approved token policies are managed centrally. Table and mount editors may reference policy IDs without exposing key values.</div>
@@ -1411,6 +1425,56 @@ async function loadTokenizationKeyReferences(){
   renderSelected();
   if(state.addTable.draft) renderAddTableMetadata();
   if(state.om.editing) omRenderTableRows();
+}
+
+async function loadTokenizationKeys(){
+  const box=$("tokenizationKeys"), status=$("tokenizationKeysStatus");
+  if(!box) return;
+  try{
+    const response=await fetch("/_config/api/tokenization-keys", {cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok || !data.ok) throw new Error(data.error||"Unable to load tokenization keys");
+    box.innerHTML="";
+    for(const key of data.keys||[]){
+      const row=document.createElement("div"); row.className="conn-row";
+      const label=document.createElement("strong"); label.textContent=key.key_ref;
+      const detail=document.createElement("span"); detail.className="hint";
+      detail.textContent=`${key.source} · ${key.updated_at||"stored"}`;
+      const remove=document.createElement("button"); remove.className="btn ghost"; remove.textContent="Delete";
+      remove.onclick=()=>deleteTokenizationKey(key.key_ref);
+      row.append(label,detail,remove); box.appendChild(row);
+    }
+    if(!(data.keys||[]).length) box.textContent="No encrypted tokenization keys are stored.";
+    status.textContent=`Encryption: ${data.backend}. Key Vault write-back: ${data.keyvault_write_back?"enabled":"disabled"}.`;
+    status.className="status ok";
+  }catch(error){ box.textContent="Tokenization key store is unavailable."; status.textContent=error.message; status.className="status err"; }
+}
+
+function generateTokenizationKey(){
+  const bytes=new Uint8Array(32); crypto.getRandomValues(bytes);
+  $("tokenizationKeyValue").value=Array.from(bytes, value=>value.toString(16).padStart(2,"0")).join("");
+  $("tokenizationKeysStatus").textContent="Generated a 256-bit key. Save it to activate.";
+  $("tokenizationKeysStatus").className="status ok";
+}
+
+async function saveTokenizationKey(){
+  const status=$("tokenizationKeysStatus");
+  const keyRef=$("tokenizationKeyRef").value.trim(), value=$("tokenizationKeyValue").value;
+  if(!/^[a-z0-9][a-z0-9-]{0,127}$/.test(keyRef) || value.length<32){ status.textContent="Use a lowercase reference and a key of at least 32 characters."; status.className="status err"; return; }
+  const response=await fetch("/_config/api/tokenization-keys", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key_ref:keyRef,value,apply:true})});
+  const data=await response.json();
+  status.textContent=data.ok?(data.environment_override?"Key saved. The deployment environment variable remains active because it has precedence.":`Key saved and applied${data.restarted?` to ${data.restarted} agent(s)`:""}.`):(data.error||"Unable to save key.");
+  status.className="status "+(data.ok?"ok":"err");
+  if(data.ok){ $("tokenizationKeyValue").value=""; await loadTokenizationKeys(); await loadTokenizationKeyReferences(); }
+}
+
+async function deleteTokenizationKey(keyRef){
+  if(!confirm(`Delete tokenization key ${keyRef}? Policies using it will stop working.`)) return;
+  const response=await fetch("/_config/api/tokenization-keys/"+encodeURIComponent(keyRef), {method:"DELETE"});
+  const data=await response.json(), status=$("tokenizationKeysStatus");
+  status.textContent=data.ok?(data.manager_restart_required?"Key deleted. Restart the Manager to remove the active cached value.":"Key deleted."):(data.error||"Unable to delete key.");
+  status.className="status "+(data.ok?"ok":"err");
+  if(data.ok){ await loadTokenizationKeys(); await loadTokenizationKeyReferences(); }
 }
 
 async function loadTokenizationPolicies(){
@@ -3922,7 +3986,10 @@ writeFormFromConn(state.connections.get(state.activeConnId));
 renderConnList();
 loadSettings();
 loadTokenizationKeyReferences();
+loadTokenizationKeys();
 loadTokenizationPolicies();
+$("btnGenerateTokenizationKey").onclick=generateTokenizationKey;
+$("btnSaveTokenizationKey").onclick=saveTokenizationKey;
 $("btnLoadUsers").onclick=loadManagedUsers;
 $("btnCreateUser").onclick=createManagedUser;
 $("btnSavePolicy").onclick=saveTokenizationPolicy;

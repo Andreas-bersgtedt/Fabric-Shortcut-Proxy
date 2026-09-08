@@ -48,6 +48,62 @@ def test_policy_builds_compatible_sha256_token(monkeypatch):
     )
 
 
+def test_tokenization_key_resolves_from_encrypted_store(monkeypatch):
+    class Store:
+        def __init__(self, _path):
+            pass
+
+        def get_tokenization_key(self, key_ref):
+            return "stored-key" if key_ref == "customer-pii-v1" else None
+
+    monkeypatch.delenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", raising=False)
+    monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True)
+    monkeypatch.setattr("security.credential_store.CredentialStore", Store)
+    assert config.resolve_tokenization_key("customer-pii-v1") == "stored-key"
+
+
+def test_tokenization_key_environment_precedes_store(monkeypatch):
+    class Store:
+        def __init__(self, _path):
+            raise AssertionError("store should not be opened when the environment has a key")
+
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "deployment-key")
+    monkeypatch.setattr("security.credential_store.CredentialStore", Store)
+    assert config.resolve_tokenization_key("customer-pii-v1") == "deployment-key"
+
+
+def test_tokenization_key_reads_through_keyvault_on_local_miss(monkeypatch):
+    class Store:
+        available = True
+        read_through = None
+
+        def __init__(self, _path):
+            pass
+
+        def get_tokenization_key(self, key_ref):
+            if self.read_through:
+                record = self.read_through("secret", f"tokenization:{key_ref}")
+                return record["value"]
+            return None
+
+    class VaultConfig:
+        enabled = True
+
+    monkeypatch.delenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", raising=False)
+    monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True)
+    monkeypatch.setattr("security.credential_store.CredentialStore", Store)
+    monkeypatch.setattr("security.keyvault.config_from_settings", lambda _settings: VaultConfig())
+    monkeypatch.setattr("security.keyvault.KeyVaultSecretSource", lambda _config: object())
+    monkeypatch.setattr(
+        "security.keyvault.read_through_for",
+        lambda _source, _config: lambda kind, key: (
+            {"value": "vault-key"}
+            if (kind, key) == ("secret", "tokenization:customer-pii-v1") else None
+        ),
+    )
+    assert config.resolve_tokenization_key("customer-pii-v1") == "vault-key"
+
+
 def test_random_legacy_transform_has_no_key():
     policy = legacy_policy(config.ColumnTransform(kind="random_token"))
     assert policy.kind == "random_token"

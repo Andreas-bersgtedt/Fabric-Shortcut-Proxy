@@ -763,7 +763,7 @@ if config.ENABLE_MONITOR:
 from reidentification.gate import enabled as reidentification_enabled
 
 if reidentification_enabled():
-    from reidentification import router as reidentification_router
+    from reidentification.router import router as reidentification_router
     app.include_router(reidentification_router)
     log.info("reidentification_enabled", path="/_reidentify/api/v1/lookup")
 

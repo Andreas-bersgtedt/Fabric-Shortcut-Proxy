@@ -394,7 +394,7 @@ def create_manager_app() -> FastAPI:
     # module profile and restart-bound system setting are active.
     from reidentification.gate import enabled as reidentification_enabled
     if reidentification_enabled():
-        from reidentification import router as reidentification_router
+        from reidentification.router import router as reidentification_router
         app.include_router(reidentification_router)
 
     # Fleet monitor: the operator console's Monitor tab (and the standalone SPA)

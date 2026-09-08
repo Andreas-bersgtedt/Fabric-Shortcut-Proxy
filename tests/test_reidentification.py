@@ -14,6 +14,7 @@ from reidentification.mappings import (
     ReidentificationMappingError,
     default_mappings_path,
 )
+from reidentification.source_lookup import build_lookup_query
 from reidentification.router import router
 from security.authorization import User
 from security.authorization_middleware import AuthorizationMiddleware
@@ -86,6 +87,56 @@ def test_lookup_mapping_uses_config_directory_unless_explicit(monkeypatch, tmp_p
     assert default_mappings_path() == str(tmp_path / "config.reidentification.json")
     monkeypatch.setenv("REIDENTIFICATION_MAPPING_FILE", "D:/secure/reidentification.json")
     assert default_mappings_path() == "D:/secure/reidentification.json"
+
+
+@pytest.mark.parametrize(
+    ("db_url", "expected", "unexpected"),
+    [
+        ("mssql+aioodbc://h/db", "SELECT TOP (:__reidentification_limit)", "LIMIT"),
+        ("postgresql+asyncpg://h/db", "LIMIT :__reidentification_limit", "TOP"),
+        ("oracle+oracledb://h/db", "FETCH FIRST :__reidentification_limit ROWS ONLY", "TOP"),
+        ("databricks://token:x@h?http_path=/sql/1.0/warehouses/x", "LIMIT :__reidentification_limit", "TOP"),
+    ],
+)
+def test_lookup_query_is_bounded_and_parameterized(monkeypatch, db_url, expected, unexpected):
+    table = TableDef(
+        name="customers_safe", source_table="dbo.customers", key_column="customer_id",
+        schema=[],
+    )
+    mapping = LookupMappings.from_dict({"mappings": [{
+        "policy_id": "customer-pii-v1", "table_id": "customers_safe",
+        "column_id": "email_token", "lookup_column": "email_token_lookup",
+        "clear_text_column": "email", "primary_key_column": "customer_id",
+    }]}).list_public()[0]
+    from reidentification.mappings import LookupMapping
+
+    monkeypatch.setattr(config, "TABLES", [table])
+    monkeypatch.setattr(config, "effective_db_url", lambda connection: db_url)
+    sql, params, connection = build_lookup_query(
+        LookupMapping.from_dict(mapping), "A" * 64
+    )
+
+    assert expected in sql and unexpected not in sql
+    assert "A" * 64 not in sql
+    assert params == {"__token_reidentification": "A" * 64, "__reidentification_limit": 2}
+    assert connection == "default"
+
+
+def test_lookup_query_rejects_invalid_token_and_unsupported_dialect(monkeypatch):
+    table = TableDef(name="customers_safe", source_table="customers", schema=[])
+    mapping = LookupMappings.from_dict({"mappings": [{
+        "policy_id": "customer-pii-v1", "table_id": "customers_safe",
+        "column_id": "email_token", "lookup_column": "email_token_lookup",
+        "clear_text_column": "email", "primary_key_column": "customer_id",
+    }]}).list_public()[0]
+    from reidentification.mappings import LookupMapping
+
+    monkeypatch.setattr(config, "TABLES", [table])
+    monkeypatch.setattr(config, "effective_db_url", lambda connection: "sqlite+aiosqlite:///x.db")
+    with pytest.raises(ReidentificationMappingError, match="64-character"):
+        build_lookup_query(LookupMapping.from_dict(mapping), "not-a-token")
+    with pytest.raises(ReidentificationMappingError, match="not supported"):
+        build_lookup_query(LookupMapping.from_dict(mapping), "A" * 64)
 
 
 @pytest.mark.asyncio

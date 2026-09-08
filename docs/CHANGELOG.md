@@ -7,12 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0]: 2026-09-08
+
+### Added
+
 - OIDC operator authentication maps verified bearer-token subjects to centrally
   managed user rights. Azure Entra issuer and discovery handling supports v1
   issuer URLs with a trailing slash.
+- Central named tokenization policies select durable or random token behavior
+  without placing algorithms, keys, domains, or normalization in table config.
+- Function- and context-based user rights, revocable local sessions, and
+  permission-aware Manager and Config Builder controls.
+
+### Changed
+
 - Tokenization UAT now includes completed live PostgreSQL 17, Oracle Free 23c,
   and Databricks SQL Warehouse validation, plus Arrow fallback capacity and
   rollout guardrails.
+- Tokenization backend selection is explicit: native SQL first, then an opt-in
+  Arrow fallback, otherwise fail closed.
 
 ## [2.7.1]: 2026-09-04
 
@@ -501,6 +514,7 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
+[2.8.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.7.1...2.8.0
 [2.7.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.6.0...2.7.0
 [2.6.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.3...2.6.0
 [2.5.3]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.2...2.5.3

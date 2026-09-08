@@ -310,6 +310,14 @@ FSP_OIDC_AUDIENCE=<application-client-id-or-api-audience>
 FSP_OIDC_USER_CLAIM=oid
 ```
 
+For an Entra v1 issuer (`https://sts.windows.net/<tenant-id>/`), preserve the
+trailing slash in `FSP_OIDC_ISSUER` and configure the tenant key endpoint:
+
+```bash
+FSP_OIDC_ISSUER=https://sts.windows.net/<tenant-id>/
+FSP_OIDC_JWKS_URL=https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys
+```
+
 `FSP_OIDC_JWKS_URL` may override discovery when an identity provider does not
 publish keys through `<issuer>/.well-known/openid-configuration`. The override
 must be the provider's HTTPS JWKS endpoint.

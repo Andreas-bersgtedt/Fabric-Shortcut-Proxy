@@ -151,8 +151,8 @@ cases, `drop` is preferable because a random token retains no analytical value.
 | --- | --- | --- | --- |
 | SQL Server | `HASHBYTES('SHA2_256', ...)` | `NEWID()` | Full |
 | PostgreSQL | `digest(..., 'sha256')` from `pgcrypto` | `gen_random_uuid()` | Implemented; requires `pgcrypto` for deterministic tokens |
-| Oracle | `STANDARD_HASH(..., 'SHA256')` | `SYS_GUID()` | Implemented; live UAT pending |
-| Databricks | `sha2(..., 256)` | `uuid()` | Implemented; live SQL warehouse UAT pending |
+| Oracle | `STANDARD_HASH(..., 'SHA256')` | `SYS_GUID()` | Live UAT passed on Oracle Free 23c |
+| Databricks | `sha2(..., 256)` | `uuid()` | Live UAT passed on Azure Databricks SQL Warehouse |
 | SQLite | No cryptographic hash in core | `randomblob(16)` | `drop` only by default |
 | Generic | Unknown | Unknown | `drop` and pass-through only |
 

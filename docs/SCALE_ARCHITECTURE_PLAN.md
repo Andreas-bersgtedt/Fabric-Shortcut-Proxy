@@ -1,13 +1,16 @@
 # Scale & Robustness Architecture: Manager / Agent Rewrite
 
-**Status:** Proposal (design). Target: turn the current single-process proxy into a
+**Status:** Historical design proposal. The active Manager and Agent deployment
+guidance is in [Enterprise_Deployment_guide.md](Enterprise_Deployment_guide.md).
+
+Target: turn the current single-process proxy into a
 **Manager/Controller + Agent/Runtime cluster** that serves large SQL datasets
 (tables with **hundreds of millions of rows**), runs on **Windows and Linux**, and
 is structured so the Agent runtime can later be **rewritten in C++** against a
 frozen, language-agnostic contract.
 
-Companion docs: [PLANNING.md](PLANNING.md) (hardening roadmap),
-[DELTA_FORMAT.md](DELTA_FORMAT.md), [FRESHNESS_PLAN.md](FRESHNESS_PLAN.md),
+Companion docs: [PLANNING.md](archive/PLANNING.md) (hardening roadmap),
+[DELTA_FORMAT.md](DELTA_FORMAT.md), [FRESHNESS_PLAN.md](archive/FRESHNESS_PLAN.md),
 [CONFIGURATION.md](CONFIGURATION.md).
 
 ---

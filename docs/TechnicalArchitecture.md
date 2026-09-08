@@ -12,7 +12,7 @@ beneath it.
 
 > Companion docs: [README.md](../README.md) (setup), [CONFIGURATION.md](CONFIGURATION.md)
 > (settings), [SECURITY.md](SECURITY.md) (auth/TLS/audit),
-> [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md) (fleet),
+> [Enterprise_Deployment_guide.md](Enterprise_Deployment_guide.md) (fleet),
 > [DELTA_FORMAT.md](DELTA_FORMAT.md) (Delta output).
 
 ---

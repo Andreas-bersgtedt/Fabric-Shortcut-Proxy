@@ -1,7 +1,10 @@
-# Configuration Manual: PostgreSQL & SQL Server
+# Configuration Manual: Sources and Runtime Settings
 
 Working, end-to-end configuration for pointing the Fabric Shortcut Proxy at a real
-**PostgreSQL** or **Microsoft SQL Server** source, single-table and multi-table.
+**PostgreSQL**, **Microsoft SQL Server**, **Oracle**, **Databricks SQL**,
+**Amazon Redshift**, **Teradata**, or **Apache Impala** source, in single-table
+or multi-table deployments. Driver-specific requirements and connection formats
+are listed in the source-dialect reference below.
 
 You do **not** hand-write a column schema. Point the proxy at a **table/view
 name** and a **key column**; the Iceberg schema is **reflected from the source
@@ -688,7 +691,8 @@ don't expose publicly.
 | `ICEBERG_MANIFEST_STATS=1` | Emit column bounds/counts for reader pruning (F3; validate against Fabric first) |
 | `ICEBERG_SNAPSHOT_HISTORY=1` | Retain snapshot versions; `POST /_admin/refresh` advances the version (F2) |
 
-See [README.md](../README.md) and [PLANNING.md](PLANNING.md) for the full flag list.
+See [README.md](../README.md) and [manual/09-reference.md](manual/09-reference.md)
+for the full flag list.
 
 ## 12. Data freshness (auto-refresh)
 
@@ -721,7 +725,7 @@ Invoke-RestMethod -Method Post http://127.0.0.1:9000/_admin/refresh
 ```
 
 > Freshness latency includes an unavoidable Fabric-side shortcut-cache lag on
-> top of `REFRESH_POLL_SECONDS`. See [FRESHNESS_PLAN.md](FRESHNESS_PLAN.md).
+> top of `REFRESH_POLL_SECONDS`.
 
 ---
 

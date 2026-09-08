@@ -196,8 +196,8 @@ fail closed with actionable diagnostics.
 
 ## References
 
-- [TOKENIZATION_PUSHDOWN.md](TOKENIZATION_PUSHDOWN.md)
-- [TOKENIZATION_MULTI_DIALECT_UAT.md](TOKENIZATION_MULTI_DIALECT_UAT.md)
-- [TOKENIZATION_OPEN_MIRROR_UAT.md](TOKENIZATION_OPEN_MIRROR_UAT.md)
-- [UsecasesAndScenarios.md](UsecasesAndScenarios.md)
-- [Open Mirror configuration](../config.open_mirror.example.json)
+- [TOKENIZATION_PUSHDOWN.md](../TOKENIZATION_PUSHDOWN.md)
+- [TOKENIZATION_MULTI_DIALECT_UAT.md](../TOKENIZATION_MULTI_DIALECT_UAT.md)
+- [TOKENIZATION_OPEN_MIRROR_UAT.md](../TOKENIZATION_OPEN_MIRROR_UAT.md)
+- [UsecasesAndScenarios.md](../UsecasesAndScenarios.md)
+- [Open Mirror configuration](../../config.open_mirror.example.json)

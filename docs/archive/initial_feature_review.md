@@ -2,11 +2,11 @@
 
 Date: 2026-07-25  
 Project: Fabric Shortcut Proxy  
-Primary reference: [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md)
+Primary reference: [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md)
 
 ## 1) Scope
 
-This review evaluates [agent-cpp/agent.cpp](../agent-cpp/agent.cpp) against the Phase 6 commitments in [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md#L642), with emphasis on:
+This review evaluates [agent-cpp/agent.cpp](../../agent-cpp/agent.cpp) against the Phase 6 commitments in [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md#L642), with emphasis on:
 
 - Contract and architecture alignment
 - Deviations and operational risk
@@ -15,7 +15,7 @@ This review evaluates [agent-cpp/agent.cpp](../agent-cpp/agent.cpp) against the 
 
 ## 2) Phase 6 Plan Commitments (Baseline)
 
-From [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md#L654):
+From [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md#L654):
 
 - C++ serving Agent is Win32 + winsock only and no third-party deps
 - Serves S3 data plane from shared store: GET/HEAD with Range, ListObjectsV2, health

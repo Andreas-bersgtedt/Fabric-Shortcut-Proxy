@@ -49,8 +49,8 @@ Status: Completed (Phases 1–4).
   TLS termination, and per-access **audit logging** (`ENABLE_AUDIT_LOG`).
 - **Config Builder UI:** Sources includes the mount editor; Security includes access-key management.
 
-Reference: [s3virtulization.md](s3virtulization.md), [SECURITY.md](SECURITY.md),
-[CONFIGURATION.md](CONFIGURATION.md) §14. Optional next step: read-write (PUT/DELETE/multipart).
+Reference: [s3virtulization.md](../s3virtulization.md), [SECURITY.md](../SECURITY.md),
+[CONFIGURATION.md](../CONFIGURATION.md) §14. Optional next step: read-write (PUT/DELETE/multipart).
 
 ## Phase 1: Canonical Source Path Model
 Goal: represent source identity clearly and map virtual folders to source lineage.

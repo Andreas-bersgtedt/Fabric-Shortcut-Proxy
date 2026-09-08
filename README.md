@@ -11,6 +11,9 @@ table objects and generates Parquet files on demand from SQL pushdown queries.
 > installing, configuring, connecting, securing, and operating the proxy, with worked
 > tutorials.
 
+> **Looking for a runbook or reference?** [docs/README.md](docs/README.md) maps
+> the maintained configuration, deployment, security, UAT, and troubleshooting guides.
+
 > The proxy supports two output modes from the same backend data path:
 > `TABLE_FORMAT=iceberg` and `TABLE_FORMAT=delta`.
 > In Fabric environments, Delta mode is often preferred because Fabric reads `_delta_log`
@@ -99,9 +102,8 @@ s3emulator/
 ├── Manager.ps1              Bootstrap: venv + deps + launch Manager/Agent cluster
 ├── Manager.sh               Linux/macOS bootstrap for Manager/Agent cluster
 ├── validate_pyiceberg.py    Reference-reader validation (pyiceberg)
-├── docs/                    Documentation (design, configuration, runbooks)
-│   ├── PLANNING.md              Hardening & enhancement roadmap
-│   ├── SCALE_ARCHITECTURE_PLAN.md  Manager/Agent cluster rewrite for scale (10⁸+ rows)
+├── docs/                    Documentation (manual, configuration, runbooks)
+│   ├── manual/                 End-to-end operator manual
 │   ├── CONFIGURATION.md         Full configuration manual (PostgreSQL / SQL Server)
 │   ├── DELTA_FORMAT.md          Native Delta output design (TABLE_FORMAT=delta)
 │   └── ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md  Real Oracle/Databricks operations + smoke tests
@@ -577,10 +579,8 @@ Use this order when docs appear to conflict:
     security, and dialect behavior.
   - [TOKENIZATION_MULTI_DIALECT_UAT.md](docs/TOKENIZATION_MULTI_DIALECT_UAT.md) for
     PostgreSQL, Oracle, and Databricks SQL validation.
-3. **Design/history docs (may describe prior states)**:
-  - [PLANNING.md](docs/PLANNING.md)
-  - [SCALE_ARCHITECTURE_PLAN.md](docs/SCALE_ARCHITECTURE_PLAN.md)
-  - [CONFIG_BUILDER_PLAN.md](docs/CONFIG_BUILDER_PLAN.md)
+3. **Historical design records**: [docs/archive/](docs/archive/README.md). They
+  are retained for context and may describe prior states.
 
 Current defaults and behavior to assume unless overridden:
 
@@ -651,7 +651,7 @@ logs.
 | Logs trace Fabric request → SQL → Parquet response | ✅ |
 | Parameterized SQL only (no injection risk) | ✅ |
 
-For the full hardening/feature roadmap and per-item status (H1–H9, F1–F6), see
-[PLANNING.md](docs/PLANNING.md). All planned items are complete; the format-risky
-features (F3 manifest stats, F2 time-travel) ship behind default-off flags and
-are validated with the `pyiceberg` reference reader.
+For current deployment and operating guidance, use the
+[User Manual](docs/manual/README.md), [Configuration Manual](docs/CONFIGURATION.md),
+and [Operations chapter](docs/manual/08-operations.md). Historical implementation
+plans are retained in [docs/archive/](docs/archive/README.md).

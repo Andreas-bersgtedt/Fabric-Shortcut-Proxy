@@ -6,8 +6,8 @@ This document plans the work to take the POC from "works in a demo" toward
 "robust and extensible."
 
 Companion documents:
-- Design & requirements: [s3virtulization.md](s3virtulization.md)
-- Scale & robustness (Manager/Agent cluster rewrite): [SCALE_ARCHITECTURE_PLAN.md](SCALE_ARCHITECTURE_PLAN.md)
+- Design & requirements: [s3virtulization.md](../s3virtulization.md)
+- Scale & robustness (Manager/Agent cluster rewrite): [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md)
 - Verified engineering notes: repo memory (`/memories/repo/s3-keycount-fix.md`)
 
 ---

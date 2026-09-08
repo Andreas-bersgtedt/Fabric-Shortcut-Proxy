@@ -86,6 +86,6 @@ update DNS or restore the reserved frontend IP before reopening the gateway.
 ## References
 
 - [Operations manual](../../docs/manual/08-operations.md)
+- [Manager guide](../../docs/MANAGER_GUIDE.md)
 - [External load balancer runbook](../../docs/EXTERNAL_LB_RUNBOOK.md)
-- [Enterprise deployment guide](../../docs/Enterprise_Deployment_guide.md)
 - [Enterprise deployment guide](../../docs/Enterprise_Deployment_guide.md)

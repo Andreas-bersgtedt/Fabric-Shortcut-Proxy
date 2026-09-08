@@ -13,6 +13,7 @@ argument-hint: "Describe the source, tables or mounts, security requirements, an
 - Configuring local, S3, MinIO, Azure Blob, or ADLS mounts.
 - Managing encrypted credentials, access keys, ACLs, or Key Vault.
 - Using the Config Builder.
+- Configuring a source/table/mirror column to select a central tokenization policy.
 
 ## Precedence and File Layout
 
@@ -65,6 +66,11 @@ $env:MANAGER_AUTH_ENABLED = "1"
 
 Use `/_config/` for sources, reflected tables, mounts, open mirroring, credentials, access keys, ACLs, and encrypted backups. Keep `FSP_CRED_KEY` stable across restarts and hosts that share the credential store. Never place live passwords, SAS tokens, or connection strings in committed examples.
 
+Use the [tokenization skill](../fsp-tokenization/SKILL.md) to create keys and
+central policies, assign durable or random selections, handle rotation, or opt
+into Arrow fallback. The screenshot workflow is in
+[CONFIG_BUILDER_GUIDE.md](../../docs/CONFIG_BUILDER_GUIDE.md).
+
 ## Mounts and Authentication
 
 - `local` requires an OS-mounted NFS/SMB path.
@@ -80,3 +86,4 @@ Use `/_config/` for sources, reflected tables, mounts, open mirroring, credentia
 - [Security](../../docs/SECURITY.md)
 - [Storage virtualization](../../docs/s3virtulization.md)
 - [Backup and restore](../../docs/BACKUP_RESTORE.md)
+- [Tokenization policy manual](../../docs/manual/14-tokenization-policies.md)

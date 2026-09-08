@@ -21,6 +21,7 @@ argument-hint: "Provide the database engine, host/network path, authentication m
 | PostgreSQL | `postgresql+asyncpg` | `[postgres]` or `[drivers]` extra |
 | SQL Server | `mssql+aioodbc` | `[drivers]` plus OS ODBC Driver 18 for SQL Server |
 | Oracle | `oracle+oracledb` | `[oracle]` or `[drivers]` extra |
+| Databricks SQL | `databricks` | Bundled driver; SQL warehouse HTTP path required |
 | Amazon Redshift | `redshift+redshift_connector` | `[redshift]` or `[drivers]` extra |
 | Teradata | `teradatasql` | `[teradata]` or `[drivers]` extra |
 | Apache Impala | `impala` | `[impala]` or `[drivers]` extra |
@@ -36,6 +37,9 @@ The Manager launchers install the supported driver set through the project extra
 ```
 
 For encrypted credentials on Linux, install `.[credentials]`. For storage-proxy upstreams, install `.[s3proxy]` or `.[azureblob]` separately.
+
+Databricks uses `databricks://token:<token>@<host>?http_path=<warehouse-path>`.
+Set an explicit `key_column` because primary-key reflection may be unavailable.
 
 ## Connection Setup
 

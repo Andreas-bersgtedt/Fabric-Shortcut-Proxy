@@ -244,7 +244,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert disabled.status_code == 200
     assert last_admin.status_code == 409
 
-    from security.identity import IdentityProvider, identity_provider
+    from security.identity import IdentityProvider
     assert IdentityProvider(str(tmp_path / "identities.json")).authenticate(
         "support", "correct horse battery staple"
     ) is None
@@ -309,7 +309,7 @@ async def test_oidc_user_enrollment_requires_no_local_credential(tmp_path, monke
 async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
-    from security.identity import IdentityProvider, identity_provider
+    from security.identity import IdentityProvider
 
     identity_path = tmp_path / "identities.json"
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
@@ -535,7 +535,7 @@ async def test_authorization_middleware_enforces_operator_functions(monkeypatch)
 
 async def test_monitor_troubleshooter_session_is_read_only_across_route_groups(tmp_path, monkeypatch):
     import httpx
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI
     from security.authorization_middleware import AuthorizationMiddleware
     from security.identity import IdentityProvider, identity_provider
 

@@ -11,7 +11,6 @@ from security.authorization import (
     bearer_token,
     require,
 )
-from security.identity import identity_provider
 
 _EXEMPT_PREFIXES = ("/healthz", "/readyz", "/favicon.ico")
 

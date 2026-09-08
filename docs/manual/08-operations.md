@@ -64,6 +64,9 @@ The config builder (`/_config`) and the monitor (`/_monitor`) are served on the 
 control plane, or on the agent's own port in Lite mode. In the enterprise edition the admin
 console is at `/_manager`.
 
+For a screen-by-screen guide to fleet status, memory trends, Agent lifecycle actions,
+and rolling restarts, see [MANAGER_GUIDE.md](../MANAGER_GUIDE.md).
+
 ## 8.3 Monitoring
 
 Enable the read-only monitor with `ENABLE_MONITOR=1`. In Enterprise, open the

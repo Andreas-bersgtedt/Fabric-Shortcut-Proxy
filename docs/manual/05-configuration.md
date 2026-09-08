@@ -157,6 +157,9 @@ The builder is off by default and accepts database credentials, so run it on a p
 only. It preserves existing explicit schemas and transforms across reloads and apply operations.
 See chapter 7 for credential and backup protections.
 
+For a task-by-task guide with screenshots of Sources, Tables, Mirroring, Security,
+and System, see [CONFIG_BUILDER_GUIDE.md](../CONFIG_BUILDER_GUIDE.md).
+
 ## 5.8 Multi-connection sources
 
 A single deployment can serve tables from more than one source. Define named connections

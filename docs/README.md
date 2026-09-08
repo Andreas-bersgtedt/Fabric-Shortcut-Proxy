@@ -8,6 +8,8 @@ connectivity, security, operations, and tutorials.
 | Topic | Document |
 | --- | --- |
 | Configuration and source connections | [CONFIGURATION.md](CONFIGURATION.md) |
+| Config Builder workflow and screenshots | [CONFIG_BUILDER_GUIDE.md](CONFIG_BUILDER_GUIDE.md) |
+| Manager fleet, monitoring, and lifecycle controls | [MANAGER_GUIDE.md](MANAGER_GUIDE.md) |
 | Linux and Windows deployment | [installation/](installation/) |
 | Enterprise and AKS deployment | [Enterprise_Deployment_guide.md](Enterprise_Deployment_guide.md) |
 | Fabric private connectivity | [CONNECTIVITY_SETUP.md](CONNECTIVITY_SETUP.md) |

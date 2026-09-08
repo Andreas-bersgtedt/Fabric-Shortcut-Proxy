@@ -310,6 +310,10 @@ def test_index_has_open_mirror_tab():
     assert "Column policies" in html
     assert "deterministic_hash" in html
     assert "omUpdatePolicy" in html
+    assert "omInspectTable(index);" in html
+    assert "function omSourceParts(sourceTable)" in html
+    assert 's.textContent="Loading columns for "+source.source+"…"' in html
+    assert "if(state.om.selectedTable!=null) omInspectTable(state.om.selectedTable);" in html
     assert 'class="om-policy-central"' in html
     assert 'class="om-policy-key"' not in html
     assert "omCentralPolicyOptions" in html

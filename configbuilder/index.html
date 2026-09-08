@@ -3352,7 +3352,12 @@ function omRenderTableList(){
   box.innerHTML=tables.map((table,index)=>`<button type="button" class="om-table-item${state.om.selectedTable===index?" active":""}" data-table="${index}">`
     + `${omEsc(omTableLabel(table,index))}<small>${omEsc(table.source_table||"Source not selected")}</small></button>`).join("");
   box.querySelectorAll("[data-table]").forEach(button=>{
-    button.onclick=()=>{ state.om.selectedTable=parseInt(button.dataset.table); omRenderTableRows(); };
+    button.onclick=()=>{
+      const index=parseInt(button.dataset.table);
+      state.om.selectedTable=index;
+      omRenderTableRows();
+      omInspectTable(index);
+    };
   });
 }
 
@@ -3664,21 +3669,41 @@ async function omPickTable(i, value){
   if(!row.target_table) row.target_table = picked.name;
   if(!row.schema) row.schema = picked.schema||"";
   omRenderTableRows();  // reflect source_table/name immediately
-  // Auto-detect the key column for the picked table.
-  const s = $("omTablesStatus"); s.className="status"; s.textContent="Detecting key for "+picked.source+"…";
+  await omInspectTable(i, picked);
+}
+
+function omSourceParts(sourceTable){
+  const value=String(sourceTable||"").trim();
+  const separator=value.lastIndexOf(".");
+  return separator>0
+    ? {schema:value.slice(0,separator),name:value.slice(separator+1),source:value}
+    : {schema:null,name:value,source:value};
+}
+
+async function omInspectTable(i, picked){
+  const t=state.om.editing; if(!t||!t.tables[i]) return;
+  const row=t.tables[i];
+  if(Array.isArray(row._sourceColumns)&&row._sourceColumns.length) return;
+  if(row._inspectionPending) return;
+  const source=picked||omSourceParts(row.source_table);
+  if(!source.name) return;
+  row._inspectionPending=true;
+  const s = $("omTablesStatus"); s.className="status"; s.textContent="Loading columns for "+source.source+"…";
   try{
     const conn = $("omConnection").value || "default";
-    const r = await fetch("/_config/api/open-mirror/inspect-table",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({connection:conn, schema:picked.schema, name:picked.name})});
+    const r = await fetch("/_config/api/open-mirror/inspect-table",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({connection:conn, schema:source.schema, name:source.name})});
     const d = await r.json();
     if(r.ok && d.ok){
       row._sourceColumns = d.columns||[];
       row._cols = (d.columns||[]).map(c=>c.name);
       if(!row.watermark_column){ const wm = omGuessWatermark(d.columns||[]); if(wm) row.watermark_column = wm; }
-      if(d.detected_key){ row.key_column = d.detected_key; s.className="status ok"; s.textContent="Key for "+picked.name+": "+d.detected_key+(row.watermark_column?("  · watermark: "+row.watermark_column):""); }
-      else { s.className="status"; s.textContent="No key detected for "+picked.name+" — set it manually."; }
+      if(d.detected_key&&!row.key_column) row.key_column=d.detected_key;
+      if(d.detected_key){ s.className="status ok"; s.textContent="Loaded columns for "+source.name+" · key: "+row.key_column+(row.watermark_column?(" · watermark: "+row.watermark_column):""); }
+      else { s.className="status"; s.textContent="Loaded columns for "+source.name+"; no key was detected."; }
       omRenderTableRows();
     } else { s.className="status err"; s.textContent="✗ "+((d&&d.error)||"key detection failed"); }
   }catch(e){ s.className="status err"; s.textContent="Key detection request failed."; }
+  finally { delete row._inspectionPending; }
 }
 
 // Suggest a monotonic watermark column by name/type (best-effort).
@@ -3759,6 +3784,7 @@ function omEdit(i){
   state.om.editingIndex=i; state.om.selectedTable=t.tables.length?0:null;
   omWriteForm(t);
   omRenderList();
+  if(state.om.selectedTable!=null) omInspectTable(state.om.selectedTable);
 }
 function omRemove(i){
   const target=state.om.targets[i], count=(target.tables||[]).length;

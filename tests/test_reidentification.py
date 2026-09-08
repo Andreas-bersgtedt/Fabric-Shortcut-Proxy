@@ -17,6 +17,7 @@ from reidentification.mappings import (
     default_mappings_path,
 )
 from reidentification.source_lookup import build_lookup_query
+from reidentification.limits import RequestLimiter
 from reidentification.router import router
 from security.authorization import User
 from security.authorization_middleware import AuthorizationMiddleware
@@ -141,8 +142,19 @@ def test_lookup_query_rejects_invalid_token_and_unsupported_dialect(monkeypatch)
         build_lookup_query(LookupMapping.from_dict(mapping), "A" * 64)
 
 
+def test_reidentification_request_limits_per_minute_and_day():
+    limiter = RequestLimiter()
+    assert limiter.allow("auditor", per_minute=2, per_day=3, now=0).allowed
+    assert limiter.allow("auditor", per_minute=2, per_day=3, now=1).allowed
+    assert limiter.allow("auditor", per_minute=2, per_day=3, now=2).reason == "re-identification minute quota exceeded"
+    assert limiter.allow("auditor", per_minute=2, per_day=3, now=61).allowed
+    assert limiter.allow("auditor", per_minute=2, per_day=3, now=62).reason == "re-identification daily quota exceeded"
+
+
 @pytest.mark.asyncio
 async def test_reidentification_route_is_auditor_only_and_redacted(tmp_path, monkeypatch):
+    import reidentification.router as reidentification_router
+
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
     monkeypatch.setattr(config, "AUDIT_LOG_FILE", str(tmp_path / "audit.jsonl"), raising=False)
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
@@ -153,6 +165,16 @@ async def test_reidentification_route_is_auditor_only_and_redacted(tmp_path, mon
     auditor = provider.authenticate("auditor", "correct horse battery staple")
     session = identity_provider().create_session(auditor)
     audit._buf.clear()
+    mapping = LookupMappings.from_dict({"mappings": [{
+        "policy_id": "customer-pii-v1", "table_id": "customers_safe",
+        "column_id": "email_token", "lookup_column": "email_token_lookup",
+        "clear_text_column": "email", "primary_key_column": "customer_id",
+    }]})
+    async def fake_lookup_rows(mapping, token):
+        assert token == "A" * 64
+        return [{"__reidentify_primary_key": 123, "__reidentify_value": "alice@example.com"}]
+    monkeypatch.setattr(reidentification_router, "_mappings", mapping)
+    monkeypatch.setattr(reidentification_router, "lookup_rows", fake_lookup_rows)
 
     app = FastAPI()
     app.add_middleware(AuthorizationMiddleware)
@@ -161,17 +183,26 @@ async def test_reidentification_route_is_auditor_only_and_redacted(tmp_path, mon
         transport=httpx.ASGITransport(app=app), base_url="http://test",
         cookies={"fsp_session": session},
     ) as client:
-        allowed = await client.post("/_reidentify/api/v1/lookup")
+        allowed = await client.post(
+            "/_reidentify/api/v1/lookup/customer-pii-v1/customers_safe/email_token",
+            json={"token": "A" * 64, "reason_code": "audit", "case_reference": "CASE-123"},
+        )
         denied = await client.post(
-            "/_reidentify/api/v1/lookup", headers={"X-Admin-Token": "admin-test-token"}
+            "/_reidentify/api/v1/lookup/customer-pii-v1/customers_safe/email_token",
+            headers={"X-Admin-Token": "admin-test-token"},
         )
 
-    assert allowed.status_code == 501
-    assert allowed.json()["error"] == "re-identification lookup is not implemented"
+    assert allowed.status_code == 200
+    assert allowed.json()["primary_key"] == 123
+    assert allowed.json()["value"] == "alice@example.com"
     assert denied.status_code == 403
     events = audit.recent()
     assert events[-2]["action"] == "reidentification_request"
     assert events[-2]["identity"] == "auditor"
+    assert events[-2]["outcome"] == "success"
+    assert events[-2]["token_fingerprint"] != "A" * 16
+    assert events[-2]["case_reference"] == "CASE-123"
+    assert events[-1]["request_id"] != "-"
     assert events[-1]["action"] == "reidentification_request"
     assert events[-1]["identity"] == "admin-token"
     assert events[-1]["status"] == 403
@@ -188,6 +219,8 @@ async def test_reidentification_route_is_auditor_only_and_redacted(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_reidentification_fails_closed_when_durable_audit_is_unavailable(tmp_path, monkeypatch):
+    import reidentification.router as reidentification_router
+
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
     monkeypatch.setattr(config, "AUDIT_LOG_FILE", "", raising=False)
     identity_path = tmp_path / "identities.json"
@@ -195,12 +228,13 @@ async def test_reidentification_fails_closed_when_durable_audit_is_unavailable(t
     provider = IdentityProvider(str(identity_path))
     provider.create_or_replace(User("auditor", roles=("auditor",)), "correct horse battery staple")
     session = identity_provider().create_session(provider.authenticate("auditor", "correct horse battery staple"))
+    monkeypatch.setattr(reidentification_router, "_mappings", LookupMappings())
     app = FastAPI()
     app.add_middleware(AuthorizationMiddleware)
     app.include_router(router)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test", cookies={"fsp_session": session}
     ) as client:
-        response = await client.post("/_reidentify/api/v1/lookup")
+        response = await client.post("/_reidentify/api/v1/lookup/missing/table/column", json={})
     assert response.status_code == 503
     assert response.json()["error"] == "audit service unavailable"

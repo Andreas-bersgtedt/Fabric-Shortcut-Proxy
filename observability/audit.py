@@ -105,6 +105,13 @@ def record_reidentification(
     status: int,
     outcome: str,
     reason: str,
+    policy_id: str = "",
+    table_id: str = "",
+    column_id: str = "",
+    token_fingerprint: str = "",
+    case_reference: str = "",
+    match_count: int | None = None,
+    latency_ms: int | None = None,
 ) -> None:
     """Persist a required redacted re-identification audit event.
 
@@ -127,6 +134,19 @@ def record_reidentification(
         "outcome": _scrub(outcome),
         "reason": _scrub(reason),
     }
+    for name, value in {
+        "policy_id": policy_id,
+        "table_id": table_id,
+        "column_id": column_id,
+        "token_fingerprint": token_fingerprint,
+        "case_reference": case_reference,
+    }.items():
+        if value:
+            event[name] = _scrub(value)
+    if match_count is not None:
+        event["match_count"] = int(match_count)
+    if latency_ms is not None:
+        event["latency_ms"] = int(latency_ms)
     with _fh_lock:
         fh = _file_handle()
         if fh is None:

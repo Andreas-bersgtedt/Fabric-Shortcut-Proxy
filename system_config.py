@@ -389,6 +389,12 @@ ENABLE_ADMIN_UI: bool = _get_bool("ENABLE_ADMIN_UI", "enable_admin_ui", False)
 ENABLE_REIDENTIFICATION: bool = _get_bool(
     "ENABLE_REIDENTIFICATION", "enable_reidentification", False
 )
+REIDENTIFICATION_REQUESTS_PER_MINUTE: int = _get_int(
+    "REIDENTIFICATION_REQUESTS_PER_MINUTE", "reidentification_requests_per_minute", 5
+)
+REIDENTIFICATION_REQUESTS_PER_DAY: int = _get_int(
+    "REIDENTIFICATION_REQUESTS_PER_DAY", "reidentification_requests_per_day", 50
+)
 
 # Token required for mutating /_manager actions (X-Admin-Token header or ?token=)
 ADMIN_TOKEN: str = _get_str("ADMIN_TOKEN", "admin_token", "").strip()

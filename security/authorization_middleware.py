@@ -20,10 +20,11 @@ def _audit_reidentification(request: Request, status: int, reason: str, identity
     if not request.url.path.startswith("/_reidentify/"):
         return True
     from observability import audit
+    import uuid
 
     try:
         audit.record_reidentification(
-        request_id=request.headers.get("x-request-id", "-")[:128],
+        request_id=request.headers.get("x-request-id", "").strip()[:128] or str(uuid.uuid4()),
         identity=identity,
         method=request.method,
         status=status,

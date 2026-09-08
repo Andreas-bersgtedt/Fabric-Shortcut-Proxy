@@ -38,6 +38,10 @@ def test_manager_fleet_probe_runs_only_after_session_authentication():
     assert "body.auth-locked > .tab-content" in html
     assert "policyAdminToken" not in html
     assert "userAdminToken" not in html
+    assert '<select id="policyKeyRef">' in html
+    assert '<input id="policyKeyRef"' not in html
+    assert "renderPolicyKeyReferences();" in html
+    assert '$("policyKind").onchange=renderPolicyKeyReferences;' in html
 
 
 def test_build_url_postgres_defaults_and_encoding():

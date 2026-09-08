@@ -625,7 +625,7 @@
           <section><label for="policyDigestSize">Digest bytes</label><input id="policyDigestSize" type="number" min="1" max="64" value="32" /></section>
         </div>
         <label for="policyKeyRef">Key reference</label>
-        <input id="policyKeyRef" placeholder="customer-pii-v1 (durable only)" />
+        <select id="policyKeyRef"><option value="" disabled selected>No configured key references</option></select>
         <div class="row">
           <section><label for="policyDomain">Domain</label><input id="policyDomain" placeholder="customer-email" /></section>
           <section><label for="policyNormalization">Normalization</label><select id="policyNormalization"><option value="none">none</option><option value="trim">trim</option><option value="trim_lower">trim_lower</option></select></section>
@@ -1422,9 +1422,18 @@ async function loadTokenizationKeyReferences(){
     const response=await fetch("/_config/api/tokenization-key-references",{cache:"no-store"}).then(result=>result.json());
     state.tokenizationKeyRefs=response.ok?(response.references||[]):[];
   }catch(error){ state.tokenizationKeyRefs=[]; }
+  renderPolicyKeyReferences();
   renderSelected();
   if(state.addTable.draft) renderAddTableMetadata();
   if(state.om.editing) omRenderTableRows();
+}
+
+function renderPolicyKeyReferences(){
+  const select=$("policyKeyRef");
+  if(!select) return;
+  const currentReference=select.value;
+  select.innerHTML=tokenizationKeyOptionHtml(currentReference);
+  select.disabled=$("policyKind").value!=="durable_token" || (!state.tokenizationKeyRefs.length&&!currentReference);
 }
 
 async function loadTokenizationKeys(){
@@ -1530,6 +1539,7 @@ async function saveTokenizationPolicy(){
   const status=$("tokenizationPoliciesStatus");
   const kind=$("policyKind").value; const policyId=$("policyId").value.trim();
   if(!policyId){ status.textContent="Policy ID is required."; status.className="status err"; return; }
+  if(kind==="durable_token"&&!$("policyKeyRef").value){ status.textContent="Select a key reference for the durable policy."; status.className="status err"; return; }
   const payload={policy_id:policyId,kind,algorithm:$("policyAlgorithm").value,digest_size:parseInt($("policyDigestSize").value||"32",10),normalization:$("policyNormalization").value,domain:$("policyDomain").value.trim()||null,enabled:true};
   if(kind==="durable_token") payload.key_ref=$("policyKeyRef").value.trim();
   const response=await fetch("/_config/api/tokenization/policies", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -3993,6 +4003,7 @@ $("btnSaveTokenizationKey").onclick=saveTokenizationKey;
 $("btnLoadUsers").onclick=loadManagedUsers;
 $("btnCreateUser").onclick=createManagedUser;
 $("btnSavePolicy").onclick=saveTokenizationPolicy;
+$("policyKind").onchange=renderPolicyKeyReferences;
 $("btnLogin").onclick=signIn;
 $("btnLogout").onclick=signOut;
 refreshAuthorization();

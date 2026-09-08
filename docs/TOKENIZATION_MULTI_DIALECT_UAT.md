@@ -7,6 +7,20 @@ The automated tests verify generated SQL, bind parameters, null handling, aliase
 and split-query structure. They do not execute against these database engines.
 Record the engine version, driver version, and results when running this UAT.
 
+## Result
+
+Completed on September 8, 2026:
+
+| Engine | Environment | Result |
+| --- | --- | --- |
+| PostgreSQL | Azure Database for PostgreSQL Flexible Server 17 | Passed with Entra authentication and `pgcrypto` on a disposable table |
+| Oracle | Oracle Free 23c temporary localhost-only container | Passed with `STANDARD_HASH`, `SYS_GUID`, modulo, and range splits |
+| Databricks SQL | Azure Databricks SQL Warehouse `dw001` | Passed with Azure AD authentication and a disposable Unity Catalog schema |
+
+Each run verified normalized deterministic tokens, random-token rotation, null
+preservation, and deterministic key rotation. The PostgreSQL, Oracle, and
+Databricks disposable objects were removed after each run.
+
 ## Expected behavior
 
 Each source must expose these logical rows:

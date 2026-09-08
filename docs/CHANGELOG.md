@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- OIDC operator authentication maps verified bearer-token subjects to centrally
+  managed user rights. Azure Entra issuer and discovery handling supports v1
+  issuer URLs with a trailing slash.
+- Tokenization UAT now includes completed live PostgreSQL 17, Oracle Free 23c,
+  and Databricks SQL Warehouse validation, plus Arrow fallback capacity and
+  rollout guardrails.
+
 ## [2.7.1]: 2026-09-04
 
 ### Added

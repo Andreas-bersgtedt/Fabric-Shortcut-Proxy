@@ -1,8 +1,10 @@
 # Pushdown tokenization
 
 Status: implemented for SQL Server, PostgreSQL, Oracle, and Databricks SQL through
-the Python agent and Config Builder. SQL Server deterministic tokenization passed
-live Fabric UAT. Live UAT remains pending for the other three engines.
+the Python agent and Config Builder. Live UAT passed for SQL Server, Azure
+PostgreSQL 17, Oracle Free 23c, and Databricks SQL Warehouse on September 8,
+2026. The database-specific results are recorded in
+`TOKENIZATION_MULTI_DIALECT_UAT.md`.
 
 The implemented scope includes deterministic SHA-256 tokens, random UUID tokens,
 column omission, source/output aliases, key resolution from environment variables,
@@ -256,9 +258,41 @@ joins between snapshots.
 
 ## Rollout
 
-Run the engine-specific checks in `TOKENIZATION_MULTI_DIALECT_UAT.md` before
-production use. Keep random tokens opt-in. When a column no longer needs equality
-analysis, removal exposes less data than replacing each value with a random token.
+The September 8, 2026 rollout review completed these checks:
+
+| Check | Result |
+| --- | --- |
+| SQL Server live Fabric UAT | Passed before this review |
+| Azure PostgreSQL 17 | Passed with Entra authentication and `pgcrypto` allow-listed for the disposable UAT table |
+| Oracle Free 23c | Passed in a temporary localhost-only container on the Linux UAT host |
+| Databricks SQL Warehouse | Passed with Azure AD authentication and a disposable Unity Catalog schema |
+| OIDC operator authorization | Passed on the Linux UAT host: viewer read allowed, configuration write denied, invalid bearer denied |
+
+The PostgreSQL table and extension, Oracle container and image, and Databricks
+schema were removed after validation. The temporary PostgreSQL extension
+allow-list was reset, and the Databricks warehouse was stopped.
+
+### Arrow fallback capacity
+
+Arrow fallback remains opt-in through `TOKENIZATION_FALLBACK=arrow`; the default
+is `none`. A deterministic-token benchmark on the Linux UAT host processed the
+same `_apply_arrow_fallback` path used before Parquet generation:
+
+| Rows in batch | Time | Rows per second | RSS increase |
+| --- | --- | --- | --- |
+| 100,000 | 3.404 s | 29,375 | 110.3 MiB |
+| 250,000 | 1.841 s | 135,831 | 112.3 MiB |
+
+The 100,000-row measurement includes process warm-up. Start production Arrow
+fallback at `STREAM_BATCH_ROWS=100000` or lower and one fallback materialization
+per Agent. Monitor Agent RSS, source-query latency, materialization duration, and
+the fallback capability/warning events. Stop rollout and set
+`TOKENIZATION_FALLBACK=none` if an Agent crosses its configured memory restart
+threshold, source reads exceed the table timeout, or fallback runs without an
+explicit policy selection.
+
+Keep random tokens opt-in. When a column no longer needs equality analysis,
+removal exposes less data than replacing each value with a random token.
 
 ## References
 

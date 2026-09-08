@@ -243,6 +243,34 @@ async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
     assert after.status_code == 401
 
 
+async def test_manager_credentials_create_single_ui_session(tmp_path, monkeypatch):
+    import config
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(tmp_path / "identities.json"))
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator", raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret", raising=False)
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        login = await client.post(
+            "/_config/api/authorization/login",
+            json={"user_id": "operator", "password": "manager-secret"},
+        )
+        me = await client.get("/_config/api/authorization/me")
+    assert login.status_code == 200
+    assert "fsp_session" in login.cookies
+    assert me.status_code == 200
+    assert me.json()["user"]["user_id"] == "operator"
+    assert "system.admin" in me.json()["permissions"]
+
+
 async def test_authorization_status_reports_only_enforcement_mode(monkeypatch):
     import httpx
     from fastapi import FastAPI

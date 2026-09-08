@@ -385,7 +385,7 @@ async def authorization_users(request: Request) -> JSONResponse:
 @router.post("/api/authorization/login")
 async def authorization_login(request: Request) -> JSONResponse:
     """Authenticate a local user and issue a revocable HttpOnly session cookie."""
-    from security.identity import identity_provider
+    from security.identity import authenticate_manager_identity, identity_provider
 
     try:
         body = await request.json()
@@ -393,10 +393,15 @@ async def authorization_login(request: Request) -> JSONResponse:
         password = str(body.get("password", ""))
     except (TypeError, ValueError):
         return JSONResponse({"ok": False, "error": "invalid login request"}, status_code=400)
-    user = identity_provider().authenticate(user_id, password)
+    provider = identity_provider()
+    user = provider.authenticate(user_id, password)
+    source = "local"
+    if user is None:
+        user = authenticate_manager_identity(user_id, password)
+        source = "manager"
     if user is None:
         return JSONResponse({"ok": False, "error": "invalid credentials"}, status_code=401)
-    token = identity_provider().create_session(user)
+    token = provider.create_session(user, source=source)
     response = JSONResponse({"ok": True, "user": user.to_public(),
                              "permissions": sorted(user.permissions())})
     response.set_cookie(

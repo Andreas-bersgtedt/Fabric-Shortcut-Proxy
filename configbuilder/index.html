@@ -194,7 +194,7 @@
   <a class="navbtn" href="/_manager">Back to Manager</a>
 </header>
 <div class="card" id="sessionPanel" style="margin:12px 24px 0;max-width:1240px;margin-left:auto;margin-right:auto;">
-  <div class="row">
+  <div class="row" id="sessionCredentials">
     <section><label for="sessionUserId">User ID</label><input id="sessionUserId" autocomplete="username" placeholder="operator" /></section>
     <section><label for="sessionPassword">Password</label><input id="sessionPassword" type="password" autocomplete="current-password" placeholder="Local identity password" /></section>
   </div>
@@ -1509,9 +1509,10 @@ async function refreshAuthorization(){
     if(!response.ok) throw new Error("Not signed in");
     const data=await response.json(); state.permissions=new Set(data.permissions||[]);
     $("sessionIdentity").textContent=data.user.user_id+" · "+[...state.permissions].join(", ");
+    $("sessionCredentials").style.display="none";
     $("btnLogin").style.display="none"; $("btnLogout").style.display="inline-block";
     applyPermissionVisibility();
-  }catch(error){ state.permissions=new Set(); $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
+  }catch(error){ state.permissions=new Set(); $("sessionCredentials").style.display="grid"; $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
 }
 
 function applyPermissionVisibility(){
@@ -1542,7 +1543,7 @@ async function signIn(){
 
 async function signOut(){
   await fetch("/_config/api/authorization/logout", {method:"POST"});
-  $("btnLogin").style.display="inline-block"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
+  $("sessionCredentials").style.display="grid"; $("btnLogin").style.display="inline-block"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
 }
 
 async function createManagedUser(){

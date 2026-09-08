@@ -56,6 +56,7 @@ def verify_password(password: str, encoded: str) -> bool:
 class Session:
     user_id: str
     expires_at: float
+    source: str = "local"
 
 
 class IdentityProvider:
@@ -126,10 +127,14 @@ class IdentityProvider:
             return None
         return User.from_dict({"user_id": user_id, **record})
 
-    def create_session(self, user: User) -> str:
+    def create_session(self, user: User, *, source: str = "local") -> str:
+        if source not in {"local", "manager"}:
+            raise ValueError("unknown identity source")
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._sessions[token] = Session(user.user_id, time.time() + self.ttl_seconds)
+            self._sessions[token] = Session(
+                user.user_id, time.time() + self.ttl_seconds, source
+            )
         return token
 
     def resolve_session(self, token: str) -> User | None:
@@ -140,6 +145,8 @@ class IdentityProvider:
             if session.expires_at <= time.time():
                 self._sessions.pop(token, None)
                 return None
+        if session.source == "manager":
+            return manager_identity(session.user_id)
         return self._user(session.user_id)
 
     def revoke_session(self, token: str) -> None:
@@ -174,3 +181,27 @@ def identity_provider() -> IdentityProvider:
         _provider = IdentityProvider(path, ttl_seconds=ttl)
         _provider_key = key
     return _provider
+
+
+def authenticate_manager_identity(user_id: str, password: str) -> User | None:
+    """Map configured Manager credentials to the bootstrap administrator."""
+    import config
+
+    if not config.MANAGER_AUTH_ENABLED or not config.MANAGER_AUTH_PASSWORD:
+        return None
+    user_ok = hmac.compare_digest(user_id, str(config.MANAGER_AUTH_USERNAME))
+    password_ok = hmac.compare_digest(password, str(config.MANAGER_AUTH_PASSWORD))
+    if not user_ok or not password_ok:
+        return None
+    return User(user_id, roles=("system_administrator",))
+
+
+def manager_identity(user_id: str) -> User | None:
+    """Resolve an established Manager session without retaining its password."""
+    import config
+
+    if not config.MANAGER_AUTH_ENABLED or not config.MANAGER_AUTH_PASSWORD:
+        return None
+    if not hmac.compare_digest(user_id, str(config.MANAGER_AUTH_USERNAME)):
+        return None
+    return User(user_id, roles=("system_administrator",))

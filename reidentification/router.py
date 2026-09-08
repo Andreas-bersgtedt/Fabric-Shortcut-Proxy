@@ -14,8 +14,10 @@ import config
 from reidentification.limits import RequestLimiter
 from reidentification.mappings import ReidentificationMappingError, load_default_mappings
 from reidentification.source_lookup import lookup_rows
+from observability.logging import get_logger
 
 router = APIRouter(prefix="/_reidentify/api/v1")
+log = get_logger(__name__)
 
 # Mounting an enabled module validates the administrative mapping contract before
 # any Auditor can reach its route.
@@ -87,7 +89,15 @@ async def lookup(policy_id: str, table_id: str, column_id: str, request: Request
             policy_id=policy_id, table_id=table_id, column_id=column_id, token=token,
             case_reference=case_reference, started=started,
         )
-    except Exception:  # source failures are deliberately indistinguishable to callers
+    except Exception as exc:  # source failures are deliberately indistinguishable to callers
+        log.warning(
+            "reidentification_source_failure",
+            request_id=request_id,
+            policy_id=policy_id,
+            table_id=table_id,
+            column_id=column_id,
+            error_type=type(exc).__name__,
+        )
         return await _audit_response(
             request_id=request_id, identity=user.user_id, method=request.method,
             status=503, outcome="source_failure", reason="source lookup unavailable",

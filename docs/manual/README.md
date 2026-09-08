@@ -35,6 +35,10 @@ duplicating it.
 | 8 | [Operations](08-operations.md) | Running, monitoring, background publishing, backup/restore, scaling, troubleshooting |
 | 9 | [Reference](09-reference.md) | Settings groups, dialect matrix, path formats, launcher flags, glossary |
 | 10 | [Tutorials](10-tutorials.md) | End-to-end worked examples: demo, SQL Server shortcut, file-share mount, tokenized column |
+| 11 | [Sources](11-sources.md) | Source connections, credentials, driver requirements, and validation |
+| 12 | [Table publishing](12-table-publishing.md) | Table registry, splits, output formats, refresh, and verification |
+| 13 | [Open Mirroring](13-open-mirroring.md) | Landing-zone targets, change tracking, recovery, retention, and operations |
+| 14 | [Tokenization policies](14-tokenization-policies.md) | Central policy lifecycle, key references, assignments, rotation, and UAT |
 
 ## How to use this manual
 
@@ -42,7 +46,10 @@ duplicating it.
   exposing anything beyond a lab.
 - **Prefer a worked example:** jump to [chapter 10](10-tutorials.md) and follow a tutorial
   end to end, referring back to the chapter each step cites.
-- **Adding a source or table:** chapter 5, then chapter 6.
+- **Adding a source:** chapter 11, then chapter 12.
+- **Publishing a table:** chapter 12, then chapter 6 to create the Fabric shortcut.
+- **Open Mirroring:** chapter 13.
+- **Tokenizing columns:** chapter 14, then chapter 7 for security controls.
 - **Tuning or scaling:** chapters 2 and 8.
 - **Hardening:** chapter 7.
 

@@ -70,8 +70,12 @@ SQLite is bundled for the demo. Install the driver for your real source:
 | PostgreSQL | `asyncpg` | `pip install -e ".[postgres]"` |
 | Oracle | `oracledb` | `pip install -e ".[oracle]"` |
 | Databricks SQL | `databricks-sqlalchemy` | bundled; requires an HTTP path to a SQL warehouse |
+| Amazon Redshift | `sqlalchemy-redshift`, `redshift-connector` | `pip install -e ".[redshift]"` |
+| Teradata | `teradatasqlalchemy` | `pip install -e ".[teradata]"` |
+| Apache Impala | `impyla` | `pip install -e ".[impala]"` |
 
-Optional dependency extras (declared in `pyproject.toml`): `postgres`, `oracle`, `s3proxy`
+Optional dependency extras (declared in `pyproject.toml`): `postgres`, `oracle`, `redshift`,
+`teradata`, `impala`, `s3proxy`
 (native S3/MinIO mounts), `azureblob` (Azure Blob/ADLS mounts), and `dev` (test dependencies).
 The encrypted store and backup/restore dependencies are included in the base installation.
 Combine extras, for example

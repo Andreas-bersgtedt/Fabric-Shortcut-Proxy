@@ -65,6 +65,9 @@ See [DELTA_FORMAT.md](../DELTA_FORMAT.md) for the commit model and type mapping.
 | PostgreSQL | `asyncpg` (`[postgres]` extra) | |
 | Oracle | `oracledb` (`[oracle]` extra) | |
 | Databricks SQL | `databricks-sqlalchemy` (bundled) | requires an HTTP path to a SQL warehouse |
+| Amazon Redshift | `sqlalchemy-redshift`, `redshift-connector` (`[redshift]` extra) | preview |
+| Teradata | `teradatasqlalchemy` (`[teradata]` extra) | preview |
+| Apache Impala | `impyla` (`[impala]` extra) | Arrow fallback is required for tokenization |
 
 Storage-proxy mounts add three passthrough backends: `local` (a filesystem path,
 including an OS-mounted NFS or SMB share), `s3` (S3, MinIO, or S3-compatible), and

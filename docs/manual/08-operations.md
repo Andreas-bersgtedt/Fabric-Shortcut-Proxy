@@ -209,7 +209,8 @@ What this means for, say, a 1 TB source table:
   proportional to it.
 - **Memory stays bounded.** With `STREAMING_PARQUET=1` each split materializes in row batches
   (`STREAM_BATCH_ROWS`, default 50,000) instead of loading whole into RAM; concurrency is
-  capped by `MAX_CONCURRENT_GENERATIONS`; the in-memory Parquet cache is capped by
+  capped by `MAX_CONCURRENT_GENERATIONS` and `SOURCE_MAX_CONCURRENCY` (0 means no source-query
+  cap); the in-memory Parquet cache is capped by
   `PARQUET_CACHE_MAX_BYTES`. Durable bytes live on disk in the artifact store, not RAM.
 - **Warm restarts skip regeneration.** With `PIN_MATERIALIZED_SPLITS=1` (default) and
   artifact-store serving, a restart serves the materialized splits from disk with no SQL and
@@ -234,6 +235,18 @@ Sizing guidance for large tables:
 - Prefer a cheap change probe (`REFRESH_STRATEGY=auto` or `dialect_probe`) or `ttl` over
   `content_hash` for auto-refresh, because content hashing re-materializes the table to
   detect change.
+
+### Arrow fallback capacity
+
+`TOKENIZATION_FALLBACK=arrow` is an explicit exception for a source dialect that
+cannot tokenize natively. It processes the selected source values in proxy memory
+before Parquet encoding. On the Linux UAT host, deterministic-token fallback processed
+250,000 rows in 1.841 seconds at 135,831 rows per second and added 112.3 MiB RSS.
+
+Start production fallback at `STREAM_BATCH_ROWS=100000` or lower and one fallback
+materialization per Agent. Monitor Agent RSS, source-query latency, and materialization
+duration. Set `TOKENIZATION_FALLBACK=none` and restart if an Agent crosses its memory
+restart threshold or source reads exceed their table timeout.
 
 ### Materialization modes (`MATERIALIZE_MODE`)
 
@@ -265,12 +278,29 @@ Manager supervises agents; a standby is a warm spare and reports as ready. The g
 standby naturally returns 503 because no agents register to it. Roll agents with health-gated
 restarts (`rolling_restart_health_timeout`).
 
-## 8.10 Retention
+## 8.10 Agent supervision
+
+`MANAGER_SUPERVISION_MODE=local` is the default: the Manager starts and restarts its
+Agent child processes. Set `MANAGER_SUPERVISION_MODE=external` only when Kubernetes or
+another orchestrator owns the Agent lifecycle; the Manager then accepts registered Agents
+but does not spawn them.
+
+`GENERATION_SOURCE_CONSISTENCY=best_effort` is the only supported distributed source-read
+contract. Each split can observe the source at a different time during a generation.
+`snapshot` is reserved for a future shared source snapshot token and fails validation today.
+
+An Agent sends a heartbeat every `HEARTBEAT_MS` (2,000 by default). The Manager marks it
+dead after `HEARTBEAT_MISS_LIMIT` misses (3 by default). `AGENT_RESTART_BACKOFF_SECONDS`
+and `AGENT_MAX_RAPID_RESTARTS` control the respawn delay and crash-loop cutoff. A
+non-owning Agent waits `MATERIALIZE_WAIT_SECONDS` (30 by default) for its owner to publish
+a split to the shared store.
+
+## 8.11 Retention
 
 Enable the retention garbage collector with `-RetentionGc` to prune orphaned Parquet splits
 on a timer (`retention_gc_interval_seconds`), or trigger it once with `POST /_admin/gc`.
 
-## 8.11 Troubleshooting
+## 8.12 Troubleshooting
 
 | Symptom | Likely cause | First check |
 |---|---|---|
@@ -284,7 +314,7 @@ on a timer (`retention_gc_interval_seconds`), or trigger it once with `POST /_ad
 | Open Mirror table stops after a restart | State is missing, corrupt, unreadable, or incompatible | Inspect `OPEN_MIRROR_STATE_DIR`; use the explicit reset endpoint only after review |
 | Open Mirror preflight does not start mirroring | Target is not a OneLake target, self-healing is disabled, or Fabric identifiers are missing | Check `landing_zone_root`, `workspace_id`, `mirrored_database_id`, and `self_healing` |
 
-## 8.12 Backup and restore
+## 8.13 Backup and restore
 
 Create and restore portable `.fspbackup` archives in the Config Builder **Security** area. The
 archive includes split configuration, local credential-store records, scoped access keys, and
@@ -302,7 +332,7 @@ Launcher and host issues are covered in
 guides. Oracle and Databricks operational specifics are in
 [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](../ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
-## 8.13 Next
+## 8.14 Next
 
 Continue to [Chapter 9: Reference](09-reference.md) for the settings groups, dialect matrix,
 path formats, and launcher flags.

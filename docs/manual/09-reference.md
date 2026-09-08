@@ -41,6 +41,9 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `SPLIT_USE_STATS_HISTOGRAM` | `split_use_stats_histogram` | `1` | Use the source stats histogram for `count` boundaries (SQL Server/PostgreSQL) |
 | `QUERY_MAX_ROWS` | `query_max_rows` | `500000` | Max rows per split query |
 | `QUERY_TIMEOUT` | `query_timeout_seconds` | `30` | SQL query timeout (seconds) |
+| `SOURCE_MAX_CONCURRENCY` | `source_max_concurrency` | `0` | Cap concurrent source queries; `0` is unlimited |
+| `STREAMING_PARQUET` | `streaming_parquet` | `0` | Generate Parquet in row batches |
+| `STREAM_BATCH_ROWS` | `stream_batch_rows` | `50000` | Rows per streaming batch |
 | `BUCKET_NAME` | `bucket` | `fabric-iceberg-poc` | Warehouse bucket name |
 | `PORT` | `port` | `9000` | Agent data-plane port |
 | `REQUIRE_SIGV4` | `require_sigv4` | `1` | Enforce SigV4 on all buckets |
@@ -56,6 +59,11 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `KEYVAULT_REFRESH_SECONDS` | `keyvault_refresh_seconds` | `300` | Background re-pull cadence (seconds) |
 | `KEYVAULT_CACHE_TTL` | `keyvault_cache_ttl` | `0` | Local-cache TTL; `0` = never expire (offline-friendly) |
 | `KEYVAULT_WRITE_BACK` | `keyvault_write_back` | `0` | Manager persists saved credentials into Key Vault (needs Secrets Officer) |
+| `FSP_OIDC_ISSUER` | *(env only)* | *(unset)* | Issuer for verified OIDC operator bearer tokens |
+| `FSP_OIDC_AUDIENCE` | *(env only)* | *(unset)* | Required OIDC token audience |
+| `FSP_OIDC_JWKS_URL` | *(env only)* | *(discovery)* | Optional explicit OIDC signing-key endpoint |
+| `FSP_OIDC_USER_CLAIM` | *(env only)* | `sub` | Verified token claim mapped to the central `user_id` |
+| `FSP_AUTHZ_ENFORCE` | *(env only)* | `0` | Require named function permissions on operator routes |
 | `ENABLE_CONFIG_BUILDER` | `enable_config_builder` | `0` | Serve the config builder UI |
 | `ENABLE_MONITOR` | `enable_monitor` | `0` | Serve the monitor dashboard |
 | `AUTO_REFRESH` | `auto_refresh` | `0` | Re-read the source and publish new snapshots |
@@ -64,9 +72,15 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `PARQUET_DISK_CACHE` | `parquet_disk_cache` | `0` | Persist generated Parquet to disk |
 | `PIN_MATERIALIZED_SPLITS` | `pin_materialized_splits` | `1` | Keep snapshot data files byte-identical |
 | `MATERIALIZE_MODE` | `materialize_mode` | `eager` | `eager`, `lazy` (defer + pin per table), or `virtual` (defer, regenerate on demand, zero at rest). Restart-required |
+| `TOKENIZATION_FALLBACK` | `tokenization_fallback` | `none` | `none` (fail closed) or `arrow` (explicit proxy-side fallback) |
 | `AGENT_COUNT` | `agent_count` | `1` | Number of supervised agents (enterprise) |
 | `ENABLE_GATEWAY` | `enable_gateway` | `0` | Built-in round-robin S3 gateway (enterprise) |
 | `CONTROL_PORT` | `control_port` | `9200` | Manager control-plane port |
+| `MANAGER_SUPERVISION_MODE` | `manager_supervision_mode` | `local` | `local` Manager-owned or `external` orchestrator-owned Agents |
+| `GENERATION_SOURCE_CONSISTENCY` | `generation_source_consistency` | `best_effort` | `best_effort` only; `snapshot` currently fails validation |
+| `HEARTBEAT_MS` / `HEARTBEAT_MISS_LIMIT` | `heartbeat_ms` / `heartbeat_miss_limit` | `2000` / `3` | Agent liveness interval and miss threshold |
+| `MATERIALIZE_WAIT_SECONDS` | `materialize_wait_seconds` | `30` | Non-owner Agent wait for an owner-published split |
+| `MEMORY_ALERT_THRESHOLD_MB` / `MEMORY_RESTART_THRESHOLD_MB` | `memory_alert_threshold_mb` / `memory_restart_threshold_mb` | `800` / `1200` | Agent memory alert and restart thresholds |
 
 This is a curated subset. Every setting, with defaults and help, is in the config builder's
 All settings panel and in [CONFIGURATION.md](../CONFIGURATION.md).
@@ -87,12 +101,16 @@ HA, and the control plane. The settings catalog marks which are live.
 | SQL Server | `mssql+aioodbc` | `[id]` | `TOP` | yes | yes | yes | yes |
 | Oracle | `oracle+oracledb` | `"id"` | `FETCH FIRST` | no | yes | yes | yes |
 | Databricks | `databricks` | `` `id` `` | `LIMIT` | no | no | yes | yes |
+| Amazon Redshift | `redshift+redshift_connector` | `"id"` | `LIMIT` | no | yes | no | no |
+| Teradata | `teradatasql` | `"id"` | `TOP` | no | yes | no | no |
+| Apache Impala | `impala` | `` `id` `` | `LIMIT` | no | yes | Arrow only | Arrow only |
 
 Non-async dialects use a sync threadpool fallback. Databricks needs an explicit `key_column`
 because primary-key reflection is unavailable, and an `http_path` to a SQL warehouse. SQL
 Server accepts a SQL login, Windows (Integrated Security), or an Entra ID service principal —
 choose the method in the Config Builder or set it in the `DB_URL` (see
-[CONFIGURATION.md](../CONFIGURATION.md) §6).
+[CONFIGURATION.md](../CONFIGURATION.md) §6). Redshift, Teradata, and Impala are preview
+sources; use pass-through columns or explicitly opt into Arrow fallback for tokenization.
 
 ## 9.4 Path formats
 
@@ -157,6 +175,7 @@ Chapter 8 has the full table with methods and query parameters.
 | `azureblob` | `azure-storage-blob`, `azure-identity` | Azure Blob / ADLS mounts |
 | `keyvault` | `azure-keyvault-secrets`, `azure-identity` | Entra ID identity + Azure Key Vault credential store (issue #16) |
 | `onelake` | `azure-storage-file-datalake`, `azure-identity` | Open Mirroring writes to OneLake landing zones |
+| `oidc` | `PyJWT[crypto]` | OIDC operator bearer-token authentication |
 | `dev` | `pyiceberg`, `botocore`, `httpx` | Tests and reference-reader validation |
 
 `cryptography` and `python-multipart` are core dependencies because the encrypted credential

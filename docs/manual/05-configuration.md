@@ -3,7 +3,8 @@
 This chapter is the working guide to pointing the proxy at a source and registering the
 tables it serves. It covers the settings model, the config files, the table registry, the
 config builder, and multi-connection sources. The complete PostgreSQL and SQL Server
-reference with reflection and type-mapping detail is in
+reference, plus connection formats for Oracle, Databricks SQL, Amazon Redshift,
+Teradata, and Apache Impala, is in
 [CONFIGURATION.md](../CONFIGURATION.md); the settings registry in `config.py` is the source
 of truth for every key.
 

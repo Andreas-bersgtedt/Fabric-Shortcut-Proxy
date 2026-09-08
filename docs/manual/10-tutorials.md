@@ -210,6 +210,10 @@ Server) and [TOKENIZATION_MULTI_DIALECT_UAT.md](../TOKENIZATION_MULTI_DIALECT_UA
 
 ## 10.5 Where to go next
 
+- Add sources and publish tables: [Chapter 11: Sources](11-sources.md) and
+  [Chapter 12: Table publishing](12-table-publishing.md).
+- Configure a mirrored landing zone: [Chapter 13: Open Mirroring](13-open-mirroring.md).
+- Create or rotate a central policy: [Chapter 14: Tokenization policies](14-tokenization-policies.md).
 - Harden the deployment before exposing it: [Chapter 7: Security](07-security.md).
 - Scale to more agents and add high availability: [Chapter 8: Operations](08-operations.md).
 - Look up any setting, flag, or path: [Chapter 9: Reference](09-reference.md).

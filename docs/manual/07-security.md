@@ -78,6 +78,31 @@ Cross-origin browser requests are disabled by default. Set
 UI from another host, port, or protocol. CORS only permits the browser request;
 it does not bypass HTTP Basic authentication.
 
+### OIDC operator authentication
+
+Install the `oidc` extra to accept verified bearer tokens from an OpenID Connect
+provider. Set the issuer and audience, then map the verified subject claim to a
+centrally managed `user_id`. Token role claims are ignored; roles and grants remain
+in the proxy user directory.
+
+```bash
+pip install -e ".[oidc]"
+export FSP_OIDC_ISSUER="https://login.microsoftonline.com/<tenant-id>/v2.0"
+export FSP_OIDC_AUDIENCE="<application-client-id-or-api-audience>"
+export FSP_OIDC_USER_CLAIM="oid"
+export FSP_AUTHZ_ENFORCE="1"
+```
+
+For an Entra v1 issuer, preserve its trailing slash and set the tenant JWKS endpoint:
+
+```bash
+export FSP_OIDC_ISSUER="https://sts.windows.net/<tenant-id>/"
+export FSP_OIDC_JWKS_URL="https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys"
+```
+
+The proxy verifies signature, issuer, audience, issue time, expiration, and subject.
+Unknown or disabled users receive no access. Use TLS before accepting bearer tokens.
+
 ## 7.5 Upstream credential mediation
 
 Outbound secrets for storage-proxy mounts are held encrypted and resolved by id, never
@@ -162,6 +187,11 @@ policies in the config builder per-column editor. Validate with the UAT runbooks
 [TOKENIZATION_UAT.md](../TOKENIZATION_UAT.md) (SQL Server) and
 [TOKENIZATION_MULTI_DIALECT_UAT.md](../TOKENIZATION_MULTI_DIALECT_UAT.md) (PostgreSQL, Oracle,
 Databricks).
+
+`TOKENIZATION_FALLBACK=none` is the default. Set `TOKENIZATION_FALLBACK=arrow` only
+when a source dialect cannot perform the selected transform natively and proxy-side
+processing is acceptable. Arrow fallback brings plaintext into proxy memory before
+Parquet generation; chapter 8 gives the tested capacity limit and rollout guardrail.
 
 ## 7.10 Encrypted backup and restore
 

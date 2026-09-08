@@ -18,7 +18,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
-import os
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -50,6 +49,10 @@ def _unauthorized() -> Response:
         status_code=401,
         headers={"WWW-Authenticate": f'Basic realm="{_REALM}"'},
     )
+
+
+def _config_unauthorized() -> Response:
+    return JSONResponse({"detail": "authentication required"}, status_code=401)
 
 
 def _misconfigured() -> Response:
@@ -86,10 +89,7 @@ def _session_ok(request: Request) -> bool:
 
 
 def _identity_bootstrap_allowed(request: Request) -> bool:
-    return (
-        os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() == "1"
-        and request.url.path in _IDENTITY_BOOTSTRAP_PATHS
-    )
+    return request.url.path in _IDENTITY_BOOTSTRAP_PATHS
 
 
 class ManagerAuthMiddleware(BaseHTTPMiddleware):
@@ -105,5 +105,7 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
         if _identity_bootstrap_allowed(request):
             return await call_next(request)
         if not _credentials_ok(request.headers.get("authorization", "")) and not _session_ok(request):
+            if request.url.path.startswith("/_config"):
+                return _config_unauthorized()
             return _unauthorized()
         return await call_next(request)

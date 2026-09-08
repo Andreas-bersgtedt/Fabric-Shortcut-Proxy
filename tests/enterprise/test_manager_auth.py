@@ -124,23 +124,24 @@ async def test_valid_local_session_also_passes_manager_basic_gate(_enable_auth, 
     assert response.status_code == 200
 
 
-async def test_identity_login_bootstrap_avoids_browser_basic_challenge(_enable_auth, monkeypatch):
-    monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
+async def test_identity_login_bootstrap_avoids_browser_basic_challenge(_enable_auth):
     async with _client(_app()) as c:
         assert (await c.get("/_config")).status_code == 200
         assert (await c.get("/_config/api/authorization/status")).status_code == 200
         assert (await c.post("/_config/api/authorization/login")).status_code == 200
         protected = await c.get("/_config/api/tables")
     assert protected.status_code == 401
-    assert protected.headers.get("www-authenticate", "").lower().startswith("basic")
+    assert "www-authenticate" not in protected.headers
 
 
-async def test_config_builder_keeps_basic_gate_without_identity_enforcement(_enable_auth, monkeypatch):
+async def test_config_builder_bootstrap_does_not_depend_on_authz_mode(_enable_auth, monkeypatch):
     monkeypatch.delenv("FSP_AUTHZ_ENFORCE", raising=False)
     async with _client(_app()) as c:
-        response = await c.get("/_config")
-    assert response.status_code == 401
-    assert response.headers.get("www-authenticate", "").lower().startswith("basic")
+        shell = await c.get("/_config")
+        protected = await c.get("/_config/api/tables")
+    assert shell.status_code == 200
+    assert protected.status_code == 401
+    assert "www-authenticate" not in protected.headers
 
 
 async def test_health_exempt_control_protected(_enable_auth):

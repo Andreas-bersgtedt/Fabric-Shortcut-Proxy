@@ -310,6 +310,14 @@ def test_index_has_open_mirror_tab():
     assert "Column policies" in html
     assert "deterministic_hash" in html
     assert "omUpdatePolicy" in html
+    assert 'class="om-policy-central"' in html
+    assert 'class="om-policy-key"' not in html
+    assert "omCentralPolicyOptions" in html
+    assert 'next.tokenization={action:kind==="deterministic_hash"?"durable_token":"random_token",policy_id:""}' in html
+    assert "delete next.transform;" in html
+    assert 'next.tokenization={action:kind==="deterministic_hash"?"durable_token":"random_token",policy_id:value}' in html
+    assert "choose a central tokenization policy under Column policies" in html
+    assert ".om-policy-central:not(:disabled)" in html
     assert 'class="omkeys"' in html
     assert 'class="omwatermark"' in html
     assert 'id="btnHealthOm"' in html

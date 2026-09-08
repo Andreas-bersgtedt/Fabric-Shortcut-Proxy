@@ -1498,6 +1498,7 @@ async function loadTokenizationPolicies(){
     box.innerHTML = "";
     if(!state.tokenizationPolicies.length){
       box.textContent = "No central tokenization policies are configured.";
+      if(state.om.editing) omRenderTableRows();
       return;
     }
     for(const policy of state.tokenizationPolicies){
@@ -1524,6 +1525,7 @@ async function loadTokenizationPolicies(){
     status.textContent = error.message || "Unable to load tokenization policies.";
     status.className = "status err";
   }
+  if(state.om.editing) omRenderTableRows();
 }
 
 async function disableTokenizationPolicy(policyId){
@@ -3419,11 +3421,10 @@ function omRenderTableRows(){
   box.querySelectorAll(".om-policy-name").forEach(inp=>{
     inp.oninput = ()=>omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, "name", inp.value);
   });
-  box.querySelectorAll(".om-policy-key,.om-policy-domain,.om-policy-normalization").forEach(inp=>{
-    inp.oninput = inp.onchange = ()=>{
-      const field=inp.dataset.p;
-      omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, field, inp.value);
-      if(field==="key_ref") omRenderTableRows();
+  box.querySelectorAll(".om-policy-central").forEach(select=>{
+    select.onchange = ()=>{
+      omUpdatePolicyField(parseInt(select.dataset.i), select.dataset.source, "policy_id", select.value);
+      omRenderTableRows();
     };
   });
   box.querySelectorAll("[data-del]").forEach(b=>{
@@ -3447,7 +3448,7 @@ function omPolicyColumns(tb){
   }));
   configured.forEach(c=>{
     const src=String(c.source||c.name||"");
-    if(!names.has(src)) out.push({field_id:c.field_id||out.length+1,name:c.name,source:src,type:c.type||c.iceberg_type||"string",nullable:c.nullable!==false,transform:c.transform});
+    if(!names.has(src)) out.push({field_id:c.field_id||out.length+1,name:c.name,source:src,type:c.type||c.iceberg_type||"string",nullable:c.nullable!==false,transform:c.transform,tokenization:c.tokenization});
     else Object.assign(out.find(x=>String(x.name)===src), c);
   });
   return out;
@@ -3455,7 +3456,22 @@ function omPolicyColumns(tb){
 
 function omPolicyKind(column){
   if(!column) return "remove";
+  if(column.tokenization&&column.tokenization.action==="durable_token") return "deterministic_hash";
+  if(column.tokenization&&column.tokenization.action==="random_token") return "random_token";
   return column.transform ? String(column.transform.kind||"keep") : "keep";
+}
+
+function omCentralPolicyOptions(kind,currentPolicyId){
+  const policies=centralPoliciesFor(kind);
+  const options=[];
+  if(currentPolicyId&&!policies.some(policy=>policy.policy_id===currentPolicyId)){
+    options.push(`<option value="${omEsc(currentPolicyId)}">${omEsc(currentPolicyId)} (unavailable)</option>`);
+  }
+  options.push(`<option value="" disabled${currentPolicyId?"":" selected"}>${policies.length?"Select central policy":"No approved central policies"}</option>`);
+  for(const policy of policies){
+    options.push(`<option value="${omEsc(policy.policy_id)}"${policy.policy_id===currentPolicyId?" selected":""}>${omEsc(policy.policy_id)}</option>`);
+  }
+  return options.join("");
 }
 
 function omPolicyEditor(tb,index){
@@ -3467,20 +3483,20 @@ function omPolicyEditor(tb,index){
     const source=String(c.source||c.name||"");
     const control=keySet.has(source)||watermark===source;
     const kind=control?"keep":omPolicyKind(c);
-    const tr=c.transform||{};
+    const policyId=String((c.tokenization&&c.tokenization.policy_id)||"");
+    const availablePolicies=centralPoliciesFor(kind);
     const options=[
       ["keep","Keep"],["remove","Remove"],["deterministic_hash","Deterministic hash"],["random_token","Random token"]
-    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${(control&&value!=="keep")||(value==="deterministic_hash"&&!state.tokenizationKeyRefs.length&&kind!==value)?" disabled":""}>${label}</option>`).join("");
+    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${(control&&value!=="keep")||((value==="deterministic_hash"||value==="random_token")&&!centralPoliciesFor(value).length&&kind!==value)?" disabled":""}>${label}</option>`).join("");
     const alias=kind==="keep"?String(c.name||source):String(c.name||source+"_token");
-    const missingKey = kind==="deterministic_hash" && !String(tr.key_ref||"").trim();
-    const details=(kind==="deterministic_hash")
-      ? `<select class="om-policy-key" data-i="${index}" data-source="${omEsc(source)}" data-p="key_ref" title="Available references come from configured FSP_TOKENIZATION_KEY_* environment variables; values are never returned"${!state.tokenizationKeyRefs.length&&!tr.key_ref?" disabled":""}>${tokenizationKeyOptionHtml(tr.key_ref||"")}</select>`
-        + `<input class="om-policy-domain" data-i="${index}" data-source="${omEsc(source)}" data-p="domain" value="${omEsc(tr.domain||"")}" placeholder="domain" />`
-        + `<select class="om-policy-normalization" data-i="${index}" data-source="${omEsc(source)}" data-p="normalization"><option value="none"${(tr.normalization||"none")==="none"?" selected":""}>none</option><option value="trim"${tr.normalization==="trim"?" selected":""}>trim</option><option value="trim_lower"${tr.normalization==="trim_lower"?" selected":""}>trim + lower</option></select>`
-        + (missingKey ? `<div class="invalid om-policy-error" role="alert">${state.tokenizationKeyRefs.length
-          ? "Choose a tokenization key."
-          : "No tokenization keys are configured. Add an FSP_TOKENIZATION_KEY_* environment variable and restart, or choose another policy."}</div>` : "")
-      : (kind==="random_token" ? `<span class="hint">Fresh value per extraction; pending recovery is preserved.</span>` : "");
+    const tokenized=kind==="deterministic_hash"||kind==="random_token";
+    const details=tokenized
+      ? `<select class="om-policy-central" data-i="${index}" data-source="${omEsc(source)}" title="Select an approved central tokenization policy"${!availablePolicies.length&&!policyId?" disabled":""}>${omCentralPolicyOptions(kind,policyId)}</select>`
+        + `<div class="hint">Central policy controls algorithm, key reference, domain, and normalization.</div>`
+        + (!policyId ? `<div class="invalid om-policy-error" role="alert">${availablePolicies.length
+          ? "Choose a central tokenization policy."
+          : "No approved central policies are configured for this token type."}</div>` : "")
+      : "";
     return `<div class="row om-policy-row" data-table-index="${index}" data-policy-source="${omEsc(source)}"><div><label>${omEsc(source)}${control?" <span class=\"hint\">(control)</span>":""}</label><select class="om-policy-kind" data-i="${index}" data-source="${omEsc(source)}"${control?" disabled":""}>${options}</select></div>`
       + `<div><label>Output name</label><input class="om-policy-name" data-i="${index}" data-source="${omEsc(source)}" value="${omEsc(alias)}"${kind==="remove"||control?" disabled":""} /></div>`
       + `<div class="om-policy-details">${details}</div></div>`;
@@ -3495,8 +3511,9 @@ function omUpdatePolicy(i,source,kind){
     tb.columns=omPolicyColumns(tb).filter(c=>String(c.source||c.name||"")!==source).map(c=>{ const x={...c}; delete x._sourceColumns; return x; });
   }else{
     const next={...sourceCol,source:kind==="keep"?undefined:source,name:kind==="keep"?source:(sourceCol.name&&sourceCol.name!==source?sourceCol.name:source+"_token")};
-    if(kind==="keep") delete next.transform;
-    else next.transform={kind,...(kind==="deterministic_hash"?{key_ref:"",domain:source,normalization:"none"}:{})};
+    delete next.transform;
+    if(kind==="keep") delete next.tokenization;
+    else next.tokenization={action:kind==="deterministic_hash"?"durable_token":"random_token",policy_id:""};
     const existing=omPolicyColumns(tb).filter(c=>String(c.source||c.name||"")!==source);
     tb.columns=[...existing,next];
   }
@@ -3508,7 +3525,11 @@ function omUpdatePolicyField(i,source,field,value){
   const col=omPolicyColumns(tb).find(c=>String(c.source||c.name||"")===source); if(!col) return;
   const next={...col};
   if(field==="name") next.name=value;
-  else next.transform={...(next.transform||{kind:"deterministic_hash"}),[field]:value};
+  else if(field==="policy_id"){
+    const kind=omPolicyKind(next);
+    delete next.transform;
+    next.tokenization={action:kind==="deterministic_hash"?"durable_token":"random_token",policy_id:value};
+  }
   tb.columns=omPolicyColumns(tb).map(c=>String(c.source||c.name||"")===source?next:c);
 }
 
@@ -3775,7 +3796,9 @@ function omTokenizationProblems(targets){
   const problems=[];
   (targets||[]).forEach((target,targetIndex)=>(target.tables||[]).forEach((table,tableIndex)=>(table.columns||[]).forEach(column=>{
     const transform=column&&column.transform;
-    if(transform&&transform.kind==="deterministic_hash"&&!String(transform.key_ref||"").trim()){
+    const selection=column&&column.tokenization;
+    if((transform&&(transform.kind==="deterministic_hash"||transform.kind==="random_token"))
+      || (selection&&(selection.action==="durable_token"||selection.action==="random_token")&&!String(selection.policy_id||"").trim())){
       problems.push({targetIndex,tableIndex,source:String(column.source||column.name||"column"),
         target:String(target.id||"target"),table:String(table.name||table.target_table||table.source_table||`table ${tableIndex+1}`)});
     }
@@ -3789,16 +3812,16 @@ function omShowTokenizationProblem(problem){
   omRenderTableRows();
   const detail=$("omEditStatus");
   detail.className="status err";
-  detail.textContent = state.tokenizationKeyRefs.length
-    ? `Table "${problem.table}", column "${problem.source}": choose a tokenization key under Column policies.`
-    : `Table "${problem.table}", column "${problem.source}": deterministic hashing needs a tokenization key. Configure an FSP_TOKENIZATION_KEY_* environment variable and restart, or choose another column policy.`;
+  detail.textContent = state.tokenizationPolicies.length
+    ? `Table "${problem.table}", column "${problem.source}": choose a central tokenization policy under Column policies.`
+    : `Table "${problem.table}", column "${problem.source}": tokenization requires an approved central policy. Create one in Security, or choose another column policy.`;
   requestAnimationFrame(()=>{
     const row=[...document.querySelectorAll('.om-policy-row')].find(item=>
       Number(item.dataset.tableIndex)===problem.tableIndex&&item.dataset.policySource===problem.source);
     if(row){
       const panel=row.closest("details"); if(panel) panel.open=true;
       row.scrollIntoView({behavior:"smooth",block:"center"});
-      (row.querySelector('.om-policy-key:not(:disabled)') || row.querySelector('.om-policy-kind'))?.focus();
+      (row.querySelector('.om-policy-central:not(:disabled)') || row.querySelector('.om-policy-kind'))?.focus();
     }
   });
 }

@@ -329,7 +329,7 @@ async def test_index_serves_html(app):
     assert 'id="btnDownload"' not in r.text
     assert 'id="btnCopy"' not in r.text
     assert 'disabled${currentReference?"":" selected"}' in r.text
-    assert 'if(field==="key_ref") omRenderTableRows();' in r.text
+    assert 'box.querySelectorAll(".om-policy-central")' in r.text
     assert 'if(await applyTables({removing:true})) return;' in r.text
 
 

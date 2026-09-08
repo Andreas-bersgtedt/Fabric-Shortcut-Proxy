@@ -232,6 +232,37 @@ async def test_config_builder_policy_mutation_requires_admin_and_never_stores_se
     assert allowed.json()["policy"]["key_ref"] == "customer-pii-v1"
 
 
+async def test_manager_session_can_mutate_policy_without_admin_token(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    path = tmp_path / "central-policies.json"
+    monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(tmp_path / "identities.json"))
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator", raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret", raising=False)
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    payload = {
+        "policy_id": "customer-pii-v1", "kind": "durable_token",
+        "key_ref": "customer-pii-v1", "domain": "customer-email",
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        login = await client.post(
+            "/_config/api/authorization/login",
+            json={"user_id": "operator", "password": "manager-secret"},
+        )
+        saved = await client.post("/_config/api/tokenization/policies", json=payload)
+    assert login.status_code == 200
+    assert saved.status_code == 200
+    assert saved.json()["policy"]["policy_id"] == "customer-pii-v1"
+
+
 async def test_config_builder_policy_disable_is_admin_only_and_retains_metadata(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI

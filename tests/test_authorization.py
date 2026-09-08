@@ -249,6 +249,7 @@ async def test_manager_credentials_create_single_ui_session(tmp_path, monkeypatc
     from fastapi import FastAPI
 
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(tmp_path / "identities.json"))
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(tmp_path / "users.json"))
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator", raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret", raising=False)
@@ -264,11 +265,21 @@ async def test_manager_credentials_create_single_ui_session(tmp_path, monkeypatc
             json={"user_id": "operator", "password": "manager-secret"},
         )
         me = await client.get("/_config/api/authorization/me")
+        created = await client.post(
+            "/_config/api/authorization/users",
+            json={
+                "user_id": "support",
+                "roles": ["monitor_troubleshooter"],
+                "password": "correct horse battery staple",
+            },
+        )
     assert login.status_code == 200
     assert "fsp_session" in login.cookies
     assert me.status_code == 200
     assert me.json()["user"]["user_id"] == "operator"
     assert "system.admin" in me.json()["permissions"]
+    assert created.status_code == 200
+    assert created.json()["user"]["user_id"] == "support"
 
 
 async def test_authorization_status_reports_only_enforcement_mode(monkeypatch):

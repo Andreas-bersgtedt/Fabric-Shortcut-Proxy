@@ -285,7 +285,7 @@ async def tokenization_policies() -> JSONResponse:
 
 
 def _check_tokenization_admin(request: Request) -> None:
-    """Require the transitional admin token for central policy mutations."""
+    """Require policy administration through the active session or legacy token."""
     from security.authorization import AuthorizationError, require_request_permission
 
     try:
@@ -306,7 +306,9 @@ def _check_config_write(request: Request) -> None:
 
     try:
         require_request_permission(
-            request.headers.get("x-admin-token", ""), "config.write"
+            request.headers.get("x-admin-token", ""),
+            "config.write",
+            session_token=request.cookies.get("fsp_session", ""),
         )
     except AuthorizationError as exc:
         raise HTTPException(status_code=401, detail="authentication required") from exc

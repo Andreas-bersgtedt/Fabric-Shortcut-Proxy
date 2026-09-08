@@ -21,6 +21,7 @@ PERMISSIONS = frozenset({
     "tokenization.assign",
     "tokenization.policy.read",
     "tokenization.policy.admin",
+    "tokenization.reidentify",
     "security.metadata.read",
     "security.credentials.admin",
     "users.admin",
@@ -43,7 +44,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "security.credentials.admin",
     }),
     "user_administrator": frozenset({"monitor.read", "troubleshoot.read", "users.admin"}),
-    "system_administrator": frozenset(PERMISSIONS),
+    "auditor": frozenset({"tokenization.reidentify"}),
+    "system_administrator": frozenset(PERMISSIONS - {"tokenization.reidentify"}),
 }
 
 

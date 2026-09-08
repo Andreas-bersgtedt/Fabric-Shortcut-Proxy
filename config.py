@@ -63,7 +63,7 @@ from system_config import (
     MANAGER_HA, LEADER_LEASE_TTL_MS, LEADER_LEASE_RENEW_MS,
     RETENTION_GC, RETENTION_GC_INTERVAL_SECONDS, ROLLING_RESTART_HEALTH_TIMEOUT,
     # Admin
-    ENABLE_ADMIN_UI, ADMIN_TOKEN,
+    ENABLE_ADMIN_UI, ENABLE_REIDENTIFICATION, ADMIN_TOKEN,
     MANAGER_AUTH_ENABLED, MANAGER_AUTH_USERNAME, MANAGER_AUTH_PASSWORD,
     CORS_ALLOWED_ORIGINS,
 )
@@ -201,6 +201,7 @@ _register("MANAGER_SUPERVISION_MODE", "manager_supervision_mode", "str", MANAGER
 _register("GENERATION_SOURCE_CONSISTENCY", "generation_source_consistency", "str", GENERATION_SOURCE_CONSISTENCY)
 _register("ENABLE_GATEWAY", "enable_gateway", "bool", ENABLE_GATEWAY)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
+_register("ENABLE_REIDENTIFICATION", "enable_reidentification", "bool", ENABLE_REIDENTIFICATION)
 
 # Manager auth (standalone HTTP Basic gate over the control-plane surface)
 _register("MANAGER_AUTH_ENABLED", "manager_auth_enabled", "bool", MANAGER_AUTH_ENABLED)
@@ -999,6 +1000,7 @@ SETTINGS_META: dict[str, dict] = {
     "agent_shard_count": {"cat": "Cluster (scale)", "help": "Total materialization shards (= agent_count)."},
     "shard_strategy": {"cat": "Cluster (scale)", "help": "Split-ownership across shards: 'modulo' (round-robin by split index) or 'weighted' (size-weighted, balances bytes using observed split sizes from the prior run; needs a shared artifact store). Restart to apply.", "choices": ["modulo", "weighted"]},
     "enable_gateway": {"cat": "Cluster (scale)", "help": "Manager: front the Agent fleet with a built-in round-robin S3 gateway."},
+    "enable_reidentification": {"cat": "Admin & observability", "help": "Mount the optional Auditor-only re-identification API when the reidentification module profile is selected. Restart to apply."},
     "materialize_wait_seconds": {"cat": "Cluster (scale)", "help": "Non-owner Agent: max wait for a sharded split to appear in the store before generating it locally."},
     "enable_admin_ui": {"cat": "Cluster (scale)", "help": "Manager: serve the /_manager operator console (fleet monitor + start/stop/restart/drain)."},
     "admin_token": {"cat": "Cluster (scale)", "help": "Manager: token required for mutating /_manager actions (X-Admin-Token header or ?token=). Blank = no auth.", "secret": True},
@@ -1198,6 +1200,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "agent_shard_count": "config.system.json",
     "shard_strategy": "config.system.json",
     "enable_gateway": "config.system.json",
+    "enable_reidentification": "config.system.json",
     "materialize_wait_seconds": "config.system.json",
     "manager_url": "config.system.json",
     "agent_id": "config.system.json",

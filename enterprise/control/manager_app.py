@@ -390,6 +390,13 @@ def create_manager_app() -> FastAPI:
         from configbuilder.router import router as config_builder_router
         app.include_router(config_builder_router)
 
+    # The re-identification endpoint is intentionally absent unless both its
+    # module profile and restart-bound system setting are active.
+    from reidentification.gate import enabled as reidentification_enabled
+    if reidentification_enabled():
+        from reidentification import router as reidentification_router
+        app.include_router(reidentification_router)
+
     # Fleet monitor: the operator console's Monitor tab (and the standalone SPA)
     # live on the Manager, but the live stats are per-Agent — this router scrapes
     # every Agent's /_monitor/api/summary and merges them. Mounted BEFORE the

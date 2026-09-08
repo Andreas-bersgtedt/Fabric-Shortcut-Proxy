@@ -6,7 +6,6 @@ authorization contract without accepting a token or reading source data.
 """
 from __future__ import annotations
 
-import time
 import uuid
 
 from fastapi import APIRouter, Request
@@ -27,19 +26,19 @@ async def lookup(request: Request) -> JSONResponse:
     """Record an authorized placeholder request without accepting sensitive input."""
     user = request.state.user
     request_id = str(uuid.uuid4())
-    audit.record(
+    try:
+        audit.record_reidentification(
+        request_id=request_id,
         identity=user.user_id,
-        bucket="reidentification",
-        key=request_id,
-        backend="source_lookup",
         method=request.method,
         status=501,
-        action="reidentification_placeholder",
+        outcome="not_implemented",
         reason="module enabled; source lookup is not implemented",
-    )
+        )
+    except audit.AuditUnavailable:
+        return JSONResponse({"ok": False, "error": "audit service unavailable"}, status_code=503)
     return JSONResponse({
         "ok": False,
         "error": "re-identification lookup is not implemented",
         "request_id": request_id,
-        "timestamp": time.time(),
     }, status_code=501)

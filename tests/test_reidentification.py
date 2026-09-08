@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi import FastAPI
 import httpx
@@ -142,6 +144,7 @@ def test_lookup_query_rejects_invalid_token_and_unsupported_dialect(monkeypatch)
 @pytest.mark.asyncio
 async def test_reidentification_route_is_auditor_only_and_redacted(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
+    monkeypatch.setattr(config, "AUDIT_LOG_FILE", str(tmp_path / "audit.jsonl"), raising=False)
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
     identity_path = tmp_path / "identities.json"
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
@@ -167,10 +170,37 @@ async def test_reidentification_route_is_auditor_only_and_redacted(tmp_path, mon
     assert allowed.json()["error"] == "re-identification lookup is not implemented"
     assert denied.status_code == 403
     events = audit.recent()
-    assert events[-2]["action"] == "reidentification_placeholder"
+    assert events[-2]["action"] == "reidentification_request"
     assert events[-2]["identity"] == "auditor"
     assert events[-1]["action"] == "reidentification_request"
     assert events[-1]["identity"] == "admin-token"
     assert events[-1]["status"] == 403
     assert all(isinstance(event["ts"], float) for event in events[-2:])
     assert all("value" not in event and "token" not in event for event in events[-2:])
+    persisted = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert persisted[-2]["identity"] == "auditor"
+    forbidden = {"value", "clear_text", "token", "sql", "params", "key", "credential"}
+    assert all(not forbidden.intersection(event) for event in persisted)
+
+
+@pytest.mark.asyncio
+async def test_reidentification_fails_closed_when_durable_audit_is_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
+    monkeypatch.setattr(config, "AUDIT_LOG_FILE", "", raising=False)
+    identity_path = tmp_path / "identities.json"
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
+    provider = IdentityProvider(str(identity_path))
+    provider.create_or_replace(User("auditor", roles=("auditor",)), "correct horse battery staple")
+    session = identity_provider().create_session(provider.authenticate("auditor", "correct horse battery staple"))
+    app = FastAPI()
+    app.add_middleware(AuthorizationMiddleware)
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test", cookies={"fsp_session": session}
+    ) as client:
+        response = await client.post("/_reidentify/api/v1/lookup")
+    assert response.status_code == 503
+    assert response.json()["error"] == "audit service unavailable"

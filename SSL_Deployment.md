@@ -55,6 +55,17 @@ sudo apt-get update
 sudo apt-get install -y nginx
 ```
 
+If the operator console must redirect an accidental
+`http://<console-host>:9443/...` request to HTTPS on the same port, also install
+the nginx stream module:
+
+```bash
+sudo apt-get install -y libnginx-mod-stream
+```
+
+Section 6a explains why this extra module is required and provides the complete
+configuration.
+
 ---
 
 ## 3. Bind the proxy to localhost (defense in depth)
@@ -111,7 +122,7 @@ apply (done in step 3's restart).
 You need **two** trust profiles:
 
 | Surface | Cert requirement |
-|---|---|
+| --- | --- |
 | Data plane (443, Fabric) | **CA-trusted** cert for the DNS name (Let's Encrypt or enterprise/public CA). Self-signed is rejected by Fabric. |
 | Console (9443, browser) | Any cert works; a self-signed one just shows a one-time browser warning. |
 
@@ -256,6 +267,120 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ---
 
+### 6a. Redirect HTTP to HTTPS on the console's port 9443
+
+The console block above is TLS-only. Sending plain HTTP to that listener normally
+returns nginx `400 Bad Request` instead of a redirect. An `error_page 400` or
+`error_page 497` workaround is not reliable because nginx can reject the request
+before normal HTTP error handling.
+
+To support both protocols on public port `9443`, use nginx's stream module to
+inspect the connection before TLS termination:
+
+- TLS connections go to an internal HTTPS listener on `127.0.0.1:9444`.
+- Plain HTTP connections go to an internal redirect listener on `127.0.0.1:9080`.
+- Only port `9443` is public; ports `9080` and `9444` remain loopback-only.
+
+Install the module if section 2 did not already do so:
+
+```bash
+sudo apt-get install -y libnginx-mod-stream
+```
+
+Replace the `listen 9443 ssl` console block from section 6 with these two internal
+HTTP-context server blocks. Replace `<console-host>` with the certificate DNS name
+or IP address. Using a fixed value avoids a Host-header-based open redirect.
+
+```nginx
+# HTTPS console backend. The stream listener supplies the original client IP.
+server {
+  listen 127.0.0.1:9444 ssl proxy_protocol;
+  server_name _;
+
+  ssl_certificate     /etc/nginx/tls/fsp.crt;
+  ssl_certificate_key /etc/nginx/tls/fsp.key;
+  ssl_protocols       TLSv1.2 TLSv1.3;
+
+  set_real_ip_from 127.0.0.1;
+  real_ip_header proxy_protocol;
+
+  location / {
+    proxy_pass http://127.0.0.1:9200;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header Authorization     $http_authorization;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_read_timeout 120s;
+  }
+}
+
+# Plain HTTP backend used only to issue the same-port redirect.
+server {
+  listen 127.0.0.1:9080 proxy_protocol;
+  server_name _;
+
+  set_real_ip_from 127.0.0.1;
+  real_ip_header proxy_protocol;
+  return 308 https://<console-host>:9443$request_uri;
+}
+```
+
+Create a top-level stream configuration. This is intentionally outside nginx's
+`http {}` context:
+
+```bash
+sudo tee /etc/nginx/fsp-console-stream.conf >/dev/null <<'EOF'
+stream {
+  map $ssl_preread_protocol $fsp_console_backend {
+    ""      127.0.0.1:9080;
+    default 127.0.0.1:9444;
+  }
+
+  server {
+    listen 9443;
+    proxy_pass $fsp_console_backend;
+    proxy_protocol on;
+    ssl_preread on;
+  }
+}
+EOF
+```
+
+Add this include at the end of `/etc/nginx/nginx.conf`, outside the existing
+`http {}` block:
+
+```nginx
+include /etc/nginx/fsp-console-stream.conf;
+```
+
+Validate before restarting. Keep the current SSH session open until all checks
+pass so a bad nginx configuration can be reverted immediately.
+
+```bash
+sudo nginx -t
+sudo systemctl restart nginx
+
+# Expect public 9443 plus loopback-only 9080 and 9444.
+ss -ltn | grep -E ':(9080|9443|9444)[[:space:]]'
+
+# Plain HTTP preserves the path and returns a permanent redirect.
+curl -sS -D - http://<console-host>:9443/healthz -o /dev/null
+# Expected: HTTP/1.1 308 and Location: https://<console-host>:9443/healthz
+
+# Follow the redirect. Use -k only for a self-signed lab certificate.
+curl -kLsS -o /dev/null -w '%{http_code} %{url_effective}\n' \
+  http://<console-host>:9443/healthz
+# Expected: 200 https://<console-host>:9443/healthz
+
+curl -kfsS https://<console-host>:9443/readyz
+```
+
+For Azure, allow inbound TCP `9443` only from the trusted administrator CIDR.
+Do not expose the internal `9080` or `9444` listeners in the NSG or host firewall.
+
+---
+
 ## 7. Optional: dynamic upstream for a multi-host fleet
 
 On a single box the static `upstream fsp_agents` above is enough. For a fleet that
@@ -339,6 +464,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://myproxy.<region>.cloudapp.azure
 curl -sk https://localhost:9443/_manager/api/fleet                 # expect 401
 curl -sk -u operator:'<password>' https://localhost:9443/_manager/api/fleet   # expect JSON
 
+# When section 6a is enabled, accidental HTTP redirects on the same port
+curl -s -o /dev/null -D - http://<console-host>:9443/healthz       # expect 308
+curl -skL -o /dev/null -w '%{http_code}\n' http://<console-host>:9443/healthz  # expect 200
+
 # App ports are not public
 curl -s -m 3 http://<public-ip>:9000/healthz || echo "9000 correctly unreachable"
 ```
@@ -371,12 +500,14 @@ never touched, so there is **no re-materialize / cold-start blip** on renewal.
 ## 11. Troubleshooting
 
 | Symptom | Likely cause / fix |
-|---|---|
+| --- | --- |
 | Fabric: "certificate not trusted" | Data-plane cert is self-signed or missing intermediates. Use a CA cert (5a/5b) with the **full chain** in `ssl_certificate`. |
 | `403 SignatureDoesNotMatch` from agent | nginx altered `Host` or `Authorization`. Keep `proxy_set_header Host $host;` and pass `Authorization` unchanged. Don't add a rewrite. |
 | `502` + `down` in `fsp_upstream.conf` | No agent is ready. Check `curl 127.0.0.1:9000/readyz`; agents finish cold-start materialize before `/readyz` 200. |
 | Console returns 401 even with the right password | Basic auth active (good). Confirm `MANAGER_AUTH_USERNAME`/`MANAGER_AUTH_PASSWORD` and that you restarted the service after setting them. |
 | Console page loads but `/agents` etc. blocked | You hit the **443** vhost, which blocks control prefixes by design. Use **9443**. |
+| `http://<host>:9443` returns `400 Bad Request` | A TLS-only nginx listener cannot reliably redirect plaintext on the same port. Configure the stream multiplexer in section 6a; do not rely on `error_page 400/497`. |
+| Same-port redirect works but nginx logs every client as `127.0.0.1` | Enable `proxy_protocol on` in the stream server and `listen ... proxy_protocol`, `set_real_ip_from`, and `real_ip_header proxy_protocol` on both internal HTTP servers as shown in section 6a. |
 | `nginx -t` fails on cert path | Path/permissions. Key must be readable by nginx and `chmod 600`; cert path must exist. |
 | Agents stopped registering after bind change | `CONTROL_HOST=127.0.0.1` is required so `MANAGER_URL` stays `http://127.0.0.1:9200`. Don't set it to the public IP. |
 

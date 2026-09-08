@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fabric-shortcut-proxy"
-version = "2.7.1"
+version = "2.8.0"
 description = "Fabric Shortcut Proxy for Microsoft Fabric (POC)"
 requires-python = ">=3.11"
 dependencies = [
@@ -34,6 +34,8 @@ dev = [
     "botocore>=1.34",
     "httpx>=0.27",
 ]
+# Production operator authentication through an OpenID Connect identity provider.
+oidc = ["PyJWT[crypto]>=2.9"]
 # Source-DB drivers loaded by SQLAlchemy via the URL scheme. Kept out of core so
 # SQLite/SQL Server installs stay lean; install the extra for the source you use.
 postgres = ["asyncpg>=0.29"]        # postgresql+asyncpg://
@@ -95,6 +97,7 @@ packages = [
     "s3",
     "security",
     "storage",
+    "tokenization",
 ]
 
 [tool.setuptools.package-data]

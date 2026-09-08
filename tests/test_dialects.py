@@ -339,8 +339,32 @@ def test_databricks_random_token_projection(monkeypatch):
 
 def test_tokenization_fails_closed_on_unsupported_dialect(monkeypatch):
     monkeypatch.setattr(config, "DB_URL", "sqlite+aiosqlite:///x.db")
+    monkeypatch.setattr(config, "TOKENIZATION_FALLBACK", "none", raising=False)
     with pytest.raises(ValueError, match="does not support column transform"):
         build_split_query(_table_split(_tokenized_table()))
+
+
+def test_impala_arrow_fallback_selects_plaintext_source_for_postprocessing(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "impala://h:21050/db")
+    monkeypatch.setattr(config, "TOKENIZATION_FALLBACK", "arrow", raising=False)
+    sql, params = build_split_query(_table_split(_tokenized_table()))
+    assert "`email` AS `email_token`" in sql
+    assert "HASHBYTES" not in sql and "sha2(" not in sql
+    assert not any(key.startswith("fsp_token_") for key in params)
+
+
+def test_arrow_fallback_tokenizes_aliased_rows_before_parquet(monkeypatch):
+    from runtime.materializer import _apply_arrow_fallback
+
+    monkeypatch.setattr(config, "DB_URL", "impala://h:21050/db")
+    monkeypatch.setattr(config, "TOKENIZATION_FALLBACK", "arrow", raising=False)
+    monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
+    rows = [{"customer_id": 1, "email_token": " Alice@Example.com "}]
+    transformed = _apply_arrow_fallback(rows, _table_split(_tokenized_table()))
+    assert transformed[0]["customer_id"] == 1
+    assert transformed[0]["email_token"] == (
+        "15A720CD53AD7C0ADBB4010CE8EF57EBBA3AD5CFCF63F315007B314E59FAE31D"
+    )
 
 
 def test_split_key_transform_is_rejected(monkeypatch):

@@ -218,6 +218,7 @@ _register("FSP_REQUIRE_KEYVAULT", "require_keyvault", "bool", REQUIRE_KEYVAULT)
 _register("FSP_KEYVAULT_REFRESH_SECONDS", "keyvault_refresh_seconds", "int", KEYVAULT_REFRESH_SECONDS)
 _register("FSP_KEYVAULT_CACHE_TTL", "keyvault_cache_ttl", "int", KEYVAULT_CACHE_TTL)
 _register("FSP_KEYVAULT_WRITE_BACK", "keyvault_write_back", "bool", KEYVAULT_WRITE_BACK)
+_register("TOKENIZATION_FALLBACK", "tokenization_fallback", "str", "none")
 
 # Register memory monitoring settings
 _register("MEMORY_ALERT_THRESHOLD_MB", "memory_alert_threshold_mb", "int", 800)
@@ -335,6 +336,9 @@ REFRESH_POLL_SECONDS: int = _get_int("REFRESH_POLL_SECONDS", "refresh_poll_secon
 REFRESH_STRATEGY: str = _get_str("REFRESH_STRATEGY", "refresh_strategy", "auto", _FRESH_CFG)
 REFRESH_ALLOW_FULL_PULL: bool = _get_bool("REFRESH_ALLOW_FULL_PULL", "refresh_allow_full_pull", False, _FRESH_CFG)
 REFRESH_TTL_SECONDS: int = _get_int("REFRESH_TTL_SECONDS", "refresh_ttl_seconds", 1200, _FRESH_CFG)
+TOKENIZATION_FALLBACK: str = _get_str(
+    "TOKENIZATION_FALLBACK", "tokenization_fallback", "none", _FILE_CFG
+).strip().lower()
 
 # ---------------------------------------------------------------------------
 # Iceberg table schema definition
@@ -375,9 +379,29 @@ def resolve_tokenization_key(key_ref: str) -> str:
     """Resolve a tokenization key without storing it in table configuration."""
     env_var = tokenization_key_env_var(key_ref)
     value = os.environ.get(env_var)
+    if not value and ENABLE_CREDENTIAL_STORE:
+        try:
+            from security.credential_store import CredentialStore
+            store = CredentialStore(CREDENTIAL_STORE_PATH or None)
+            value = store.get_tokenization_key(key_ref)
+            if not value:
+                import system_config as sc
+                from security.keyvault import (
+                    KeyVaultSecretSource,
+                    config_from_settings,
+                    read_through_for,
+                )
+                keyvault_config = config_from_settings(sc)
+                if keyvault_config.enabled and store.available:
+                    source = KeyVaultSecretSource(keyvault_config)
+                    store.read_through = read_through_for(source, keyvault_config)
+                    value = store.get_tokenization_key(key_ref)
+        except Exception:  # noqa: BLE001 - an unavailable store is equivalent to a missing key
+            value = None
     if not value:
         raise ValueError(
-            f"Tokenization key {key_ref!r} is not configured; set {env_var}"
+            f"Tokenization key {key_ref!r} is not configured; set {env_var} "
+            "or save it in the encrypted tokenization key store"
         )
     return value
 
@@ -391,6 +415,7 @@ class ColumnDef:
     nullable: bool = True
     source: str | None = None
     transform: ColumnTransform | None = None
+    policy_id: str | None = None
 
     @property
     def source_name(self) -> str:
@@ -476,10 +501,29 @@ def column_defs_from_json(raw_schema, *, context: str = "Column") -> list[Column
     if not isinstance(raw_schema, list):
         raise TypeError(f"{context} schema must be a list")
 
-    def _transform(c: dict) -> ColumnTransform | None:
+    def _transform(c: dict) -> tuple[ColumnTransform | None, str | None, bool]:
+        selection = c.get("tokenization")
+        if selection is not None:
+            from tokenization import TokenizationSelection, load_default_registry
+
+            if not isinstance(selection, dict):
+                raise ValueError(
+                    f"{context} {c.get('name')!r} tokenization must be an object"
+                )
+            action = str(selection.get("action", "")).strip().lower()
+            policy_id = selection.get("policy_id")
+            selected = TokenizationSelection(
+                action, policy_id=(str(policy_id).strip() if policy_id is not None else None)
+            )
+            if selected.action == "keep":
+                return None, None, False
+            if selected.action == "remove":
+                return None, None, True
+            policy = load_default_registry().resolve_selection(selected)
+            return policy.to_legacy_transform(), policy.policy_id, False
         raw = c.get("transform")
         if not raw:
-            return None
+            return None, None, False
         if not isinstance(raw, dict):
             raise ValueError(
                 f"{context} {c.get('name')!r} transform must be an object"
@@ -489,19 +533,23 @@ def column_defs_from_json(raw_schema, *, context: str = "Column") -> list[Column
             key_ref=(str(raw["key_ref"]).strip() if raw.get("key_ref") else None),
             domain=(str(raw["domain"]) if raw.get("domain") is not None else None),
             normalization=str(raw.get("normalization", "none")).strip().lower(),
-        )
+        ), None, False
 
-    return [
-        ColumnDef(
+    columns = []
+    for c in raw_schema:
+        transform, policy_id, removed = _transform(c)
+        if removed:
+            continue
+        columns.append(ColumnDef(
             field_id=int(c["field_id"]),
             name=c["name"],
             iceberg_type=c.get("type") or c.get("iceberg_type"),
             nullable=bool(c.get("nullable", True)),
             source=(str(c["source"]) if c.get("source") else None),
-            transform=_transform(c),
-        )
-        for c in raw_schema
-    ]
+            transform=transform,
+            policy_id=policy_id,
+        ))
+    return columns
 
 
 def _tabledef_from_json(d: dict) -> "TableDef":
@@ -561,6 +609,12 @@ if _orphaned_tables:
 def validate_config() -> None:
     """Validate required configuration at startup; raise ``ValueError`` on error."""
     problems: list[str] = []
+
+    if TOKENIZATION_FALLBACK not in ("none", "arrow"):
+        problems.append(
+            "TOKENIZATION_FALLBACK must be 'none' or 'arrow' "
+            f"(got {TOKENIZATION_FALLBACK!r})."
+        )
 
     if not DB_URL:
         problems.append("DB_URL must be set (a SQLAlchemy async URL).")
@@ -730,7 +784,9 @@ def validate_config() -> None:
                         "a column transform."
                     )
                 if col.transform.kind == "deterministic_hash":
-                    if not capabilities.supports_deterministic_tokenization:
+                    if capabilities.tokenization_backend(
+                        "deterministic_hash", TOKENIZATION_FALLBACK
+                    ) == "none":
                         problems.append(
                             f"Table {t.name!r}: deterministic_hash is not supported "
                             f"for dialect {capabilities.flavor!r}."
@@ -741,7 +797,9 @@ def validate_config() -> None:
                         problems.append(f"Table {t.name!r}: {exc}")
                 if (
                     col.transform.kind == "random_token"
-                    and not capabilities.supports_random_tokenization
+                    and capabilities.tokenization_backend(
+                        "random_token", TOKENIZATION_FALLBACK
+                    ) == "none"
                 ):
                     problems.append(
                         f"Table {t.name!r}: random_token is not supported for "
@@ -794,7 +852,9 @@ def validate_config() -> None:
                     if transform is None:
                         continue
                     if transform.kind == "deterministic_hash":
-                        if not capabilities.supports_deterministic_tokenization:
+                        if capabilities.tokenization_backend(
+                            "deterministic_hash", TOKENIZATION_FALLBACK
+                        ) == "none":
                             problems.append(
                                 f"Open Mirror table {table.name!r}: deterministic_hash "
                                 f"is not supported for dialect {capabilities.flavor!r}."
@@ -805,7 +865,9 @@ def validate_config() -> None:
                             problems.append(f"Open Mirror table {table.name!r}: {exc}")
                     elif (
                         transform.kind == "random_token"
-                        and not capabilities.supports_random_tokenization
+                        and capabilities.tokenization_backend(
+                            "random_token", TOKENIZATION_FALLBACK
+                        ) == "none"
                     ):
                         problems.append(
                             f"Open Mirror table {table.name!r}: random_token is not "

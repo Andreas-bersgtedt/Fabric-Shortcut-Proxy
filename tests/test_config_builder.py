@@ -28,6 +28,22 @@ _DB = pathlib.Path(__file__).parent / "test_cfgbuilder.db"
 # Pure helpers
 # ---------------------------------------------------------------------------
 
+def test_manager_fleet_probe_runs_only_after_session_authentication():
+    html = (pathlib.Path(__file__).parents[1] / "configbuilder" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    call_sites = [line.strip() for line in html.splitlines() if "loadManagerFleet();" in line]
+    assert call_sites == ["await loadManagerFleet();"]
+    assert '<body class="auth-pending">' in html
+    assert "body.auth-locked > .tab-content" in html
+    assert "policyAdminToken" not in html
+    assert "userAdminToken" not in html
+    assert '<select id="policyKeyRef">' in html
+    assert '<input id="policyKeyRef"' not in html
+    assert "renderPolicyKeyReferences();" in html
+    assert '$("policyKind").onchange=renderPolicyKeyReferences;' in html
+
+
 def test_build_url_postgres_defaults_and_encoding():
     url = build_url(dialect="postgresql", host="h", database="db",
                     username="u", password="p@ss:w/rd")
@@ -313,7 +329,7 @@ async def test_index_serves_html(app):
     assert 'id="btnDownload"' not in r.text
     assert 'id="btnCopy"' not in r.text
     assert 'disabled${currentReference?"":" selected"}' in r.text
-    assert 'if(field==="key_ref") omRenderTableRows();' in r.text
+    assert 'box.querySelectorAll(".om-policy-central")' in r.text
     assert 'if(await applyTables({removing:true})) return;' in r.text
 
 

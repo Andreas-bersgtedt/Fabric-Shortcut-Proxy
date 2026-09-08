@@ -144,9 +144,10 @@ The token SQL is native per engine:
 
 Key handling and guarantees:
 
-- The token key is referenced by a logical name (for example `customer-pii-v1`) and resolved
-  only from the environment variable `FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1`. The secret is
-  never stored in table configuration.
+- The token key is referenced by a logical name (for example `customer-pii-v1`). Manage it
+  in the Config Builder **Security > Tokenization keys** panel, which stores it in the encrypted
+  credential file. `FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1` remains supported and takes precedence.
+  The secret is never returned by the API or stored in table configuration.
 - Token bind parameters use letter-prefixed `fsp_token_*` names and are redacted from logs;
   SQLAlchemy hides parameter values in exceptions.
 - Deterministic tokens reveal equality and frequency. Use a per-column domain so the same
@@ -195,7 +196,8 @@ deployment runs entirely from the local store. Set `REQUIRE_KEYVAULT=1` only if 
 cold start with no cache to fail fast.
 
 Turn on `KEYVAULT_WRITE_BACK` to make the vault the authoritative store. The Manager then
-persists every saved credential into Key Vault as well as the local cache — DB URLs, mount
+persists every saved credential into Key Vault as well as the local cache — DB URLs, tokenization
+keys, mount
 credentials, the S3 secret, admin token, and Manager password, and per-key S3 access keys
 **with their ACL scope** — and soft-deletes the vault secret when you delete a credential. A
 rebuilt Manager or a fresh agent re-populates from the vault. Write-back is fail-soft: a Key

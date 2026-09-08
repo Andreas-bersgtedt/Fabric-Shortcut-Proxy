@@ -604,7 +604,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fabric Shortcut Proxy (POC)",
     description="Virtual Iceberg-over-S3 proxy that serves SQL pushdown as Parquet",
-    version="2.7.1",
+    version="2.8.0",
     lifespan=lifespan,
 )
 
@@ -617,6 +617,9 @@ app.add_middleware(
     allow_methods=["GET", "HEAD", "PUT", "DELETE", "POST"],
     allow_headers=["*"],
 )
+from security.authorization_middleware import AuthorizationMiddleware
+
+app.add_middleware(AuthorizationMiddleware)
 
 
 # ---------------------------------------------------------------------------

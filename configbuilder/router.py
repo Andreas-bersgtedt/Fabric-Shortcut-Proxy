@@ -20,7 +20,7 @@ import os
 import pathlib
 import uuid
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import config
@@ -34,7 +34,12 @@ from db.reflect import (
 )
 from observability.logging import get_logger
 from security.backup import BackupError, create_backup, restore_backup
-from security.credential_store import CredentialStore, env_var_for, looks_masked
+from security.credential_store import (
+    CredentialStore,
+    env_var_for,
+    looks_masked,
+    tokenization_env_var,
+)
 
 log = get_logger(__name__)
 
@@ -259,12 +264,346 @@ async def keyvault_status() -> JSONResponse:
 async def tokenization_key_references() -> JSONResponse:
     """List configured tokenization key references without returning key values."""
     prefix = "FSP_TOKENIZATION_KEY_"
-    references = sorted({
+    references = {
         name[len(prefix):].lower().replace("_", "-")
         for name, value in os.environ.items()
         if name.upper().startswith(prefix) and value
+    }
+    if config.ENABLE_CREDENTIAL_STORE:
+        references.update(item["key_ref"] for item in _store().list_tokenization_keys())
+    return JSONResponse({"ok": True, "references": sorted(references)})
+
+
+def _request_user(request: Request):
+    from security.authorization import authenticate_request, bearer_token
+
+    user = getattr(request.state, "user", None)
+    if user is not None:
+        return user
+    return authenticate_request(
+        request.headers.get("x-admin-token", ""),
+        request.cookies.get("fsp_session", ""),
+        bearer_token(request.headers.get("authorization", "")),
+    )
+
+
+def _check_security_permission(request: Request, permission: str) -> None:
+    from security.authorization import AuthorizationError, require
+
+    try:
+        user = _request_user(request)
+        if user is None:
+            raise AuthorizationError("authentication required")
+        require(user, permission)
+    except AuthorizationError as exc:
+        raise PermissionError(str(exc)) from exc
+
+
+@router.get("/api/tokenization-keys")
+async def list_tokenization_keys(request: Request) -> JSONResponse:
+    """Return encrypted token-key metadata without key values."""
+    try:
+        _check_security_permission(request, "security.metadata.read")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    store = _store()
+    keys = []
+    for item in store.list_tokenization_keys():
+        keys.append({
+            **item,
+            "source": "environment" if os.environ.get(item["env_var"]) else "encrypted_store",
+        })
+    import system_config as sc
+    return JSONResponse({
+        "ok": True,
+        "available": store.available,
+        "backend": store.backend_name,
+        "keys": keys,
+        "keyvault_write_back": bool(getattr(sc, "KEYVAULT_WRITE_BACK", False)),
     })
-    return JSONResponse({"ok": True, "references": references})
+
+
+@router.post("/api/tokenization-keys")
+async def save_tokenization_key(request: Request) -> JSONResponse:
+    """Encrypt a tokenization key locally and optionally mirror it to Key Vault."""
+    try:
+        _check_security_permission(request, "security.credentials.admin")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    if not config.ENABLE_CREDENTIAL_STORE:
+        return JSONResponse({"ok": False, "error": "credential store is disabled"}, status_code=400)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    key_ref = str(body.get("key_ref") or "").strip()
+    value = str(body.get("value") or "")
+    store = _store()
+    if not store.available:
+        return JSONResponse({"ok": False, "error": "credential store encryption is unavailable"}, status_code=400)
+    try:
+        env_var = tokenization_env_var(key_ref)
+        previous_value = store.get_tokenization_key(key_ref)
+        store.set_tokenization_key(key_ref, value)
+    except (RuntimeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    current_value = os.environ.get(env_var)
+    environment_override = bool(current_value and current_value != previous_value)
+    if not environment_override:
+        os.environ[env_var] = value
+    restarted = (
+        await _restart_agents(request)
+        if bool(body.get("apply")) and not environment_override else 0
+    )
+    log.info("tokenization_key_saved", key_ref=key_ref, backend=store.backend_name,
+             restarted=restarted)
+    return JSONResponse({
+        "ok": True,
+        "key_ref": key_ref,
+        "env_var": env_var,
+        "backend": store.backend_name,
+        "restarted": restarted,
+        "active": not environment_override,
+        "environment_override": environment_override,
+    })
+
+
+@router.delete("/api/tokenization-keys/{key_ref}")
+async def delete_tokenization_key(key_ref: str, request: Request) -> JSONResponse:
+    """Remove a locally stored tokenization key and its Key Vault mirror."""
+    try:
+        _check_security_permission(request, "security.credentials.admin")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    store = _store()
+    try:
+        env_var = tokenization_env_var(key_ref)
+        removed = store.delete_tokenization_key(key_ref)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("tokenization_key_deleted", key_ref=key_ref, removed=removed)
+    return JSONResponse({
+        "ok": True, "key_ref": key_ref, "removed": removed,
+        "manager_restart_required": bool(removed and os.environ.get(env_var)),
+    })
+
+
+@router.get("/api/tokenization/policies")
+async def tokenization_policies() -> JSONResponse:
+    """Return the central policy catalog without returning secret values."""
+    from tokenization import algorithm_specs, load_default_registry
+
+    try:
+        registry = load_default_registry()
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+    return JSONResponse({
+        "ok": True,
+        "path": os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"),
+        "algorithms": [spec.name for spec in algorithm_specs()],
+        "policies": registry.list_public(),
+    })
+
+
+def _check_tokenization_admin(request: Request) -> None:
+    """Require policy administration through the active session or legacy token."""
+    from security.authorization import AuthorizationError, require
+
+    try:
+        user = _request_user(request)
+        if user is None:
+            raise AuthorizationError("authentication required")
+        require(user, "tokenization.policy.admin")
+    except AuthorizationError as exc:
+        raise PermissionError(str(exc)) from exc
+
+
+def _check_config_write(request: Request) -> None:
+    """Optionally enforce the named config.write permission on mutations."""
+    if os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() != "1":
+        return
+    from security.authorization import AuthorizationError, require
+
+    try:
+        user = _request_user(request)
+        if user is None:
+            raise AuthorizationError("authentication required")
+        require(user, "config.write")
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=401, detail="authentication required") from exc
+
+
+@router.post("/api/tokenization/policies")
+async def save_tokenization_policy(request: Request) -> JSONResponse:
+    """Create or replace one central policy; secret values are never accepted."""
+    try:
+        _check_tokenization_admin(request)
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    try:
+        from tokenization import TokenizationPolicy, load_default_registry, save_registry
+        body = await request.json()
+        policy = TokenizationPolicy.from_dict(body)
+        registry = load_default_registry()
+        registry.replace(policy)
+        save_registry(os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"), registry)
+    except (ValueError, TypeError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("tokenization_policy_saved", policy_id=policy.policy_id, enabled=policy.enabled)
+    return JSONResponse({"ok": True, "policy": policy.to_public(), "restart_required": True})
+
+
+@router.delete("/api/tokenization/policies/{policy_id}")
+async def disable_tokenization_policy(policy_id: str, request: Request) -> JSONResponse:
+    """Disable a policy without deleting its historical metadata."""
+    try:
+        _check_tokenization_admin(request)
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    try:
+        from tokenization import load_default_registry, save_registry
+        registry = load_default_registry()
+        registry.disable(policy_id)
+        save_registry(os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"), registry)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    log.info("tokenization_policy_disabled", policy_id=policy_id)
+    return JSONResponse({"ok": True, "policy_id": policy_id, "enabled": False,
+                         "restart_required": True})
+
+
+@router.get("/api/authorization/me")
+async def authorization_me(request: Request) -> JSONResponse:
+    """Return the authenticated identity and effective permissions."""
+    user = _request_user(request)
+    if user is None:
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    return JSONResponse({"ok": True, "user": user.to_public(),
+                         "permissions": sorted(user.permissions())})
+
+
+@router.get("/api/authorization/users")
+async def authorization_users(request: Request) -> JSONResponse:
+    """List safe user metadata for the authenticated transitional administrator."""
+    from security.authorization import UserDirectory
+
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        users = UserDirectory.load(os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json"))
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+    return JSONResponse({"ok": True, "users": users.list_public()})
+
+
+@router.post("/api/authorization/login")
+async def authorization_login(request: Request) -> JSONResponse:
+    """Authenticate a local user and issue a revocable HttpOnly session cookie."""
+    from security.identity import authenticate_manager_identity, identity_provider
+
+    try:
+        body = await request.json()
+        user_id = str(body.get("user_id", "")).strip()
+        password = str(body.get("password", ""))
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "error": "invalid login request"}, status_code=400)
+    provider = identity_provider()
+    user = provider.authenticate(user_id, password)
+    source = "local"
+    if user is None:
+        user = authenticate_manager_identity(user_id, password)
+        source = "manager"
+    if user is None:
+        return JSONResponse({"ok": False, "error": "invalid credentials"}, status_code=401)
+    token = provider.create_session(user, source=source)
+    response = JSONResponse({"ok": True, "user": user.to_public(),
+                             "permissions": sorted(user.permissions())})
+    response.set_cookie(
+        "fsp_session", token, httponly=True, samesite="strict",
+        secure=request.url.scheme == "https", max_age=8 * 60 * 60,
+    )
+    return response
+
+
+@router.get("/api/authorization/status")
+async def authorization_status() -> JSONResponse:
+    """Expose only whether route authorization is enabled, never credentials."""
+    from security.authorization_middleware import authorization_enforced
+
+    return JSONResponse({
+        "ok": True,
+        "enforced": authorization_enforced(),
+    })
+
+
+@router.post("/api/authorization/logout")
+async def authorization_logout(request: Request) -> JSONResponse:
+    """Revoke the current local session and clear its cookie."""
+    from security.identity import identity_provider
+
+    token = request.cookies.get("fsp_session", "")
+    identity_provider().revoke_session(token)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("fsp_session")
+    return response
+
+
+@router.post("/api/authorization/users")
+async def save_authorization_user(request: Request) -> JSONResponse:
+    """Create or replace safe user metadata for the transitional administrator."""
+    from security.authorization import User, UserDirectory
+
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        body = await request.json()
+        password = str(body.pop("password", "")) if isinstance(body, dict) else ""
+        identity_source = str(body.get("identity_source", "local")).strip().lower()
+        if identity_source == "local" and not password:
+            raise ValueError("password is required for a login-enabled user")
+        if identity_source == "oidc" and password:
+            raise ValueError("OIDC-only users must not have a local password")
+        user = User.from_dict(body)
+        path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+        directory = UserDirectory.load(path)
+        directory.replace(user)
+        from security.identity import hash_password, identity_provider
+        if identity_source == "local":
+            hash_password(password)
+            identity_provider().create_or_replace(user, password)
+        else:
+            identity_provider().disable(user.user_id)
+        directory.save(path)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("authorization_user_saved", user_id=user.user_id, enabled=user.enabled)
+    return JSONResponse({"ok": True, "user": user.to_public()})
+
+
+@router.delete("/api/authorization/users/{user_id}")
+async def disable_authorization_user(user_id: str, request: Request) -> JSONResponse:
+    """Disable a user while preserving the last enabled administrator."""
+    from security.authorization import AuthorizationError, UserDirectory
+
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+        directory = UserDirectory.load(path)
+        directory.disable(user_id)
+        directory.save(path)
+        from security.identity import identity_provider
+        identity_provider().disable(user_id)
+    except AuthorizationError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("authorization_user_disabled", user_id=user_id)
+    return JSONResponse({"ok": True, "user_id": user_id, "enabled": False})
 
 
 @router.post("/api/keyvault/test")
@@ -332,7 +671,16 @@ async def bootstrap_builder() -> JSONResponse:
             }
             if column.source:
                 item["source"] = column.source
-            if column.transform:
+            if getattr(column, "policy_id", None):
+                item["tokenization"] = {
+                    "action": (
+                        "durable_token"
+                        if column.transform and column.transform.kind == "deterministic_hash"
+                        else "random_token"
+                    ),
+                    "policy_id": column.policy_id,
+                }
+            elif column.transform:
                 transform = {
                     "kind": column.transform.kind,
                     "normalization": column.transform.normalization,
@@ -405,6 +753,7 @@ async def save_config(request: Request) -> JSONResponse:
     (``restart_required``) — except ``agent_count``, which the Manager can also
     apply live via ``POST /_manager/api/scale``.
     """
+    _check_config_write(request)
     body = await request.json()
     updates = body.get("settings") if isinstance(body, dict) else None
     if not isinstance(updates, dict) or not updates:
@@ -446,6 +795,7 @@ async def apply_config(request: Request) -> JSONResponse:
 
     Request body: ``{"settings": {"key": value, ...}}``
     """
+    _check_config_write(request)
     body = await request.json()
     updates = body.get("settings") if isinstance(body, dict) else None
     if not isinstance(updates, dict) or not updates:
@@ -640,7 +990,16 @@ def _open_mirror_targets_payload() -> list[dict]:
             "type": column.iceberg_type,
             "nullable": column.nullable,
         }
-        if column.transform:
+        if getattr(column, "policy_id", None):
+            payload["tokenization"] = {
+                "action": (
+                    "durable_token"
+                    if column.transform and column.transform.kind == "deterministic_hash"
+                    else "random_token"
+                ),
+                "policy_id": column.policy_id,
+            }
+        elif column.transform:
             payload["transform"] = {
                 "kind": column.transform.kind,
                 "key_ref": column.transform.key_ref,

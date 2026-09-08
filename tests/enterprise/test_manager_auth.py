@@ -18,6 +18,22 @@ def _app() -> FastAPI:
     app = FastAPI()
     app.add_middleware(ManagerAuthMiddleware)
 
+    @app.get("/_config")
+    async def config_builder():
+        return {"page": "config"}
+
+    @app.get("/_config/api/authorization/status")
+    async def authorization_status():
+        return {"enforced": True}
+
+    @app.post("/_config/api/authorization/login")
+    async def authorization_login():
+        return {"ok": True}
+
+    @app.get("/_config/api/tables")
+    async def config_tables():
+        return {"tables": []}
+
     @app.get("/_manager/api/fleet")
     async def fleet():
         return {"ok": True}
@@ -90,6 +106,62 @@ async def test_correct_credentials_pass(_enable_auth):
     async with _client(_app()) as c:
         r = await c.get("/_manager/api/fleet", headers=_basic("operator", "s3cret"))
         assert r.status_code == 200 and r.json() == {"ok": True}
+
+
+async def test_valid_local_session_also_passes_manager_basic_gate(_enable_auth, tmp_path, monkeypatch):
+    from security.authorization import User
+    from security.identity import IdentityProvider, identity_provider
+
+    identity_path = tmp_path / "identities.json"
+    monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
+    provider = IdentityProvider(str(identity_path))
+    provider.create_or_replace(User("ops", roles=("monitor_troubleshooter",)), "correct horse battery staple")
+    session_provider = identity_provider()
+    user = session_provider.authenticate("ops", "correct horse battery staple")
+    session = session_provider.create_session(user)
+    async with _client(_app()) as c:
+        c.cookies.set("fsp_session", session)
+        response = await c.get("/_manager/api/fleet")
+    assert response.status_code == 200
+
+
+async def test_valid_oidc_bearer_also_passes_manager_basic_gate(_enable_auth, monkeypatch):
+    from security.authorization import User
+
+    monkeypatch.setattr(
+        "security.identity.authenticate_oidc_token",
+        lambda token: User("external-ops", roles=("monitor_troubleshooter",))
+        if token == "signed-token" else None,
+    )
+    async with _client(_app()) as c:
+        allowed = await c.get(
+            "/_manager/api/fleet", headers={"Authorization": "Bearer signed-token"}
+        )
+        denied = await c.get(
+            "/_manager/api/fleet", headers={"Authorization": "Bearer invalid-token"}
+        )
+    assert allowed.status_code == 200
+    assert denied.status_code == 401
+
+
+async def test_identity_login_bootstrap_avoids_browser_basic_challenge(_enable_auth):
+    async with _client(_app()) as c:
+        assert (await c.get("/_config")).status_code == 200
+        assert (await c.get("/_config/api/authorization/status")).status_code == 200
+        assert (await c.post("/_config/api/authorization/login")).status_code == 200
+        protected = await c.get("/_config/api/tables")
+    assert protected.status_code == 401
+    assert "www-authenticate" not in protected.headers
+
+
+async def test_config_builder_bootstrap_does_not_depend_on_authz_mode(_enable_auth, monkeypatch):
+    monkeypatch.delenv("FSP_AUTHZ_ENFORCE", raising=False)
+    async with _client(_app()) as c:
+        shell = await c.get("/_config")
+        protected = await c.get("/_config/api/tables")
+    assert shell.status_code == 200
+    assert protected.status_code == 401
+    assert "www-authenticate" not in protected.headers
 
 
 async def test_health_exempt_control_protected(_enable_auth):

@@ -30,6 +30,13 @@ _EXEMPT_PREFIXES = ("/healthz", "/readyz", "/favicon.ico")
 
 _REALM = "Fabric Shortcut Proxy Manager"
 
+_IDENTITY_BOOTSTRAP_PATHS = {
+    "/_config",
+    "/_config/",
+    "/_config/api/authorization/login",
+    "/_config/api/authorization/status",
+}
+
 
 def manager_auth_active() -> bool:
     """True when Manager authentication is enabled."""
@@ -42,6 +49,10 @@ def _unauthorized() -> Response:
         status_code=401,
         headers={"WWW-Authenticate": f'Basic realm="{_REALM}"'},
     )
+
+
+def _config_unauthorized() -> Response:
+    return JSONResponse({"detail": "authentication required"}, status_code=401)
 
 
 def _misconfigured() -> Response:
@@ -65,6 +76,42 @@ def _credentials_ok(header: str) -> bool:
     return user_ok and pw_ok
 
 
+def _session_ok(request: Request) -> bool:
+    """Accept a valid local identity session alongside legacy Basic auth."""
+    token = request.cookies.get("fsp_session", "")
+    if not token:
+        return False
+    try:
+        from security.identity import identity_provider
+        return identity_provider().resolve_session(token) is not None
+    except (OSError, ValueError):
+        return False
+
+
+def _bearer_ok(request: Request) -> bool:
+    """Validate an OIDC bearer credential and retain its centrally managed user."""
+    from security.authorization import bearer_token
+
+    if getattr(request.state, "user", None) is not None:
+        return True
+    token = bearer_token(request.headers.get("authorization", ""))
+    if not token:
+        return False
+    try:
+        from security.identity import authenticate_oidc_token
+        user = authenticate_oidc_token(token)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if user is None:
+        return False
+    request.state.user = user
+    return True
+
+
+def _identity_bootstrap_allowed(request: Request) -> bool:
+    return request.url.path in _IDENTITY_BOOTSTRAP_PATHS
+
+
 class ManagerAuthMiddleware(BaseHTTPMiddleware):
     """Require HTTP Basic credentials for the Manager's operator surface."""
 
@@ -75,6 +122,14 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if not config.MANAGER_AUTH_PASSWORD:
             return _misconfigured()
-        if not _credentials_ok(request.headers.get("authorization", "")):
+        if _identity_bootstrap_allowed(request):
+            return await call_next(request)
+        if not (
+            _credentials_ok(request.headers.get("authorization", ""))
+            or _session_ok(request)
+            or _bearer_ok(request)
+        ):
+            if request.url.path.startswith("/_config"):
+                return _config_unauthorized()
             return _unauthorized()
         return await call_next(request)

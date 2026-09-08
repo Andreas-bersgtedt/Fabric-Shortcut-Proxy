@@ -21,7 +21,6 @@ formatting differ per source, exactly as documented for multi-dialect pushdown.
 """
 from __future__ import annotations
 
-import hashlib
 import uuid
 from typing import TYPE_CHECKING, Protocol
 
@@ -44,15 +43,6 @@ def _to_text(value) -> str | None:
     return str(value)
 
 
-def _normalize(text: str, mode: str) -> str:
-    """Apply the column's normalization, matching the dialect logic (trim then lower)."""
-    if mode in ("trim", "trim_lower"):
-        text = text.strip()
-    if mode == "trim_lower":
-        text = text.lower()
-    return text
-
-
 class Tokenizer(Protocol):
     kind: str
 
@@ -66,20 +56,16 @@ class DeterministicHashTokenizer:
     kind = "deterministic_hash"
 
     def apply(self, values, *, transform, column):
-        import config  # lazy: keeps this module import-clean (see containment rule)
+        from tokenization.policy import legacy_policy
 
-        key = config.resolve_tokenization_key(transform.key_ref)
-        domain = transform.domain or column.name
-        prefix = f"{key}|{domain}|"
+        policy = legacy_policy(transform, default_domain=column.name)
         out: list[str | None] = []
         for value in values.to_pylist():
             text = _to_text(value)
             if text is None:
                 out.append(None)
                 continue
-            normalized = _normalize(text, transform.normalization)
-            digest = hashlib.sha256((prefix + normalized).encode("utf-8")).hexdigest()
-            out.append(digest.upper())
+            out.append(policy.deterministic_token(text))
         return pa.array(out, type=pa.string())
 
 

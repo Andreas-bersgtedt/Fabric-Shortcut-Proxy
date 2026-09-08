@@ -300,6 +300,36 @@ Browser requests from another origin are blocked unless that origin is listed in
 same-origin access to `http://<manager-host>:9200/_manager` and `/_config` does
 not require a CORS entry, but it still requires Manager credentials.
 
+### External OIDC identity provider
+
+Install provider support with `pip install -e ".[oidc]"`, then set:
+
+```bash
+FSP_OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0
+FSP_OIDC_AUDIENCE=<application-client-id-or-api-audience>
+FSP_OIDC_USER_CLAIM=oid
+```
+
+For an Entra v1 issuer (`https://sts.windows.net/<tenant-id>/`), preserve the
+trailing slash in `FSP_OIDC_ISSUER` and configure the tenant key endpoint:
+
+```bash
+FSP_OIDC_ISSUER=https://sts.windows.net/<tenant-id>/
+FSP_OIDC_JWKS_URL=https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys
+```
+
+`FSP_OIDC_JWKS_URL` may override discovery when an identity provider does not
+publish keys through `<issuer>/.well-known/openid-configuration`. The override
+must be the provider's HTTPS JWKS endpoint.
+
+Operator requests may send `Authorization: Bearer <access-token>`. The proxy
+validates the JWT signature, issuer, audience, issued-at time, expiration, and
+subject. It then maps `FSP_OIDC_USER_CLAIM` (`sub` by default) to `user_id` in
+the existing central user directory. Roles and grants in the token are ignored;
+all function rights remain owned by the proxy's central user administration.
+Unknown and disabled users fail closed. Keep `FSP_AUTHZ_ENFORCE=1` enabled and
+terminate TLS before accepting bearer credentials.
+
 ### Audit logging
 
 - With `ENABLE_AUDIT_LOG=1` (default), every mounted-object access emits a

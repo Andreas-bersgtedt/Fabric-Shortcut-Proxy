@@ -20,6 +20,8 @@
   .navbtn:hover { border-color:var(--accent2); color:#dff4ff; }
   .warn-banner { background:#3b2f14; border:1px solid var(--warn); color:#fcd34d;
                  padding:8px 12px; border-radius:8px; margin:12px 24px; font-size:12px; }
+  body.auth-pending > .warn-banner, body.auth-pending > .tabs, body.auth-pending > .tab-content,
+  body.auth-locked > .warn-banner, body.auth-locked > .tabs, body.auth-locked > .tab-content { display:none !important; }
   .tabs { display:grid; grid-template-columns:repeat(6,auto); justify-content:start; gap:0;
           border-bottom:1px solid var(--line); padding:0 24px; background:var(--bg); }
   .tab-btn { appearance:none; background:none; border:none; color:var(--muted); padding:14px 16px;
@@ -185,7 +187,7 @@
   }
 </style>
 </head>
-<body>
+<body class="auth-pending">
 <header>
   <div>
     <h1>Config Builder</h1>
@@ -193,6 +195,14 @@
   </div>
   <a class="navbtn" href="/_manager">Back to Manager</a>
 </header>
+<div class="card" id="sessionPanel" style="margin:12px 24px 0;max-width:1240px;margin-left:auto;margin-right:auto;">
+  <div class="row" id="sessionCredentials">
+    <section><label for="sessionUserId">User ID</label><input id="sessionUserId" autocomplete="username" placeholder="operator" /></section>
+    <section><label for="sessionPassword">Password</label><input id="sessionPassword" type="password" autocomplete="current-password" placeholder="Local identity password" /></section>
+  </div>
+  <div class="actions"><button class="btn primary" id="btnLogin">Sign in</button><button class="btn ghost" id="btnLogout" style="display:none;">Sign out</button><span class="hint" id="sessionIdentity">Not signed in</span></div>
+  <div class="status" id="sessionStatus"></div>
+</div>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
 
 <div class="tabs" role="tablist" aria-label="Configuration sections">
@@ -322,6 +332,7 @@
     </div>
     <div class="hint" id="credHint" style="margin-top:8px;">Save source stores non-secret properties in configuration and encrypts its password in the Manager credential store when needed.</div>
     <div class="status" id="connStatus"></div>
+    <div class="status" id="connWarnings" role="status"></div>
   </div>
   </div>
 </div>
@@ -540,7 +551,7 @@
     <div class="status" id="mountEditStatus"></div>
   </div>
 
-  <div class="card" id="securityAccessKeys" style="margin-top:16px;">
+  <div class="card" id="securityAccessKeys" data-requires-permission="security.credentials.admin" style="margin-top:16px;">
     <h2>Access keys <span style="font-weight:400;text-transform:none;">(per-key authorization)</span></h2>
     <div class="hint" style="margin-bottom:12px;">Issue scoped S3 access keys so each client/tenant can reach only the buckets it's allowed.
       Keys are stored <b>encrypted</b> in the Manager; the secret is shown <b>once</b> at creation. When any key exists it governs SigV4 auth
@@ -579,7 +590,89 @@
     </div>
   </div>
   <div id="securityContent" class="security-stack">
-    <div class="card" id="backupRestorePanel">
+    <div class="card" id="tokenizationKeysPanel" data-requires-permission="security.credentials.admin">
+      <h2>Tokenization keys</h2>
+      <div class="hint">Keys are encrypted in the local credential store and mirrored to Key Vault when write-back is enabled. Values are never displayed after saving.</div>
+      <div id="tokenizationKeys" class="connlist"></div>
+      <div class="row" style="margin-top:12px;">
+        <section><label for="tokenizationKeyRef">Key reference</label><input id="tokenizationKeyRef" placeholder="customer-pii-v1" /></section>
+        <section><label for="tokenizationKeyValue">Key value</label><input id="tokenizationKeyValue" type="password" autocomplete="new-password" placeholder="At least 32 characters" /></section>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="btnGenerateTokenizationKey">Generate</button>
+        <button class="btn primary" id="btnSaveTokenizationKey">Save and apply</button>
+      </div>
+      <div class="status" id="tokenizationKeysStatus"></div>
+    </div>
+    <div class="card" id="tokenizationPoliciesPanel" data-requires-permission="tokenization.policy.read">
+      <h2>Tokenization policies</h2>
+      <div class="hint">Approved token policies are managed centrally. Table and mount editors may reference policy IDs without exposing key values.</div>
+      <div id="tokenizationPolicies" class="connlist"></div>
+      <details style="margin-top:12px;">
+        <summary>Create or replace policy</summary>
+        <div class="row">
+          <section>
+            <label for="policyId">Policy ID</label>
+            <input id="policyId" placeholder="customer-pii-v1" />
+          </section>
+          <section>
+            <label for="policyKind">Token type</label>
+            <select id="policyKind"><option value="durable_token">Durable token</option><option value="random_token">Random token</option></select>
+          </section>
+        </div>
+        <div class="row">
+          <section><label for="policyAlgorithm">Algorithm</label><select id="policyAlgorithm"><option value="sha256">SHA-256</option><option value="blake2b">BLAKE2b</option></select></section>
+          <section><label for="policyDigestSize">Digest bytes</label><input id="policyDigestSize" type="number" min="1" max="64" value="32" /></section>
+        </div>
+        <label for="policyKeyRef">Key reference</label>
+        <select id="policyKeyRef"><option value="" disabled selected>No configured key references</option></select>
+        <div class="row">
+          <section><label for="policyDomain">Domain</label><input id="policyDomain" placeholder="customer-email" /></section>
+          <section><label for="policyNormalization">Normalization</label><select id="policyNormalization"><option value="none">none</option><option value="trim">trim</option><option value="trim_lower">trim_lower</option></select></section>
+        </div>
+        <div class="actions"><button class="btn primary" id="btnSavePolicy">Save policy</button></div>
+      </details>
+      <div class="status" id="tokenizationPoliciesStatus"></div>
+    </div>
+    <div class="card" id="userManagementPanel" data-requires-permission="users.admin">
+      <h2>User management</h2>
+      <div class="hint">Create and disable local identities for the protected management API. Passwords are stored only as salted hashes.</div>
+      <div class="row">
+        <section>
+          <label for="newUserId">User ID</label>
+          <input id="newUserId" placeholder="support-operator" />
+        </section>
+        <section>
+          <label for="newUserRole">Role</label>
+          <select id="newUserRole">
+            <option value="monitor_troubleshooter">Monitor / Troubleshooter</option>
+            <option value="viewer">Viewer</option>
+            <option value="config_operator">Config Operator</option>
+            <option value="tokenization_administrator">Tokenization Administrator</option>
+            <option value="security_administrator">Security Administrator</option>
+            <option value="user_administrator">User Administrator</option>
+            <option value="system_administrator">System Administrator</option>
+          </select>
+        </section>
+      </div>
+      <div class="grid2">
+        <section>
+          <label for="newUserIdentitySource">Identity source</label>
+          <select id="newUserIdentitySource"><option value="local">Local password</option><option value="oidc">OIDC subject</option></select>
+        </section>
+        <section id="newUserPasswordField">
+          <label for="newUserPassword">Temporary password</label>
+          <input id="newUserPassword" type="password" autocomplete="new-password" placeholder="At least 12 characters" />
+        </section>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="btnLoadUsers">Load users</button>
+        <button class="btn primary" id="btnCreateUser">Create user</button>
+      </div>
+      <div id="userManagementList" class="connlist"></div>
+      <div class="status" id="userManagementStatus"></div>
+    </div>
+    <div class="card" id="backupRestorePanel" data-requires-permission="security.credentials.admin">
       <h2>Backup and restore</h2>
       <div class="hint">Create a portable encrypted backup of all configuration, database credentials, storage secrets, access keys and ACLs, and Open Mirroring state (including any pending recovery payload). Source datasets, generated caches, logs, environment-only secrets, external TLS files, and remote Key Vault contents are not copied.</div>
       <div class="row">
@@ -795,7 +888,7 @@
       <div class="status" id="moduleSaveStatus"></div>
     </div>
 
-    <div id="legacySecretPanel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <div id="legacySecretPanel" data-requires-permission="security.credentials.admin" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>S3 secret key</b> <span id="s3SecretState" class="hint" style="margin-left:6px;">(checking...)</span>
       <div class="hint">Write-only field. Value is never shown back; status only.</div>
       <div class="tablebar" style="margin-top:8px;">
@@ -806,7 +899,7 @@
       <div class="status" id="s3SecretStatus"></div>
     </div>
 
-    <div id="sigv4Panel" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
+    <div id="sigv4Panel" data-requires-permission="security.metadata.read" style="margin:12px 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
       <b>SigV4 diagnostics</b>
       <div class="hint">Effective authentication values used by this running process.</div>
       <div style="margin-top:8px; display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; align-items:center;">
@@ -990,6 +1083,9 @@ const state = {
   credBackend: "",           // encryption backend the Manager store is using
   credAvailable: false,      // whether the Manager can encrypt/persist credentials
   tokenizationKeyRefs: [],   // configured FSP_TOKENIZATION_KEY_* references (values are never returned)
+  tokenizationPolicies: [],  // central policy metadata (never contains key values)
+  permissions: new Set(),
+  authzEnforced: false,
   showHiddenPrimary: false,  // reveal the empty default card even when auto-hidden
   sourceCatalog: [],
   addTable: { sourceId:"", objects:[], metadata:null, draft:null },
@@ -1334,9 +1430,222 @@ async function loadTokenizationKeyReferences(){
     const response=await fetch("/_config/api/tokenization-key-references",{cache:"no-store"}).then(result=>result.json());
     state.tokenizationKeyRefs=response.ok?(response.references||[]):[];
   }catch(error){ state.tokenizationKeyRefs=[]; }
+  renderPolicyKeyReferences();
   renderSelected();
   if(state.addTable.draft) renderAddTableMetadata();
   if(state.om.editing) omRenderTableRows();
+}
+
+function renderPolicyKeyReferences(){
+  const select=$("policyKeyRef");
+  if(!select) return;
+  const currentReference=select.value;
+  select.innerHTML=tokenizationKeyOptionHtml(currentReference);
+  select.disabled=$("policyKind").value!=="durable_token" || (!state.tokenizationKeyRefs.length&&!currentReference);
+}
+
+async function loadTokenizationKeys(){
+  const box=$("tokenizationKeys"), status=$("tokenizationKeysStatus");
+  if(!box) return;
+  try{
+    const response=await fetch("/_config/api/tokenization-keys", {cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok || !data.ok) throw new Error(data.error||"Unable to load tokenization keys");
+    box.innerHTML="";
+    for(const key of data.keys||[]){
+      const row=document.createElement("div"); row.className="conn-row";
+      const label=document.createElement("strong"); label.textContent=key.key_ref;
+      const detail=document.createElement("span"); detail.className="hint";
+      detail.textContent=`${key.source} · ${key.updated_at||"stored"}`;
+      const remove=document.createElement("button"); remove.className="btn ghost"; remove.textContent="Delete";
+      remove.onclick=()=>deleteTokenizationKey(key.key_ref);
+      row.append(label,detail,remove); box.appendChild(row);
+    }
+    if(!(data.keys||[]).length) box.textContent="No encrypted tokenization keys are stored.";
+    status.textContent=`Encryption: ${data.backend}. Key Vault write-back: ${data.keyvault_write_back?"enabled":"disabled"}.`;
+    status.className="status ok";
+  }catch(error){ box.textContent="Tokenization key store is unavailable."; status.textContent=error.message; status.className="status err"; }
+}
+
+function generateTokenizationKey(){
+  const bytes=new Uint8Array(32); crypto.getRandomValues(bytes);
+  $("tokenizationKeyValue").value=Array.from(bytes, value=>value.toString(16).padStart(2,"0")).join("");
+  $("tokenizationKeysStatus").textContent="Generated a 256-bit key. Save it to activate.";
+  $("tokenizationKeysStatus").className="status ok";
+}
+
+async function saveTokenizationKey(){
+  const status=$("tokenizationKeysStatus");
+  const keyRef=$("tokenizationKeyRef").value.trim(), value=$("tokenizationKeyValue").value;
+  if(!/^[a-z0-9][a-z0-9-]{0,127}$/.test(keyRef) || value.length<32){ status.textContent="Use a lowercase reference and a key of at least 32 characters."; status.className="status err"; return; }
+  const response=await fetch("/_config/api/tokenization-keys", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key_ref:keyRef,value,apply:true})});
+  const data=await response.json();
+  status.textContent=data.ok?(data.environment_override?"Key saved. The deployment environment variable remains active because it has precedence.":`Key saved and applied${data.restarted?` to ${data.restarted} agent(s)`:""}.`):(data.error||"Unable to save key.");
+  status.className="status "+(data.ok?"ok":"err");
+  if(data.ok){ $("tokenizationKeyValue").value=""; await loadTokenizationKeys(); await loadTokenizationKeyReferences(); }
+}
+
+async function deleteTokenizationKey(keyRef){
+  if(!confirm(`Delete tokenization key ${keyRef}? Policies using it will stop working.`)) return;
+  const response=await fetch("/_config/api/tokenization-keys/"+encodeURIComponent(keyRef), {method:"DELETE"});
+  const data=await response.json(), status=$("tokenizationKeysStatus");
+  status.textContent=data.ok?(data.manager_restart_required?"Key deleted. Restart the Manager to remove the active cached value.":"Key deleted."):(data.error||"Unable to delete key.");
+  status.className="status "+(data.ok?"ok":"err");
+  if(data.ok){ await loadTokenizationKeys(); await loadTokenizationKeyReferences(); }
+}
+
+async function loadTokenizationPolicies(){
+  const box = $("tokenizationPolicies");
+  const status = $("tokenizationPoliciesStatus");
+  if(!box) return;
+  try{
+    const response = await fetch("/_config/api/tokenization/policies", {cache:"no-store"});
+    const data = await response.json();
+    if(!response.ok || !data.ok) throw new Error(data.error || "Unable to load tokenization policies");
+    state.tokenizationPolicies = data.policies || [];
+    box.innerHTML = "";
+    if(!state.tokenizationPolicies.length){
+      box.textContent = "No central tokenization policies are configured.";
+      if(state.om.editing) omRenderTableRows();
+      return;
+    }
+    for(const policy of state.tokenizationPolicies){
+      const row = document.createElement("div");
+      row.className = "conn-row";
+      const label = document.createElement("strong");
+      label.textContent = policy.policy_id;
+      const detail = document.createElement("span");
+      detail.className = "hint";
+      detail.textContent = `${policy.enabled===false?"disabled":"enabled"} · ${policy.kind} · ${policy.algorithm} · ${policy.normalization}`;
+      const disable = document.createElement("button");
+      disable.className = "btn ghost";
+      disable.textContent = "Disable";
+      disable.disabled = policy.enabled === false;
+      disable.onclick = () => disableTokenizationPolicy(policy.policy_id);
+      row.append(label, detail, disable);
+      box.appendChild(row);
+    }
+    status.textContent = `${state.tokenizationPolicies.length} central policy${state.tokenizationPolicies.length===1?"":"ies"} available.`;
+    status.className = "status ok";
+  }catch(error){
+    state.tokenizationPolicies = [];
+    box.textContent = "Central tokenization policies are unavailable.";
+    status.textContent = error.message || "Unable to load tokenization policies.";
+    status.className = "status err";
+  }
+  if(state.om.editing) omRenderTableRows();
+}
+
+async function disableTokenizationPolicy(policyId){
+  const status=$("tokenizationPoliciesStatus");
+  const response=await fetch("/_config/api/tokenization/policies/"+encodeURIComponent(policyId), {method:"DELETE"});
+  const data=await response.json();
+  status.textContent=data.ok?"Tokenization policy disabled.":(data.error||"Unable to disable tokenization policy.");
+  status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadTokenizationPolicies();
+}
+
+async function saveTokenizationPolicy(){
+  const status=$("tokenizationPoliciesStatus");
+  const kind=$("policyKind").value; const policyId=$("policyId").value.trim();
+  if(!policyId){ status.textContent="Policy ID is required."; status.className="status err"; return; }
+  if(kind==="durable_token"&&!$("policyKeyRef").value){ status.textContent="Select a key reference for the durable policy."; status.className="status err"; return; }
+  const payload={policy_id:policyId,kind,algorithm:$("policyAlgorithm").value,digest_size:parseInt($("policyDigestSize").value||"32",10),normalization:$("policyNormalization").value,domain:$("policyDomain").value.trim()||null,enabled:true};
+  if(kind==="durable_token") payload.key_ref=$("policyKeyRef").value.trim();
+  const response=await fetch("/_config/api/tokenization/policies", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  const data=await response.json();
+  status.textContent=data.ok?"Tokenization policy saved.":(data.error||"Unable to save tokenization policy."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadTokenizationPolicies();
+}
+
+async function loadManagedUsers(){
+  const box=$("userManagementList"); const status=$("userManagementStatus");
+  if(!box) return;
+  try{
+    const response=await fetch("/_config/api/authorization/users", {cache:"no-store"});
+    const data=await response.json();
+    if(!response.ok || !data.ok) throw new Error(data.error||"Unable to load users");
+    box.innerHTML="";
+    for(const user of data.users||[]){
+      const row=document.createElement("div"); row.className="conn-row";
+      const label=document.createElement("strong"); label.textContent=user.user_id;
+      const detail=document.createElement("span"); detail.className="hint";
+      detail.textContent=(user.enabled?"enabled":"disabled")+" · "+(user.identity_source||"local")+" · "+(user.roles||[]).join(", ");
+      const disable=document.createElement("button"); disable.className="btn ghost"; disable.textContent="Disable";
+      disable.disabled=!user.enabled; disable.onclick=()=>disableManagedUser(user.user_id);
+      row.append(label,detail,disable); box.appendChild(row);
+    }
+    status.textContent=`${(data.users||[]).length} user record${(data.users||[]).length===1?"":"s"} loaded.`;
+    status.className="status ok";
+  }catch(error){ box.textContent="User records are unavailable."; status.textContent=error.message||"Unable to load users."; status.className="status err"; }
+}
+
+async function refreshAuthorization(){
+  const status=$("sessionStatus");
+  try{
+    const authStatus=await fetch("/_config/api/authorization/status", {cache:"no-store"}).then(response=>response.json());
+    state.authzEnforced=authStatus.enforced===true;
+    const response=await fetch("/_config/api/authorization/me", {cache:"no-store"});
+    if(!response.ok) throw new Error("Not signed in");
+    const data=await response.json(); state.permissions=new Set(data.permissions||[]);
+    document.body.classList.remove("auth-pending", "auth-locked");
+    $("sessionIdentity").textContent=data.user.user_id+" · "+[...state.permissions].join(", ");
+    $("sessionCredentials").style.display="none";
+    $("btnLogin").style.display="none"; $("btnLogout").style.display="inline-block";
+    applyPermissionVisibility();
+    await loadManagerFleet();
+  }catch(error){ state.permissions=new Set(); document.body.classList.remove("auth-pending"); document.body.classList.toggle("auth-locked", state.authzEnforced); $("sessionCredentials").style.display="grid"; $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
+}
+
+function applyPermissionVisibility(){
+  const locked = state.authzEnforced;
+  const rules={sources:"config.read",tables:"config.read",openmirror:"config.read",security:"security.metadata.read",operational:"system.admin"};
+  Object.entries(rules).forEach(([tab,permission])=>{
+    const button=$("tab-"+(tab==="operational"?"operational":tab));
+    if(button) button.hidden=locked && (tab!=="security"
+      ? !state.permissions.has(permission)
+      : !["security.metadata.read","security.credentials.admin","tokenization.policy.read","tokenization.policy.admin","users.admin"].some(p=>state.permissions.has(p)));
+  });
+  document.querySelectorAll("[data-requires-permission]").forEach(element=>{
+    element.hidden=locked&&!state.permissions.has(element.dataset.requiresPermission);
+  });
+  document.querySelectorAll("[data-go-tab]").forEach(element=>{
+    const target=$("tab-"+element.dataset.goTab);
+    element.hidden=Boolean(locked && target && target.hidden);
+  });
+}
+
+async function signIn(){
+  const status=$("sessionStatus");
+  const response=await fetch("/_config/api/authorization/login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:$("sessionUserId").value.trim(),password:$("sessionPassword").value})});
+  const data=await response.json();
+  if(!data.ok){ status.textContent=data.error||"Sign-in failed."; status.className="status err"; return; }
+  $("sessionPassword").value=""; status.textContent="Signed in."; status.className="status ok"; window.location.reload();
+}
+
+async function signOut(){
+  await fetch("/_config/api/authorization/logout", {method:"POST"});
+  document.body.classList.add("auth-locked");
+  $("fleetScale").style.display="none";
+  $("sessionCredentials").style.display="grid"; $("btnLogin").style.display="inline-block"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
+}
+
+async function createManagedUser(){
+  const userId=$("newUserId").value.trim(); const password=$("newUserPassword").value;
+  const role=$("newUserRole").value; const identitySource=$("newUserIdentitySource").value; const status=$("userManagementStatus");
+  if(!userId || (identitySource==="local"&&password.length<12)){ status.textContent=identitySource==="local"?"User ID and a password of at least 12 characters are required.":"User ID is required."; status.className="status err"; return; }
+  const response=await fetch("/_config/api/authorization/users", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:userId,roles:[role],identity_source:identitySource,password:identitySource==="local"?password:""})});
+  const data=await response.json();
+  status.textContent=data.ok?"User record created.":(data.error||"Unable to create user."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok){ $("newUserId").value=""; $("newUserPassword").value=""; await loadManagedUsers(); }
+}
+
+async function disableManagedUser(userId){
+  const status=$("userManagementStatus");
+  const response=await fetch("/_config/api/authorization/users/"+encodeURIComponent(userId), {method:"DELETE"});
+  const data=await response.json();
+  status.textContent=data.ok?"User record disabled.":(data.error||"Unable to disable user."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadManagedUsers();
 }
 
 // ---- connect / test ----
@@ -1348,6 +1657,11 @@ async function testActiveConnection(){
   const data = await api("/_config/api/connect", conn);
   $("btnConnect").disabled = false;
   if(!data.ok){ s.className="status err"; s.textContent="Connection failed: " + (data.error||"unknown error"); return null; }
+  const warningBox=$("connWarnings");
+  if(warningBox){
+    warningBox.textContent=(data.warnings||[]).join(" ");
+    warningBox.className="status "+((data.warnings||[]).length?"warn":"");
+  }
   const connId = conn.id || "default";
   state.activeConnId = connId;
   const c = state.connections.get(connId) || newConn(connId);
@@ -1696,7 +2010,9 @@ function storagePolicyColumns(draft){
     const transformed=column.policy==="deterministic_hash"||column.policy==="random_token";
     const item={field_id:column.field_id,name:column.name.trim(),type:transformed?"string":column.type,nullable:column.nullable};
     if(column.name!==column.source||transformed) item.source=column.source;
-    if(column.policy==="deterministic_hash") item.transform={kind:"deterministic_hash",key_ref:column.key_ref.trim(),domain:column.domain,normalization:column.normalization};
+    if(column.policy_id && (column.policy==="deterministic_hash" || column.policy==="random_token")){
+      item.tokenization={action:column.policy==="deterministic_hash"?"durable_token":"random_token",policy_id:column.policy_id};
+    }else if(column.policy==="deterministic_hash") item.transform={kind:"deterministic_hash",key_ref:column.key_ref.trim(),domain:column.domain,normalization:column.normalization};
     else if(column.policy==="random_token") item.transform={kind:"random_token"};
     return item;
   });
@@ -1735,13 +2051,16 @@ function stub(t){ return { name:t.name, schema:t.schema||null,
 
 function policyColumn(column, index){
   const transform = column.transform || null;
+  const tokenization = column.tokenization || null;
+  const policy = tokenization ? String(tokenization.action || "keep") : (transform ? transform.kind : "keep");
   return {
     field_id: Number(column.field_id) || index + 1,
     source: String(column.source || column.name || ""),
     name: String(column.name || column.source || ""),
     type: String(column.type || column.iceberg_type || "string"),
     nullable: column.nullable !== false,
-    policy: transform ? transform.kind : "keep",
+    policy,
+    policy_id: tokenization && tokenization.policy_id ? String(tokenization.policy_id) : "",
     key_ref: transform && transform.key_ref ? String(transform.key_ref) : "",
     domain: transform && transform.domain != null ? String(transform.domain) : "",
     normalization: transform && transform.normalization ? transform.normalization : "none",
@@ -1806,8 +2125,8 @@ function policyErrors(entry){
   if(names.some(name=>!name)) errors.push("Every kept column needs an output name.");
   if(new Set(names).size!==names.length) errors.push("Output names must be unique.");
   for(const column of kept){
-    if(column.policy==="deterministic_hash" && !column.key_ref.trim()){
-      errors.push(`${column.source}: deterministic tokens require a key reference.`);
+    if(column.policy==="deterministic_hash" && !column.policy_id && !column.key_ref.trim()){
+      errors.push(`${column.source}: deterministic tokens require a central policy or key reference.`);
     }
   }
   const random = kept.some(column=>column.policy==="random_token");
@@ -1851,6 +2170,11 @@ function tokenizationKeyOptionHtml(currentReference){
   return options.join("");
 }
 
+function centralPoliciesFor(kind){
+  const wanted = kind === "deterministic_hash" ? "durable_token" : "random_token";
+  return state.tokenizationPolicies.filter(policy=>policy.kind===wanted && policy.enabled!==false);
+}
+
 function renderPolicyEditor(entry, opts){
   opts = opts || {};
   const onEdit = opts.onEdit || (()=>{});
@@ -1877,6 +2201,10 @@ function renderPolicyEditor(entry, opts){
     policy.title = tokenCapable ? "Select how this source column is exposed" : "Tokenization is not supported for this source";
     policy.onchange=()=>{
       column.policy=policy.value;
+      if(column.policy==="keep" || column.policy==="remove") column.policy_id="";
+      if(column.policy_id && column.policy!=="deterministic_hash" && column.policy!=="random_token") column.policy_id="";
+      const available=centralPoliciesFor(column.policy);
+      if(available.length && !available.some(item=>item.policy_id===column.policy_id)) column.policy_id=available[0].policy_id;
       if(column.policy!=="keep" && column.policy!=="remove" && column.name===column.source) column.name=column.source+"_token";
       if(column.policy==="deterministic_hash" && !column.domain) column.domain=entry.name+"."+column.source;
       rerender();
@@ -1884,8 +2212,28 @@ function renderPolicyEditor(entry, opts){
     const type = document.createElement("span"); type.className="rows";
     type.textContent=(column.policy==="deterministic_hash" || column.policy==="random_token") ? "string" : column.type;
     row.append(source, output, policy, type);
-    if(column.policy==="deterministic_hash"){
+    if(column.policy==="deterministic_hash" || column.policy==="random_token"){
       const detail=document.createElement("div"); detail.className="policy-detail";
+      const central=centralPoliciesFor(column.policy);
+      if(central.length){
+        const policySelect=document.createElement("select"); policySelect.title="Select an approved central tokenization policy";
+        for(const item of central){
+          const option=document.createElement("option"); option.value=item.policy_id; option.textContent=item.policy_id;
+          option.selected=item.policy_id===column.policy_id; policySelect.appendChild(option);
+        }
+        if(!column.policy_id) column.policy_id=central[0].policy_id;
+        policySelect.value=column.policy_id;
+        policySelect.onchange=()=>{ column.policy_id=policySelect.value; onEdit(); rerender(); };
+        detail.append(policySelect);
+        const policyNote=document.createElement("div"); policyNote.className="policy-note";
+        policyNote.textContent="Central policy controls algorithm, key reference, domain, and normalization.";
+        detail.appendChild(policyNote); row.appendChild(detail); editor.appendChild(row); continue;
+      }
+      if(column.policy==="random_token"){
+        const note=document.createElement("div"); note.className="policy-note";
+        note.textContent="No approved random-token policies are configured.";
+        detail.appendChild(note); row.appendChild(detail); editor.appendChild(row); continue;
+      }
       const keyRef=tokenizationKeySelect(column.key_ref, value=>{
         column.key_ref=value; onEdit(); rerender();
       });
@@ -2104,7 +2452,9 @@ function tableConfig(entry){
       const item={field_id:column.field_id, name:column.name.trim(),
         type:transformed ? "string" : column.type, nullable:column.nullable};
       if(column.name!==column.source || transformed) item.source=column.source;
-      if(column.policy==="deterministic_hash"){
+      if(column.policy_id && (column.policy==="deterministic_hash" || column.policy==="random_token")){
+        item.tokenization={action:column.policy==="deterministic_hash"?"durable_token":"random_token",policy_id:column.policy_id};
+      }else if(column.policy==="deterministic_hash"){
         item.transform={kind:"deterministic_hash", key_ref:column.key_ref.trim(),
           domain:column.domain, normalization:column.normalization};
       }else if(column.policy==="random_token"){
@@ -3010,7 +3360,12 @@ function omRenderTableList(){
   box.innerHTML=tables.map((table,index)=>`<button type="button" class="om-table-item${state.om.selectedTable===index?" active":""}" data-table="${index}">`
     + `${omEsc(omTableLabel(table,index))}<small>${omEsc(table.source_table||"Source not selected")}</small></button>`).join("");
   box.querySelectorAll("[data-table]").forEach(button=>{
-    button.onclick=()=>{ state.om.selectedTable=parseInt(button.dataset.table); omRenderTableRows(); };
+    button.onclick=()=>{
+      const index=parseInt(button.dataset.table);
+      state.om.selectedTable=index;
+      omRenderTableRows();
+      omInspectTable(index);
+    };
   });
 }
 
@@ -3079,11 +3434,16 @@ function omRenderTableRows(){
   box.querySelectorAll(".om-policy-name").forEach(inp=>{
     inp.oninput = ()=>omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, "name", inp.value);
   });
-  box.querySelectorAll(".om-policy-key,.om-policy-domain,.om-policy-normalization").forEach(inp=>{
-    inp.oninput = inp.onchange = ()=>{
-      const field=inp.dataset.p;
-      omUpdatePolicyField(parseInt(inp.dataset.i), inp.dataset.source, field, inp.value);
-      if(field==="key_ref") omRenderTableRows();
+  box.querySelectorAll(".om-policy-central").forEach(select=>{
+    select.onchange = ()=>{
+      omUpdatePolicyField(parseInt(select.dataset.i), select.dataset.source, "policy_id", select.value);
+      omRenderTableRows();
+    };
+  });
+  box.querySelectorAll("details.om-policy-panel").forEach(panel=>{
+    panel.ontoggle = ()=>{
+      const table=state.om.editing.tables[parseInt(panel.dataset.i)];
+      if(table) table._policiesOpen=panel.open;
     };
   });
   box.querySelectorAll("[data-del]").forEach(b=>{
@@ -3107,7 +3467,7 @@ function omPolicyColumns(tb){
   }));
   configured.forEach(c=>{
     const src=String(c.source||c.name||"");
-    if(!names.has(src)) out.push({field_id:c.field_id||out.length+1,name:c.name,source:src,type:c.type||c.iceberg_type||"string",nullable:c.nullable!==false,transform:c.transform});
+    if(!names.has(src)) out.push({field_id:c.field_id||out.length+1,name:c.name,source:src,type:c.type||c.iceberg_type||"string",nullable:c.nullable!==false,transform:c.transform,tokenization:c.tokenization});
     else Object.assign(out.find(x=>String(x.name)===src), c);
   });
   return out;
@@ -3115,7 +3475,22 @@ function omPolicyColumns(tb){
 
 function omPolicyKind(column){
   if(!column) return "remove";
+  if(column.tokenization&&column.tokenization.action==="durable_token") return "deterministic_hash";
+  if(column.tokenization&&column.tokenization.action==="random_token") return "random_token";
   return column.transform ? String(column.transform.kind||"keep") : "keep";
+}
+
+function omCentralPolicyOptions(kind,currentPolicyId){
+  const policies=centralPoliciesFor(kind);
+  const options=[];
+  if(currentPolicyId&&!policies.some(policy=>policy.policy_id===currentPolicyId)){
+    options.push(`<option value="${omEsc(currentPolicyId)}">${omEsc(currentPolicyId)} (unavailable)</option>`);
+  }
+  options.push(`<option value="" disabled${currentPolicyId?"":" selected"}>${policies.length?"Select central policy":"No approved central policies"}</option>`);
+  for(const policy of policies){
+    options.push(`<option value="${omEsc(policy.policy_id)}"${policy.policy_id===currentPolicyId?" selected":""}>${omEsc(policy.policy_id)}</option>`);
+  }
+  return options.join("");
 }
 
 function omPolicyEditor(tb,index){
@@ -3127,25 +3502,25 @@ function omPolicyEditor(tb,index){
     const source=String(c.source||c.name||"");
     const control=keySet.has(source)||watermark===source;
     const kind=control?"keep":omPolicyKind(c);
-    const tr=c.transform||{};
+    const policyId=String((c.tokenization&&c.tokenization.policy_id)||"");
+    const availablePolicies=centralPoliciesFor(kind);
     const options=[
       ["keep","Keep"],["remove","Remove"],["deterministic_hash","Deterministic hash"],["random_token","Random token"]
-    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${(control&&value!=="keep")||(value==="deterministic_hash"&&!state.tokenizationKeyRefs.length&&kind!==value)?" disabled":""}>${label}</option>`).join("");
+    ].map(([value,label])=>`<option value="${value}"${kind===value?" selected":""}${(control&&value!=="keep")||((value==="deterministic_hash"||value==="random_token")&&!centralPoliciesFor(value).length&&kind!==value)?" disabled":""}>${label}</option>`).join("");
     const alias=kind==="keep"?String(c.name||source):String(c.name||source+"_token");
-    const missingKey = kind==="deterministic_hash" && !String(tr.key_ref||"").trim();
-    const details=(kind==="deterministic_hash")
-      ? `<select class="om-policy-key" data-i="${index}" data-source="${omEsc(source)}" data-p="key_ref" title="Available references come from configured FSP_TOKENIZATION_KEY_* environment variables; values are never returned"${!state.tokenizationKeyRefs.length&&!tr.key_ref?" disabled":""}>${tokenizationKeyOptionHtml(tr.key_ref||"")}</select>`
-        + `<input class="om-policy-domain" data-i="${index}" data-source="${omEsc(source)}" data-p="domain" value="${omEsc(tr.domain||"")}" placeholder="domain" />`
-        + `<select class="om-policy-normalization" data-i="${index}" data-source="${omEsc(source)}" data-p="normalization"><option value="none"${(tr.normalization||"none")==="none"?" selected":""}>none</option><option value="trim"${tr.normalization==="trim"?" selected":""}>trim</option><option value="trim_lower"${tr.normalization==="trim_lower"?" selected":""}>trim + lower</option></select>`
-        + (missingKey ? `<div class="invalid om-policy-error" role="alert">${state.tokenizationKeyRefs.length
-          ? "Choose a tokenization key."
-          : "No tokenization keys are configured. Add an FSP_TOKENIZATION_KEY_* environment variable and restart, or choose another policy."}</div>` : "")
-      : (kind==="random_token" ? `<span class="hint">Fresh value per extraction; pending recovery is preserved.</span>` : "");
+    const tokenized=kind==="deterministic_hash"||kind==="random_token";
+    const details=tokenized
+      ? `<select class="om-policy-central" data-i="${index}" data-source="${omEsc(source)}" title="Select an approved central tokenization policy"${!availablePolicies.length&&!policyId?" disabled":""}>${omCentralPolicyOptions(kind,policyId)}</select>`
+        + `<div class="hint">Central policy controls algorithm, key reference, domain, and normalization.</div>`
+        + (!policyId ? `<div class="invalid om-policy-error" role="alert">${availablePolicies.length
+          ? "Choose a central tokenization policy."
+          : "No approved central policies are configured for this token type."}</div>` : "")
+      : "";
     return `<div class="row om-policy-row" data-table-index="${index}" data-policy-source="${omEsc(source)}"><div><label>${omEsc(source)}${control?" <span class=\"hint\">(control)</span>":""}</label><select class="om-policy-kind" data-i="${index}" data-source="${omEsc(source)}"${control?" disabled":""}>${options}</select></div>`
       + `<div><label>Output name</label><input class="om-policy-name" data-i="${index}" data-source="${omEsc(source)}" value="${omEsc(alias)}"${kind==="remove"||control?" disabled":""} /></div>`
       + `<div class="om-policy-details">${details}</div></div>`;
   }).join("");
-  return `<details class="panel om-policy-panel" style="margin-top:10px;padding:8px;"><summary><b>Column policies</b> <span class="badge">${columns.length}</span></summary><div class="hint">Control columns stay pass-through. Removed columns are omitted from the landing-zone schema.</div>${rows}</details>`;
+  return `<details class="panel om-policy-panel" data-i="${index}" style="margin-top:10px;padding:8px;"${tb._policiesOpen?" open":""}><summary><b>Column policies</b> <span class="badge">${columns.length}</span></summary><div class="hint">Control columns stay pass-through. Removed columns are omitted from the landing-zone schema.</div>${rows}</details>`;
 }
 
 function omUpdatePolicy(i,source,kind){
@@ -3155,8 +3530,9 @@ function omUpdatePolicy(i,source,kind){
     tb.columns=omPolicyColumns(tb).filter(c=>String(c.source||c.name||"")!==source).map(c=>{ const x={...c}; delete x._sourceColumns; return x; });
   }else{
     const next={...sourceCol,source:kind==="keep"?undefined:source,name:kind==="keep"?source:(sourceCol.name&&sourceCol.name!==source?sourceCol.name:source+"_token")};
-    if(kind==="keep") delete next.transform;
-    else next.transform={kind,...(kind==="deterministic_hash"?{key_ref:"",domain:source,normalization:"none"}:{})};
+    delete next.transform;
+    if(kind==="keep") delete next.tokenization;
+    else next.tokenization={action:kind==="deterministic_hash"?"durable_token":"random_token",policy_id:""};
     const existing=omPolicyColumns(tb).filter(c=>String(c.source||c.name||"")!==source);
     tb.columns=[...existing,next];
   }
@@ -3168,7 +3544,11 @@ function omUpdatePolicyField(i,source,field,value){
   const col=omPolicyColumns(tb).find(c=>String(c.source||c.name||"")===source); if(!col) return;
   const next={...col};
   if(field==="name") next.name=value;
-  else next.transform={...(next.transform||{kind:"deterministic_hash"}),[field]:value};
+  else if(field==="policy_id"){
+    const kind=omPolicyKind(next);
+    delete next.transform;
+    next.tokenization={action:kind==="deterministic_hash"?"durable_token":"random_token",policy_id:value};
+  }
   tb.columns=omPolicyColumns(tb).map(c=>String(c.source||c.name||"")===source?next:c);
 }
 
@@ -3303,21 +3683,41 @@ async function omPickTable(i, value){
   if(!row.target_table) row.target_table = picked.name;
   if(!row.schema) row.schema = picked.schema||"";
   omRenderTableRows();  // reflect source_table/name immediately
-  // Auto-detect the key column for the picked table.
-  const s = $("omTablesStatus"); s.className="status"; s.textContent="Detecting key for "+picked.source+"…";
+  await omInspectTable(i, picked);
+}
+
+function omSourceParts(sourceTable){
+  const value=String(sourceTable||"").trim();
+  const separator=value.lastIndexOf(".");
+  return separator>0
+    ? {schema:value.slice(0,separator),name:value.slice(separator+1),source:value}
+    : {schema:null,name:value,source:value};
+}
+
+async function omInspectTable(i, picked){
+  const t=state.om.editing; if(!t||!t.tables[i]) return;
+  const row=t.tables[i];
+  if(Array.isArray(row._sourceColumns)&&row._sourceColumns.length) return;
+  if(row._inspectionPending) return;
+  const source=picked||omSourceParts(row.source_table);
+  if(!source.name) return;
+  row._inspectionPending=true;
+  const s = $("omTablesStatus"); s.className="status"; s.textContent="Loading columns for "+source.source+"…";
   try{
     const conn = $("omConnection").value || "default";
-    const r = await fetch("/_config/api/open-mirror/inspect-table",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({connection:conn, schema:picked.schema, name:picked.name})});
+    const r = await fetch("/_config/api/open-mirror/inspect-table",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({connection:conn, schema:source.schema, name:source.name})});
     const d = await r.json();
     if(r.ok && d.ok){
       row._sourceColumns = d.columns||[];
       row._cols = (d.columns||[]).map(c=>c.name);
       if(!row.watermark_column){ const wm = omGuessWatermark(d.columns||[]); if(wm) row.watermark_column = wm; }
-      if(d.detected_key){ row.key_column = d.detected_key; s.className="status ok"; s.textContent="Key for "+picked.name+": "+d.detected_key+(row.watermark_column?("  · watermark: "+row.watermark_column):""); }
-      else { s.className="status"; s.textContent="No key detected for "+picked.name+" — set it manually."; }
+      if(d.detected_key&&!row.key_column) row.key_column=d.detected_key;
+      if(d.detected_key){ s.className="status ok"; s.textContent="Loaded columns for "+source.name+" · key: "+row.key_column+(row.watermark_column?(" · watermark: "+row.watermark_column):""); }
+      else { s.className="status"; s.textContent="Loaded columns for "+source.name+"; no key was detected."; }
       omRenderTableRows();
     } else { s.className="status err"; s.textContent="✗ "+((d&&d.error)||"key detection failed"); }
   }catch(e){ s.className="status err"; s.textContent="Key detection request failed."; }
+  finally { delete row._inspectionPending; }
 }
 
 // Suggest a monotonic watermark column by name/type (best-effort).
@@ -3398,6 +3798,7 @@ function omEdit(i){
   state.om.editingIndex=i; state.om.selectedTable=t.tables.length?0:null;
   omWriteForm(t);
   omRenderList();
+  if(state.om.selectedTable!=null) omInspectTable(state.om.selectedTable);
 }
 function omRemove(i){
   const target=state.om.targets[i], count=(target.tables||[]).length;
@@ -3435,7 +3836,9 @@ function omTokenizationProblems(targets){
   const problems=[];
   (targets||[]).forEach((target,targetIndex)=>(target.tables||[]).forEach((table,tableIndex)=>(table.columns||[]).forEach(column=>{
     const transform=column&&column.transform;
-    if(transform&&transform.kind==="deterministic_hash"&&!String(transform.key_ref||"").trim()){
+    const selection=column&&column.tokenization;
+    if((transform&&(transform.kind==="deterministic_hash"||transform.kind==="random_token"))
+      || (selection&&(selection.action==="durable_token"||selection.action==="random_token")&&!String(selection.policy_id||"").trim())){
       problems.push({targetIndex,tableIndex,source:String(column.source||column.name||"column"),
         target:String(target.id||"target"),table:String(table.name||table.target_table||table.source_table||`table ${tableIndex+1}`)});
     }
@@ -3449,16 +3852,16 @@ function omShowTokenizationProblem(problem){
   omRenderTableRows();
   const detail=$("omEditStatus");
   detail.className="status err";
-  detail.textContent = state.tokenizationKeyRefs.length
-    ? `Table "${problem.table}", column "${problem.source}": choose a tokenization key under Column policies.`
-    : `Table "${problem.table}", column "${problem.source}": deterministic hashing needs a tokenization key. Configure an FSP_TOKENIZATION_KEY_* environment variable and restart, or choose another column policy.`;
+  detail.textContent = state.tokenizationPolicies.length
+    ? `Table "${problem.table}", column "${problem.source}": choose a central tokenization policy under Column policies.`
+    : `Table "${problem.table}", column "${problem.source}": tokenization requires an approved central policy. Create one in Security, or choose another column policy.`;
   requestAnimationFrame(()=>{
     const row=[...document.querySelectorAll('.om-policy-row')].find(item=>
       Number(item.dataset.tableIndex)===problem.tableIndex&&item.dataset.policySource===problem.source);
     if(row){
       const panel=row.closest("details"); if(panel) panel.open=true;
       row.scrollIntoView({behavior:"smooth",block:"center"});
-      (row.querySelector('.om-policy-key:not(:disabled)') || row.querySelector('.om-policy-kind'))?.focus();
+      (row.querySelector('.om-policy-central:not(:disabled)') || row.querySelector('.om-policy-kind'))?.focus();
     }
   });
 }
@@ -3656,6 +4059,18 @@ writeFormFromConn(state.connections.get(state.activeConnId));
 renderConnList();
 loadSettings();
 loadTokenizationKeyReferences();
+loadTokenizationKeys();
+loadTokenizationPolicies();
+$("btnGenerateTokenizationKey").onclick=generateTokenizationKey;
+$("btnSaveTokenizationKey").onclick=saveTokenizationKey;
+$("btnLoadUsers").onclick=loadManagedUsers;
+$("btnCreateUser").onclick=createManagedUser;
+$("newUserIdentitySource").onchange=()=>{ const local=$("newUserIdentitySource").value==="local"; $("newUserPasswordField").style.display=local?"":"none"; if(!local) $("newUserPassword").value=""; };
+$("btnSavePolicy").onclick=saveTokenizationPolicy;
+$("policyKind").onchange=renderPolicyKeyReferences;
+$("btnLogin").onclick=signIn;
+$("btnLogout").onclick=signOut;
+refreshAuthorization();
 loadMounts();
 loadAccessKeys();
 omInit();
@@ -3725,7 +4140,10 @@ async function loadCurrent(){
   renderLive();
   renderS3SecretState();
   renderSigv4Diagnostics();
-  // Detect Manager (fleet endpoint) to enable live scaling.
+}
+
+async function loadManagerFleet(){
+  // Probe only after session authentication; anonymous Basic challenges open a browser dialog.
   try{
     const fr = await fetch("/_manager/api/fleet", {cache:"no-store"});
     if(fr.ok){ const f = await fr.json();

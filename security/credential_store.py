@@ -50,6 +50,25 @@ def env_var_for(connection_id: str | None) -> str:
     return "DB_URL_" + re.sub(r"[^A-Za-z0-9]+", "_", cid).upper()
 
 
+_TOKENIZATION_PREFIX = "tokenization:"
+
+
+def tokenization_env_var(key_ref: str) -> str:
+    """Return the environment variable for a tokenization key reference."""
+    ref = (key_ref or "").strip()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", ref):
+        raise ValueError("key_ref must use lowercase letters, numbers, and hyphens")
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", ref).upper()
+    return f"FSP_TOKENIZATION_KEY_{normalized}"
+
+
+def _tokenization_secret_id(key_ref: str) -> str:
+    ref = (key_ref or "").strip()
+    if not ref:
+        raise ValueError("key_ref must be non-empty")
+    return f"{_TOKENIZATION_PREFIX}{ref}"
+
+
 def looks_masked(url: str) -> bool:
     """True if the URL's password was redacted to ``***`` (i.e. not a real secret).
 
@@ -452,6 +471,37 @@ class CredentialStore:
     def list_secret_ids(self) -> list[str]:
         return sorted(self._load().get("secrets", {}).keys())
 
+    # -- tokenization keys ------------------------------------------------
+    def set_tokenization_key(self, key_ref: str, value: str) -> None:
+        """Encrypt a tokenization key under its non-secret reference."""
+        secret = str(value or "")
+        if len(secret) < 32:
+            raise ValueError("tokenization key must contain at least 32 characters")
+        self.set_secret(_tokenization_secret_id(key_ref), {"value": secret})
+
+    def get_tokenization_key(self, key_ref: str) -> str | None:
+        record = self.get_secret(_tokenization_secret_id(key_ref))
+        value = record.get("value") if isinstance(record, dict) else None
+        return value if isinstance(value, str) and value else None
+
+    def delete_tokenization_key(self, key_ref: str) -> bool:
+        return self.delete_secret(_tokenization_secret_id(key_ref))
+
+    def list_tokenization_keys(self) -> list[dict[str, str]]:
+        """Return non-secret key metadata without decrypting key material."""
+        data = self._load()
+        result = []
+        for secret_id, entry in data.get("secrets", {}).items():
+            if not secret_id.startswith(_TOKENIZATION_PREFIX) or not isinstance(entry, dict):
+                continue
+            key_ref = secret_id[len(_TOKENIZATION_PREFIX):]
+            result.append({
+                "key_ref": key_ref,
+                "env_var": tokenization_env_var(key_ref),
+                "updated_at": str(entry.get("updated_at") or ""),
+            })
+        return sorted(result, key=lambda item: item["key_ref"])
+
     # -- access keys (encrypted proxy access-key + ACL records) -----------
     def set_access_key(self, key_id: str, obj: dict) -> None:
         """Encrypt and persist a proxy access-key record (secret + ACL scope)."""
@@ -609,7 +659,7 @@ def _store_enabled() -> bool:
 
 
 def hydrate_environment(store: CredentialStore | None = None) -> list[str]:
-    """Fill missing ``DB_URL`` / ``DB_URL_<ID>`` env vars from the store.
+    """Fill missing database and tokenization-key env vars from the store.
 
     Best-effort: an env var already set (e.g. via ``-DbUrl``) always wins, and
     any failure is swallowed so a broken/absent store never blocks startup.
@@ -625,6 +675,14 @@ def hydrate_environment(store: CredentialStore | None = None) -> list[str]:
         for name, url in st.env_overrides().items():
             if name not in os.environ and url:
                 os.environ[name] = url
+                hydrated.append(name)
+        for item in st.list_tokenization_keys():
+            name = item["env_var"]
+            if name in os.environ:
+                continue
+            value = st.get_tokenization_key(item["key_ref"])
+            if value:
+                os.environ[name] = value
                 hydrated.append(name)
     except Exception as exc:  # noqa: BLE001
         print(f"[credential_store] hydration skipped: {exc}", file=sys.stderr)

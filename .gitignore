@@ -73,6 +73,7 @@ config.freshness.json
 config.tables.json
 config.mounts.json
 config.open_mirror.json
+config.tokenization.json
 *.env
 .env.local
 secrets.json

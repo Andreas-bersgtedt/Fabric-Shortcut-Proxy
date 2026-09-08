@@ -308,8 +308,22 @@ def test_index_has_open_mirror_tab():
     assert "api/open-mirror/fabric/workspaces" in html
     assert 'id="omMirroredDb"' in html
     assert "Column policies" in html
+    assert 'table._policiesOpen=panel.open' in html
+    assert 'tb._policiesOpen?" open":""' in html
     assert "deterministic_hash" in html
     assert "omUpdatePolicy" in html
+    assert "omInspectTable(index);" in html
+    assert "function omSourceParts(sourceTable)" in html
+    assert 's.textContent="Loading columns for "+source.source+"…"' in html
+    assert "if(state.om.selectedTable!=null) omInspectTable(state.om.selectedTable);" in html
+    assert 'class="om-policy-central"' in html
+    assert 'class="om-policy-key"' not in html
+    assert "omCentralPolicyOptions" in html
+    assert 'next.tokenization={action:kind==="deterministic_hash"?"durable_token":"random_token",policy_id:""}' in html
+    assert "delete next.transform;" in html
+    assert 'next.tokenization={action:kind==="deterministic_hash"?"durable_token":"random_token",policy_id:value}' in html
+    assert "choose a central tokenization policy under Column policies" in html
+    assert ".om-policy-central:not(:disabled)" in html
     assert 'class="omkeys"' in html
     assert 'class="omwatermark"' in html
     assert 'id="btnHealthOm"' in html

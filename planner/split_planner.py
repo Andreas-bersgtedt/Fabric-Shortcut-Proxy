@@ -12,6 +12,8 @@ Rows are ordered by pk_col to keep results deterministic across retries.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 from datetime import date, datetime, timezone
 import math
 
@@ -347,7 +349,7 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
 
     rendered = [
         dialect.render_projection(col, str(index))
-        for index, col in enumerate(table.schema)
+        for index, col in enumerate(_query_projection_columns(split))
     ]
     projected = ", ".join(item[0] for item in rendered)
     outer_projected = ", ".join(item[1] for item in rendered)
@@ -410,6 +412,47 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
         "max_rows": max_rows,
     }
     return sql, params
+
+
+def arrow_fallback_columns(split: SplitDescriptor) -> list:
+    """Return source projections with only unsupported transforms stripped.
+
+    The original transform remains available to the materializer, which applies
+    those columns in Arrow after the source query returns.
+    """
+    table = split.table
+    dialect_caps = capabilities_for_db_url(config.effective_db_url(table.connection_id))
+    allow_arrow = getattr(config, "TOKENIZATION_FALLBACK", "none") == "arrow"
+    columns = []
+    for column in table.schema:
+        transform = column.transform
+        if not transform:
+            columns.append(column)
+            continue
+        backend = dialect_caps.tokenization_backend(transform.kind, "arrow" if allow_arrow else "none")
+        if backend != "arrow":
+            columns.append(column)
+            continue
+        # The query aliases the source into the output name; Arrow must therefore
+        # read the returned output name while preserving the transform metadata.
+        columns.append(replace(column, source=column.name))
+    return columns
+
+
+def _query_projection_columns(split: SplitDescriptor) -> list:
+    """Return columns used by SQL, stripping only explicitly Arrow transforms."""
+    dialect_caps = capabilities_for_db_url(
+        config.effective_db_url(split.table.connection_id)
+    )
+    allow_arrow = getattr(config, "TOKENIZATION_FALLBACK", "none") == "arrow"
+    return [
+        replace(column, transform=None)
+        if column.transform and dialect_caps.tokenization_backend(
+            column.transform.kind, "arrow" if allow_arrow else "none"
+        ) == "arrow"
+        else column
+        for column in split.table.schema
+    ]
 
 
 async def plan_ranges_for_snapshot(snap) -> bool:

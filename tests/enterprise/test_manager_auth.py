@@ -53,6 +53,21 @@ def _app() -> FastAPI:
     return app
 
 
+def _standalone_app() -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(ManagerAuthMiddleware, operator_only=True)
+
+    @app.get("/_admin/stats")
+    async def stats():
+        return {"ok": True}
+
+    @app.get("/data-bucket/object")
+    async def data_object():
+        return {"data": True}
+
+    return app
+
+
 def _client(app: FastAPI) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
@@ -102,10 +117,76 @@ async def test_wrong_and_malformed_credentials_rejected(_enable_auth):
         assert (await c.get("/_manager/api/fleet", headers={"Authorization": "Bearer s3cret"})).status_code == 401
 
 
+async def test_operator_auth_denial_is_audited_without_credentials(_enable_auth, monkeypatch):
+    from observability import audit
+
+    monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
+    async with _client(_app()) as c:
+        response = await c.get(
+            "/_manager/api/fleet",
+            headers={**_basic("operator", "wrong-secret"), "X-Request-ID": "operator-denied"},
+        )
+    assert response.status_code == 401
+    event = next(item for item in audit.recent() if item.get("request_id") == "operator-denied")
+    assert event["action"] == "operator_auth"
+    assert event["outcome"] == "denied"
+    assert event["path"] == "/_manager/api/fleet"
+    assert "wrong-secret" not in str(event)
+
+
 async def test_correct_credentials_pass(_enable_auth):
     async with _client(_app()) as c:
         r = await c.get("/_manager/api/fleet", headers=_basic("operator", "s3cret"))
         assert r.status_code == 200 and r.json() == {"ok": True}
+
+
+async def test_standalone_gate_protects_only_operator_routes(_enable_auth):
+    async with _client(_standalone_app()) as c:
+        data = await c.get("/data-bucket/object")
+        denied = await c.get("/_admin/stats")
+        s3_credential = await c.get(
+            "/_admin/stats",
+            headers={"Authorization": "AWS4-HMAC-SHA256 Credential=AKIA/example"},
+        )
+        allowed = await c.get("/_admin/stats", headers=_basic("operator", "s3cret"))
+    assert data.status_code == 200
+    assert denied.status_code == 401
+    assert s3_credential.status_code == 401
+    assert allowed.status_code == 200
+
+
+async def test_basic_identity_reaches_rbac_in_composed_stack(_enable_auth):
+    from security.authorization_middleware import AuthorizationMiddleware
+
+    app = FastAPI()
+    app.add_middleware(AuthorizationMiddleware)
+    app.add_middleware(ManagerAuthMiddleware)
+
+    @app.post("/_config/api/save")
+    async def save():
+        return {"ok": True}
+
+    async with _client(app) as c:
+        denied = await c.post("/_config/api/save")
+        allowed = await c.post(
+            "/_config/api/save", headers=_basic("operator", "s3cret")
+        )
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("enabled", "password"),
+    [(False, "configured"), (True, "")],
+)
+async def test_standalone_incomplete_auth_fails_closed_only_for_operator_routes(
+    monkeypatch, enabled, password
+):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", enabled, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", password, raising=False)
+    async with _client(_standalone_app()) as c:
+        assert (await c.get("/_admin/stats")).status_code == 503
+        assert (await c.get("/data-bucket/object")).status_code == 200
 
 
 async def test_valid_local_session_also_passes_manager_basic_gate(_enable_auth, tmp_path, monkeypatch):

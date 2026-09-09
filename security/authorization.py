@@ -18,6 +18,7 @@ PERMISSIONS = frozenset({
     "troubleshoot.read",
     "config.read",
     "config.write",
+    "storage.mount.inspect",
     "tokenization.assign",
     "tokenization.policy.read",
     "tokenization.policy.admin",
@@ -33,7 +34,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "monitor_troubleshooter": frozenset({"monitor.read", "troubleshoot.read"}),
     "config_operator": frozenset({
         "monitor.read", "troubleshoot.read", "config.read", "config.write",
-        "tokenization.assign",
+        "storage.mount.inspect", "tokenization.assign",
     }),
     "tokenization_administrator": frozenset({
         "monitor.read", "troubleshoot.read", "tokenization.assign",

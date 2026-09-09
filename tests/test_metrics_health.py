@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import base64
 
 import pytest
 
@@ -29,6 +30,11 @@ from main import app
 from observability import metrics
 
 
+def _operator_headers() -> dict[str, str]:
+    token = base64.b64encode(b"metrics-operator:metrics-secret").decode()
+    return {"Authorization": f"Basic {token}"}
+
+
 @pytest.fixture(scope="module")
 async def client():
     from demo.seed_db import seed_demo_database
@@ -40,8 +46,16 @@ async def client():
     _executor._engine = None
     _saved_layout = config.OBJECT_PATH_LAYOUT
     _saved_aliases = config.ENABLE_LEGACY_PATH_ALIASES
+    _saved_auth = (
+        config.MANAGER_AUTH_ENABLED,
+        config.MANAGER_AUTH_USERNAME,
+        config.MANAGER_AUTH_PASSWORD,
+    )
     config.OBJECT_PATH_LAYOUT = "legacy"   # this module asserts legacy warehouse/db/<table> paths
     config.ENABLE_LEGACY_PATH_ALIASES = True   # accept the 'warehouse/' request prefix
+    config.MANAGER_AUTH_ENABLED = True
+    config.MANAGER_AUTH_USERNAME = "metrics-operator"
+    config.MANAGER_AUTH_PASSWORD = "metrics-secret"
     build_snapshot(
         table_name=config.TABLE_NAME,
         num_splits=config.NUM_SPLITS,
@@ -62,6 +76,11 @@ async def client():
 
     config.OBJECT_PATH_LAYOUT = _saved_layout
     config.ENABLE_LEGACY_PATH_ALIASES = _saved_aliases
+    (
+        config.MANAGER_AUTH_ENABLED,
+        config.MANAGER_AUTH_USERNAME,
+        config.MANAGER_AUTH_PASSWORD,
+    ) = _saved_auth
     if _executor._engine is not None:
         await _executor._engine.dispose()
         _executor._engine = None
@@ -96,7 +115,7 @@ async def test_metrics_prometheus_format(client):
 
 
 async def test_admin_stats_json(client):
-    r = await client.get("/_admin/stats")
+    r = await client.get("/_admin/stats", headers=_operator_headers())
     assert r.status_code == 200
     body = r.json()
     assert "counters" in body
@@ -125,7 +144,7 @@ async def test_metrics_record_on_object_serving(client):
     data_resp = await client.get(f"/{bucket}/{snap_id_key}")
     assert data_resp.status_code == 200
 
-    stats = (await client.get("/_admin/stats")).json()
+    stats = (await client.get("/_admin/stats", headers=_operator_headers())).json()
     counters = stats["counters"]
 
     # s3_requests_total has entries for get/list.

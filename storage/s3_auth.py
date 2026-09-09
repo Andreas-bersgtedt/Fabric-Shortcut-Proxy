@@ -8,7 +8,7 @@ DigitalOcean Spaces, Oracle/IBM COS, …) by delegating to botocore's own creden
 machinery wherever possible.
 
 Split of responsibilities:
-  * **Secret material** (access keys, session tokens, role config, process command)
+    * **Secret material** (access keys, session tokens, role config)
     lives ONLY in the encrypted credential store, keyed by the mount's
     ``credential`` id — never in ``config.mounts.json`` and never logged.
   * **Non-secret connection knobs** (endpoint, region, addressing style, signature
@@ -22,7 +22,6 @@ Supported auth modes (``mode`` in the stored credential blob):
   ``profile``      — a named profile from ``~/.aws`` (incl. source_profile chains).
   ``sso``          — an IAM Identity Center profile (token cache + refresh).
   ``instance``     — the default provider chain (EC2/ECS/EKS instance role, env).
-  ``process``      — an external ``credential_process`` command.
   ``anonymous``    — unsigned requests (public buckets).
 
 boto3/botocore are imported lazily so the core install (local/NFS/SMB mounts) needs
@@ -36,8 +35,10 @@ from typing import Any, Mapping
 
 SUPPORTED_MODES = frozenset({
     "static", "session", "assume_role", "web_identity",
-    "profile", "sso", "instance", "process", "anonymous",
+    "profile", "sso", "instance", "anonymous",
 })
+
+_DISABLED_LEGACY_MODES = frozenset({"process"})
 
 _DEFAULT_SESSION_NAME = "fsp-proxy"
 
@@ -105,6 +106,11 @@ def validate_s3_auth(auth: S3AuthConfig) -> list[str]:
     problems: list[str] = []
     if not auth.mode:
         return ["missing auth 'mode' (and no static keys to infer one)"]
+    if auth.mode in _DISABLED_LEGACY_MODES:
+        return [
+            "process auth is disabled because client-controlled credential_process commands "
+            "can execute arbitrary code; migrate to web_identity, assume_role, instance, or static auth"
+        ]
     if auth.mode not in SUPPORTED_MODES:
         return [f"unsupported auth mode {auth.mode!r} (use one of {sorted(SUPPORTED_MODES)})"]
     if auth.mode in ("static", "session"):
@@ -127,9 +133,6 @@ def validate_s3_auth(auth: S3AuthConfig) -> list[str]:
     elif auth.mode in ("profile", "sso"):
         if not auth.profile:
             problems.append(f"{auth.mode} auth needs 'profile'")
-    elif auth.mode == "process":
-        if not auth.credential_process:
-            problems.append("process auth needs 'credential_process'")
     # instance / anonymous need nothing.
     return problems
 
@@ -225,6 +228,9 @@ def _client_kwargs(opts: S3ClientOptions) -> dict[str, Any]:
 
 def build_s3_client(auth: S3AuthConfig, opts: S3ClientOptions):
     """Build an authenticated boto3 S3 client for the given auth + options."""
+    problems = validate_s3_auth(auth)
+    if problems:
+        raise ValueError("; ".join(problems))
     _require_boto3()
     import boto3
 
@@ -248,8 +254,6 @@ def build_s3_client(auth: S3AuthConfig, opts: S3ClientOptions):
         return _assume_role_client(auth, opts, ckw)
     if auth.mode == "web_identity":
         return _web_identity_client(auth, opts, ckw)
-    if auth.mode == "process":
-        return _process_client(auth, opts, ckw)
     raise ValueError(f"unsupported s3 auth mode: {auth.mode!r}")
 
 
@@ -318,32 +322,6 @@ def _web_identity_client(auth: S3AuthConfig, opts: S3ClientOptions, ckw: dict):
     )
     creds = DeferredRefreshableCredentials(
         method="assume-role-with-web-identity", refresh_using=fetcher.fetch_credentials)
-    session = _botocore_session(opts.region)
-    session._credentials = creds
-    return boto3.Session(botocore_session=session).client("s3", **ckw)
-
-
-def _process_client(auth: S3AuthConfig, opts: S3ClientOptions, ckw: dict):
-    import json
-    import shlex
-    import subprocess
-
-    import boto3
-    from botocore.credentials import DeferredRefreshableCredentials
-
-    argv = shlex.split(auth.credential_process)   # no shell => no injection surface
-
-    def _refresh() -> dict:
-        out = subprocess.check_output(argv)        # noqa: S603 - operator-configured command
-        data = json.loads(out)
-        return {
-            "access_key": data["AccessKeyId"],
-            "secret_key": data["SecretAccessKey"],
-            "token": data.get("SessionToken"),
-            "expiry_time": data.get("Expiration"),
-        }
-
-    creds = DeferredRefreshableCredentials(method="custom-process", refresh_using=_refresh)
     session = _botocore_session(opts.region)
     session._credentials = creds
     return boto3.Session(botocore_session=session).client("s3", **ckw)

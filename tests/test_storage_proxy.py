@@ -266,3 +266,69 @@ async def test_mount_test_endpoint(cb_app, tmp_path):
         r2 = await c.post("/_config/api/mounts/test",
                           json={"backend": "local", "root": str(tmp_path / "missing")})
         assert r2.json()["ok"] is False
+
+
+async def test_mount_test_rejects_unapproved_custom_endpoint_before_sdk(cb_app, monkeypatch):
+    monkeypatch.setattr(config, "MOUNT_TEST_HOST_ALLOWLIST", "approved.example", raising=False)
+    async with _client(cb_app) as c:
+        response = await c.post("/_config/api/mounts/test", json={
+            "backend": "s3",
+            "root": "upstream-bucket",
+            "auth": "anonymous",
+            "endpoint": "http://169.254.169.254/latest/meta-data",
+        })
+    assert response.status_code == 400
+    assert response.json()["error"] == (
+        "custom endpoint host is not approved by MOUNT_TEST_HOST_ALLOWLIST"
+    )
+
+
+async def test_mount_test_validates_custom_endpoint_shape(cb_app, monkeypatch):
+    monkeypatch.setattr(config, "MOUNT_TEST_HOST_ALLOWLIST", "minio.internal", raising=False)
+    async with _client(cb_app) as c:
+        response = await c.post("/_config/api/mounts/test", json={
+            "backend": "s3",
+            "root": "upstream-bucket",
+            "auth": "anonymous",
+            "endpoint": "file://minio.internal/secrets",
+        })
+    assert response.status_code == 400
+    assert "HTTP(S)" in response.json()["error"]
+
+
+def test_mount_test_host_allowlist_accepts_exact_hosts_and_cidrs(monkeypatch):
+    from configbuilder.router import _mount_test_host_allowed
+
+    monkeypatch.setattr(
+        config,
+        "MOUNT_TEST_HOST_ALLOWLIST",
+        "minio.internal,10.40.0.0/16",
+        raising=False,
+    )
+    assert _mount_test_host_allowed("MINIO.INTERNAL.")
+    assert _mount_test_host_allowed("10.40.2.8")
+    assert not _mount_test_host_allowed("10.41.2.8")
+
+
+def test_mount_test_validates_azure_derived_host(monkeypatch):
+    from configbuilder.router import _validate_mount_test_destination
+
+    monkeypatch.setattr(config, "MOUNT_TEST_HOST_ALLOWLIST", "", raising=False)
+    mount = Mount(
+        "blob",
+        "azure",
+        root="container",
+        account="storageacct",
+        endpoint_suffix="internal.example",
+    )
+    assert _validate_mount_test_destination(mount) == (
+        "custom endpoint host is not approved by MOUNT_TEST_HOST_ALLOWLIST"
+    )
+
+    monkeypatch.setattr(
+        config,
+        "MOUNT_TEST_HOST_ALLOWLIST",
+        "storageacct.internal.example",
+        raising=False,
+    )
+    assert _validate_mount_test_destination(mount) == ""

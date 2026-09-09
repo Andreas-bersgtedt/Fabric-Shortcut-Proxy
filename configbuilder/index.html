@@ -456,7 +456,6 @@
           <option value="web_identity">web_identity — OIDC / EKS IRSA</option>
           <option value="profile">profile — a named ~/.aws profile</option>
           <option value="sso">sso — IAM Identity Center profile</option>
-          <option value="process">process — credential_process command</option>
         </select>
         <div class="s3f" data-modes="static session"><label>Access key</label><input id="s3AccessKey" placeholder="AKIA…" /></div>
         <div class="s3f" data-modes="static session"><label>Secret key</label><input id="s3SecretKey" type="password" placeholder="Enter secret_access_key" /></div>
@@ -466,7 +465,6 @@
         <div class="s3f" data-modes="assume_role web_identity"><label>Session name <span class="hint">(optional)</span></label><input id="s3SessionName" placeholder="fsp-proxy" /></div>
         <div class="s3f" data-modes="web_identity"><label>Web identity token file</label><input id="s3TokenFile" placeholder="/var/run/secrets/eks.amazonaws.com/serviceaccount/token" /></div>
         <div class="s3f" data-modes="profile sso"><label>Profile</label><input id="s3Profile" placeholder="default" /></div>
-        <div class="s3f" data-modes="process"><label>credential_process command</label><input id="s3Process" placeholder="/usr/local/bin/cred-helper --json" /></div>
         <div class="actions" style="display:none;"><button class="btn ghost" id="btnSaveS3Cred">Save S3 credential</button></div>
         <div class="status" id="s3CredStatus"></div>
       </div>
@@ -3028,8 +3026,6 @@ function readS3AuthForm(){
     a.session_name = $("s3SessionName").value.trim();
   }else if(mode === "profile" || mode === "sso"){
     a.profile = $("s3Profile").value.trim();
-  }else if(mode === "process"){
-    a.credential_process = $("s3Process").value.trim();
   }
   return a;
 }
@@ -3172,7 +3168,7 @@ $("btnApplyMount").onclick = async () => {
       s.className = "status err"; s.textContent = "Enter a credential id and secret, or pick default/managed_identity/anonymous."; return; }
   }
   $("btnApplyMount").disabled=true;
-  const s3CredentialEntered=m.backend==="s3" && ["s3AccessKey","s3SecretKey","s3SessionToken","s3RoleArn","s3ExternalId","s3TokenFile","s3Profile","s3Process"]
+  const s3CredentialEntered=m.backend==="s3" && ["s3AccessKey","s3SecretKey","s3SessionToken","s3RoleArn","s3ExternalId","s3TokenFile","s3Profile"]
     .some(id=>($(id).value||"").trim());
   const azureCredentialEntered=m.backend==="azure" && ["azAccountKey","azSasToken","azConnString","azTenantId","azClientId","azClientSecret","azMiClientId"]
     .some(id=>($(id).value||"").trim());

@@ -56,6 +56,7 @@ from system_config import (
     MANAGER_SUPERVISION_MODE, GENERATION_SOURCE_CONSISTENCY,
     # Control Plane
     MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT, AGENT_HOST_ALLOWLIST,
+    MOUNT_TEST_HOST_ALLOWLIST, MOUNT_TEST_REQUESTS_PER_MINUTE, MOUNT_TEST_MAX_CONCURRENCY,
     AGENT_ADVERTISE_HOST,
     HEARTBEAT_MS, HEARTBEAT_MISS_LIMIT, AGENT_RESTART_BACKOFF_SECONDS, AGENT_MAX_RAPID_RESTARTS,
     AGENT_DRAIN_GRACE_SECONDS,
@@ -212,6 +213,9 @@ _register("MANAGER_AUTH_USERNAME", "manager_auth_username", "str", MANAGER_AUTH_
 _register("MANAGER_AUTH_PASSWORD", "manager_auth_password", "str", MANAGER_AUTH_PASSWORD)
 _register("CORS_ALLOWED_ORIGINS", "cors_allowed_origins", "str", CORS_ALLOWED_ORIGINS)
 _register("AGENT_HOST_ALLOWLIST", "agent_host_allowlist", "str", AGENT_HOST_ALLOWLIST)
+_register("MOUNT_TEST_HOST_ALLOWLIST", "mount_test_host_allowlist", "str", MOUNT_TEST_HOST_ALLOWLIST)
+_register("MOUNT_TEST_REQUESTS_PER_MINUTE", "mount_test_requests_per_minute", "int", MOUNT_TEST_REQUESTS_PER_MINUTE)
+_register("MOUNT_TEST_MAX_CONCURRENCY", "mount_test_max_concurrency", "int", MOUNT_TEST_MAX_CONCURRENCY)
 
 # Entra ID auth & Azure Key Vault (issue #16)
 _register("FSP_AUTH_MODE", "auth_mode", "str", AUTH_MODE)
@@ -1012,6 +1016,9 @@ SETTINGS_META: dict[str, dict] = {
     "manager_auth_enabled": {"cat": "Cluster (scale)", "help": "Manager: require HTTP Basic auth on the whole control-plane surface (/_manager, /_config, /_monitor, /agents). /control + health probes stay open. Needs a password set. Restart to apply."},
     "manager_auth_username": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic username (default 'admin'). Restart to apply."},
     "manager_auth_password": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic password. Blank = auth off even when enabled. Restart to apply.", "secret": True},
+    "mount_test_host_allowlist": {"cat": "Cluster (scale)", "help": "Exact hosts or IP CIDRs allowed for custom S3/Azure mount test endpoints. Empty blocks custom endpoints. Restart to apply."},
+    "mount_test_requests_per_minute": {"cat": "Cluster (scale)", "help": "Maximum mount test and schema inspection requests per identity in a rolling minute. Restart to apply."},
+    "mount_test_max_concurrency": {"cat": "Cluster (scale)", "help": "Maximum concurrent mount test and schema inspection requests per process. Restart to apply."},
     "manager_ha": {"cat": "Cluster (scale)", "help": "Manager HA: run a leader lease over the shared store; only the primary supervises Agents + serves the gateway."},
     "leader_lease_ttl_ms": {"cat": "Cluster (scale)", "help": "Leader lease TTL (ms): a standby takes over if the primary doesn't renew within this window."},
     "leader_lease_renew_ms": {"cat": "Cluster (scale)", "help": "Leader lease renew interval (ms); must be < TTL."},
@@ -1230,6 +1237,9 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "manager_auth_enabled": "config.system.json",
     "manager_auth_username": "config.system.json",
     "manager_auth_password": "config.system.json",
+    "mount_test_host_allowlist": "config.system.json",
+    "mount_test_requests_per_minute": "config.system.json",
+    "mount_test_max_concurrency": "config.system.json",
     # Entra ID & Key Vault (issue #16)
     "auth_mode": "config.system.json",
     "keyvault_uri": "config.system.json",

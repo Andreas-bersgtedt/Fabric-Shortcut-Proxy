@@ -238,8 +238,8 @@ def create_manager_app() -> FastAPI:
     app.state.is_leader = not config.MANAGER_HA
     # Standalone HTTP Basic gate over the operator surface. Health probes remain
     # open; authenticated Agent credentials are sent for internal control calls.
-    app.add_middleware(ManagerAuthMiddleware)
     app.add_middleware(AuthorizationMiddleware)
+    app.add_middleware(ManagerAuthMiddleware)
     app.include_router(create_control_router(service))
 
     @app.get("/healthz")

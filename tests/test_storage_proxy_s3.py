@@ -130,8 +130,28 @@ def test_validate_flags_missing_fields():
 
 def test_all_coverage_modes_recognized():
     for mode in ("static", "session", "assume_role", "web_identity",
-                 "profile", "sso", "instance", "process", "anonymous"):
+                 "profile", "sso", "instance", "anonymous"):
         assert mode in s3_auth.SUPPORTED_MODES
+
+
+def test_legacy_process_auth_is_disabled_before_client_construction(monkeypatch):
+    auth = s3_auth.parse_s3_auth({
+        "mode": "process",
+        "credential_process": "untrusted-helper --json",
+    })
+    problems = s3_auth.validate_s3_auth(auth)
+    assert problems and "process auth is disabled" in problems[0]
+
+    require_boto3_called = False
+
+    def fail_if_called():
+        nonlocal require_boto3_called
+        require_boto3_called = True
+
+    monkeypatch.setattr(s3_auth, "_require_boto3", fail_if_called)
+    with pytest.raises(ValueError, match="process auth is disabled"):
+        s3_auth.build_s3_client(auth, s3_auth.S3ClientOptions())
+    assert require_boto3_called is False
 
 
 def test_options_defaults_path_style_for_custom_endpoint():
@@ -307,6 +327,24 @@ async def test_s3_credential_rejects_invalid(cb_app, tmp_path):
         r = await c.post("/_config/api/s3-credentials", json={
             "credential_id": "bad", "auth": {"mode": "static"}})   # missing keys
         assert r.status_code == 400 and r.json()["ok"] is False
+
+
+async def test_s3_credential_rejects_process_mode(cb_app, tmp_path):
+    from security.credential_store import CredentialStore
+    if not CredentialStore(str(tmp_path / "credentials.json")).available:
+        pytest.skip("no encryption backend available on this host")
+    async with _client(cb_app) as c:
+        r = await c.post("/_config/api/s3-credentials", json={
+            "credential_id": "legacy-process",
+            "auth": {
+                "mode": "process",
+                "credential_process": "untrusted-helper --json",
+            },
+        })
+        assert r.status_code == 400
+        assert "process auth is disabled" in " ".join(r.json()["errors"])
+        store = CredentialStore(str(tmp_path / "credentials.json"))
+        assert store.get_secret("legacy-process") is None
 
 
 async def test_s3_mount_save_persists_connection_knobs(cb_app, tmp_path, monkeypatch):

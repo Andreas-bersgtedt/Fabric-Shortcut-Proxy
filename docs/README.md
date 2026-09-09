@@ -20,6 +20,7 @@ connectivity, security, operations, and tutorials.
 | External load balancing | [EXTERNAL_LB_RUNBOOK.md](EXTERNAL_LB_RUNBOOK.md) |
 | Source-specific operations | [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md) |
 | Tokenization design and UAT | [TOKENIZATION_PUSHDOWN.md](TOKENIZATION_PUSHDOWN.md), [TOKENIZATION_UAT.md](TOKENIZATION_UAT.md), and [TOKENIZATION_MULTI_DIALECT_UAT.md](TOKENIZATION_MULTI_DIALECT_UAT.md) |
+| Audited re-identification | [manual/15-reidentification.md](manual/15-reidentification.md) |
 | Open Mirror tokenization UAT | [TOKENIZATION_OPEN_MIRROR_UAT.md](TOKENIZATION_OPEN_MIRROR_UAT.md) |
 | Frequently asked questions | [FAQ.md](FAQ.md) |
 

@@ -124,6 +124,19 @@ The Manager console and configuration UI require HTTP Basic authentication when
 different website, add that website's exact origin to `CORS_ALLOWED_ORIGINS`;
 same-origin browser access does not need a CORS entry.
 
+### 1.3 Configure audited re-identification
+
+The Config Builder **Operational > System configuration > Optional modules** panel
+contains the `reidentification` selector. Select it in the desired profile, set
+`enable_reidentification=true` in the system settings, save, and restart the
+Manager. The route is not mounted until both controls are active.
+
+Use the Security tab to manage secret-free mappings. The mapping file defaults to
+`config.reidentification.json` under `FSP_CONFIG_DIR`; set
+`REIDENTIFICATION_MAPPING_FILE` when it must live elsewhere. See
+[manual chapter 15](manual/15-reidentification.md) for the mapping schema,
+Auditor authorization, audit requirements, quotas, and rollback procedure.
+
 ---
 
 ## 2. Prerequisites (drivers)

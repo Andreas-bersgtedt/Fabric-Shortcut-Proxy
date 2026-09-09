@@ -99,6 +99,28 @@ def test_manager_auth_settings_persist_to_system(tmp_path, monkeypatch):
     assert system["manager_auth_password"] == "pw"
 
 
+def test_oidc_settings_are_catalogued_and_persist_to_system(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    catalog = {setting["key"]: setting for setting in config.settings_catalog()}
+    assert catalog["oidc_issuer"]["env"] == "FSP_OIDC_ISSUER"
+    assert catalog["oidc_issuer"]["category"] == "Operator identity"
+    assert catalog["oidc_user_claim"]["default"] in {"sub", "oid"}
+
+    updates = {
+        "oidc_issuer": "https://login.microsoftonline.com/tenant-id/v2.0",
+        "oidc_audience": "fsp-api-client-id",
+        "oidc_user_claim": "oid",
+        "oidc_jwks_url": "",
+    }
+    clean, errors = config.validate_setting_updates(updates)
+    assert not errors
+    assert clean == updates
+
+    config.write_config_updates(clean)
+    system = json.loads((tmp_path / "config.system.json").read_text())["system"]
+    assert {key: system[key] for key in updates} == updates
+
+
 # ---------------------------------------------------------------------------
 # config builder /_config API
 # ---------------------------------------------------------------------------

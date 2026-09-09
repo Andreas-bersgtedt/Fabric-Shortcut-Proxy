@@ -67,7 +67,7 @@ from system_config import (
     ENABLE_ADMIN_UI, ENABLE_REIDENTIFICATION, REIDENTIFICATION_REQUESTS_PER_MINUTE,
     REIDENTIFICATION_REQUESTS_PER_DAY, ADMIN_TOKEN,
     MANAGER_AUTH_ENABLED, MANAGER_AUTH_USERNAME, MANAGER_AUTH_PASSWORD,
-    CORS_ALLOWED_ORIGINS,
+    CORS_ALLOWED_ORIGINS, OIDC_ISSUER, OIDC_AUDIENCE, OIDC_USER_CLAIM, OIDC_JWKS_URL,
 )
 
 from connection_config import (
@@ -212,6 +212,10 @@ _register("MANAGER_AUTH_ENABLED", "manager_auth_enabled", "bool", MANAGER_AUTH_E
 _register("MANAGER_AUTH_USERNAME", "manager_auth_username", "str", MANAGER_AUTH_USERNAME)
 _register("MANAGER_AUTH_PASSWORD", "manager_auth_password", "str", MANAGER_AUTH_PASSWORD)
 _register("CORS_ALLOWED_ORIGINS", "cors_allowed_origins", "str", CORS_ALLOWED_ORIGINS)
+_register("FSP_OIDC_ISSUER", "oidc_issuer", "str", OIDC_ISSUER)
+_register("FSP_OIDC_AUDIENCE", "oidc_audience", "str", OIDC_AUDIENCE)
+_register("FSP_OIDC_USER_CLAIM", "oidc_user_claim", "str", OIDC_USER_CLAIM)
+_register("FSP_OIDC_JWKS_URL", "oidc_jwks_url", "str", OIDC_JWKS_URL)
 _register("AGENT_HOST_ALLOWLIST", "agent_host_allowlist", "str", AGENT_HOST_ALLOWLIST)
 _register("MOUNT_TEST_HOST_ALLOWLIST", "mount_test_host_allowlist", "str", MOUNT_TEST_HOST_ALLOWLIST)
 _register("MOUNT_TEST_REQUESTS_PER_MINUTE", "mount_test_requests_per_minute", "int", MOUNT_TEST_REQUESTS_PER_MINUTE)
@@ -1040,6 +1044,11 @@ SETTINGS_META: dict[str, dict] = {
     "manager_auth_enabled": {"cat": "Cluster (scale)", "help": "Manager: require HTTP Basic auth on the whole control-plane surface (/_manager, /_config, /_monitor, /agents). /control + health probes stay open. Needs a password set. Restart to apply."},
     "manager_auth_username": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic username (default 'admin'). Restart to apply."},
     "manager_auth_password": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic password. Blank = auth off even when enabled. Restart to apply.", "secret": True},
+    # External operator identity
+    "oidc_issuer": {"cat": "Operator identity", "help": "OIDC token issuer. For Entra ID use https://login.microsoftonline.com/<tenant-id>/v2.0. Restart to apply."},
+    "oidc_audience": {"cat": "Operator identity", "help": "Expected access-token audience for the FSP API, normally its Entra application client ID or Application ID URI. Restart to apply."},
+    "oidc_user_claim": {"cat": "Operator identity", "help": "Token claim mapped to the FSP user_id. Use 'oid' for a single-tenant Entra deployment; default is 'sub'. Restart to apply."},
+    "oidc_jwks_url": {"cat": "Operator identity", "help": "Optional HTTPS JWKS endpoint override. Leave blank to use issuer discovery. Restart to apply."},
     "mount_test_host_allowlist": {"cat": "Cluster (scale)", "help": "Exact hosts or IP CIDRs allowed for custom S3/Azure mount test endpoints. Empty blocks custom endpoints. Restart to apply."},
     "mount_test_requests_per_minute": {"cat": "Cluster (scale)", "help": "Maximum mount test and schema inspection requests per identity in a rolling minute. Restart to apply."},
     "mount_test_max_concurrency": {"cat": "Cluster (scale)", "help": "Maximum concurrent mount test and schema inspection requests per process. Restart to apply."},
@@ -1062,7 +1071,7 @@ SETTINGS_META: dict[str, dict] = {
 
 _SETTINGS_CAT_ORDER = [
     "Connection", "S3 endpoint", "Server", "Splits & query", "Caching",
-    "Robustness", "Admin & observability", "Entra ID & Key Vault",
+    "Robustness", "Admin & observability", "Operator identity", "Entra ID & Key Vault",
     "Iceberg (advanced)", "Data freshness",
     "Cluster (scale)", "Other",
 ]
@@ -1261,6 +1270,10 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "manager_auth_enabled": "config.system.json",
     "manager_auth_username": "config.system.json",
     "manager_auth_password": "config.system.json",
+    "oidc_issuer": "config.system.json",
+    "oidc_audience": "config.system.json",
+    "oidc_user_claim": "config.system.json",
+    "oidc_jwks_url": "config.system.json",
     "mount_test_host_allowlist": "config.system.json",
     "mount_test_requests_per_minute": "config.system.json",
     "mount_test_max_concurrency": "config.system.json",

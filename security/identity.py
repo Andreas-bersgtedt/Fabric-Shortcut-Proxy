@@ -211,8 +211,10 @@ def manager_identity(user_id: str) -> User | None:
 
 def authenticate_oidc_token(token: str) -> User | None:
     """Validate an OIDC JWT and resolve its subject through the local rights directory."""
-    issuer = os.environ.get("FSP_OIDC_ISSUER", "").strip()
-    audience = os.environ.get("FSP_OIDC_AUDIENCE", "").strip()
+    import config
+
+    issuer = os.environ.get("FSP_OIDC_ISSUER", config.OIDC_ISSUER).strip()
+    audience = os.environ.get("FSP_OIDC_AUDIENCE", config.OIDC_AUDIENCE).strip()
     if not issuer or not audience or not token:
         return None
     try:
@@ -222,9 +224,9 @@ def authenticate_oidc_token(token: str) -> User | None:
             "OIDC authentication requires the 'oidc' package extra"
         ) from exc
 
-    jwks_url = os.environ.get(
-        "FSP_OIDC_JWKS_URL", f"{issuer.rstrip('/')}/.well-known/openid-configuration"
-    ).strip()
+    jwks_url = os.environ.get("FSP_OIDC_JWKS_URL", config.OIDC_JWKS_URL).strip()
+    if not jwks_url:
+        jwks_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
     if jwks_url.endswith("/.well-known/openid-configuration"):
         jwks_url = _oidc_jwks_uri(jwks_url)
     try:
@@ -240,7 +242,7 @@ def authenticate_oidc_token(token: str) -> User | None:
     except jwt.PyJWTError:
         return None
 
-    claim_name = os.environ.get("FSP_OIDC_USER_CLAIM", "sub").strip() or "sub"
+    claim_name = os.environ.get("FSP_OIDC_USER_CLAIM", config.OIDC_USER_CLAIM).strip() or "sub"
     user_id = str(claims.get(claim_name, "")).strip()
     if not user_id:
         return None

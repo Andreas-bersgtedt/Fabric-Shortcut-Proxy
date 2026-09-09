@@ -117,6 +117,13 @@ FORWARDED_ALLOW_IPS: str = _get_str("FORWARDED_ALLOW_IPS", "forwarded_allow_ips"
 # Browser origins allowed to call the API. Empty means no cross-origin browser access.
 CORS_ALLOWED_ORIGINS: str = _get_str("CORS_ALLOWED_ORIGINS", "cors_allowed_origins", "").strip()
 
+# External OIDC authentication for operator identities. These values are
+# non-secret; access tokens are never persisted in configuration.
+OIDC_ISSUER: str = _get_str("FSP_OIDC_ISSUER", "oidc_issuer", "").strip()
+OIDC_AUDIENCE: str = _get_str("FSP_OIDC_AUDIENCE", "oidc_audience", "").strip()
+OIDC_USER_CLAIM: str = _get_str("FSP_OIDC_USER_CLAIM", "oidc_user_claim", "sub").strip() or "sub"
+OIDC_JWKS_URL: str = _get_str("FSP_OIDC_JWKS_URL", "oidc_jwks_url", "").strip()
+
 # TLS termination at the proxy (Phase 4). Provide BOTH a cert and key to serve
 # HTTPS; empty = plain HTTP (terminate TLS at a fronting LB instead).
 TLS_CERT_FILE: str = _get_str("TLS_CERT_FILE", "tls_cert_file", "")

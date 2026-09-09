@@ -2719,7 +2719,7 @@ function renderSettings(){
   const wrap = $("allSettings"); wrap.innerHTML="";
   let cat = null;
   for(const s of (state.settings||[])){
-    if(q && !(s.key.includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
+    if(q && !(s.key.includes(q) || (s.env||"").toLowerCase().includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
     if(s.category !== cat){ cat = s.category;
       const h=document.createElement("div"); h.className="setcat"; h.textContent=cat; wrap.appendChild(h);
       if(cat === "Entra ID & Key Vault"){ wrap.appendChild(buildKeyVaultPanel()); } }
@@ -4273,7 +4273,7 @@ function renderLive(){
   let cat=null, groupBody=null, groupIndex=0;
   for(const s of live.settings){
     if(s.secret) continue;                       // never edit secrets here
-    if(q && !(s.key.includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
+    if(q && !(s.key.includes(q) || (s.env||"").toLowerCase().includes(q) || (s.help||"").toLowerCase().includes(q) || (s.category||"").toLowerCase().includes(q))) continue;
     if(s.category!==cat){
       cat=s.category;
       const group=document.createElement("details"); group.className="settings-group";

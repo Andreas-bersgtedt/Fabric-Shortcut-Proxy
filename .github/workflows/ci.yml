@@ -242,6 +242,7 @@ jobs:
         with:
           cluster_name: fsp-proof
           config: deploy/kubernetes/overlays/kind/cluster.yaml
+          ignore_failed_clean: true
 
       - name: Build and load fleet images
         run: |

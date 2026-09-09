@@ -278,6 +278,13 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
 
 ### TLS
 
+- SigV4 requests must carry a valid `x-amz-date` matching the credential-scope
+  date and within 15 minutes of proxy UTC time. Keep proxy hosts synchronized
+  with a trusted time source.
+- The SigV4 verifier supports actual-body SHA-256 validation for body-bearing
+  requests and rejects missing hashes, mismatches, and `UNSIGNED-PAYLOAD` in
+  that mode. The current S3 data plane is read-only; writeback must pass the
+  consumed or streaming-verified body into this verifier before enabling writes.
 - Terminate HTTPS **at the proxy** by setting **both** `TLS_CERT_FILE` and
   `TLS_KEY_FILE` (wired into uvicorn for [main.py](../main.py) and
   [enterprise/manager.py](../enterprise/manager.py)), or terminate at a fronting load balancer.

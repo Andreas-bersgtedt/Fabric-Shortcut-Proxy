@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import pathlib
+from datetime import datetime, timedelta, timezone
+import hashlib
 
 _DB = pathlib.Path(__file__).parent / "test_auth.db"
 os.environ["DB_URL"] = f"sqlite+aiosqlite:///{_DB.as_posix()}"
@@ -36,7 +38,7 @@ _HOST = "s3.local"
 _REGION = "us-east-1"
 
 
-def _sign(method, path, query="", *, key=None, secret=None):
+def _sign(method, path, query="", *, key=None, secret=None, body=None, payload_hash=None):
     key = key or config.ACCESS_KEY_ID
     secret = secret or config.SECRET_ACCESS_KEY
     url = f"http://{_HOST}{path}"
@@ -48,7 +50,10 @@ def _sign(method, path, query="", *, key=None, secret=None):
     if query:
         from urllib.parse import parse_qsl
         params = dict(parse_qsl(query, keep_blank_values=True))
-    req = AWSRequest(method=method, url=url, headers={"host": _HOST}, params=params)
+    headers = {"host": _HOST}
+    if payload_hash is not None:
+        headers["x-amz-content-sha256"] = payload_hash
+    req = AWSRequest(method=method, url=url, headers=headers, params=params, data=body)
     S3SigV4Auth(Credentials(key, secret), "s3", _REGION).add_auth(req)
     return dict(req.headers)
 
@@ -135,6 +140,121 @@ def test_missing_authorization_rejected():
             "GET", "/auth-bucket/x", "", {"host": _HOST},
             access_key_id=config.ACCESS_KEY_ID,
             secret_access_key=config.SECRET_ACCESS_KEY,
+        )
+    assert exc.value.code == "AccessDenied"
+
+
+def _signed_request_time(headers):
+    return datetime.strptime(headers["X-Amz-Date"], "%Y%m%dT%H%M%SZ").replace(
+        tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.parametrize("offset_seconds", [-901, 901])
+def test_request_time_outside_allowed_skew_rejected(offset_seconds):
+    path = "/auth-bucket/x"
+    headers = _sign("GET", path)
+    request_time = _signed_request_time(headers)
+    with pytest.raises(SigV4Error) as exc:
+        verify_signature(
+            "GET", path, "", headers,
+            access_key_id=config.ACCESS_KEY_ID,
+            secret_access_key=config.SECRET_ACCESS_KEY,
+            now=request_time + timedelta(seconds=offset_seconds),
+        )
+    assert exc.value.code == "RequestTimeTooSkewed"
+
+
+@pytest.mark.parametrize("amz_date", ["not-a-sigv4-date", "202691T010203Z"])
+def test_malformed_request_time_rejected(amz_date):
+    path = "/auth-bucket/x"
+    headers = _sign("GET", path)
+    headers["X-Amz-Date"] = amz_date
+    with pytest.raises(SigV4Error) as exc:
+        verify_signature(
+            "GET", path, "", headers,
+            access_key_id=config.ACCESS_KEY_ID,
+            secret_access_key=config.SECRET_ACCESS_KEY,
+        )
+    assert exc.value.code == "AccessDenied"
+
+
+def test_credential_scope_date_must_match_request_date():
+    path = "/auth-bucket/x"
+    headers = _sign("GET", path)
+    authorization = headers["Authorization"]
+    scope_date = headers["X-Amz-Date"][:8]
+    headers["Authorization"] = authorization.replace(scope_date, "19990101", 1)
+    with pytest.raises(SigV4Error) as exc:
+        verify_signature(
+            "GET", path, "", headers,
+            access_key_id=config.ACCESS_KEY_ID,
+            secret_access_key=config.SECRET_ACCESS_KEY,
+        )
+    assert exc.value.code == "SignatureDoesNotMatch"
+
+
+def test_body_payload_hash_accepted():
+    path = "/auth-bucket/x"
+    body = b'{"writeback":true}'
+    payload_hash = hashlib.sha256(body).hexdigest()
+    headers = _sign("PUT", path, body=body, payload_hash=payload_hash)
+    verify_signature(
+        "PUT", path, "", headers,
+        access_key_id=config.ACCESS_KEY_ID,
+        secret_access_key=config.SECRET_ACCESS_KEY,
+        request_body=body,
+    )
+
+
+def test_modified_body_rejected():
+    path = "/auth-bucket/x"
+    body = b'{"writeback":true}'
+    payload_hash = hashlib.sha256(body).hexdigest()
+    headers = _sign("PUT", path, body=body, payload_hash=payload_hash)
+    with pytest.raises(SigV4Error) as exc:
+        verify_signature(
+            "PUT", path, "", headers,
+            access_key_id=config.ACCESS_KEY_ID,
+            secret_access_key=config.SECRET_ACCESS_KEY,
+            request_body=b'{"writeback":false}',
+        )
+    assert exc.value.code == "XAmzContentSHA256Mismatch"
+
+
+def test_body_requires_payload_hash_header():
+    path = "/auth-bucket/x"
+    body = b"future-write"
+    headers = _sign("PUT", path, body=body)
+    headers = {
+        name: value
+        for name, value in headers.items()
+        if name.lower() != "x-amz-content-sha256"
+    }
+    with pytest.raises(SigV4Error) as exc:
+        verify_signature(
+            "PUT", path, "", headers,
+            access_key_id=config.ACCESS_KEY_ID,
+            secret_access_key=config.SECRET_ACCESS_KEY,
+            request_body=body,
+        )
+    assert exc.value.code == "AccessDenied"
+
+
+def test_unsigned_payload_rejected_for_body():
+    path = "/auth-bucket/x"
+    body = b"future-write"
+    headers = _sign("PUT", path, body=body)
+    payload_header = next(
+        name for name in headers if name.lower() == "x-amz-content-sha256"
+    )
+    headers[payload_header] = "UNSIGNED-PAYLOAD"
+    with pytest.raises(SigV4Error) as exc:
+        verify_signature(
+            "PUT", path, "", headers,
+            access_key_id=config.ACCESS_KEY_ID,
+            secret_access_key=config.SECRET_ACCESS_KEY,
+            request_body=body,
         )
     assert exc.value.code == "AccessDenied"
 

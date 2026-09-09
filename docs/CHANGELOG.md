@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- SigV4 rejects malformed timestamps, credential-scope date mismatches, and
+  requests outside a 15-minute clock-skew window. The verifier can also require
+  and validate the signed SHA-256 of an actual request body for future writeback.
 - HTTP-configured S3 process credentials are rejected before persistence or client
   construction. The Config Builder no longer accepts executable commands for S3 auth.
 - Mount test and schema inspection routes require the dedicated

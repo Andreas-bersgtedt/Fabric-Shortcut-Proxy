@@ -333,6 +333,18 @@ AGENT_HOST_ALLOWLIST: str = _get_str(
     "AGENT_HOST_ALLOWLIST", "agent_host_allowlist", "127.0.0.1,0.0.0.0,::1,::,localhost"
 ).strip()
 
+# Manager: exact hosts or IP networks permitted for transient custom storage
+# endpoint tests. Empty blocks custom endpoints; SDK-derived cloud endpoints remain available.
+MOUNT_TEST_HOST_ALLOWLIST: str = _get_str(
+    "MOUNT_TEST_HOST_ALLOWLIST", "mount_test_host_allowlist", ""
+).strip()
+MOUNT_TEST_REQUESTS_PER_MINUTE: int = _get_int(
+    "MOUNT_TEST_REQUESTS_PER_MINUTE", "mount_test_requests_per_minute", 10
+)
+MOUNT_TEST_MAX_CONCURRENCY: int = _get_int(
+    "MOUNT_TEST_MAX_CONCURRENCY", "mount_test_max_concurrency", 2
+)
+
 # Manager: control-plane REST bind address
 CONTROL_HOST: str = _get_str("CONTROL_HOST", "control_host", "127.0.0.1")
 

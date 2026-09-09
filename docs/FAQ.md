@@ -28,7 +28,7 @@ Three, all served read-only with ranged reads and one-level folder browsing:
 | `s3` | a native **S3 / MinIO / S3-compatible** bucket | ranged streaming + list pagination |
 | `azure` | an **Azure Blob / ADLS Gen2** container | flat blob and hierarchical namespace |
 
-Upstream credentials are **mediated**: clients never see them. They are held encrypted (DPAPI on Windows, Fernet elsewhere) and resolved by id. Outbound S3 supports static keys, session tokens, assume-role, web-identity (OIDC/IRSA), profiles, SSO, instance role, credential-process, and anonymous; Azure supports connection string, account key, SAS, service principal, managed identity, DefaultAzureCredential, and anonymous.
+Upstream credentials are **mediated**: clients never see them. They are held encrypted (DPAPI on Windows, Fernet elsewhere) and resolved by id. Outbound S3 supports static keys, session tokens, assume-role, web-identity (OIDC/IRSA), profiles, SSO, instance role, and anonymous; Azure supports connection string, account key, SAS, service principal, managed identity, DefaultAzureCredential, and anonymous. Version 2.9.1 rejects legacy S3 process credentials; migrate them to web identity, assume-role, instance-role, or static credentials.
 
 ## Can credentials live in Azure Key Vault?
 

@@ -202,6 +202,14 @@ async def test_agent_manager_path_hint_when_standalone(monkeypatch):
         assert "Manager" in r.json()["detail"]
 
 
+async def test_manager_control_paths_do_not_bypass_agent_sigv4(monkeypatch):
+    monkeypatch.setattr(config, "REQUIRE_SIGV4", True)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://agent") as c:
+        assert (await c.get("/agents")).status_code == 403
+        assert (await c.post("/control/register")).status_code == 403
+
+
 async def test_agent_favicon_serves_brand_icon():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                  base_url="http://agent") as c:

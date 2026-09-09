@@ -618,18 +618,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 from security.authorization_middleware import AuthorizationMiddleware
+from security.operator_auth import ManagerAuthMiddleware, is_operator_route
+
+_STANDALONE_OPERATOR_PREFIXES = ("/_admin", "/_config", "/_monitor")
 
 app.add_middleware(AuthorizationMiddleware)
+app.add_middleware(
+    ManagerAuthMiddleware,
+    operator_only=True,
+    operator_prefixes=_STANDALONE_OPERATOR_PREFIXES,
+)
 
 
 # ---------------------------------------------------------------------------
 # SigV4 authentication (H3). Health/readiness/metrics and CORS preflight
 # remain public. Administrative and configuration routes require authentication.
-# are exempt too: the console lives on the Manager, and an Agent bounces /_manager
+# The console lives on the Manager, and an Agent bounces /_manager
 # there (see below) instead of rejecting it with a confusing SigV4 403.
 # ---------------------------------------------------------------------------
 _AUTH_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/favicon.ico")
-_AUTH_REQUIRED_PREFIXES = ("/_admin", "/_config", "/_monitor")
 _INTERNAL_MONITOR_HEADER = "x-fsp-internal-monitor"
 
 
@@ -648,6 +655,10 @@ async def sigv4_auth_middleware(request, call_next):
         return await call_next(request)
     path = request.url.path
     if any(path == p or path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+    if is_operator_route(path, _STANDALONE_OPERATOR_PREFIXES) or is_operator_route(
+        path, ("/_manager",)
+    ):
         return await call_next(request)
     if path.startswith("/_monitor/api/") and (
         request.headers.get(_INTERNAL_MONITOR_HEADER)
@@ -669,7 +680,7 @@ async def sigv4_auth_middleware(request, call_next):
         except Exception:  # noqa: BLE001 - proxy lookup must never break the front door
             mounted = False
 
-    # REQUIRE_SIGV4 controls both object and administrative request signing.
+    # SigV4 controls the S3 data plane only; operator routes use Basic/session/OIDC.
     require = config.REQUIRE_SIGV4 or (mounted and config.ENFORCE_MOUNT_AUTH)
     if require:
         try:

@@ -118,11 +118,12 @@ The builder is **off by default** and accepts database credentials, so expose it
 trusted administrative network. The Manager bootstrap installs the supported Python database
 drivers. See [BACKUP_RESTORE.md](BACKUP_RESTORE.md) before moving configuration between hosts.
 
-The Manager console and configuration UI require HTTP Basic authentication when
-`MANAGER_AUTH_ENABLED=1` (the default). Use the configured
-`MANAGER_AUTH_USERNAME` and `MANAGER_AUTH_PASSWORD`. If the UI is embedded in a
-different website, add that website's exact origin to `CORS_ALLOWED_ORIGINS`;
-same-origin browser access does not need a CORS entry.
+Standalone and Manager operator routes require Basic, local-session, or OIDC
+authentication. `MANAGER_AUTH_ENABLED=1` is the default; disabled auth or a blank
+`MANAGER_AUTH_PASSWORD` returns 503 on operator routes. S3 data routes remain
+independent and continue to use SigV4 settings. If the UI is embedded in a different
+website, add that website's exact origin to `CORS_ALLOWED_ORIGINS`; same-origin
+browser access does not need a CORS entry.
 
 ### 1.3 Configure audited re-identification
 
@@ -834,11 +835,14 @@ Install the SDK for native backends: `pip install '.[s3proxy]'` (S3),
 | Backend | `root` is | Extra | Auth modes (via `credential` blob or `auth`) |
 |---|---|---|---|
 | `local` | a filesystem path (NFS/SMB mount) | — | n/a |
-| `s3` | the upstream S3 bucket | `.[s3proxy]` | static, session, assume_role, web_identity, profile, sso, instance, process, anonymous |
+| `s3` | the upstream S3 bucket | `.[s3proxy]` | static, session, assume_role, web_identity, profile, sso, instance, anonymous |
 | `azure` | the container | `.[azureblob]` | connection_string, account_key, sas, aad_client_secret, managed_identity, default, anonymous |
 
 Upstream secrets live encrypted in the credential store and are set in the config
 builder (**Sources → mount editor**) or via `/_config/api/{s3,azure}-credentials`.
+S3 `process` credentials are rejected as of 2.9.1 because an HTTP-configured command
+could execute with the proxy's operating-system privileges. Replace stored process
+credentials with `web_identity`, `assume_role`, `instance`, or `static` credentials.
 
 ### 14.3 Access keys & authorization
 
@@ -853,6 +857,9 @@ allowed buckets/prefixes:
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access |
 | `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
+| `MOUNT_TEST_HOST_ALLOWLIST` | *(empty)* | Exact hosts or IP CIDRs allowed for custom S3/Azure mount test endpoints |
+| `MOUNT_TEST_REQUESTS_PER_MINUTE` | `10` | Mount test/inspection requests allowed per identity in a rolling minute |
+| `MOUNT_TEST_MAX_CONCURRENCY` | `2` | Concurrent mount test/inspection requests allowed per process |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |
 
 Manage keys in the Config Builder **Security → Access keys** panel (create returns

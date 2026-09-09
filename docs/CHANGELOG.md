@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- HTTP-configured S3 process credentials are rejected before persistence or client
+  construction. The Config Builder no longer accepts executable commands for S3 auth.
+- Mount test and schema inspection routes require the dedicated
+  `storage.mount.inspect` permission instead of generic `config.write`.
+- Custom S3 and Azure mount-test endpoints must match
+  `MOUNT_TEST_HOST_ALLOWLIST`; malformed URLs and embedded credentials are
+  rejected before credential resolution or SDK construction.
+- Mount test and schema inspection requests have per-identity rolling-minute and
+  process concurrency limits. Allowed, failed, rate-limited, and authorization-denied
+  outcomes emit audit events without request bodies or provider output.
+- Standalone and Manager operator routes share the Basic/session/OIDC boundary and
+  named RBAC map. Disabled or incomplete operator auth returns 503, and S3 SigV4
+  credentials no longer authorize operator routes.
+
 ## [2.9.0]: 2026-09-09
 
 ### Added

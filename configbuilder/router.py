@@ -16,8 +16,11 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import hmac
+import ipaddress
 import os
 import pathlib
+import re
+from urllib.parse import urlsplit
 import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -2004,8 +2007,6 @@ def _s3_auth_blob(auth) -> dict:
             blob["session_name"] = auth.session_name
     elif auth.mode in ("profile", "sso"):
         blob["profile"] = auth.profile
-    elif auth.mode == "process":
-        blob["credential_process"] = auth.credential_process
     return blob
 
 
@@ -2559,6 +2560,10 @@ async def inspect_mount(request: Request) -> JSONResponse:
         mount = sm._mount_from_json({**body, "columns": []})
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": _clean_error(exc)})
+    _set_mount_audit_context(request, mount)
+    destination_error = _validate_mount_test_destination(mount)
+    if destination_error:
+        return JSONResponse({"ok": False, "error": destination_error}, status_code=400)
     try:
         from storage.objectstore_reader import reader_for_mount
         schema = reader_for_mount(mount).schema()
@@ -2577,13 +2582,15 @@ async def test_mount(request: Request) -> JSONResponse:
     root = str(body.get("root") or "").strip()
     prefix = str(body.get("prefix") or "").strip().strip("/")
     if backend == "s3":
-        return await _test_s3_mount(body, root, prefix)
+        return await _test_s3_mount(request, body, root, prefix)
     if backend == "azure":
-        return await _test_azure_mount(body, root, prefix)
+        return await _test_azure_mount(request, body, root, prefix)
     if backend != "local":
         return JSONResponse({"ok": False, "error": f"backend {backend!r} not testable (use 'local', 's3', or 'azure')"})
     if not root:
         return JSONResponse({"ok": False, "error": "root path is required"})
+    request.state.mount_provider_id = "local"
+    request.state.mount_destination = "local"
     base = os.path.join(root, *prefix.split("/")) if prefix else root
     if not os.path.isdir(base):
         return JSONResponse({"ok": False, "error": f"not a directory: {base!r} (mount the share first)"})
@@ -2599,7 +2606,75 @@ async def test_mount(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "path": base, "sample": entries, "sample_count": len(entries)})
 
 
-async def _test_s3_mount(body: dict, root: str, prefix: str) -> JSONResponse:
+def _mount_test_host_allowed(host: str) -> bool:
+    value = host.strip().lower().rstrip(".")
+    entries = (
+        item.strip().lower() for item in config.MOUNT_TEST_HOST_ALLOWLIST.split(",")
+    )
+    for entry in entries:
+        if not entry:
+            continue
+        if value == entry.rstrip("."):
+            return True
+        try:
+            if ipaddress.ip_address(value) in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _set_mount_audit_context(request: Request, mount) -> None:
+    endpoint = (mount.endpoint or "").strip()
+    if endpoint:
+        try:
+            request.state.mount_destination = urlsplit(endpoint).hostname or "invalid"
+        except ValueError:
+            request.state.mount_destination = "invalid"
+    elif mount.backend == "azure" and mount.account:
+        suffix = mount.endpoint_suffix or "blob.core.windows.net"
+        request.state.mount_destination = f"{mount.account}.{suffix.strip('.')}"
+    else:
+        request.state.mount_destination = "sdk-default"
+
+
+def _validate_mount_test_destination(mount) -> str:
+    endpoint = (mount.endpoint or "").strip()
+    if not endpoint:
+        if mount.backend != "azure" or not mount.endpoint_suffix:
+            return ""
+        account = (mount.account or "").strip().lower()
+        suffix = mount.endpoint_suffix.strip().lower().strip(".")
+        if not re.fullmatch(r"[a-z0-9]{3,24}", account):
+            return "azure account name is invalid"
+        trusted_suffixes = {
+            "blob.core.windows.net",
+            "blob.core.chinacloudapi.cn",
+            "blob.core.usgovcloudapi.net",
+            "blob.core.cloudapi.de",
+        }
+        if suffix not in trusted_suffixes and not _mount_test_host_allowed(f"{account}.{suffix}"):
+            return "custom endpoint host is not approved by MOUNT_TEST_HOST_ALLOWLIST"
+        return ""
+    try:
+        parsed = urlsplit(endpoint)
+        port = parsed.port
+    except ValueError:
+        return "custom endpoint URL is invalid"
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return "custom endpoint must be an HTTP(S) URL with a hostname"
+    if parsed.username or parsed.password:
+        return "custom endpoint must not contain credentials"
+    if parsed.query or parsed.fragment:
+        return "custom endpoint must not contain a query string or fragment"
+    if port is not None and not 1 <= port <= 65535:
+        return "custom endpoint port is invalid"
+    if not _mount_test_host_allowed(parsed.hostname):
+        return "custom endpoint host is not approved by MOUNT_TEST_HOST_ALLOWLIST"
+    return ""
+
+
+async def _test_s3_mount(request: Request, body: dict, root: str, prefix: str) -> JSONResponse:
     """Build the s3 backend from the posted mount and list one folder level."""
     import storage.mounts as sm
     from storage.s3_auth import resolve_s3_auth, validate_s3_auth
@@ -2608,6 +2683,10 @@ async def _test_s3_mount(body: dict, root: str, prefix: str) -> JSONResponse:
     if not root:
         return JSONResponse({"ok": False, "error": "s3 backend needs 'root' (the upstream bucket)"})
     mount = sm._mount_from_json({**body, "backend": "s3", "prefix": prefix})
+    _set_mount_audit_context(request, mount)
+    destination_error = _validate_mount_test_destination(mount)
+    if destination_error:
+        return JSONResponse({"ok": False, "error": destination_error}, status_code=400)
     try:
         auth = resolve_s3_auth(mount)
     except Exception as exc:  # noqa: BLE001 - never leak secret material
@@ -2615,6 +2694,7 @@ async def _test_s3_mount(body: dict, root: str, prefix: str) -> JSONResponse:
     problems = validate_s3_auth(auth)
     if problems:
         return JSONResponse({"ok": False, "error": "; ".join(problems)})
+    request.state.mount_provider_id = auth.mode
     try:
         store = build_s3_store(mount)
         entries = store.list_dir(mount.prefix)
@@ -2625,7 +2705,7 @@ async def _test_s3_mount(body: dict, root: str, prefix: str) -> JSONResponse:
                          "sample": sample, "sample_count": len(sample)})
 
 
-async def _test_azure_mount(body: dict, root: str, prefix: str) -> JSONResponse:
+async def _test_azure_mount(request: Request, body: dict, root: str, prefix: str) -> JSONResponse:
     """Build the azure backend from the posted mount and list one folder level."""
     import storage.mounts as sm
     from storage.azure_auth import resolve_azure_auth, validate_azure_auth
@@ -2634,6 +2714,10 @@ async def _test_azure_mount(body: dict, root: str, prefix: str) -> JSONResponse:
     if not root:
         return JSONResponse({"ok": False, "error": "azure backend needs 'root' (the container)"})
     mount = sm._mount_from_json({**body, "backend": "azure", "prefix": prefix})
+    _set_mount_audit_context(request, mount)
+    destination_error = _validate_mount_test_destination(mount)
+    if destination_error:
+        return JSONResponse({"ok": False, "error": destination_error}, status_code=400)
     try:
         auth = resolve_azure_auth(mount)
     except Exception as exc:  # noqa: BLE001 - never leak secret material
@@ -2641,6 +2725,7 @@ async def _test_azure_mount(body: dict, root: str, prefix: str) -> JSONResponse:
     problems = validate_azure_auth(auth)
     if problems:
         return JSONResponse({"ok": False, "error": "; ".join(problems)})
+    request.state.mount_provider_id = auth.mode
     try:
         store = build_azure_store(mount)
         entries = store.list_dir(mount.prefix)

@@ -287,12 +287,13 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
 
 ### Manager and browser access
 
-The Manager operator surfaces require HTTP Basic authentication when
-`MANAGER_AUTH_ENABLED=1` (the default). Configure `MANAGER_AUTH_USERNAME` and
-`MANAGER_AUTH_PASSWORD` in the systemd environment file or another protected
-secret source. This protects `/_manager`, `/_config`, `/_monitor`, `/agents`, and
-the Manager control routes. Health and readiness probes remain unauthenticated so
-service monitors and supervised Agents can check liveness.
+Standalone and Manager operator surfaces require Basic, local-session, or OIDC
+authentication. `MANAGER_AUTH_ENABLED=1` is the default. Disabled authentication or
+a blank `MANAGER_AUTH_PASSWORD` fails closed with 503 on operator routes. Configure
+the password in the systemd environment file or another protected secret source.
+This protects `/_admin`, `/_manager`, `/_config`, `/_monitor`, `/agents`, and Manager
+control routes. S3 data routes use SigV4 independently. Health and readiness probes
+remain unauthenticated.
 
 Browser requests from another origin are blocked unless that origin is listed in
 `CORS_ALLOWED_ORIGINS` as a comma-separated list, for example

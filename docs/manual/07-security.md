@@ -113,13 +113,14 @@ connection strings and access keys, and survives restarts, hydrating `DB_URL` an
 
 Supported outbound auth modes:
 
-- **S3:** static, session, assume_role, web_identity, profile, sso, instance, process,
-  anonymous.
+- **S3:** static, session, assume_role, web_identity, profile, sso, instance, anonymous.
 - **Azure:** connection_string, account_key, sas, aad_client_secret, managed_identity,
   default, anonymous.
 
 A credential-less mount must declare an explicit `auth` mode (for example `anonymous` or
 `instance` for S3; `default`, `managed_identity`, or `anonymous` for Azure).
+Version 2.9.1 rejects legacy S3 `process` credentials before client construction. Migrate
+those records to `web_identity`, `assume_role`, `instance`, or `static` credentials.
 
 ## 7.6 Path safety on mounts
 
@@ -138,7 +139,11 @@ with nginx is in [SSL_Deployment.md](../../SSL_Deployment.md).
 
 With `ENABLE_AUDIT_LOG=1`, every mounted-object access is recorded with the identity,
 bucket, key, and byte count, and mount auth denials are recorded too. Recent events are
-available at `GET /_config/api/audit`; the file is set by `AUDIT_LOG_FILE`. Behind a private
+kept in the in-memory audit ring. Mount test and schema inspection events record the
+request ID, identity, operation, provider mode, destination host, status, and outcome.
+Request bodies, credentials, local paths, and provider output are not recorded.
+Recent events are available at `GET /_config/api/audit`; the file is set by
+`AUDIT_LOG_FILE`. Behind a private
 load balancer, set `forwarded_allow_ips` so the audit log records the real client IP rather
 than the load balancer's.
 

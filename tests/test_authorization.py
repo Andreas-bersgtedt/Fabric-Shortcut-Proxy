@@ -38,6 +38,14 @@ def test_context_scoped_grant_matches_only_its_context():
     assert not user.can("config.write")
 
 
+def test_mount_inspection_is_separate_from_config_write():
+    editor = User("editor", grants=(PermissionGrant("config.write"),))
+    operator = User("operator", roles=("config_operator",))
+
+    assert not editor.can("storage.mount.inspect")
+    assert operator.can("storage.mount.inspect")
+
+
 def test_wildcard_context_grant_and_disabled_user():
     user = User(
         "support",
@@ -476,6 +484,12 @@ def test_authorization_route_map_separates_security_from_config():
     assert _permission("/_config/api/credentials", "POST") == "security.credentials.admin"
     assert _permission("/_config/api/access-keys/key", "DELETE") == "security.credentials.admin"
     assert _permission("/_config/api/save", "POST") == "config.write"
+    assert _permission("/_config/api/mounts/test", "POST") == "storage.mount.inspect"
+    assert _permission("/_config/api/mounts/inspect", "POST") == "storage.mount.inspect"
+    assert _permission("/_admin/stats", "GET") == "monitor.read"
+    assert _permission("/_admin/refresh", "POST") == "system.admin"
+    assert _permission("/agents", "GET") == "monitor.read"
+    assert _permission("/control/register", "POST") == "system.admin"
     assert _permission("/_config/api/tokenization/policies", "GET") == "tokenization.policy.read"
     assert _permission("/_config/api/tokenization/policies", "POST") == "tokenization.policy.admin"
     assert _permission("/_config/api/tokenization-keys", "GET") == "security.metadata.read"
@@ -531,6 +545,108 @@ async def test_authorization_middleware_enforces_operator_functions(monkeypatch)
     assert allowed.status_code == 200, allowed.text
     assert allowed.json()["user"] == "admin-token"
     assert write.status_code == 200
+
+
+async def test_mount_operation_rate_limit_is_audited(monkeypatch):
+    import httpx
+    import config
+    from fastapi import FastAPI
+    from observability import audit
+    from security.authorization_middleware import AuthorizationMiddleware
+
+    monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "0")
+    monkeypatch.setattr(config, "MOUNT_TEST_REQUESTS_PER_MINUTE", 1, raising=False)
+    monkeypatch.setattr(config, "MOUNT_TEST_MAX_CONCURRENCY", 1, raising=False)
+    monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
+    app = FastAPI()
+    app.add_middleware(AuthorizationMiddleware)
+
+    @app.post("/_config/api/mounts/test")
+    async def mount_test(request: Request):
+        request.state.mount_provider_id = "anonymous"
+        request.state.mount_destination = "sdk-default"
+        return {"ok": True}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        allowed = await client.post(
+            "/_config/api/mounts/test", headers={"X-Request-ID": "mount-rate-allowed"}
+        )
+        denied = await client.post(
+            "/_config/api/mounts/test", headers={"X-Request-ID": "mount-rate-denied"}
+        )
+    assert allowed.status_code == 200
+    assert denied.status_code == 429
+    event = next(item for item in audit.recent() if item.get("request_id") == "mount-rate-denied")
+    assert event["action"] == "mount_operation"
+    assert event["outcome"] == "denied"
+    assert event["reason"] == "request limit exceeded"
+
+
+async def test_mount_operation_concurrency_limit(monkeypatch):
+    import asyncio
+    import httpx
+    import config
+    from fastapi import FastAPI
+    from security.authorization_middleware import AuthorizationMiddleware
+
+    monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "0")
+    monkeypatch.setattr(config, "MOUNT_TEST_REQUESTS_PER_MINUTE", 10, raising=False)
+    monkeypatch.setattr(config, "MOUNT_TEST_MAX_CONCURRENCY", 1, raising=False)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    app = FastAPI()
+    app.add_middleware(AuthorizationMiddleware)
+
+    @app.post("/_config/api/mounts/inspect")
+    async def mount_inspect():
+        entered.set()
+        await release.wait()
+        return {"ok": True}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        first_task = asyncio.create_task(client.post("/_config/api/mounts/inspect"))
+        await entered.wait()
+        second = await client.post("/_config/api/mounts/inspect")
+        release.set()
+        first = await first_task
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["error"] == "concurrency limit exceeded"
+
+
+async def test_denied_mount_operation_is_audited_without_body(monkeypatch):
+    import httpx
+    import config
+    from fastapi import FastAPI
+    from observability import audit
+    from security.authorization_middleware import AuthorizationMiddleware
+
+    monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
+    monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
+    app = FastAPI()
+    app.add_middleware(AuthorizationMiddleware)
+
+    @app.post("/_config/api/mounts/test")
+    async def mount_test():
+        return {"ok": True}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/_config/api/mounts/test",
+            headers={"X-Request-ID": "mount-auth-denied"},
+            json={"credential_process": "secret-command", "endpoint": "http://internal/path"},
+        )
+    assert response.status_code == 401
+    event = next(item for item in audit.recent() if item.get("request_id") == "mount-auth-denied")
+    assert event["destination"] == "-"
+    assert event["provider_id"] == "-"
+    assert "secret-command" not in str(event)
 
 
 async def test_monitor_troubleshooter_session_is_read_only_across_route_groups(tmp_path, monkeypatch):

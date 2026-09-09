@@ -142,6 +142,31 @@ def test_validate_config_passes_with_defaults():
     config.validate_config()  # should not raise
 
 
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "10.20.30.40", "proxy.internal"])
+def test_non_loopback_operator_bind_requires_complete_auth(monkeypatch, host):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "")
+
+    with pytest.raises(ValueError, match="MANAGER_AUTH_PASSWORD must be set"):
+        config.validate_config(operator_bind_host=host)
+
+
+def test_non_loopback_operator_bind_rejects_disabled_auth(monkeypatch):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "unused")
+
+    with pytest.raises(ValueError, match="MANAGER_AUTH_ENABLED must be enabled"):
+        config.validate_config(operator_bind_host="0.0.0.0")
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "[::1]", "localhost"])
+def test_loopback_operator_bind_allows_incomplete_auth(monkeypatch, host):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "")
+
+    config.validate_config(operator_bind_host=host)
+
+
 def test_validate_config_rejects_bad_num_splits(monkeypatch):
     monkeypatch.setattr(config, "NUM_SPLITS", 0)
     with pytest.raises(ValueError, match="NUM_SPLITS"):

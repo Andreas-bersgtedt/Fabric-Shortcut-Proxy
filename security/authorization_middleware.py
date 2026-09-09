@@ -22,6 +22,23 @@ _MOUNT_OPERATIONS = {
     "/_config/api/mounts/test": "test",
     "/_config/api/mounts/inspect": "inspect",
 }
+_CONFIG_RESOURCES = (
+    "apply",
+    "audit",
+    "bootstrap",
+    "connect",
+    "connections",
+    "current",
+    "inspect",
+    "manager",
+    "modules",
+    "mounts",
+    "open-mirror",
+    "save",
+    "settings",
+    "sources",
+    "tokenization-key-references",
+)
 
 
 def _audit_reidentification(request: Request, status: int, reason: str, identity: str = "") -> bool:
@@ -98,7 +115,10 @@ def _permission(path: str, method: str) -> str | None:
         return "monitor.read"
     if path.startswith("/_manager/api/"):
         return "system.admin" if method not in {"GET", "HEAD"} else "monitor.read"
-    if path.startswith("/_config/api/"):
+    if any(
+        path == f"/_config/api/{resource}" or path.startswith(f"/_config/api/{resource}/")
+        for resource in _CONFIG_RESOURCES
+    ):
         return "config.write" if method not in {"GET", "HEAD"} else "config.read"
     return None
 

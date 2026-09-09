@@ -99,7 +99,7 @@ def _source_connect_hint(exc: Exception) -> str:
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
-    config.validate_config()
+    config.validate_config(operator_bind_host=config.HOST)
 
     log.info(
         "startup",

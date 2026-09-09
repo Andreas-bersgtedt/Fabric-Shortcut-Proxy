@@ -289,8 +289,10 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
 
 Standalone and Manager operator surfaces require Basic, local-session, or OIDC
 authentication. `MANAGER_AUTH_ENABLED=1` is the default. Disabled authentication or
-a blank `MANAGER_AUTH_PASSWORD` fails closed with 503 on operator routes. Configure
-the password in the systemd environment file or another protected secret source.
+a blank `MANAGER_AUTH_PASSWORD` prevents startup when `HOST` (standalone) or
+`CONTROL_HOST` (Manager) is not loopback. Loopback-only development instances may
+start without complete credentials, but operator requests still fail closed with 503.
+Configure the password in the systemd environment file or another protected secret source.
 This protects `/_admin`, `/_manager`, `/_config`, `/_monitor`, `/agents`, and Manager
 control routes. S3 data routes use SigV4 independently. Health and readiness probes
 remain unauthenticated.
@@ -353,6 +355,66 @@ terminate TLS before accepting bearer credentials.
 | `AUDIT_LOG_FILE` | *(unset)* | Optional append-only audit file |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)* | Serve HTTPS at the proxy |
 
+### Operator deployment and recovery
+
+Upgrade from a release before 2.9.1 in this order:
+
+1. Create a random `MANAGER_AUTH_PASSWORD` in the deployment secret store. Set
+  `MANAGER_AUTH_ENABLED=1` and `FSP_AUTHZ_ENFORCE=1`.
+2. Assign each operator the narrowest built-in role that covers the work:
+  `viewer`, `config_operator`, `tokenization_administrator`,
+  `security_administrator`, `user_administrator`, or `system_administrator`.
+3. Terminate TLS at the process or ingress before exposing an operator port.
+4. Deploy one instance, run the verification commands below, then continue the rollout.
+
+For Kubernetes, inject `MANAGER_AUTH_PASSWORD` from a Secret into the `fsp-manager`
+Deployment. Rotate it by updating the Secret and restarting the Deployment:
+
+```bash
+kubectl -n <namespace> create secret generic fsp-operator-auth \
+  --from-literal=MANAGER_AUTH_PASSWORD='<new-random-value>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n <namespace> rollout restart deployment/fsp-manager
+kubectl -n <namespace> rollout status deployment/fsp-manager
+```
+
+Do not disable authentication to recover access. For break-glass recovery, use host
+console access or `kubectl` access to replace the protected password, restart only the
+affected workload, verify access, and rotate the temporary password again. This does
+not create a network-accessible bypass. Record the operator, ticket, and rotation time
+in the incident log.
+
+To roll back the application, restore the previous image while retaining the current
+operator password, TLS configuration, user directory, and credential store. If the old
+release cannot consume the current configuration, first isolate the operator service
+from non-loopback networks, restore the pre-upgrade `.fspbackup` described in
+[BACKUP_RESTORE.md](BACKUP_RESTORE.md), and start the prior image. Never solve a rollback
+failure by publishing an unauthenticated operator port.
+
+### Production verification
+
+Run these checks against both the standalone URL and the Manager URL after deployment.
+Use HTTPS in production. A protected endpoint must reject an anonymous request and
+accept the configured operator:
+
+```bash
+curl -i https://<standalone-host>:9000/_admin/stats
+curl -i -u '<operator>:<password>' https://<standalone-host>:9000/_admin/stats
+curl -i https://<manager-host>:9200/_manager/api/health
+curl -i -u '<operator>:<password>' https://<manager-host>:9200/_manager/api/health
+```
+
+The anonymous responses must be 401. The authenticated responses must be 200 for an
+authorized role or 403 for an authenticated role that lacks the named permission.
+Also confirm `/healthz` and `/readyz` return 200 without credentials, and confirm an S3
+request still requires SigV4 rather than Basic credentials. Review the audit log for
+the denied operator requests and verify that it contains no password or authorization
+header values.
+
+The control design and release criteria are tracked in
+[the 2.9.0 security review](../devplan/290_sec_review.md), GitHub Epic #53, and child
+issues #54 through #62.
+
 ## Deployment Checklist
 
 Before deploying to production:
@@ -362,6 +424,11 @@ Before deploying to production:
 - [ ] `.gitignore` includes `config.*.json` entries
 - [ ] Run `git log --all -p` to verify no recent commits contain passwords
 - [ ] Test that application starts successfully with only env vars (no JSON creds)
+- [ ] Confirm non-loopback startup fails when operator auth is disabled or incomplete
+- [ ] Confirm anonymous operator requests return 401 and authorized requests return 200
+- [ ] Confirm TLS protects every non-loopback operator endpoint
+- [ ] Confirm operator users have least-privilege roles
+- [ ] Test password rotation and the rollback procedure in a non-production environment
 - [ ] Review logs for any credential leaks using `scrub_secrets()`
 - [ ] Store credentials in:
   - Azure Key Vault (recommended for Azure deployments)

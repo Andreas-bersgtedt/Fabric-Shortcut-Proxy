@@ -177,7 +177,7 @@ def create_manager_app() -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         configure_logging()
-        config.validate_config()
+        config.validate_config(operator_bind_host=config.CONTROL_HOST)
         if os.environ.get("KUBERNETES_SERVICE_HOST") and config.MANAGER_SUPERVISION_MODE != "external":
             raise RuntimeError(
                 "Manager local supervision is disabled in Kubernetes because it would spawn "

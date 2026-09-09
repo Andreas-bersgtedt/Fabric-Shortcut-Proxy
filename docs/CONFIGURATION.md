@@ -120,7 +120,8 @@ drivers. See [BACKUP_RESTORE.md](BACKUP_RESTORE.md) before moving configuration 
 
 Standalone and Manager operator routes require Basic, local-session, or OIDC
 authentication. `MANAGER_AUTH_ENABLED=1` is the default; disabled auth or a blank
-`MANAGER_AUTH_PASSWORD` returns 503 on operator routes. S3 data routes remain
+`MANAGER_AUTH_PASSWORD` prevents non-loopback startup. Loopback-only development
+instances still return 503 on operator routes until credentials are complete. S3 data routes remain
 independent and continue to use SigV4 settings. If the UI is embedded in a different
 website, add that website's exact origin to `CORS_ALLOWED_ORIGINS`; same-origin
 browser access does not need a CORS entry.

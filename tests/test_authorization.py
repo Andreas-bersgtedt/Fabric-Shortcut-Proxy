@@ -494,7 +494,67 @@ def test_authorization_route_map_separates_security_from_config():
     assert _permission("/_config/api/tokenization/policies", "POST") == "tokenization.policy.admin"
     assert _permission("/_config/api/tokenization-keys", "GET") == "security.metadata.read"
     assert _permission("/_config/api/tokenization-keys", "POST") == "security.credentials.admin"
-    assert _permission("/_config/api/unknown", "GET") == "config.read"
+    assert _permission("/_config/api/unknown", "GET") is None
+
+
+def _missing_operator_route_decisions(route_sources, public_routes):
+    from security.authorization_middleware import _permission
+
+    operator_prefixes = ("/_admin", "/_config", "/_monitor", "/_manager", "/agents", "/control")
+    missing: list[tuple[str, str]] = []
+    for source in route_sources:
+        for route in source.routes:
+            path = getattr(route, "path", "")
+            if not path.startswith(operator_prefixes):
+                continue
+            for method in getattr(route, "methods", set()):
+                decision = (method, path)
+                if method not in {"HEAD", "OPTIONS"} and decision not in public_routes:
+                    if _permission(path, method) is None:
+                        missing.append(decision)
+    return sorted(missing)
+
+
+def test_registered_standalone_operator_routes_have_authorization_decisions():
+    from configbuilder.router import router as config_builder_router
+    from main import app
+    from monitor.router import router as monitor_router
+    from observability.endpoints import router as observability_router
+
+    public_routes = {
+        ("GET", "/_config"),
+        ("GET", "/_config/"),
+        ("GET", "/_config/api/authorization/login"),
+        ("POST", "/_config/api/authorization/login"),
+        ("GET", "/_config/api/authorization/status"),
+        ("GET", "/_manager"),
+        ("GET", "/_manager/{rest:path}"),
+        ("GET", "/_monitor"),
+        ("GET", "/_monitor/"),
+    }
+
+    route_sources = [app, config_builder_router, monitor_router, observability_router]
+    assert _missing_operator_route_decisions(route_sources, public_routes) == []
+
+
+def test_registered_manager_operator_routes_have_authorization_decisions(monkeypatch):
+    import config
+    from enterprise.control.admin import create_admin_router
+    from enterprise.control.manager_app import create_manager_app
+
+    monkeypatch.setattr(config, "AGENT_COUNT", 0, raising=False)
+    app = create_manager_app()
+    public_routes = {
+        ("GET", "/_config"),
+        ("GET", "/_config/"),
+        ("GET", "/_config/api/authorization/login"),
+        ("POST", "/_config/api/authorization/login"),
+        ("GET", "/_config/api/authorization/status"),
+        ("GET", "/_manager"),
+    }
+
+    route_sources = [app, create_admin_router(None, [])]
+    assert _missing_operator_route_decisions(route_sources, public_routes) == []
 
 
 def test_authorization_context_ignores_caller_supplied_scope_claims():
@@ -521,24 +581,24 @@ async def test_authorization_middleware_enforces_operator_functions(monkeypatch)
     app = FastAPI()
     app.add_middleware(AuthorizationMiddleware)
 
-    @app.get("/_config/api/safe-read")
+    @app.get("/_config/api/settings")
     async def safe_read(request: Request):
         return {"ok": True, "user": request.state.user.user_id}
 
-    @app.post("/_config/api/safe-write")
+    @app.post("/_config/api/save")
     async def safe_write():
         return {"ok": True}
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        denied = await client.get("/_config/api/safe-read")
+        denied = await client.get("/_config/api/settings")
         allowed = await client.get(
-            "/_config/api/safe-read",
+            "/_config/api/settings",
             headers={"X-Admin-Token": "admin-test-token"},
         )
         write = await client.post(
-            "/_config/api/safe-write",
+            "/_config/api/save",
             headers={"X-Admin-Token": "admin-test-token"},
         )
     assert denied.status_code == 401

@@ -94,6 +94,8 @@ jobs:
     env:
       # validate_pyiceberg uses unsigned HTTP reads against the local test proxy.
       REQUIRE_SIGV4: "0"
+      MANAGER_AUTH_USERNAME: "ci-operator"
+      MANAGER_AUTH_PASSWORD: "pyiceberg-ci-password"
     steps:
       - uses: actions/checkout@v5
 

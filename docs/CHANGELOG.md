@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Config Builder exposes restart-bound OIDC issuer, audience, user-claim, and
+  optional JWKS settings under Operator identity. Settings search also matches
+  environment-variable names such as `FSP_OIDC_ISSUER`.
+
 ### Security
 
 - SigV4 rejects malformed timestamps, credential-scope date mismatches, and

@@ -320,6 +320,11 @@ FSP_OIDC_AUDIENCE=<application-client-id-or-api-audience>
 FSP_OIDC_USER_CLAIM=oid
 ```
 
+The same non-secret values can be saved in the Config Builder under
+**Operational > System configuration > Operator identity** as `oidc_issuer`,
+`oidc_audience`, `oidc_user_claim`, and `oidc_jwks_url`. Save and restart the
+service to apply them. `FSP_OIDC_*` environment variables override saved values.
+
 For an Entra v1 issuer (`https://sts.windows.net/<tenant-id>/`), preserve the
 trailing slash in `FSP_OIDC_ISSUER` and configure the tenant key endpoint:
 

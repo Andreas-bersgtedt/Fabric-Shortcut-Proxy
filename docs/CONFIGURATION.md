@@ -126,6 +126,13 @@ independent and continue to use SigV4 settings. If the UI is embedded in a diffe
 website, add that website's exact origin to `CORS_ALLOWED_ORIGINS`; same-origin
 browser access does not need a CORS entry.
 
+Inbound operator OIDC values are in **Operational > System configuration >
+Operator identity**. Search for either `oidc_issuer` or `FSP_OIDC_ISSUER`, set the
+issuer, audience, user claim, and optional JWKS URL, then save and restart. The UI
+writes these non-secret values to `config.system.json`; matching `FSP_OIDC_*`
+environment variables take precedence. See [SECURITY.md](SECURITY.md#external-oidc-identity-provider)
+for Entra examples and TLS requirements.
+
 ### 1.3 Configure audited re-identification
 
 The Config Builder **Operational > System configuration > Optional modules** panel

@@ -44,6 +44,14 @@ def test_manager_fleet_probe_runs_only_after_session_authentication():
     assert '$("policyKind").onchange=renderPolicyKeyReferences;' in html
 
 
+def test_settings_search_matches_environment_variable_names():
+    html = (pathlib.Path(__file__).parents[1] / "configbuilder" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    env_search = '(s.env||"").toLowerCase().includes(q)'
+    assert html.count(env_search) == 2
+
+
 def test_build_url_postgres_defaults_and_encoding():
     url = build_url(dialect="postgresql", host="h", database="db",
                     username="u", password="p@ss:w/rd")

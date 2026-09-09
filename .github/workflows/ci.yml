@@ -139,6 +139,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REQUIRE_SIGV4: "0"
+      MANAGER_AUTH_USERNAME: "ci-operator"
+      MANAGER_AUTH_PASSWORD: "cpp-ci-password"
     steps:
       - uses: actions/checkout@v5
 
@@ -179,7 +181,9 @@ jobs:
           exit 1
 
       - name: Publish serving image
-        run: curl -sf -X POST http://127.0.0.1:9011/_admin/publish-image
+        run: >-
+          curl -sf -u "$MANAGER_AUTH_USERNAME:$MANAGER_AUTH_PASSWORD"
+          -X POST http://127.0.0.1:9011/_admin/publish-image
 
       - name: Stop Python publisher
         if: always()

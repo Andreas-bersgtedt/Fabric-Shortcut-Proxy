@@ -614,9 +614,33 @@ if _orphaned_tables:
 # Config validation
 # ---------------------------------------------------------------------------
 
-def validate_config() -> None:
+def _loopback_bind(host: str) -> bool:
+    import ipaddress
+
+    normalized = (host or "").strip().strip("[]").lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_config(*, operator_bind_host: str | None = None) -> None:
     """Validate required configuration at startup; raise ``ValueError`` on error."""
     problems: list[str] = []
+
+    if operator_bind_host is not None and not _loopback_bind(operator_bind_host):
+        if not MANAGER_AUTH_ENABLED:
+            problems.append(
+                "MANAGER_AUTH_ENABLED must be enabled when operator routes bind to "
+                f"non-loopback host {operator_bind_host!r}."
+            )
+        elif not MANAGER_AUTH_PASSWORD:
+            problems.append(
+                "MANAGER_AUTH_PASSWORD must be set when operator routes bind to "
+                f"non-loopback host {operator_bind_host!r}."
+            )
 
     if TOKENIZATION_FALLBACK not in ("none", "arrow"):
         problems.append(

@@ -193,7 +193,23 @@ when a source dialect cannot perform the selected transform natively and proxy-s
 processing is acceptable. Arrow fallback brings plaintext into proxy memory before
 Parquet generation; chapter 8 gives the tested capacity limit and rollout guardrail.
 
-## 7.10 Encrypted backup and restore
+## 7.10 Audited re-identification
+
+Re-identification is a disabled-by-default Auditor capability. It performs a
+bounded equality lookup against a source-maintained indexed token column; it does
+not reverse or decrypt a SHA-256 token. Enable the optional module and the
+`enable_reidentification` setting, then restart the Manager before use.
+
+Only the `auditor` role receives `tokenization.reidentify`. System administrators
+are not granted this permission automatically. Every request requires an approved
+reason code and case reference. A durable audit event is written before a
+clear-text response, and an unavailable audit file fails closed.
+
+The audit event contains metadata and a token fingerprint. It excludes the raw
+token, clear-text value, SQL, bind values, keys, and credentials. The complete
+configuration and rollback procedure is in [Chapter 15](15-reidentification.md).
+
+## 7.11 Encrypted backup and restore
 
 The Config Builder **Security** area creates portable `.fspbackup` archives containing split
 configuration, logical encrypted-store records, scoped access keys, and Open Mirroring recovery
@@ -209,7 +225,7 @@ Source data, generated artifacts and caches, logs, environment-only secrets, ext
 and remote Key Vault contents are outside the archive. Follow
 [BACKUP_RESTORE.md](../BACKUP_RESTORE.md) for the complete scope and operator procedure.
 
-## 7.11 Entra ID identity and Azure Key Vault
+## 7.12 Entra ID identity and Azure Key Vault
 
 Beyond per-mount Azure auth, the proxy can take its **own** Entra ID identity and use Azure
 Key Vault as a central credential store. `AUTH_MODE` selects the outbound identity —

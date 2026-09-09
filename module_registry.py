@@ -34,6 +34,7 @@ CATALOG: tuple[Module, ...] = (
     Module("keyvault", "keyvault", "Azure Key Vault secret source", ("azure-keyvault-secrets", "azure-identity"), ("azure.keyvault.secrets", "azure.identity")),
     Module("onelake", "onelake", "Fabric OneLake Open Mirroring", ("azure-storage-file-datalake", "azure-identity"), ("azure.storage.filedatalake", "azure.identity")),
     Module("objectstore", "objectstore", "Delta and Iceberg object-store readers", ("deltalake", "pyiceberg"), ("deltalake", "pyiceberg")),
+    Module("reidentification", "reidentification", "Audited source-side token re-identification", (), ()),
     Module("credentials", "credentials", "Fernet credential encryption", ("cryptography",), ("cryptography",), platforms=("linux", "darwin")),
 )
 

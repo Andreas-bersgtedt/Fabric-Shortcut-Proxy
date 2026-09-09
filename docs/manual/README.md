@@ -1,6 +1,6 @@
 # Fabric Shortcut Proxy — User Manual
 
-Version 2.8.0
+Version 2.9.0
 
 This manual is the end-to-end guide to installing, configuring, and operating the
 Fabric Shortcut Proxy. It is organized into chapters (files) that each cover one
@@ -39,6 +39,7 @@ duplicating it.
 | 12 | [Table publishing](12-table-publishing.md) | Table registry, splits, output formats, refresh, and verification |
 | 13 | [Open Mirroring](13-open-mirroring.md) | Landing-zone targets, change tracking, recovery, retention, and operations |
 | 14 | [Tokenization policies](14-tokenization-policies.md) | Central policy lifecycle, key references, assignments, rotation, and UAT |
+| 15 | [Audited re-identification](15-reidentification.md) | Optional Auditor lookup, mappings, audit, quotas, rollback, and UAT |
 
 ## How to use this manual
 
@@ -50,6 +51,7 @@ duplicating it.
 - **Publishing a table:** chapter 12, then chapter 6 to create the Fabric shortcut.
 - **Open Mirroring:** chapter 13.
 - **Tokenizing columns:** chapter 14, then chapter 7 for security controls.
+- **Re-identification:** chapter 15, then chapter 7 for identity and audit controls.
 - **Tuning or scaling:** chapters 2 and 8.
 - **Hardening:** chapter 7.
 

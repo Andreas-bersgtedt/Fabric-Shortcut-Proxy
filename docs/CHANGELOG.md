@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0]: 2026-09-09
+
+### Added
+
+- An optional, disabled-by-default audited re-identification module for durable
+  SHA-256 tokens across SQL Server, PostgreSQL, Oracle, and Databricks SQL.
+- Config Builder controls for the module profile, restart-bound enablement,
+  secret-free lookup mappings, required Auditor role, quotas, and audit status.
+- Bounded source-side equality lookup with durable audit-before-response and
+  redacted request metadata.
+
+### Security
+
+- Only the `auditor` role receives `tokenization.reidentify`.
+- Raw tokens, clear-text values, SQL, bind values, keys, and credentials are
+  excluded from re-identification audit events and ordinary failure responses.
+- An unavailable durable audit sink fails closed before a clear-text response.
+
 ## [2.8.0]: 2026-09-08
 
 ### Added

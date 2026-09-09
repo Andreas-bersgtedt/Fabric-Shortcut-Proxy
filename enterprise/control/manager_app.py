@@ -231,7 +231,7 @@ def create_manager_app() -> FastAPI:
         if gateway is not None:
             await gateway.aclose()
 
-    app = FastAPI(title="Fabric Shortcut Proxy — Manager", version="2.8.0", lifespan=lifespan)
+    app = FastAPI(title="Fabric Shortcut Proxy — Manager", version="2.9.0", lifespan=lifespan)
     app.state.registry = registry
     app.state.supervisors = supervisors
     app.state.lease = lease
@@ -389,6 +389,13 @@ def create_manager_app() -> FastAPI:
     if config.ENABLE_CONFIG_BUILDER:
         from configbuilder.router import router as config_builder_router
         app.include_router(config_builder_router)
+
+    # The re-identification endpoint is intentionally absent unless both its
+    # module profile and restart-bound system setting are active.
+    from reidentification.gate import enabled as reidentification_enabled
+    if reidentification_enabled():
+        from reidentification.router import router as reidentification_router
+        app.include_router(reidentification_router)
 
     # Fleet monitor: the operator console's Monitor tab (and the standalone SPA)
     # live on the Manager, but the live stats are per-Agent — this router scrapes

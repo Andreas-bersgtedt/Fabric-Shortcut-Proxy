@@ -15,10 +15,33 @@ from security.authorization import (
 _EXEMPT_PREFIXES = ("/healthz", "/readyz", "/favicon.ico")
 
 
+def _audit_reidentification(request: Request, status: int, reason: str, identity: str = "") -> bool:
+    """Record the route outcome without reading a sensitive request body."""
+    if not request.url.path.startswith("/_reidentify/"):
+        return True
+    from observability import audit
+    import uuid
+
+    try:
+        audit.record_reidentification(
+        request_id=request.headers.get("x-request-id", "").strip()[:128] or str(uuid.uuid4()),
+        identity=identity,
+        method=request.method,
+        status=status,
+        outcome="denied" if status in {401, 403} else "failed",
+        reason=reason,
+        )
+    except audit.AuditUnavailable:
+        return False
+    return True
+
+
 def authorization_enforced(path: str = "/_config") -> bool:
     """Require RBAC explicitly, or for Config Builder when Manager auth is active."""
     import os
 
+    if path.startswith("/_reidentify/"):
+        return True
     if os.environ.get("FSP_AUTHZ_ENFORCE", "0").strip() == "1":
         return True
     import config
@@ -30,6 +53,8 @@ def authorization_enforced(path: str = "/_config") -> bool:
 
 
 def _permission(path: str, method: str) -> str | None:
+    if path.startswith("/_reidentify/api/v1/lookup"):
+        return "tokenization.reidentify"
     if not (path.startswith("/_config") or path.startswith("/_manager") or path.startswith("/_monitor")):
         return None
     if path in {"/_config/api/authorization/login", "/_config/api/authorization/status", "/_config/", "/_config"}:
@@ -42,6 +67,8 @@ def _permission(path: str, method: str) -> str | None:
         return "tokenization.policy.read" if method in {"GET", "HEAD"} else "tokenization.policy.admin"
     if path.startswith("/_config/api/tokenization-keys"):
         return "security.metadata.read" if method in {"GET", "HEAD"} else "security.credentials.admin"
+    if path.startswith("/_config/api/reidentification/mappings"):
+        return "system.admin"
     if any(path.startswith(f"/_config/api/{prefix}") for prefix in (
         "credentials", "s3-credentials", "azure-credentials", "access-keys",
         "backup", "restore",
@@ -98,10 +125,14 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                 bearer_token(request.headers.get("authorization", "")),
             )
         if user is None:
+            if not _audit_reidentification(request, 401, "authentication required"):
+                return JSONResponse({"ok": False, "error": "audit service unavailable"}, status_code=503)
             return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
         try:
             decision = require(user, permission, _context(request))
         except AuthorizationError:
+            if not _audit_reidentification(request, 403, "permission denied", user.user_id):
+                return JSONResponse({"ok": False, "error": "audit service unavailable"}, status_code=503)
             return JSONResponse({"ok": False, "error": "permission denied"}, status_code=403)
         request.state.authorization = decision
         request.state.user = user

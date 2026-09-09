@@ -758,6 +758,15 @@ if config.ENABLE_MONITOR:
     app.include_router(monitor_router)
     log.info("monitor_enabled", path="/_monitor/")
 
+# Optional audited re-identification API. Both the persisted module profile and
+# explicit system setting are required before its route exists.
+from reidentification.gate import enabled as reidentification_enabled
+
+if reidentification_enabled():
+    from reidentification.router import router as reidentification_router
+    app.include_router(reidentification_router)
+    log.info("reidentification_enabled", path="/_reidentify/api/v1/lookup")
+
 # The operator console lives on the Manager (control port), not on an Agent. If a
 # browser points at an Agent's /_manager, bounce it to the Manager's console
 # (via MANAGER_URL) instead of returning a confusing SigV4 403. Mounted BEFORE the

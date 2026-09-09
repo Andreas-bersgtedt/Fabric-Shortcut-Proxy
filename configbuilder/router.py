@@ -406,6 +406,87 @@ async def tokenization_policies() -> JSONResponse:
     })
 
 
+@router.get("/api/reidentification/mappings")
+async def reidentification_mappings(request: Request) -> JSONResponse:
+    """List mapping metadata without tokens or source values."""
+    try:
+        _check_security_permission(request, "system.admin")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    from module_registry import desired_profile
+    from reidentification.gate import enabled as reidentification_enabled
+    from reidentification.mappings import load_default_mappings
+
+    try:
+        mappings = load_default_mappings()
+        mappings.validate()
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return JSONResponse({
+        "ok": True,
+        "module_selected": "reidentification" in desired_profile(),
+        "system_setting_enabled": bool(config.ENABLE_REIDENTIFICATION),
+        "endpoint_active": reidentification_enabled(),
+        "restart_required": True,
+        "required_role": "auditor",
+        "requests_per_minute": config.REIDENTIFICATION_REQUESTS_PER_MINUTE,
+        "requests_per_day": config.REIDENTIFICATION_REQUESTS_PER_DAY,
+        "audit_sink_configured": bool(config.ENABLE_AUDIT_LOG and config.AUDIT_LOG_FILE),
+        "mappings": mappings.list_public(),
+    })
+
+
+@router.post("/api/reidentification/mappings")
+async def save_reidentification_mapping(request: Request) -> JSONResponse:
+    """Create or replace one validated source lookup mapping."""
+    try:
+        _check_security_permission(request, "system.admin")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    from reidentification.mappings import (
+        LookupMapping,
+        default_mappings_path,
+        load_default_mappings,
+        save_mappings,
+    )
+
+    try:
+        mapping = LookupMapping.from_dict(await request.json())
+        mappings = load_default_mappings()
+        mappings.replace(mapping)
+        mappings.validate()
+        save_mappings(default_mappings_path(), mappings)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    log.info("reidentification_mapping_saved", policy_id=mapping.policy_id,
+             table_id=mapping.table_id, column_id=mapping.column_id)
+    return JSONResponse({"ok": True, "mapping": mapping.to_public(), "restart_required": True})
+
+
+@router.delete("/api/reidentification/mappings/{policy_id}/{table_id}/{column_id}")
+async def delete_reidentification_mapping(policy_id: str, table_id: str, column_id: str, request: Request) -> JSONResponse:
+    """Delete one mapping without exposing source data or token values."""
+    try:
+        _check_security_permission(request, "system.admin")
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    from reidentification.mappings import (
+        default_mappings_path,
+        load_default_mappings,
+        save_mappings,
+    )
+
+    try:
+        mappings = load_default_mappings()
+        mappings.remove(policy_id, table_id, column_id)
+        save_mappings(default_mappings_path(), mappings)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=404)
+    log.info("reidentification_mapping_deleted", policy_id=policy_id,
+             table_id=table_id, column_id=column_id)
+    return JSONResponse({"ok": True, "restart_required": True})
+
+
 def _check_tokenization_admin(request: Request) -> None:
     """Require policy administration through the active session or legacy token."""
     from security.authorization import AuthorizationError, require

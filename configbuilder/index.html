@@ -634,6 +634,19 @@
       </details>
       <div class="status" id="tokenizationPoliciesStatus"></div>
     </div>
+    <div class="card" id="reidentificationMappingsPanel" data-requires-permission="system.admin">
+      <h2>Re-identification mappings</h2>
+      <div class="hint">Map one approved durable policy to an indexed source token column. This panel never submits tokens or displays clear-text lookup results.</div>
+      <div id="reidentificationMappingStatus" class="status"></div>
+      <div id="reidentificationMappings" class="connlist"></div>
+      <details style="margin-top:12px;">
+        <summary>Create or replace mapping</summary>
+        <div class="row"><section><label for="reidPolicyId">Policy ID</label><input id="reidPolicyId" placeholder="customer-pii-v1" /></section><section><label for="reidTableId">Table ID</label><input id="reidTableId" placeholder="customers_safe" /></section></div>
+        <div class="row"><section><label for="reidColumnId">Token column</label><input id="reidColumnId" placeholder="email_token" /></section><section><label for="reidLookupColumn">Indexed lookup column</label><input id="reidLookupColumn" placeholder="email_token_lookup" /></section></div>
+        <div class="row"><section><label for="reidClearTextColumn">Clear-text source column</label><input id="reidClearTextColumn" placeholder="email" /></section><section><label for="reidPrimaryKeyColumn">Primary key column</label><input id="reidPrimaryKeyColumn" placeholder="customer_id" /></section></div>
+        <div class="actions"><button class="btn primary" id="btnSaveReidentificationMapping">Save mapping</button></div>
+      </details>
+    </div>
     <div class="card" id="userManagementPanel" data-requires-permission="users.admin">
       <h2>User management</h2>
       <div class="hint">Create and disable local identities for the protected management API. Passwords are stored only as salted hashes.</div>
@@ -649,6 +662,7 @@
             <option value="viewer">Viewer</option>
             <option value="config_operator">Config Operator</option>
             <option value="tokenization_administrator">Tokenization Administrator</option>
+            <option value="auditor">Auditor</option>
             <option value="security_administrator">Security Administrator</option>
             <option value="user_administrator">User Administrator</option>
             <option value="system_administrator">System Administrator</option>
@@ -1543,6 +1557,41 @@ async function disableTokenizationPolicy(policyId){
   status.textContent=data.ok?"Tokenization policy disabled.":(data.error||"Unable to disable tokenization policy.");
   status.className="status "+(data.ok?"ok":"err");
   if(data.ok) await loadTokenizationPolicies();
+}
+
+async function loadReidentificationMappings(){
+  const box=$("reidentificationMappings"), status=$("reidentificationMappingStatus");
+  if(!box) return;
+  try{
+    const response=await fetch("/_config/api/reidentification/mappings", {cache:"no-store"});
+    const data=await response.json(); if(!response.ok||!data.ok) throw new Error(data.error||"Unable to load mappings");
+    box.innerHTML="";
+    for(const mapping of data.mappings||[]){
+      const row=document.createElement("div"); row.className="conn-row";
+      const label=document.createElement("strong"); label.textContent=`${mapping.policy_id} · ${mapping.table_id}.${mapping.column_id}`;
+      const detail=document.createElement("span"); detail.className="hint"; detail.textContent=`lookup: ${mapping.lookup_column} · source: ${mapping.clear_text_column} · key: ${mapping.primary_key_column}`;
+      const remove=document.createElement("button"); remove.className="btn ghost"; remove.textContent="Delete"; remove.onclick=()=>deleteReidentificationMapping(mapping);
+      row.append(label,detail,remove); box.appendChild(row);
+    }
+    if(!(data.mappings||[]).length) box.textContent="No re-identification mappings are configured.";
+    status.textContent=`Module profile: ${data.module_selected?"selected":"not selected"}. Endpoint: ${data.endpoint_active?"active":"restart required"}. Auditor role required. Limits: ${data.requests_per_minute}/minute, ${data.requests_per_day}/day. Audit file: ${data.audit_sink_configured?"configured":"required before lookup"}.`;
+    status.className="status "+(data.audit_sink_configured?"ok":"");
+  }catch(error){ box.textContent="Re-identification mappings are unavailable."; status.textContent=error.message||"Unable to load mappings."; status.className="status err"; }
+}
+
+async function saveReidentificationMapping(){
+  const status=$("reidentificationMappingStatus");
+  const payload={policy_id:$("reidPolicyId").value.trim(),table_id:$("reidTableId").value.trim(),column_id:$("reidColumnId").value.trim(),lookup_column:$("reidLookupColumn").value.trim(),clear_text_column:$("reidClearTextColumn").value.trim(),primary_key_column:$("reidPrimaryKeyColumn").value.trim()};
+  const response=await fetch("/_config/api/reidentification/mappings", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  const data=await response.json(); status.textContent=data.ok?"Mapping saved. Restart the Manager before enabling the endpoint.":(data.error||"Unable to save mapping."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadReidentificationMappings();
+}
+
+async function deleteReidentificationMapping(mapping){
+  if(!confirm(`Delete mapping ${mapping.policy_id} / ${mapping.table_id} / ${mapping.column_id}?`)) return;
+  const response=await fetch("/_config/api/reidentification/mappings/"+encodeURIComponent(mapping.policy_id)+"/"+encodeURIComponent(mapping.table_id)+"/"+encodeURIComponent(mapping.column_id), {method:"DELETE"});
+  const data=await response.json(), status=$("reidentificationMappingStatus"); status.textContent=data.ok?"Mapping deleted. Restart the Manager before enabling the endpoint.":(data.error||"Unable to delete mapping."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadReidentificationMappings();
 }
 
 async function saveTokenizationPolicy(){
@@ -4061,12 +4110,14 @@ loadSettings();
 loadTokenizationKeyReferences();
 loadTokenizationKeys();
 loadTokenizationPolicies();
+loadReidentificationMappings();
 $("btnGenerateTokenizationKey").onclick=generateTokenizationKey;
 $("btnSaveTokenizationKey").onclick=saveTokenizationKey;
 $("btnLoadUsers").onclick=loadManagedUsers;
 $("btnCreateUser").onclick=createManagedUser;
 $("newUserIdentitySource").onchange=()=>{ const local=$("newUserIdentitySource").value==="local"; $("newUserPasswordField").style.display=local?"":"none"; if(!local) $("newUserPassword").value=""; };
 $("btnSavePolicy").onclick=saveTokenizationPolicy;
+$("btnSaveReidentificationMapping").onclick=saveReidentificationMapping;
 $("policyKind").onchange=renderPolicyKeyReferences;
 $("btnLogin").onclick=signIn;
 $("btnLogout").onclick=signOut;

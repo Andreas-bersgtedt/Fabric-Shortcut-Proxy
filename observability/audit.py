@@ -33,6 +33,10 @@ _fh = None
 _fh_path = ""
 
 
+class AuditUnavailable(RuntimeError):
+    """Raised when a required audit event cannot reach the configured file sink."""
+
+
 def _file_handle():
     """Lazily open (and reopen on path change) the optional audit file."""
     global _fh, _fh_path
@@ -91,6 +95,71 @@ def record(*, identity: str, bucket: str, key: str, backend: str, method: str,
                 fh.flush()
             except OSError as exc:  # noqa: BLE001
                 _log.warning("audit_file_write_failed", error=str(exc))
+
+
+def record_reidentification(
+    *,
+    request_id: str,
+    identity: str,
+    method: str,
+    status: int,
+    outcome: str,
+    reason: str,
+    policy_id: str = "",
+    table_id: str = "",
+    column_id: str = "",
+    token_fingerprint: str = "",
+    case_reference: str = "",
+    match_count: int | None = None,
+    latency_ms: int | None = None,
+) -> None:
+    """Persist a required redacted re-identification audit event.
+
+    This deliberately accepts no token, clear-text result, SQL, or credentials.
+    ``AUDIT_LOG_FILE`` is required because the in-memory audit ring is not durable.
+    """
+    import config
+
+    if not getattr(config, "ENABLE_AUDIT_LOG", True):
+        raise AuditUnavailable("re-identification requires ENABLE_AUDIT_LOG=1")
+    if not (getattr(config, "AUDIT_LOG_FILE", "") or "").strip():
+        raise AuditUnavailable("re-identification requires AUDIT_LOG_FILE")
+    event = {
+        "ts": time.time(),
+        "request_id": request_id,
+        "identity": identity or "-",
+        "method": method,
+        "action": "reidentification_request",
+        "status": status,
+        "outcome": _scrub(outcome),
+        "reason": _scrub(reason),
+    }
+    for name, value in {
+        "policy_id": policy_id,
+        "table_id": table_id,
+        "column_id": column_id,
+        "token_fingerprint": token_fingerprint,
+        "case_reference": case_reference,
+    }.items():
+        if value:
+            event[name] = _scrub(value)
+    if match_count is not None:
+        event["match_count"] = int(match_count)
+    if latency_ms is not None:
+        event["latency_ms"] = int(latency_ms)
+    with _fh_lock:
+        fh = _file_handle()
+        if fh is None:
+            raise AuditUnavailable("re-identification audit file is unavailable")
+        try:
+            import json
+            fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+            fh.flush()
+        except OSError as exc:
+            raise AuditUnavailable("re-identification audit write failed") from exc
+    with _lock:
+        _buf.append(event)
+    _log.info("audit", **event)
 
 
 def recent(limit: int = 100) -> list[dict]:

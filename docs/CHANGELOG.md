@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named RBAC map. Disabled or incomplete operator auth returns 503, and S3 SigV4
   credentials no longer authorize operator routes.
 
+### Fixed
+
+- Closed Direct Lake issue #11: S3 `HEAD` and `GET` responses now include consistent
+  ETags, RFC 1123 `Last-Modified` headers, and canonicalize Fabric's trailing-slash
+  object probes. Verified with a portal-created Direct Lake semantic model.
+
 ## [2.9.0]: 2026-09-09
 
 ### Added

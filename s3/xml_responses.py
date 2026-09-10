@@ -71,7 +71,12 @@ def list_objects_v2_response(
         contents = ET.SubElement(root, "Contents")
         ET.SubElement(contents, "Key").text = obj["key"]
         ET.SubElement(contents, "LastModified").text = _modified(obj.get("last_modified_ms"))
-        ET.SubElement(contents, "ETag").text = f'"{_etag(obj["key"])}"'
+        # Prefer a real content-hash ETag (matches what GET/HEAD returns for the
+        # same key) when the caller has one; otherwise fall back to the stable
+        # pseudo-ETag derived from the key. A list-vs-get ETag mismatch is
+        # treated as a hard consistency error by some S3A-based clients.
+        etag = obj.get("etag") or _etag(obj["key"])
+        ET.SubElement(contents, "ETag").text = f'"{etag}"'
         ET.SubElement(contents, "Size").text = str(obj["size"])
         ET.SubElement(contents, "StorageClass").text = "STANDARD"
 

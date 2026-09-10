@@ -239,6 +239,10 @@ def delta_log_objects() -> dict[str, dict]:
                     "last_modified_ms": cur.watermark_ms,
                     "data": data,
                     "content_type": "application/json",
+                    # Real content-hash ETag so ListObjectsV2 and a subsequent
+                    # GET/HEAD agree (S3A/Ozone-style clients treat a
+                    # list-vs-get ETag mismatch as a hard consistency error).
+                    "etag": hashlib.md5(data, usedforsecurity=False).hexdigest(),
                 }
             # Advertise data files for EVERY retained version (not just current):
             # after a refresh, Fabric may still read a prior version's files until

@@ -431,6 +431,7 @@ async def list_objects_v2(
                     "key": _display_key_for_prefix(k, warehouse_alias=warehouse_alias),
                     "size": all_objects[k]["size"],
                     "last_modified_ms": all_objects[k]["last_modified_ms"],
+                    "etag": all_objects[k].get("etag"),
                 })
             else:
                 cp = prefix + remainder[: delim_pos + len(delimiter)]
@@ -444,7 +445,7 @@ async def list_objects_v2(
     else:
         flat_objects = [
             {"key": _display_key_for_prefix(k, warehouse_alias=warehouse_alias), "size": all_objects[k]["size"],
-             "last_modified_ms": all_objects[k]["last_modified_ms"]}
+             "last_modified_ms": all_objects[k]["last_modified_ms"], "etag": all_objects[k].get("etag")}
             for k in matched_keys
         ]
         log.info("list_objects", bucket=bucket, prefix=prefix_in, matched=len(flat_objects))

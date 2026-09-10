@@ -183,6 +183,7 @@ def _make_object_response(
     *,
     key: str | None = None,
     kind: str | None = None,
+    last_modified_ms: int | None = None,
 ) -> FastAPIResponse:
     total = len(data)
     if _range_is_unsatisfiable(range_header, total):
@@ -206,6 +207,10 @@ def _make_object_response(
         "Accept-Ranges": "bytes",
         **(extra_headers or {}),
     }
+    if last_modified_ms:
+        headers["Last-Modified"] = email.utils.formatdate(
+            last_modified_ms / 1000.0, usegmt=True
+        )
     if is_partial:
         headers["Content-Range"] = f"bytes {start}-{end}/{total}"
     # Capture the exact request/range/status chain for ranged reads and every
@@ -557,7 +562,9 @@ async def get_object(
         commit = delta_log.get_commit_bytes(key)
         if commit is not None:
             return _make_object_response(commit, "application/json", range_header,
-                                         key=key, kind="delta_log")
+                                         key=key, kind="delta_log",
+                                         last_modified_ms=delta_log.delta_log_objects().get(
+                                             key, {}).get("last_modified_ms"))
         # A _last_checkpoint probe or unknown log file -> 404 (expected). A missing
         # NN.json commit, however, is significant for a Direct Lake read: surface
         # it with the commits we actually have so the gap is visible.
@@ -584,11 +591,13 @@ async def get_object(
                 cached = build_metadata_json(snap)
                 cache.put_metadata(key, cached)
             return _make_object_response(cached, "application/json", range_header,
-                                         key=key, kind="metadata")
+                                         key=key, kind="metadata",
+                                         last_modified_ms=snap.watermark_ms)
 
         if key == snap.version_hint_key:
             return _make_object_response(_version_hint_bytes(key), "text/plain", range_header,
-                                         key=key, kind="version_hint")
+                                         key=key, kind="version_hint",
+                                         last_modified_ms=snap.watermark_ms)
 
         if key == snap.manifest_list_key:
             cached = cache.get_metadata(key)
@@ -596,7 +605,8 @@ async def get_object(
                 cached = build_manifest_list(snap)
                 cache.put_metadata(key, cached)
             return _make_object_response(cached, "application/octet-stream", range_header,
-                                         key=key, kind="manifest_list")
+                                         key=key, kind="manifest_list",
+                                         last_modified_ms=snap.watermark_ms)
 
         if key == snap.manifest_file_key:
             cached = cache.get_metadata(key)
@@ -604,7 +614,8 @@ async def get_object(
                 cached = build_manifest_file(snap)
                 cache.put_metadata(key, cached)
             return _make_object_response(cached, "application/octet-stream", range_header,
-                                         key=key, kind="manifest_file")
+                                         key=key, kind="manifest_file",
+                                         last_modified_ms=snap.watermark_ms)
 
     # ---- Data objects (Parquet on demand) ----------------------------------
     split = get_split_by_key(key)
@@ -632,7 +643,8 @@ async def get_object(
             rows=split.record_count, resp_bytes=len(cached_parquet), cache_hit=True,
         )
         return _make_object_response(cached_parquet, "application/octet-stream", range_header,
-                                     key=key, kind="data")
+                                     key=key, kind="data",
+                                     last_modified_ms=split.watermark_ms)
 
     # SQL pushdown → Parquet (bounded concurrency to protect CPU/memory).
     try:
@@ -669,4 +681,5 @@ async def get_object(
         rows=len(rows), resp_bytes=len(parquet_bytes), cache_hit=False,
     )
     return _make_object_response(parquet_bytes, "application/octet-stream", range_header,
-                                 key=key, kind="data")
+                                 key=key, kind="data",
+                                 last_modified_ms=split.watermark_ms)

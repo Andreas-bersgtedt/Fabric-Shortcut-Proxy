@@ -261,6 +261,12 @@ def _objects_for_snapshot(snap) -> dict[str, dict]:
             "last_modified_ms": snap.watermark_ms,
             "data": None,  # generated on demand
             "content_type": "application/octet-stream",
+            # Real content-hash ETag when already cached, so ListObjectsV2
+            # and a subsequent GET/HEAD agree on the same object.
+            "etag": (
+                hashlib.md5(cached, usedforsecurity=False).hexdigest()
+                if cached is not None else None
+            ),
         }
 
     if config.OBJECT_PATH_LAYOUT == "canonical" and config.ENABLE_LEGACY_PATH_ALIASES:

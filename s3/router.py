@@ -21,6 +21,7 @@ Object resolution logic
 from __future__ import annotations
 
 import asyncio
+import email.utils
 import hashlib
 import time
 
@@ -492,6 +493,10 @@ async def head_object(
             "Content-Type": obj["content_type"],
             "Accept-Ranges": "bytes",
         }
+        if obj.get("last_modified_ms"):
+            headers["Last-Modified"] = email.utils.formatdate(
+                obj["last_modified_ms"] / 1000.0, usegmt=True
+            )
         if obj.get("etag"):
             headers["ETag"] = f'"{obj["etag"]}"'
         return FastAPIResponse(

@@ -274,6 +274,40 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
         assert "numRecords" in json.loads(add["stats"])
 
 
+def _extract_key_etags(xml_bytes: bytes) -> dict[str, str]:
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_bytes)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    return {
+        c.find("s3:Key", ns).text: c.find("s3:ETag", ns).text
+        for c in root.findall("s3:Contents", ns)
+    }
+
+
+async def test_delta_log_etag_matches_between_list_and_get(delta_client):
+    """ListObjectsV2's ETag for a _delta_log commit must equal the ETag the
+    same key returns from GET/HEAD (content-hash), not a hash of the key.
+
+    S3A/Ozone-style clients treat a list-vs-get ETag mismatch as a hard
+    consistency error (this broke Ozone's xTable/S3A integration before
+    Ozone 1.4.1), so the two must agree for Fabric's Direct Lake reader.
+    """
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    etags = _extract_key_etags(r.content)
+    commit_key = next(k for k in etags if k.endswith("_delta_log/00000000000000000000.json"))
+    list_etag = etags[commit_key]
+
+    r2 = await delta_client.get(f"/delta-bucket/{commit_key}")
+    assert r2.status_code == 200
+    get_etag = r2.headers["etag"]
+
+    assert list_etag == get_etag
+    # And it must be a real content hash, not a hash of the key string.
+    import hashlib
+    content_hash = f'"{hashlib.md5(r2.content, usedforsecurity=False).hexdigest()}"'
+    assert list_etag == content_hash
+
+
 async def test_get_data_parquet_in_delta_mode(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)

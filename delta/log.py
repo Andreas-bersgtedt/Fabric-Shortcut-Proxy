@@ -266,6 +266,15 @@ def delta_log_objects() -> dict[str, dict]:
                         "last_modified_ms": snap.watermark_ms,
                         "data": None,  # generated / pinned on demand
                         "content_type": "application/octet-stream",
+                        # Real content-hash ETag when the split is already
+                        # cached, so a list-then-get sees the same ETag (see
+                        # the _delta_log commit fix above for why this
+                        # matters). Left unset (key-hash fallback) only when
+                        # the split hasn't been generated/cached yet.
+                        "etag": (
+                            hashlib.md5(cached, usedforsecurity=False).hexdigest()
+                            if cached is not None else None
+                        ),
                     }
     return objects
 

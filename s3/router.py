@@ -79,8 +79,16 @@ def _warehouse_alias_enabled() -> bool:
 
 
 def _normalize_incoming_key(key: str) -> str:
-    """Map legacy aliases to active object keys."""
+    """Map legacy aliases to active object keys.
+
+    Fabric sometimes retries the same object with a trailing slash on the path
+    (for example ``.../_delta_log/00000000000000000000.json/``). That is not a
+    distinct S3 key; it is the same object with a stray separator, so normalize
+    it back to the canonical object key before any lookup.
+    """
     k = alias_to_active_key(key)
+    if k.endswith("/"):
+        k = k.rstrip("/")
     if _warehouse_alias_enabled() and k.startswith("warehouse/"):
         k = k[len("warehouse/"):]
     return k
@@ -479,13 +487,16 @@ async def head_object(
     obj = all_objects.get(key)
     if obj is not None:
         log.info("head_object", key=key, size=obj["size"])
+        headers = {
+            "Content-Length": str(obj["size"]),
+            "Content-Type": obj["content_type"],
+            "Accept-Ranges": "bytes",
+        }
+        if obj.get("etag"):
+            headers["ETag"] = f'"{obj["etag"]}"'
         return FastAPIResponse(
             status_code=200,
-            headers={
-                "Content-Length": str(obj["size"]),
-                "Content-Type": obj["content_type"],
-                "Accept-Ranges": "bytes",
-            },
+            headers=headers,
         )
 
     # No literal object at this key. Real S3 returns 404 for a HEAD on a

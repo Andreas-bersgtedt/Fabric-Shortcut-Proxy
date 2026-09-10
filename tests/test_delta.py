@@ -274,6 +274,17 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
         assert "numRecords" in json.loads(add["stats"])
 
 
+async def test_get_commit_zero_trailing_slash_is_normalized(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    keys = _extract_keys(r.content)
+    commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
+
+    r2 = await delta_client.get(f"/delta-bucket/{commit_key}/")
+    assert r2.status_code == 200
+    assert r2.headers["content-type"].startswith("application/json")
+    assert r2.text == (await delta_client.get(f"/delta-bucket/{commit_key}")).text
+
+
 def _extract_key_etags(xml_bytes: bytes) -> dict[str, str]:
     import xml.etree.ElementTree as ET
     root = ET.fromstring(xml_bytes)
@@ -306,6 +317,16 @@ async def test_delta_log_etag_matches_between_list_and_get(delta_client):
     import hashlib
     content_hash = f'"{hashlib.md5(r2.content, usedforsecurity=False).hexdigest()}"'
     assert list_etag == content_hash
+
+
+async def test_delta_log_etag_matches_between_list_and_head(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    etags = _extract_key_etags(r.content)
+    commit_key = next(k for k in etags if k.endswith("_delta_log/00000000000000000000.json"))
+
+    r2 = await delta_client.head(f"/delta-bucket/{commit_key}")
+    assert r2.status_code == 200
+    assert r2.headers["etag"] == etags[commit_key]
 
 
 async def test_get_data_parquet_in_delta_mode(delta_client):

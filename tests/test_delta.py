@@ -327,6 +327,7 @@ async def test_delta_log_etag_matches_between_list_and_head(delta_client):
     r2 = await delta_client.head(f"/delta-bucket/{commit_key}")
     assert r2.status_code == 200
     assert r2.headers["etag"] == etags[commit_key]
+    assert r2.headers["last-modified"]
 
 
 async def test_get_data_parquet_in_delta_mode(delta_client):

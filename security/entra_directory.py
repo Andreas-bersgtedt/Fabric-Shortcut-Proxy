@@ -18,12 +18,15 @@ def _escape_filter(value: str) -> str:
 class EntraDirectoryClient:
     def __init__(self) -> None:
         import config
+        from system_config import ENTRA_GRAPH_CLIENT_SECRET
 
         self.tenant_id = str(config.ENTRA_TENANT_ID or "").strip()
         self.client_id = str(
             os.environ.get("FSP_ENTRA_GRAPH_CLIENT_ID", config.ENTRA_GRAPH_CLIENT_ID)
         ).strip()
-        self.client_secret = os.environ.get("FSP_ENTRA_GRAPH_CLIENT_SECRET", "").strip()
+        self.client_secret = os.environ.get(
+            "FSP_ENTRA_GRAPH_CLIENT_SECRET", ENTRA_GRAPH_CLIENT_SECRET
+        ).strip()
         self.authority = f"https://login.microsoftonline.com/{self.tenant_id}"
 
     def _access_token(self) -> str:

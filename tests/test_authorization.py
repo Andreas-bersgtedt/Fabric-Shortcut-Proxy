@@ -324,7 +324,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     app = FastAPI()
     app.include_router(router)
     payload = {
-        "user_id": "support", "roles": ["monitor_troubleshooter"],
+        "user_id": "support", "roles": ["monitor_troubleshooter", "user_administrator"],
         "password": "correct horse battery staple",
     }
     async with httpx.AsyncClient(
@@ -346,6 +346,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert denied.status_code == 401
     assert created.status_code == 200
     assert created.json()["user"]["user_id"] == "support"
+    assert created.json()["user"]["roles"] == ["monitor_troubleshooter", "user_administrator"]
     assert disabled.status_code == 200
     assert last_admin.status_code == 409
 
@@ -388,6 +389,36 @@ async def test_entra_group_assignment_api_round_trip_and_disable(tmp_path, monke
     assert disabled.status_code == 200
     assert invalid.status_code == 400
     assert UserDirectory.load(str(group_path)).list_groups_public()[0]["enabled"] is False
+
+
+async def test_entra_directory_search_api_requires_users_admin_and_returns_safe_results(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from configbuilder.router import router
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+
+    class FakeDirectoryClient:
+        def search_users(self, query):
+            assert query == "Alex"
+            return [{"id": "11111111-2222-3333-4444-555555555555", "kind": "user",
+                     "tenant_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                     "display_name": "Alex Operator", "user_principal_name": "alex@example.com"}]
+
+    monkeypatch.setattr("security.entra_directory.EntraDirectoryClient", FakeDirectoryClient)
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        denied = await client.get("/_config/api/entra/directory/users?q=Alex")
+        allowed = await client.get(
+            "/_config/api/entra/directory/users?q=Alex",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()["results"][0]["display_name"] == "Alex Operator"
+    assert "access_token" not in allowed.text
 
 
 async def test_user_creation_validates_password_before_metadata_write(tmp_path, monkeypatch):

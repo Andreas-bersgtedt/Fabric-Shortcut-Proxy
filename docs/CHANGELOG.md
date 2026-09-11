@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.1]: 2026-09-11
+
 ### Added
 
 - Config Builder exposes restart-bound OIDC issuer, audience, user-claim, and
@@ -563,6 +565,7 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
+[2.9.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.0...2.9.1
 [2.8.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.7.1...2.8.0
 [2.7.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.6.0...2.7.0
 [2.6.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.5.3...2.6.0

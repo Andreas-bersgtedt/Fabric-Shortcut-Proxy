@@ -1127,7 +1127,7 @@ async function loadEntraMsal(){
   if(!window.msal){
     await new Promise((resolve,reject)=>{
       const script=document.createElement("script");
-      script.src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js";
+      script.src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@4.26.2/lib/msal-browser.min.js";
       script.onload=resolve; script.onerror=()=>reject(new Error("Unable to load MSAL Browser"));
       document.head.appendChild(script);
     });

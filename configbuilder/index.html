@@ -1702,9 +1702,14 @@ async function loadManagedUsers(){
   const box=$("userManagementList"); const status=$("userManagementStatus");
   if(!box) return;
   try{
-    const response=await fetch("/_config/api/authorization/users", {cache:"no-store"});
-    const data=await response.json();
-    if(!response.ok || !data.ok) throw new Error(data.error||"Unable to load users");
+    const [userResponse, groupResponse]=await Promise.all([
+      fetch("/_config/api/authorization/users", {cache:"no-store"}),
+      fetch("/_config/api/authorization/groups", {cache:"no-store"}),
+    ]);
+    const data=await userResponse.json();
+    const groupData=await groupResponse.json();
+    if(!userResponse.ok || !data.ok) throw new Error(data.error||"Unable to load users");
+    if(!groupResponse.ok || !groupData.ok) throw new Error(groupData.error||"Unable to load groups");
     box.innerHTML="";
     for(const user of data.users||[]){
       const row=document.createElement("div"); row.className="connrow";
@@ -1719,7 +1724,20 @@ async function loadManagedUsers(){
       disable.disabled=!user.enabled; disable.onclick=()=>disableManagedUser(user.user_id);
       row.append(identity,disable); box.appendChild(row);
     }
-    status.textContent=`${(data.users||[]).length} user record${(data.users||[]).length===1?"":"s"} loaded.`;
+    for(const group of groupData.groups||[]){
+      const row=document.createElement("div"); row.className="connrow";
+      const identity=document.createElement("div"); identity.className="useridentity";
+      const label=document.createElement("strong"); label.className="cid";
+      label.textContent=group.display_name||"Entra security group";
+      const detail=document.createElement("span"); detail.className="meta";
+      detail.textContent=(group.enabled?"enabled":"disabled")+" · Entra security group · "+(group.roles||[]).join(", ");
+      identity.append(label,detail);
+      const disable=document.createElement("button"); disable.className="btn ghost useraction"; disable.textContent="Disable";
+      disable.disabled=!group.enabled; disable.onclick=()=>disableManagedGroup(group.group_id);
+      row.append(identity,disable); box.appendChild(row);
+    }
+    const userCount=(data.users||[]).length, groupCount=(groupData.groups||[]).length;
+    status.textContent=`${userCount} user record${userCount===1?"":"s"} and ${groupCount} group assignment${groupCount===1?"":"s"} loaded.`;
     status.className="status ok";
   }catch(error){ box.textContent="User records are unavailable."; status.textContent=error.message||"Unable to load users."; status.className="status err"; }
 }
@@ -1816,6 +1834,14 @@ async function disableManagedUser(userId){
   const response=await fetch("/_config/api/authorization/users/"+encodeURIComponent(userId), {method:"DELETE"});
   const data=await response.json();
   status.textContent=data.ok?"User record disabled.":(data.error||"Unable to disable user."); status.className="status "+(data.ok?"ok":"err");
+  if(data.ok) await loadManagedUsers();
+}
+
+async function disableManagedGroup(groupId){
+  const status=$("userManagementStatus");
+  const response=await fetch("/_config/api/authorization/groups/"+encodeURIComponent(groupId), {method:"DELETE"});
+  const data=await response.json();
+  status.textContent=data.ok?"Group assignment disabled.":(data.error||"Unable to disable group assignment."); status.className="status "+(data.ok?"ok":"err");
   if(data.ok) await loadManagedUsers();
 }
 

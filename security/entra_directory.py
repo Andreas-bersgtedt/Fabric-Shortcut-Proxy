@@ -103,3 +103,15 @@ class EntraDirectoryClient:
             for item in self._get(f"groups?$select={select}&$filter={filter_value}&$top=25")
             if item.get("id") and item.get("displayName") and item.get("securityEnabled") is True
         ]
+
+    def user_group_ids(self, object_id: str) -> set[str]:
+        """Return direct and transitive security-group IDs for an Entra user."""
+        path = (
+            f"users/{quote(object_id, safe='')}/transitiveMemberOf/microsoft.graph.group"
+            "?$select=id,securityEnabled&$top=999"
+        )
+        return {
+            str(item["id"]).lower()
+            for item in self._get(path)
+            if item.get("id") and item.get("securityEnabled") is True
+        }

@@ -119,6 +119,22 @@ def test_entra_user_round_trips_immutable_identity_and_display_name(tmp_path):
         )
 
 
+def test_user_directory_group_roles_are_tenant_scoped():
+    from security.authorization import ROLE_PERMISSIONS
+
+    tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    group_id = "22222222-3333-4444-5555-666666666666"
+    directory = UserDirectory(groups=[{
+        "group_id": group_id, "tenant_id": tenant_id,
+        "display_name": "Proxy Operators", "roles": ["config_operator"],
+    }])
+
+    assert directory.authorize_groups(tenant_id, {group_id}, "config.write")
+    assert not directory.authorize_groups("bbbbbbbb-cccc-dddd-eeee-ffffffffffff", {group_id}, "config.write")
+    assert not directory.authorize_groups(tenant_id, {group_id}, "system.admin")
+    assert "config.write" in {p for role in ["config_operator"] for p in ROLE_PERMISSIONS[role]}
+
+
 def test_user_directory_protects_last_enabled_system_admin():
     directory = UserDirectory([
         User("admin", roles=("system_administrator",)),

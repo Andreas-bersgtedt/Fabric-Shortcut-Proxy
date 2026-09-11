@@ -210,13 +210,47 @@ def require(
 class UserDirectory:
     """Secret-free user/role directory for the future identity-provider adapter."""
 
-    def __init__(self, users: list[User] | None = None) -> None:
+    def __init__(self, users: list[User] | None = None, groups: list[dict] | None = None) -> None:
         self._users: dict[str, User] = {}
+        self._groups: dict[str, dict] = {}
         for user in users or []:
             self.replace(user)
+        for group in groups or []:
+            self.replace_group(group)
 
     def replace(self, user: User) -> None:
         self._users[user.user_id] = user
+
+    def replace_group(self, group: Mapping) -> None:
+        group_id = str(group.get("group_id", "")).strip().lower()
+        if not group_id:
+            raise ValueError("group_id must be non-empty")
+        self._groups[group_id] = {
+            "group_id": group_id,
+            "tenant_id": str(group.get("tenant_id", "")).strip(),
+            "display_name": str(group.get("display_name", "")).strip(),
+            "roles": [str(role).strip() for role in (group.get("roles") or [])],
+            "enabled": bool(group.get("enabled", True)),
+        }
+        unknown = set(self._groups[group_id]["roles"]) - set(ROLE_PERMISSIONS)
+        if unknown:
+            raise ValueError(f"unknown roles: {sorted(unknown)}")
+
+    def groups_for(self, tenant_id: str, group_ids: set[str]) -> list[dict]:
+        tenant = str(tenant_id).strip().lower()
+        return [
+            group for group_id, group in self._groups.items()
+            if group_id in {value.lower() for value in group_ids}
+            and group["enabled"] and group["tenant_id"].lower() == tenant
+        ]
+
+    def authorize_groups(self, tenant_id: str, group_ids: set[str], permission: str) -> bool:
+        return any(
+            permission in {
+                granted for role in group["roles"] for granted in ROLE_PERMISSIONS[role]
+            }
+            for group in self.groups_for(tenant_id, group_ids)
+        )
 
     def disable(self, user_id: str) -> None:
         """Disable a user without allowing the last enabled admin to be removed."""
@@ -231,7 +265,8 @@ class UserDirectory:
             raise AuthorizationError("cannot disable the last enabled system administrator")
         self._users[user_id] = User(
             user.user_id, roles=user.roles, grants=user.grants, enabled=False,
-            identity_source=user.identity_source,
+            identity_source=user.identity_source, tenant_id=user.tenant_id,
+            object_id=user.object_id, display_name=user.display_name,
         )
 
     def get(self, user_id: str) -> User:
@@ -244,13 +279,16 @@ class UserDirectory:
         return [self._users[key].to_public() for key in sorted(self._users)]
 
     def to_dict(self) -> dict:
-        return {"users": self.list_public()}
+        return {"users": self.list_public(), "groups": list(self._groups.values())}
 
     @classmethod
     def from_dict(cls, raw: Mapping) -> "UserDirectory":
         if not isinstance(raw, Mapping) or not isinstance(raw.get("users"), list):
             raise ValueError("user directory must contain a users list")
-        return cls([User.from_dict(item) for item in raw["users"]])
+        directory = cls([User.from_dict(item) for item in raw["users"]])
+        for group in raw.get("groups", []):
+            directory.replace_group(group)
+        return directory
 
     @classmethod
     def load(cls, path: str) -> "UserDirectory":

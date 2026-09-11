@@ -30,8 +30,16 @@ class EntraDirectoryClient:
         self.authority = f"https://login.microsoftonline.com/{self.tenant_id}"
 
     def _access_token(self) -> str:
-        if not self.tenant_id or not self.client_id or not self.client_secret:
-            raise EntraDirectoryError("Entra Graph app credentials are not configured")
+        if not self.tenant_id:
+            raise EntraDirectoryError("Entra tenant is not configured")
+        if not self.client_secret:
+            try:
+                from azure.identity import DefaultAzureCredential
+                return DefaultAzureCredential().get_token(
+                    "https://graph.microsoft.com/.default"
+                ).token
+            except Exception as exc:  # noqa: BLE001 - normalize identity errors
+                raise EntraDirectoryError("Entra managed identity cannot access Microsoft Graph") from exc
         try:
             import msal
         except ImportError as exc:

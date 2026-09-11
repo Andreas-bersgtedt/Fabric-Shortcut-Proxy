@@ -686,7 +686,7 @@
       <div class="grid2">
         <section>
           <label for="newUserIdentitySource">Identity source</label>
-          <select id="newUserIdentitySource"><option value="local">Local password</option><option value="oidc">OIDC subject</option><option value="entra">Entra ID user</option></select>
+          <select id="newUserIdentitySource"><option value="local">Local password</option><option value="oidc">OIDC subject</option><option value="entra">Entra ID user</option><option value="entra_group">Entra security group</option></select>
         </section>
         <section id="newUserPasswordField">
           <label for="newUserPassword">Temporary password</label>
@@ -696,12 +696,12 @@
       <div id="entraUserPicker" style="display:none;">
         <div class="row">
           <section>
-            <label for="entraUserSearch">Search Entra users</label>
-            <input id="entraUserSearch" placeholder="Display name or sign-in name" autocomplete="off" />
+            <label for="entraUserSearch">Search Entra directory</label>
+            <input id="entraUserSearch" placeholder="Display name" autocomplete="off" />
           </section>
           <section>
-            <label for="entraUserResult">Selected user</label>
-            <select id="entraUserResult"><option value="">Search and select a user</option></select>
+            <label for="entraUserResult">Selected directory object</label>
+            <select id="entraUserResult"><option value="">Search and select an object</option></select>
           </section>
         </div>
       </div>
@@ -1783,10 +1783,17 @@ async function createManagedUser(){
   const userId=$("newUserId").value.trim(); const password=$("newUserPassword").value;
   const role=$("newUserRole").value; const identitySource=$("newUserIdentitySource").value; const status=$("userManagementStatus");
   const payload={user_id:userId,roles:[role],identity_source:identitySource,password:identitySource==="local"?password:""};
-  if(identitySource==="entra"){
+  if(identitySource==="entra"||identitySource==="entra_group"){
     const selected=$("entraUserResult").selectedOptions[0];
-    if(!selected?.dataset.tenantId||!selected.dataset.objectId){ status.textContent="Select an Entra user first."; status.className="status err"; return; }
+    if(!selected?.dataset.tenantId||!selected.dataset.objectId){ status.textContent="Select an Entra directory object first."; status.className="status err"; return; }
     payload.tenant_id=selected.dataset.tenantId; payload.object_id=selected.dataset.objectId; payload.display_name=selected.dataset.displayName||selected.textContent;
+    if(identitySource==="entra_group"){
+      delete payload.user_id; delete payload.identity_source; delete payload.password; payload.group_id=payload.object_id;
+      const groupResponse=await fetch("/_config/api/authorization/groups", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({group_id:payload.group_id,tenant_id:payload.tenant_id,display_name:payload.display_name,roles:[role],enabled:true})});
+      const groupData=await groupResponse.json(); status.textContent=groupData.ok?"Group assignment saved.":(groupData.error||"Unable to save group assignment."); status.className="status "+(groupData.ok?"ok":"err");
+      if(groupData.ok){ $("newUserId").value=""; $("entraUserSearch").value=""; await loadManagedUsers(); }
+      return;
+    }
   }
   if(!userId || (identitySource==="local"&&password.length<12)){ status.textContent=identitySource==="local"?"User ID and a password of at least 12 characters are required.":"User ID is required."; status.className="status err"; return; }
   const response=await fetch("/_config/api/authorization/users", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -4219,12 +4226,13 @@ $("btnGenerateTokenizationKey").onclick=generateTokenizationKey;
 $("btnSaveTokenizationKey").onclick=saveTokenizationKey;
 $("btnLoadUsers").onclick=loadManagedUsers;
 $("btnCreateUser").onclick=createManagedUser;
-$("newUserIdentitySource").onchange=()=>{ const source=$("newUserIdentitySource").value; const local=source==="local"; $("newUserPasswordField").style.display=local?"":"none"; $("entraUserPicker").style.display=source==="entra"?"":"none"; if(!local) $("newUserPassword").value=""; };
+$("newUserIdentitySource").onchange=()=>{ const source=$("newUserIdentitySource").value; const local=source==="local"; const entra=source==="entra"||source==="entra_group"; $("newUserPasswordField").style.display=local?"":"none"; $("entraUserPicker").style.display=entra?"":"none"; if(!local) $("newUserPassword").value=""; };
 $("entraUserSearch").oninput=async()=>{
   const query=$("entraUserSearch").value.trim(), result=$("entraUserResult");
-  if(query.length<2){ result.innerHTML="<option value=''>Search and select a user</option>"; return; }
-  const response=await fetch("/_config/api/entra/directory/users?q="+encodeURIComponent(query),{cache:"no-store"});
-  const data=await response.json(); result.innerHTML="<option value=''>Select a user</option>";
+  if(query.length<2){ result.innerHTML="<option value=''>Search and select an object</option>"; return; }
+  const groupSearch=$("newUserIdentitySource").value==="entra_group";
+  const response=await fetch("/_config/api/entra/directory/"+(groupSearch?"groups":"users")+"?q="+encodeURIComponent(query),{cache:"no-store"});
+  const data=await response.json(); result.innerHTML="<option value=''>Select an object</option>";
   if(!response.ok||!data.ok) return;
   for(const item of data.results||[]){ const option=document.createElement("option"); option.value=item.id; option.textContent=item.display_name+(item.user_principal_name?" · "+item.user_principal_name:""); option.dataset.tenantId=item.tenant_id||""; option.dataset.objectId=item.id; option.dataset.displayName=item.display_name||""; result.appendChild(option); }
 };

@@ -355,6 +355,41 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     ) is None
 
 
+async def test_entra_group_assignment_api_round_trip_and_disable(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from configbuilder.router import router
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    group_path = tmp_path / "users.json"
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(group_path))
+    UserDirectory([User("admin", roles=("system_administrator",))]).save(str(group_path))
+
+    app = FastAPI()
+    app.include_router(router)
+    payload = {
+        "group_id": "22222222-3333-4444-5555-666666666666",
+        "tenant_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "display_name": "Proxy Operators",
+        "roles": ["config_operator"],
+        "enabled": True,
+    }
+    headers = {"X-Admin-Token": "admin-test-token"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post("/_config/api/authorization/groups", json=payload, headers=headers)
+        listed = await client.get("/_config/api/authorization/groups", headers=headers)
+        disabled = await client.delete(f"/_config/api/authorization/groups/{payload['group_id']}", headers=headers)
+        invalid = await client.post("/_config/api/authorization/groups", json={**payload, "roles": ["unknown"]}, headers=headers)
+
+    assert created.status_code == 200
+    assert created.json()["group"]["display_name"] == "Proxy Operators"
+    assert listed.status_code == 200
+    assert listed.json()["groups"][0]["group_id"] == payload["group_id"]
+    assert disabled.status_code == 200
+    assert invalid.status_code == 400
+    assert UserDirectory.load(str(group_path)).list_groups_public()[0]["enabled"] is False
+
+
 async def test_user_creation_validates_password_before_metadata_write(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI

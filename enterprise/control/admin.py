@@ -649,7 +649,7 @@ window.fetch = async function(input, init = {}) {
   const url = typeof input === "string" ? input : input.url;
   const path = new URL(url, window.location.href).pathname;
   const bootstrap = ["/_manager/api/authorization/msal-config"];
-  if (entraMsalInstance && path.startsWith("/_manager/api/") && !bootstrap.includes(path)) {
+  if (entraMsalInstance && (path.startsWith("/_manager/api/") || path.startsWith("/_monitor/api/")) && !bootstrap.includes(path)) {
     const token = await entraAccessToken();
     if (token) {
       const headers = new Headers(init.headers || ((typeof input !== "string") ? input.headers : undefined));

@@ -66,6 +66,16 @@ $env:MANAGER_AUTH_ENABLED = "1"
 
 Use `/_config/` for sources, reflected tables, mounts, open mirroring, credentials, access keys, ACLs, and encrypted backups. Keep `FSP_CRED_KEY` stable across restarts and hosts that share the credential store. Never place live passwords, SAS tokens, or connection strings in committed examples.
 
+For public browser access, configure a trusted HTTPS operator origin and set the
+matching Entra values: `FSP_ENTRA_TENANT_ID`, `FSP_ENTRA_SPA_CLIENT_ID`,
+`FSP_ENTRA_API_AUDIENCE`, `FSP_ENTRA_API_SCOPE`, `FSP_ENTRA_REDIRECT_URI`, and
+`FSP_ENTRA_POST_LOGOUT_REDIRECT_URI`. Register the exact redirect and logout
+URIs in the SPA app registration. The SPA has no client secret.
+
+User Management stores immutable Entra tenant/object IDs for authorization and
+uses display names only for selection and presentation. Roles are additive; a
+user may receive more than one proxy role. `auditor` does not grant `users.admin`.
+
 Use the [tokenization skill](../fsp-tokenization/SKILL.md) to create keys and
 central policies, assign durable or random selections, handle rotation, or opt
 into Arrow fallback. The screenshot workflow is in

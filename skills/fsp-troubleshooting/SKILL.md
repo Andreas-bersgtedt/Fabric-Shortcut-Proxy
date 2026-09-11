@@ -70,6 +70,24 @@ Install `cryptography` in the active venv, keep `FSP_CRED_KEY` stable, and verif
 
 ## Network and Endpoint Diagnosis
 
+### Browser shows a native username/password dialog
+
+Inspect the response headers. A `401` with `WWW-Authenticate: Basic` causes
+Chrome and Edge to open their native credential dialog. When Entra is enabled,
+browser routes should return `401` without that header and protected API loaders
+must not run before MSAL initialization and bearer-token acquisition.
+
+Check the public operator origin with:
+
+```bash
+curl -i https://<operator-fqdn>:9443/_manager/api/authorization/me
+```
+
+An unauthenticated Entra-enabled response should be `401` without
+`WWW-Authenticate`; a signed-in browser should return `200`. If the browser
+reports `crypto_nonexistent`, it is using HTTP. Use the trusted HTTPS FQDN and
+register that exact URI in the Entra SPA application.
+
 - If `/healthz` fails, inspect process startup, bind host, port collision, and logs.
 - If `/healthz` works but `/readyz` is `503`, inspect source DB reachability, schema reflection, snapshot/materialization errors, or missing ready Agents.
 - If localhost works but a private endpoint fails, test DNS resolution, route, NSG/firewall, the `fsp-materializer-internal` Service frontend and port `9000`, internal LoadBalancer health probes, and TLS termination.

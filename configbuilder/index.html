@@ -117,6 +117,9 @@
   #userManagementList .connrow .meta { margin-top:1px; word-break:normal; }
   #userManagementList .useridentity { min-width:0; display:flex; align-items:baseline; gap:12px; }
   #userManagementList .useraction { padding:4px 10px; font-size:11px; }
+  .role-picker { display:grid; grid-template-columns:1fr 1fr; gap:5px 10px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#0b1220; }
+  .role-picker label { display:flex; align-items:center; gap:6px; margin:0; font-size:11px; color:var(--fg); }
+  .role-picker input { width:auto; }
   .connacts { display:flex; gap:6px; }
   .om-workspace { display:grid; grid-template-columns:minmax(210px,280px) minmax(0,1fr); gap:14px; margin-top:10px; }
   .om-table-nav { border-right:1px solid var(--line); padding-right:14px; }
@@ -675,17 +678,17 @@
           <input id="newUserId" placeholder="support-operator" />
         </section>
         <section>
-          <label for="newUserRole">Role</label>
-          <select id="newUserRole">
-            <option value="monitor_troubleshooter">Monitor / Troubleshooter</option>
-            <option value="viewer">Viewer</option>
-            <option value="config_operator">Config Operator</option>
-            <option value="tokenization_administrator">Tokenization Administrator</option>
-            <option value="auditor">Auditor</option>
-            <option value="security_administrator">Security Administrator</option>
-            <option value="user_administrator">User Administrator</option>
-            <option value="system_administrator">System Administrator</option>
-          </select>
+          <label>Roles</label>
+          <div id="newUserRoles" class="role-picker">
+            <label><input type="checkbox" name="newUserRole" value="monitor_troubleshooter" checked />Monitor / Troubleshooter</label>
+            <label><input type="checkbox" name="newUserRole" value="viewer" />Viewer</label>
+            <label><input type="checkbox" name="newUserRole" value="config_operator" />Config Operator</label>
+            <label><input type="checkbox" name="newUserRole" value="tokenization_administrator" />Tokenization Administrator</label>
+            <label><input type="checkbox" name="newUserRole" value="auditor" />Auditor</label>
+            <label><input type="checkbox" name="newUserRole" value="security_administrator" />Security Administrator</label>
+            <label><input type="checkbox" name="newUserRole" value="user_administrator" />User Administrator</label>
+            <label><input type="checkbox" name="newUserRole" value="system_administrator" />System Administrator</label>
+          </div>
         </section>
       </div>
       <div class="grid2">
@@ -1808,15 +1811,17 @@ async function signOut(){
 
 async function createManagedUser(){
   const userId=$("newUserId").value.trim(); const password=$("newUserPassword").value;
-  const role=$("newUserRole").value; const identitySource=$("newUserIdentitySource").value; const status=$("userManagementStatus");
-  const payload={user_id:userId,roles:[role],identity_source:identitySource,password:identitySource==="local"?password:""};
+  const roles=[...document.querySelectorAll("input[name='newUserRole']:checked")].map(input=>input.value);
+  const identitySource=$("newUserIdentitySource").value; const status=$("userManagementStatus");
+  const payload={user_id:userId,roles,identity_source:identitySource,password:identitySource==="local"?password:""};
+  if(!roles.length){ status.textContent="Select at least one role."; status.className="status err"; return; }
   if(identitySource==="entra"||identitySource==="entra_group"){
     const selected=$("entraUserResult").selectedOptions[0];
     if(!selected?.dataset.tenantId||!selected.dataset.objectId){ status.textContent="Select an Entra directory object first."; status.className="status err"; return; }
     payload.tenant_id=selected.dataset.tenantId; payload.object_id=selected.dataset.objectId; payload.display_name=selected.dataset.displayName||selected.textContent;
     if(identitySource==="entra_group"){
       delete payload.user_id; delete payload.identity_source; delete payload.password; payload.group_id=payload.object_id;
-      const groupResponse=await fetch("/_config/api/authorization/groups", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({group_id:payload.group_id,tenant_id:payload.tenant_id,display_name:payload.display_name,roles:[role],enabled:true})});
+      const groupResponse=await fetch("/_config/api/authorization/groups", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({group_id:payload.group_id,tenant_id:payload.tenant_id,display_name:payload.display_name,roles,enabled:true})});
       const groupData=await groupResponse.json(); status.textContent=groupData.ok?"Group assignment saved.":(groupData.error||"Unable to save group assignment."); status.className="status "+(groupData.ok?"ok":"err");
       if(groupData.ok){ $("newUserId").value=""; $("entraUserSearch").value=""; await loadManagedUsers(); }
       return;

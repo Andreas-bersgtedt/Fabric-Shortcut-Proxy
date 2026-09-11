@@ -252,6 +252,16 @@ class UserDirectory:
             for group in self.groups_for(tenant_id, group_ids)
         )
 
+    def group_permissions(self, tenant_id: str, group_ids: set[str]) -> frozenset[str]:
+        permissions: set[str] = set()
+        for group in self.groups_for(tenant_id, group_ids):
+            for role in group["roles"]:
+                permissions.update(ROLE_PERMISSIONS[role])
+        return frozenset(permissions)
+
+    def list_groups_public(self) -> list[dict]:
+        return [dict(self._groups[key]) for key in sorted(self._groups)]
+
     def disable(self, user_id: str) -> None:
         """Disable a user without allowing the last enabled admin to be removed."""
         user = self.get(user_id)
@@ -279,7 +289,7 @@ class UserDirectory:
         return [self._users[key].to_public() for key in sorted(self._users)]
 
     def to_dict(self) -> dict:
-        return {"users": self.list_public(), "groups": list(self._groups.values())}
+        return {"users": self.list_public(), "groups": self.list_groups_public()}
 
     @classmethod
     def from_dict(cls, raw: Mapping) -> "UserDirectory":

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-from security.authorization import User
+from security.authorization import ROLE_PERMISSIONS, User
 
 _ITERATIONS = 310_000
 _SESSION_TTL = 8 * 60 * 60
@@ -308,8 +308,29 @@ def authenticate_entra_token(token: str) -> User | None:
         from security.authorization import UserDirectory, default_user_directory_path
         user = UserDirectory.load(default_user_directory_path()).get(user_id)
     except (KeyError, ValueError, PermissionError):
+        user = None
+    if user is not None:
+        return user if user.enabled and user.identity_source == "entra" else None
+
+    try:
+        from security.authorization import UserDirectory
+        directory = UserDirectory.load(default_user_directory_path())
+        from security.entra_directory import EntraDirectoryClient
+        group_ids = EntraDirectoryClient().user_group_ids(str(claims["oid"]))
+        permissions = directory.group_permissions(tenant_uuid, group_ids)
+        if not permissions:
+            return None
+        roles = tuple(
+            role for role, role_permissions in ROLE_PERMISSIONS.items()
+            if role_permissions.intersection(permissions)
+        )
+        return User(
+            user_id, roles=roles, identity_source="entra",
+            tenant_id=tenant_uuid, object_id=str(claims["oid"]),
+            display_name=str(claims.get("name", "")).strip() or None,
+        )
+    except (KeyError, ValueError, PermissionError, RuntimeError):
         return None
-    return user if user.enabled and user.identity_source == "entra" else None
 
 
 @lru_cache(maxsize=8)

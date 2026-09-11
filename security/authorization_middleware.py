@@ -97,6 +97,8 @@ def _permission(path: str, method: str) -> str | None:
         return "monitor.read"
     if path.startswith("/_config/api/authorization/users"):
         return "users.admin"
+    if path.startswith("/_config/api/authorization/groups"):
+        return "users.admin"
     if path.startswith("/_config/api/entra/directory/"):
         return "users.admin"
     if path.startswith("/_config/api/tokenization/policies"):

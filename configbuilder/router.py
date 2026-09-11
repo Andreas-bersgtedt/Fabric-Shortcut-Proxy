@@ -630,6 +630,57 @@ async def entra_directory_groups(request: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
 
 
+@router.get("/api/authorization/groups")
+async def authorization_groups(request: Request) -> JSONResponse:
+    """List configured Entra group role assignments without secrets."""
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        from security.authorization import UserDirectory
+        groups = UserDirectory.load(os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")).list_groups_public()
+        return JSONResponse({"ok": True, "groups": groups})
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+
+
+@router.post("/api/authorization/groups")
+async def save_authorization_group(request: Request) -> JSONResponse:
+    """Create or replace an Entra security-group role assignment."""
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        from security.authorization import UserDirectory
+        body = await request.json()
+        directory_path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+        directory = UserDirectory.load(directory_path)
+        directory.replace_group(body)
+        directory.save(directory_path)
+        return JSONResponse({"ok": True, "group": body})
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@router.delete("/api/authorization/groups/{group_id}")
+async def disable_authorization_group(group_id: str, request: Request) -> JSONResponse:
+    """Disable an Entra security-group role assignment."""
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        from security.authorization import UserDirectory
+        directory_path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+        directory = UserDirectory.load(directory_path)
+        group = next(item for item in directory.list_groups_public() if item["group_id"] == group_id.lower())
+        group["enabled"] = False
+        directory.replace_group(group)
+        directory.save(directory_path)
+        return JSONResponse({"ok": True, "group_id": group_id, "enabled": False})
+    except (StopIteration, ValueError):
+        return JSONResponse({"ok": False, "error": "group not found"}, status_code=404)
+
+
 @router.post("/api/authorization/login")
 async def authorization_login(request: Request) -> JSONResponse:
     """Authenticate a local user and issue a revocable HttpOnly session cookie."""

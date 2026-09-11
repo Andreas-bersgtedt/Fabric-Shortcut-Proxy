@@ -677,11 +677,13 @@ async function loadManagerAuthorization() {
     $("btnEntraLogin").style.display = "none";
     $("btnLogout").style.display = "inline-block";
     $("accountPopover").hidden = true;
+    return true;
   } catch (_) {
     managerAuthzEnforced = true;
     managerPermissions = new Set();
     $("accountPopover").hidden = false;
     $("accountButton").setAttribute("aria-expanded", "true");
+    return false;
   }
 }
 
@@ -1260,7 +1262,9 @@ document.addEventListener("click", event => {
   }
 });
 
-loadManagerAuthorization().finally(() => { refresh(); loop(); });
+loadManagerAuthorization().then(authenticated => {
+  if (authenticated) { refresh(); loop(); }
+});
 </script>
 </body>
 </html>

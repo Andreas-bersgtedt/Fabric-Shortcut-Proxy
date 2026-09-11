@@ -1714,7 +1714,10 @@ async function refreshAuthorization(){
     $("btnLogin").style.display="none"; $("btnEntraLogin").style.display="none"; $("btnLogout").style.display="inline-block";
     applyPermissionVisibility();
     await loadManagerFleet();
-  }catch(error){ state.permissions=new Set(); document.body.classList.remove("auth-pending"); document.body.classList.toggle("auth-locked", state.authzEnforced); $("sessionCredentials").style.display="grid"; $("btnEntraLogin").style.display=entraMsalConfig?.enabled?"inline-block":"none"; $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
+  }catch(error){
+    console.error("FSP authorization initialization failed", error);
+    state.permissions=new Set(); document.body.classList.remove("auth-pending"); document.body.classList.toggle("auth-locked", state.authzEnforced); $("sessionCredentials").style.display="grid"; $("btnEntraLogin").style.display=entraMsalConfig?.enabled?"inline-block":"none"; $("sessionIdentity").textContent="Not signed in"; status.textContent=error.message||"Authentication initialization failed."; status.className="status err"; applyPermissionVisibility();
+  }
 }
 
 function applyPermissionVisibility(){

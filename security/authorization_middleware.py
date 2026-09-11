@@ -91,7 +91,9 @@ def _permission(path: str, method: str) -> str | None:
     if not (path.startswith("/_config") or path.startswith("/_manager") or path.startswith("/_monitor")):
         return None
     if path in {"/_config/api/authorization/login", "/_config/api/authorization/status",
-                "/_config/api/authorization/msal-config", "/_config/", "/_config"}:
+                "/_config/api/authorization/msal-config", "/_manager", "/_manager/",
+                "/_manager/api/authorization/msal-config",
+                "/_config/", "/_config"}:
         return None
     if path.startswith("/_config/api/authorization/logout") or path.startswith("/_config/api/authorization/me"):
         return "monitor.read"

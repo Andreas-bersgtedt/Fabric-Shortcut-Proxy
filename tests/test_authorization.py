@@ -649,6 +649,7 @@ def test_registered_manager_operator_routes_have_authorization_decisions(monkeyp
         ("POST", "/_config/api/authorization/login"),
         ("GET", "/_config/api/authorization/status"),
         ("GET", "/_manager"),
+            ("GET", "/_manager/api/authorization/msal-config"),
     }
 
     route_sources = [app, create_admin_router(None, [])]

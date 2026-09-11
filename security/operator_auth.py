@@ -23,6 +23,9 @@ _IDENTITY_BOOTSTRAP_PATHS = {
     "/_config/api/authorization/login",
     "/_config/api/authorization/status",
     "/_config/api/authorization/msal-config",
+    "/_manager",
+    "/_manager/",
+    "/_manager/api/authorization/msal-config",
 }
 
 

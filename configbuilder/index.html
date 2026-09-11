@@ -112,6 +112,9 @@
   .connrow.active { border-color:var(--accent); background:rgba(56,189,248,.07); }
   .connrow .cid { font-weight:600; font-size:13px; }
   .connrow .meta { font-size:11px; color:var(--muted); margin-top:2px; word-break:break-all; }
+  #userManagementList .connrow { padding:7px 10px; gap:8px; }
+  #userManagementList .connrow .cid { font-size:12px; }
+  #userManagementList .connrow .meta { margin-top:1px; word-break:normal; }
   .connacts { display:flex; gap:6px; }
   .om-workspace { display:grid; grid-template-columns:minmax(210px,280px) minmax(0,1fr); gap:14px; margin-top:10px; }
   .om-table-nav { border-right:1px solid var(--line); padding-right:14px; }
@@ -1702,10 +1705,12 @@ async function loadManagedUsers(){
     if(!response.ok || !data.ok) throw new Error(data.error||"Unable to load users");
     box.innerHTML="";
     for(const user of data.users||[]){
-      const row=document.createElement("div"); row.className="conn-row";
-      const label=document.createElement("strong"); label.textContent=user.user_id;
-      const detail=document.createElement("span"); detail.className="hint";
-      detail.textContent=(user.enabled?"enabled":"disabled")+" · "+(user.identity_source||"local")+" · "+(user.roles||[]).join(", ");
+      const row=document.createElement("div"); row.className="connrow";
+      const label=document.createElement("strong");
+      label.className="cid";
+      label.textContent=user.identity_source==="entra" ? (user.display_name||"Entra ID user") : user.user_id;
+      const detail=document.createElement("span"); detail.className="meta";
+      detail.textContent=(user.enabled?"enabled":"disabled")+" · "+(user.identity_source==="entra"?"Entra ID":"local")+" · "+(user.roles||[]).join(", ");
       const disable=document.createElement("button"); disable.className="btn ghost"; disable.textContent="Disable";
       disable.disabled=!user.enabled; disable.onclick=()=>disableManagedUser(user.user_id);
       row.append(label,detail,disable); box.appendChild(row);

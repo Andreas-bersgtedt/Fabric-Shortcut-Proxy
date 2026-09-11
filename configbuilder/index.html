@@ -14,6 +14,16 @@
   header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   header h1 { margin:0; font-size:18px; }
   header p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+  .account-menu { position:relative; margin-left:auto; }
+  .account-button { appearance:none; display:flex; align-items:center; gap:9px; max-width:360px; border:1px solid var(--line); border-radius:8px; padding:6px 10px 6px 7px; color:var(--fg); background:#0b1220; cursor:pointer; font:inherit; text-align:left; }
+  .account-button:hover, .account-button:focus-visible { border-color:var(--accent2); outline:none; }
+  .account-avatar { display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:var(--accent); color:#082f49; font-size:18px; line-height:1; }
+  .account-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:600; }
+  .account-popover { position:absolute; z-index:20; right:0; top:calc(100% + 8px); width:min(360px, calc(100vw - 32px)); padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--card); box-shadow:0 14px 32px #0008; }
+  .account-popover[hidden] { display:none; }
+  .account-popover .row { margin:0 0 10px; }
+  .account-popover .actions { margin:0; }
+  .account-popover .status { margin-top:8px; }
   .navbtn { display:inline-block; text-decoration:none; border-radius:8px; padding:8px 12px;
             border:1px solid var(--line); color:var(--fg); font-size:12px; font-weight:600;
             background:#0b1220; }
@@ -194,15 +204,21 @@
     <p>Define sources, configure tables, and manage proxy settings.</p>
   </div>
   <a class="navbtn" href="/_manager">Back to Manager</a>
+  <div class="account-menu" id="sessionPanel">
+    <button class="account-button" id="accountButton" type="button" aria-expanded="false" aria-controls="accountPopover">
+      <span class="account-avatar" aria-hidden="true">&#128100;</span>
+      <span class="account-label" id="sessionIdentity">Not signed in</span>
+    </button>
+    <div class="account-popover" id="accountPopover" hidden>
+      <div class="row" id="sessionCredentials">
+        <section><label for="sessionUserId">User ID</label><input id="sessionUserId" autocomplete="username" placeholder="operator" /></section>
+        <section><label for="sessionPassword">Password</label><input id="sessionPassword" type="password" autocomplete="current-password" placeholder="Local identity password" /></section>
+      </div>
+      <div class="actions"><button class="btn primary" id="btnLogin">Sign in</button><button class="btn primary" id="btnEntraLogin" style="display:none;">Sign in with Entra ID</button><button class="btn ghost" id="btnLogout" style="display:none;">Sign out</button></div>
+      <div class="hint" id="accountPermissions"></div>
+      <div class="status" id="sessionStatus"></div>
+    </div>
 </header>
-<div class="card" id="sessionPanel" style="margin:12px 24px 0;max-width:1240px;margin-left:auto;margin-right:auto;">
-  <div class="row" id="sessionCredentials">
-    <section><label for="sessionUserId">User ID</label><input id="sessionUserId" autocomplete="username" placeholder="operator" /></section>
-    <section><label for="sessionPassword">Password</label><input id="sessionPassword" type="password" autocomplete="current-password" placeholder="Local identity password" /></section>
-  </div>
-  <div class="actions"><button class="btn primary" id="btnLogin">Sign in</button><button class="btn primary" id="btnEntraLogin" style="display:none;">Sign in with Entra ID</button><button class="btn ghost" id="btnLogout" style="display:none;">Sign out</button><span class="hint" id="sessionIdentity">Not signed in</span></div>
-  <div class="status" id="sessionStatus"></div>
-</div>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
 
 <div class="tabs" role="tablist" aria-label="Configuration sections">
@@ -1709,14 +1725,16 @@ async function refreshAuthorization(){
     if(!response.ok) throw new Error("Not signed in");
     const data=await response.json(); state.permissions=new Set(data.permissions||[]);
     document.body.classList.remove("auth-pending", "auth-locked");
-    $("sessionIdentity").textContent=data.user.user_id+" · "+[...state.permissions].join(", ");
+    $("sessionIdentity").textContent=data.user.display_name||data.user.user_id;
+    $("accountButton").title=data.user.user_id;
+    $("accountPermissions").textContent=[...state.permissions].join(", ");
     $("sessionCredentials").style.display="none";
-    $("btnLogin").style.display="none"; $("btnEntraLogin").style.display="none"; $("btnLogout").style.display="inline-block";
+    $("btnLogin").style.display="none"; $("btnEntraLogin").style.display="none"; $("btnLogout").style.display="inline-block"; $("accountPopover").hidden=true; $("accountButton").setAttribute("aria-expanded","false");
     applyPermissionVisibility();
     await loadManagerFleet();
   }catch(error){
     console.error("FSP authorization initialization failed", error);
-    state.permissions=new Set(); document.body.classList.remove("auth-pending"); document.body.classList.toggle("auth-locked", state.authzEnforced); $("sessionCredentials").style.display="grid"; $("btnEntraLogin").style.display=entraMsalConfig?.enabled?"inline-block":"none"; $("sessionIdentity").textContent="Not signed in"; status.textContent=error.message||"Authentication initialization failed."; status.className="status err"; applyPermissionVisibility();
+    state.permissions=new Set(); document.body.classList.remove("auth-pending"); document.body.classList.toggle("auth-locked", state.authzEnforced); $("sessionCredentials").style.display="grid"; $("btnEntraLogin").style.display=entraMsalConfig?.enabled?"inline-block":"none"; $("sessionIdentity").textContent="Not signed in"; $("accountPermissions").textContent=""; $("accountPopover").hidden=false; $("accountButton").setAttribute("aria-expanded","true"); status.textContent=error.message||"Authentication initialization failed."; status.className="status err"; applyPermissionVisibility();
   }
 }
 
@@ -1758,7 +1776,7 @@ async function signOut(){
   await fetch("/_config/api/authorization/logout", {method:"POST"});
   document.body.classList.add("auth-locked");
   $("fleetScale").style.display="none";
-  $("sessionCredentials").style.display="grid"; $("btnLogin").style.display="inline-block"; $("btnEntraLogin").style.display=entraMsalConfig?.enabled?"inline-block":"none"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
+  $("sessionCredentials").style.display="grid"; $("btnLogin").style.display="inline-block"; $("btnEntraLogin").style.display=entraMsalConfig?.enabled?"inline-block":"none"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; $("accountPermissions").textContent=""; state.permissions=new Set(); applyPermissionVisibility();
 }
 
 async function createManagedUser(){
@@ -4217,6 +4235,8 @@ $("policyKind").onchange=renderPolicyKeyReferences;
 $("btnLogin").onclick=signIn;
 $("btnEntraLogin").onclick=signIn;
 $("btnLogout").onclick=signOut;
+$("accountButton").onclick=()=>{ const popover=$("accountPopover"); const open=popover.hidden; popover.hidden=!open; $("accountButton").setAttribute("aria-expanded",String(open)); };
+document.addEventListener("click",event=>{ if(!$("sessionPanel").contains(event.target)){ $("accountPopover").hidden=true; $("accountButton").setAttribute("aria-expanded","false"); } });
 refreshAuthorization();
 loadMounts();
 loadAccessKeys();

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import json
 import os
 import tempfile
+import uuid
 from typing import Mapping
 
 
@@ -54,6 +55,16 @@ class AuthorizationError(PermissionError):
     """Raised when a user cannot perform a function in the requested context."""
 
 
+def entra_subject_id(tenant_id: str, object_id: str) -> str:
+    """Return the stable application key for an Entra directory object."""
+    try:
+        tenant = str(uuid.UUID(str(tenant_id).strip()))
+        object_value = str(uuid.UUID(str(object_id).strip()))
+    except (ValueError, AttributeError):
+        raise ValueError("Entra tenant_id and object_id must be UUIDs") from None
+    return f"entra:{tenant}:{object_value}"
+
+
 @dataclass(frozen=True)
 class PermissionGrant:
     permission: str
@@ -82,6 +93,9 @@ class User:
     grants: tuple[PermissionGrant, ...] = ()
     enabled: bool = True
     identity_source: str = "local"
+    tenant_id: str | None = None
+    object_id: str | None = None
+    display_name: str | None = None
 
     def __post_init__(self) -> None:
         if not self.user_id.strip() or any(ch.isspace() for ch in self.user_id):
@@ -89,18 +103,32 @@ class User:
         unknown = set(self.roles) - set(ROLE_PERMISSIONS)
         if unknown:
             raise ValueError(f"unknown roles: {sorted(unknown)}")
-        if self.identity_source not in {"local", "oidc"}:
-            raise ValueError("identity_source must be 'local' or 'oidc'")
+        if self.identity_source not in {"local", "oidc", "entra"}:
+            raise ValueError("identity_source must be 'local', 'oidc', or 'entra'")
+        if self.identity_source == "entra":
+            if not self.tenant_id or not self.object_id:
+                raise ValueError("Entra users require tenant_id and object_id")
+            if self.user_id != entra_subject_id(self.tenant_id, self.object_id):
+                raise ValueError("Entra user_id must match tenant_id and object_id")
+        elif self.tenant_id is not None or self.object_id is not None:
+            raise ValueError("tenant_id and object_id are only valid for Entra users")
 
     def to_public(self) -> dict:
         """Return persisted identity metadata without credentials or tokens."""
-        return {
+        public = {
             "user_id": self.user_id,
             "roles": list(self.roles),
             "grants": [grant.to_dict() for grant in self.grants],
             "enabled": self.enabled,
             "identity_source": self.identity_source,
         }
+        if self.identity_source == "entra":
+            public.update({
+                "tenant_id": self.tenant_id,
+                "object_id": self.object_id,
+                "display_name": self.display_name,
+            })
+        return public
 
     @classmethod
     def from_dict(cls, raw: Mapping) -> "User":
@@ -115,6 +143,9 @@ class User:
             grants=tuple(PermissionGrant.from_dict(grant) for grant in (raw.get("grants") or [])),
             enabled=bool(raw.get("enabled", True)),
             identity_source=str(raw.get("identity_source", "local")).strip().lower(),
+            tenant_id=(str(raw["tenant_id"]).strip() if raw.get("tenant_id") else None),
+            object_id=(str(raw["object_id"]).strip() if raw.get("object_id") else None),
+            display_name=(str(raw["display_name"]).strip() if raw.get("display_name") else None),
         )
 
     def permissions(self) -> frozenset[str]:

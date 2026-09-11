@@ -11,6 +11,7 @@ from security.authorization import (
     authorize,
     authenticate_admin_token,
     authenticate_request,
+    entra_subject_id,
     require,
 )
 
@@ -92,6 +93,30 @@ def test_user_directory_rejects_credentials_and_unknown_user():
         User.from_dict({"user_id": "ops", "password_hash": "x"})
     with pytest.raises(PermissionError, match="user not found"):
         UserDirectory().get("missing")
+
+
+def test_entra_user_round_trips_immutable_identity_and_display_name(tmp_path):
+    tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    object_id = "11111111-2222-3333-4444-555555555555"
+    user = User(
+        entra_subject_id(tenant_id, object_id), roles=("config_operator",),
+        identity_source="entra", tenant_id=tenant_id, object_id=object_id,
+        display_name="Alex Operator",
+    )
+    path = tmp_path / "users.json"
+    UserDirectory([user]).save(str(path))
+    loaded = UserDirectory.load(str(path)).get(user.user_id)
+
+    assert loaded.user_id == "entra:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:11111111-2222-3333-4444-555555555555"
+    assert loaded.display_name == "Alex Operator"
+    assert loaded.can("config.write")
+    assert loaded.to_public()["object_id"] == object_id
+
+    with pytest.raises(ValueError, match="must match"):
+        User(
+            "entra:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:66666666-7777-8888-9999-000000000000",
+            identity_source="entra", tenant_id=tenant_id, object_id=object_id,
+        )
 
 
 def test_user_directory_protects_last_enabled_system_admin():

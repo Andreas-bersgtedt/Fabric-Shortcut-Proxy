@@ -1164,7 +1164,8 @@ async function entraAccessToken(){
 window.fetch=async function(input, init={}){
   const url=typeof input==="string"?input:input.url;
   const path=new URL(url, window.location.href).pathname;
-  if(entraMsalInstance&&path.startsWith("/_config/api/")&&!path.startsWith("/_config/api/authorization/")){
+  const authBootstrap=["/_config/api/authorization/status","/_config/api/authorization/msal-config","/_config/api/authorization/login","/_config/api/authorization/logout"];
+  if(entraMsalInstance&&path.startsWith("/_config/api/")&&!authBootstrap.includes(path)){
     const token=await entraAccessToken();
     if(token){
       const headers=new Headers(init.headers||((typeof input!=="string")?input.headers:undefined));

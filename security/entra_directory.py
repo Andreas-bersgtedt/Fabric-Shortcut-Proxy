@@ -25,7 +25,8 @@ class EntraDirectoryClient:
             os.environ.get("FSP_ENTRA_GRAPH_CLIENT_ID", config.ENTRA_GRAPH_CLIENT_ID)
         ).strip()
         self.client_secret = os.environ.get(
-            "FSP_ENTRA_GRAPH_CLIENT_SECRET", ENTRA_GRAPH_CLIENT_SECRET
+            "FSP_ENTRA_GRAPH_CLIENT_SECRET",
+            os.environ.get("AZURE_CLIENT_SECRET", ENTRA_GRAPH_CLIENT_SECRET),
         ).strip()
         self.authority = f"https://login.microsoftonline.com/{self.tenant_id}"
 

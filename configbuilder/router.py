@@ -582,6 +582,105 @@ async def authorization_users(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "users": users.list_public()})
 
 
+@router.get("/api/entra/directory/users")
+async def entra_directory_users(request: Request) -> JSONResponse:
+    """Search Entra users for role assignment without exposing Graph credentials."""
+    try:
+        _check_security_permission(request, "users.admin")
+        query = str(request.query_params.get("q", "")).strip()
+        if len(query) < 2:
+            return JSONResponse({"ok": True, "results": []})
+        from security.entra_directory import EntraDirectoryClient
+        results = EntraDirectoryClient().search_users(query)
+        from observability import audit
+        user = _request_user(request)
+        audit.record_directory_search(
+            request_id=request.headers.get("x-request-id", "").strip()[:128] or str(uuid.uuid4()),
+            identity=user.user_id if user else "-", object_type="user", query=query,
+            result_count=len(results), status=200, outcome="success",
+        )
+        return JSONResponse({"ok": True, "results": results})
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    except Exception as exc:  # noqa: BLE001 - keep provider errors out of responses
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+
+
+@router.get("/api/entra/directory/groups")
+async def entra_directory_groups(request: Request) -> JSONResponse:
+    """Search Entra security groups for role assignment."""
+    try:
+        _check_security_permission(request, "users.admin")
+        query = str(request.query_params.get("q", "")).strip()
+        if len(query) < 2:
+            return JSONResponse({"ok": True, "results": []})
+        from security.entra_directory import EntraDirectoryClient
+        results = EntraDirectoryClient().search_security_groups(query)
+        from observability import audit
+        user = _request_user(request)
+        audit.record_directory_search(
+            request_id=request.headers.get("x-request-id", "").strip() or str(uuid.uuid4()),
+            identity=user.user_id if user else "-", object_type="group", query=query,
+            result_count=len(results), status=200, outcome="success",
+        )
+        return JSONResponse({"ok": True, "results": results})
+    except PermissionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
+    except Exception as exc:  # noqa: BLE001 - keep provider errors out of responses
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+
+
+@router.get("/api/authorization/groups")
+async def authorization_groups(request: Request) -> JSONResponse:
+    """List configured Entra group role assignments without secrets."""
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        from security.authorization import UserDirectory
+        groups = UserDirectory.load(os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")).list_groups_public()
+        return JSONResponse({"ok": True, "groups": groups})
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+
+
+@router.post("/api/authorization/groups")
+async def save_authorization_group(request: Request) -> JSONResponse:
+    """Create or replace an Entra security-group role assignment."""
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        from security.authorization import UserDirectory
+        body = await request.json()
+        directory_path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+        directory = UserDirectory.load(directory_path)
+        directory.replace_group(body)
+        directory.save(directory_path)
+        return JSONResponse({"ok": True, "group": body})
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@router.delete("/api/authorization/groups/{group_id}")
+async def disable_authorization_group(group_id: str, request: Request) -> JSONResponse:
+    """Disable an Entra security-group role assignment."""
+    user = _request_user(request)
+    if user is None or not user.can("users.admin"):
+        return JSONResponse({"ok": False, "error": "authentication required"}, status_code=401)
+    try:
+        from security.authorization import UserDirectory
+        directory_path = os.environ.get("FSP_USER_DIRECTORY_FILE", "users.json")
+        directory = UserDirectory.load(directory_path)
+        group = next(item for item in directory.list_groups_public() if item["group_id"] == group_id.lower())
+        group["enabled"] = False
+        directory.replace_group(group)
+        directory.save(directory_path)
+        return JSONResponse({"ok": True, "group_id": group_id, "enabled": False})
+    except (StopIteration, ValueError):
+        return JSONResponse({"ok": False, "error": "group not found"}, status_code=404)
+
+
 @router.post("/api/authorization/login")
 async def authorization_login(request: Request) -> JSONResponse:
     """Authenticate a local user and issue a revocable HttpOnly session cookie."""
@@ -619,6 +718,28 @@ async def authorization_status() -> JSONResponse:
     return JSONResponse({
         "ok": True,
         "enforced": authorization_enforced(),
+    })
+
+
+@router.get("/api/authorization/msal-config")
+async def authorization_msal_config() -> JSONResponse:
+    """Return non-secret MSAL browser configuration."""
+    enabled = bool(config.ENTRA_ENABLED and config.ENTRA_TENANT_ID and config.ENTRA_SPA_CLIENT_ID)
+    authority = (
+        f"https://login.microsoftonline.com/{config.ENTRA_TENANT_ID}/v2.0"
+        if config.ENTRA_TENANT_ID else ""
+    )
+    return JSONResponse({
+        "ok": True,
+        "enabled": enabled,
+        "client_id": config.ENTRA_SPA_CLIENT_ID,
+        "authority": authority,
+        "api_scope": (
+            f"{config.ENTRA_API_AUDIENCE.rstrip('/')}/{config.ENTRA_API_SCOPE}"
+            if config.ENTRA_API_AUDIENCE and config.ENTRA_API_SCOPE else ""
+        ),
+        "redirect_uri": config.ENTRA_REDIRECT_URI,
+        "post_logout_redirect_uri": config.ENTRA_POST_LOGOUT_REDIRECT_URI,
     })
 
 

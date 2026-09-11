@@ -124,6 +124,20 @@ OIDC_AUDIENCE: str = _get_str("FSP_OIDC_AUDIENCE", "oidc_audience", "").strip()
 OIDC_USER_CLAIM: str = _get_str("FSP_OIDC_USER_CLAIM", "oidc_user_claim", "sub").strip() or "sub"
 OIDC_JWKS_URL: str = _get_str("FSP_OIDC_JWKS_URL", "oidc_jwks_url", "").strip()
 
+# Microsoft Entra operator UI/API integration. These values are non-secret;
+# confidential Graph credentials must come from the managed identity or secret store.
+ENTRA_ENABLED: bool = _get_bool("FSP_ENTRA_ENABLED", "entra_enabled", False)
+ENTRA_TENANT_ID: str = _get_str("FSP_ENTRA_TENANT_ID", "entra_tenant_id", "").strip()
+ENTRA_SPA_CLIENT_ID: str = _get_str("FSP_ENTRA_SPA_CLIENT_ID", "entra_spa_client_id", "").strip()
+ENTRA_API_CLIENT_ID: str = _get_str("FSP_ENTRA_API_CLIENT_ID", "entra_api_client_id", "").strip()
+ENTRA_API_AUDIENCE: str = _get_str("FSP_ENTRA_API_AUDIENCE", "entra_api_audience", "").strip()
+ENTRA_API_SCOPE: str = _get_str("FSP_ENTRA_API_SCOPE", "entra_api_scope", "operator.access_as_user").strip()
+ENTRA_ALLOWED_CLIENT_IDS: str = _get_str("FSP_ENTRA_ALLOWED_CLIENT_IDS", "entra_allowed_client_ids", "").strip()
+ENTRA_REDIRECT_URI: str = _get_str("FSP_ENTRA_REDIRECT_URI", "entra_redirect_uri", "").strip()
+ENTRA_POST_LOGOUT_REDIRECT_URI: str = _get_str("FSP_ENTRA_POST_LOGOUT_REDIRECT_URI", "entra_post_logout_redirect_uri", "").strip()
+ENTRA_GRAPH_CLIENT_ID: str = _get_str("FSP_ENTRA_GRAPH_CLIENT_ID", "entra_graph_client_id", "").strip()
+ENTRA_GRAPH_CLIENT_SECRET: str = _get_str("FSP_ENTRA_GRAPH_CLIENT_SECRET", "entra_graph_client_secret", "").strip()
+
 # TLS termination at the proxy (Phase 4). Provide BOTH a cert and key to serve
 # HTTPS; empty = plain HTTP (terminate TLS at a fronting LB instead).
 TLS_CERT_FILE: str = _get_str("TLS_CERT_FILE", "tls_cert_file", "")

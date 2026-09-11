@@ -18,6 +18,11 @@ argument-hint: "Describe the operational action, deployment mode, and affected M
 
 The Manager control plane normally listens on `127.0.0.1:9200`; the Agent data plane normally listens on `0.0.0.0:9000`. With `-Gateway`, Fabric uses the Manager control port as the S3 gateway. Do not send Fabric traffic to the administrative endpoint unless gateway mode is intentionally enabled.
 
+For browser administration, use the TLS-fronted operator origin, for example
+`https://<operator-fqdn>:9443/_manager` and `/_config/`. Entra ID through MSAL
+is the normal browser login. The Manager and Config Builder resolve the same
+proxy roles from the immutable Entra `(tenant_id, object_id)` mapping.
+
 ## Start and Stop
 
 ```powershell
@@ -49,6 +54,10 @@ Interpret the endpoints separately:
 - `/healthz` means the process is alive.
 - `/readyz` means the required snapshot/source state or fleet state is ready; a `503` is actionable, not proof that the process is down.
 - `/_admin` and Manager UI routes expose operational state and may require `ADMIN_TOKEN` or Manager Basic Auth.
+
+When Entra is enabled, browser routes use bearer tokens. Basic Auth is a
+break-glass compatibility path only. Keep direct HTTP operator ports off the
+public network.
 
 For AKS, inspect the whole control path:
 

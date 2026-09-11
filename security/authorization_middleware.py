@@ -90,11 +90,18 @@ def _permission(path: str, method: str) -> str | None:
         return "system.admin"
     if not (path.startswith("/_config") or path.startswith("/_manager") or path.startswith("/_monitor")):
         return None
-    if path in {"/_config/api/authorization/login", "/_config/api/authorization/status", "/_config/", "/_config"}:
+    if path in {"/_config/api/authorization/login", "/_config/api/authorization/status",
+                "/_config/api/authorization/msal-config", "/_manager", "/_manager/",
+                "/_manager/api/authorization/msal-config",
+                "/_config/", "/_config"}:
         return None
     if path.startswith("/_config/api/authorization/logout") or path.startswith("/_config/api/authorization/me"):
         return "monitor.read"
     if path.startswith("/_config/api/authorization/users"):
+        return "users.admin"
+    if path.startswith("/_config/api/authorization/groups"):
+        return "users.admin"
+    if path.startswith("/_config/api/entra/directory/"):
         return "users.admin"
     if path.startswith("/_config/api/tokenization/policies"):
         return "tokenization.policy.read" if method in {"GET", "HEAD"} else "tokenization.policy.admin"

@@ -41,6 +41,19 @@ bash ./Manager.sh --skip-install
 
 For systemd, run the service as a dedicated user with a protected environment file. Confirm the service uses the intended repository and virtual environment before troubleshooting dependency errors.
 
+### Public operator console
+
+For a public operator origin, place nginx or another TLS terminator in front of
+the Manager and Config Builder. Use a trusted FQDN and certificate, normally on
+443 or the configured operator TLS port such as 9443. Register the exact HTTPS
+Config Builder and Manager redirect/logout URIs in the Entra SPA application.
+Keep the direct Manager and Config Builder HTTP listeners private or loopback-only.
+
+The browser uses MSAL and sends an FSP API bearer token. Do not expose a public
+HTTP operator URL or use a self-signed certificate for the Entra browser flow.
+A DNS-01 certificate is appropriate when port 80 is not reachable; manual DNS
+certificates need a documented renewal procedure.
+
 ## AKS Deployment Sequence
 
 1. Build and push the image to a private ACR.

@@ -11,6 +11,7 @@ from security.authorization import (
     authorize,
     authenticate_admin_token,
     authenticate_request,
+    entra_subject_id,
     require,
 )
 
@@ -92,6 +93,46 @@ def test_user_directory_rejects_credentials_and_unknown_user():
         User.from_dict({"user_id": "ops", "password_hash": "x"})
     with pytest.raises(PermissionError, match="user not found"):
         UserDirectory().get("missing")
+
+
+def test_entra_user_round_trips_immutable_identity_and_display_name(tmp_path):
+    tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    object_id = "11111111-2222-3333-4444-555555555555"
+    user = User(
+        entra_subject_id(tenant_id, object_id), roles=("config_operator",),
+        identity_source="entra", tenant_id=tenant_id, object_id=object_id,
+        display_name="Alex Operator",
+    )
+    path = tmp_path / "users.json"
+    UserDirectory([user]).save(str(path))
+    loaded = UserDirectory.load(str(path)).get(user.user_id)
+
+    assert loaded.user_id == "entra:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:11111111-2222-3333-4444-555555555555"
+    assert loaded.display_name == "Alex Operator"
+    assert loaded.can("config.write")
+    assert loaded.to_public()["object_id"] == object_id
+
+    with pytest.raises(ValueError, match="must match"):
+        User(
+            "entra:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:66666666-7777-8888-9999-000000000000",
+            identity_source="entra", tenant_id=tenant_id, object_id=object_id,
+        )
+
+
+def test_user_directory_group_roles_are_tenant_scoped():
+    from security.authorization import ROLE_PERMISSIONS
+
+    tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    group_id = "22222222-3333-4444-5555-666666666666"
+    directory = UserDirectory(groups=[{
+        "group_id": group_id, "tenant_id": tenant_id,
+        "display_name": "Proxy Operators", "roles": ["config_operator"],
+    }])
+
+    assert directory.authorize_groups(tenant_id, {group_id}, "config.write")
+    assert not directory.authorize_groups("bbbbbbbb-cccc-dddd-eeee-ffffffffffff", {group_id}, "config.write")
+    assert not directory.authorize_groups(tenant_id, {group_id}, "system.admin")
+    assert "config.write" in {p for role in ["config_operator"] for p in ROLE_PERMISSIONS[role]}
 
 
 def test_user_directory_protects_last_enabled_system_admin():
@@ -179,6 +220,62 @@ def test_signed_oidc_subject_uses_central_rights_and_ignores_token_roles(tmp_pat
     assert discovery_urls == [f"{issuer.rstrip('/')}/.well-known/openid-configuration"]
 
 
+def test_entra_access_token_uses_tid_oid_scope_and_central_roles(tmp_path, monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    import config
+    from security.identity import authenticate_entra_token
+
+    tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    object_id = "11111111-2222-3333-4444-555555555555"
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    user_path = tmp_path / "users.json"
+    UserDirectory([User(
+        entra_subject_id(tenant_id, object_id), roles=("viewer",),
+        identity_source="entra", tenant_id=tenant_id, object_id=object_id,
+        display_name="Alex Operator",
+    )]).save(str(user_path))
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
+    monkeypatch.setattr(config, "ENTRA_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "ENTRA_TENANT_ID", tenant_id, raising=False)
+    monkeypatch.setattr(config, "ENTRA_API_AUDIENCE", "api://fsp-api", raising=False)
+    monkeypatch.setattr(config, "ENTRA_API_SCOPE", "operator.access_as_user", raising=False)
+    monkeypatch.setattr(config, "ENTRA_ALLOWED_CLIENT_IDS", "fsp-spa", raising=False)
+    monkeypatch.setattr(config, "OIDC_JWKS_URL", "https://login.example.test/keys", raising=False)
+
+    class StaticJWKClient:
+        def __init__(self, url):
+            assert url == "https://login.example.test/keys"
+
+        def get_signing_key_from_jwt(self, token):
+            return SimpleNamespace(key=private_key.public_key())
+
+    monkeypatch.setattr(jwt, "PyJWKClient", StaticJWKClient)
+
+    def signed(**overrides):
+        now = int(time.time())
+        claims = {
+            "iss": f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+            "aud": "api://fsp-api", "tid": tenant_id, "oid": object_id,
+            "azp": "fsp-spa", "scp": "operator.access_as_user",
+            "iat": now, "exp": now + 300,
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, private_key, algorithm="RS256")
+
+    user = authenticate_entra_token(signed())
+    assert user is not None
+    assert user.user_id == entra_subject_id(tenant_id, object_id)
+    assert user.can("monitor.read")
+    assert authenticate_entra_token(signed(scp="User.Read")) is None
+    assert authenticate_entra_token(signed(idtyp="app")) is None
+    assert authenticate_entra_token(signed(tid="bbbbbbbb-cccc-dddd-eeee-ffffffffffff")) is None
+
+
 async def test_authorization_endpoints_require_admin_and_hide_user_secrets(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
@@ -227,7 +324,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     app = FastAPI()
     app.include_router(router)
     payload = {
-        "user_id": "support", "roles": ["monitor_troubleshooter"],
+        "user_id": "support", "roles": ["monitor_troubleshooter", "user_administrator"],
         "password": "correct horse battery staple",
     }
     async with httpx.AsyncClient(
@@ -249,6 +346,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert denied.status_code == 401
     assert created.status_code == 200
     assert created.json()["user"]["user_id"] == "support"
+    assert created.json()["user"]["roles"] == ["monitor_troubleshooter", "user_administrator"]
     assert disabled.status_code == 200
     assert last_admin.status_code == 409
 
@@ -256,6 +354,71 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert IdentityProvider(str(tmp_path / "identities.json")).authenticate(
         "support", "correct horse battery staple"
     ) is None
+
+
+async def test_entra_group_assignment_api_round_trip_and_disable(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from configbuilder.router import router
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    group_path = tmp_path / "users.json"
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(group_path))
+    UserDirectory([User("admin", roles=("system_administrator",))]).save(str(group_path))
+
+    app = FastAPI()
+    app.include_router(router)
+    payload = {
+        "group_id": "22222222-3333-4444-5555-666666666666",
+        "tenant_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "display_name": "Proxy Operators",
+        "roles": ["config_operator"],
+        "enabled": True,
+    }
+    headers = {"X-Admin-Token": "admin-test-token"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post("/_config/api/authorization/groups", json=payload, headers=headers)
+        listed = await client.get("/_config/api/authorization/groups", headers=headers)
+        disabled = await client.delete(f"/_config/api/authorization/groups/{payload['group_id']}", headers=headers)
+        invalid = await client.post("/_config/api/authorization/groups", json={**payload, "roles": ["unknown"]}, headers=headers)
+
+    assert created.status_code == 200
+    assert created.json()["group"]["display_name"] == "Proxy Operators"
+    assert listed.status_code == 200
+    assert listed.json()["groups"][0]["group_id"] == payload["group_id"]
+    assert disabled.status_code == 200
+    assert invalid.status_code == 400
+    assert UserDirectory.load(str(group_path)).list_groups_public()[0]["enabled"] is False
+
+
+async def test_entra_directory_search_api_requires_users_admin_and_returns_safe_results(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from configbuilder.router import router
+
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+
+    class FakeDirectoryClient:
+        def search_users(self, query):
+            assert query == "Alex"
+            return [{"id": "11111111-2222-3333-4444-555555555555", "kind": "user",
+                     "tenant_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                     "display_name": "Alex Operator", "user_principal_name": "alex@example.com"}]
+
+    monkeypatch.setattr("security.entra_directory.EntraDirectoryClient", FakeDirectoryClient)
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        denied = await client.get("/_config/api/entra/directory/users?q=Alex")
+        allowed = await client.get(
+            "/_config/api/entra/directory/users?q=Alex",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()["results"][0]["display_name"] == "Alex Operator"
+    assert "access_token" not in allowed.text
 
 
 async def test_user_creation_validates_password_before_metadata_write(tmp_path, monkeypatch):
@@ -527,6 +690,7 @@ def test_registered_standalone_operator_routes_have_authorization_decisions():
         ("GET", "/_config/api/authorization/login"),
         ("POST", "/_config/api/authorization/login"),
         ("GET", "/_config/api/authorization/status"),
+            ("GET", "/_config/api/authorization/msal-config"),
         ("GET", "/_manager"),
         ("GET", "/_manager/{rest:path}"),
         ("GET", "/_monitor"),
@@ -551,6 +715,7 @@ def test_registered_manager_operator_routes_have_authorization_decisions(monkeyp
         ("POST", "/_config/api/authorization/login"),
         ("GET", "/_config/api/authorization/status"),
         ("GET", "/_manager"),
+            ("GET", "/_manager/api/authorization/msal-config"),
     }
 
     route_sources = [app, create_admin_router(None, [])]

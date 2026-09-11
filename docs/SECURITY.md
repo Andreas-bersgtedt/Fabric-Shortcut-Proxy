@@ -403,6 +403,52 @@ from non-loopback networks, restore the pre-upgrade `.fspbackup` described in
 [BACKUP_RESTORE.md](BACKUP_RESTORE.md), and start the prior image. Never solve a rollback
 failure by publishing an unauthenticated operator port.
 
+### Entra operator closeout
+
+The operator UI must use an HTTPS FQDN in production. Do not register a public
+HTTP IP address as an MSAL redirect URI. The SPA has no secret; the API client
+credential used for backend Graph lookup belongs in Key Vault or the deployment
+secret store.
+
+Configure the deployed origin with the matching values below and register the
+exact sign-in and sign-out URLs in the SPA application:
+
+```text
+FSP_ENTRA_ENABLED=1
+FSP_ENTRA_TENANT_ID=<tenant-guid>
+FSP_ENTRA_SPA_CLIENT_ID=<spa-client-guid>
+FSP_ENTRA_API_CLIENT_ID=<api-client-guid>
+FSP_ENTRA_API_AUDIENCE=api://<api-client-guid>
+FSP_ENTRA_API_SCOPE=operator.access_as_user
+FSP_ENTRA_ALLOWED_CLIENT_IDS=<spa-client-guid>
+FSP_ENTRA_REDIRECT_URI=https://<operator-fqdn>/_config/
+FSP_ENTRA_POST_LOGOUT_REDIRECT_URI=https://<operator-fqdn>/_config/
+```
+
+Expose the operator console only through the TLS listener, normally nginx on
+9443 or a front door on 443. Keep the direct HTTP Manager and Config Builder
+listeners private or loopback-only. If no trusted FQDN and certificate exist,
+use the SSH port-forward procedure instead of opening the HTTP listener.
+
+Provision roles in the proxy directory, not in the browser token. Roles are
+additive. `auditor` does not grant `users.admin`; combine it with
+`user_administrator` when the operator must manage users. Authorization uses
+`entra:<tenant-id>:<object-id>`; display names and UPNs are display-only.
+
+For a successful Entra sign-in followed by `403`, compare the token `(tid, oid)`
+with the directory entry and inspect its enabled roles. Unknown and disabled
+principals must remain denied. If every administrator is unavailable, use host
+console access to restore a documented administrator record, retain a backup of
+the previous directory, restart the affected service, and record the ticket,
+operator, timestamp, and resulting role set.
+
+After rollout, verify MSAL sign-in, `/api/authorization/me`, protected user and
+group search, role-denied `403` behavior, disabled-principal denial, logout, and
+the absence of tokens or authorization headers in audit output. On rollback,
+restore the previous application revision while retaining the current directory,
+TLS configuration, and credential store. Never replace an Entra failure with an
+unauthenticated public endpoint.
+
 ### Production verification
 
 Run these checks against both the standalone URL and the Manager URL after deployment.

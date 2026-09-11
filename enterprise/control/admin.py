@@ -197,6 +197,21 @@ def create_admin_router(
       return {"ok": True, "user": user.to_public(),
           "enforced": True, "permissions": sorted(user.permissions())}
 
+    @router.get("/_manager/api/authorization/msal-config")
+    async def manager_msal_config() -> dict:
+      """Return non-secret MSAL browser configuration for the Manager UI."""
+      enabled = bool(config.ENTRA_ENABLED and config.ENTRA_TENANT_ID and config.ENTRA_SPA_CLIENT_ID)
+      authority = (
+        f"https://login.microsoftonline.com/{config.ENTRA_TENANT_ID}/v2.0"
+        if config.ENTRA_TENANT_ID else ""
+      )
+      return {"ok": True, "enabled": enabled, "client_id": config.ENTRA_SPA_CLIENT_ID,
+          "authority": authority,
+          "api_scope": (f"{config.ENTRA_API_AUDIENCE.rstrip('/')}/{config.ENTRA_API_SCOPE}"
+                        if config.ENTRA_API_AUDIENCE and config.ENTRA_API_SCOPE else ""),
+          "redirect_uri": config.ENTRA_REDIRECT_URI,
+          "post_logout_redirect_uri": config.ENTRA_POST_LOGOUT_REDIRECT_URI}
+
     @router.get("/_manager/api/fleet")
     async def fleet() -> dict:
         return fleet_snapshot(registry, supervisors, gateway=gateway, token_required=token_required)
@@ -381,6 +396,10 @@ _ADMIN_HTML = r"""<!doctype html>
   button.stop { border-color: #5a2230; } button.stop:hover { background: #3a1622; }
   button:disabled { opacity: .4; cursor: not-allowed; }
   .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .account-button { border-radius: 50%; width: 34px; height: 34px; padding: 0; font-size: 18px; }
+  .account-popover { position: absolute; z-index: 20; right: 20px; top: 48px; width: 220px; padding: 12px; border: 1px solid #313a4f; border-radius: 8px; background: #151c2c; box-shadow: 0 12px 28px #0008; }
+  .account-popover[hidden] { display: none; }
+  .account-popover button { width: 100%; margin: 0 0 8px; }
   .navbtn { display: inline-block; font-size: 12px; font-weight: 600; text-decoration: none;
             padding: 5px 10px; border-radius: 7px; border: 1px solid #313a4f;
             background: #1c2740; color: #dfe6f2; }
@@ -453,6 +472,12 @@ _ADMIN_HTML = r"""<!doctype html>
   <span id="clock" class="muted" style="font-size:12px"></span>
   <div class="hdr-right">
     <a class="navbtn" href="/_config">Config UI</a>
+    <button class="account-button" id="accountButton" type="button" aria-expanded="false" aria-controls="accountPopover">&#128100; <span id="sessionIdentity">Not signed in</span></button>
+    <div class="account-popover" id="accountPopover" hidden>
+      <button id="btnEntraLogin">Sign in with Entra ID</button>
+      <button id="btnLogout" style="display:none">Sign out</button>
+      <div id="authMessage" class="muted"></div>
+    </div>
     <label class="muted" id="toklabel" style="display:none">admin token
       <input id="token" type="password" size="16" placeholder="X-Admin-Token"/>
     </label>
@@ -576,6 +601,64 @@ let monitorTimer = null;
 let fleetTimer = null;
 let managerPermissions = new Set();
 let managerAuthzEnforced = false;
+let entraMsalConfig = null;
+let entraMsalInstance = null;
+const nativeFetch = window.fetch.bind(window);
+
+async function loadEntraMsal() {
+  const response = await nativeFetch("/_manager/api/authorization/msal-config", {cache:"no-store"});
+  entraMsalConfig = await response.json();
+  if (!entraMsalConfig.enabled) return;
+  if (!window.msal) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/@azure/msal-browser@4.26.2/lib/msal-browser.min.js";
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("Unable to load MSAL Browser"));
+      document.head.appendChild(script);
+    });
+  }
+  entraMsalInstance = new msal.PublicClientApplication({
+    auth: {clientId: entraMsalConfig.client_id, authority: entraMsalConfig.authority,
+      redirectUri: entraMsalConfig.redirect_uri || window.location.href,
+      postLogoutRedirectUri: entraMsalConfig.post_logout_redirect_uri || window.location.href},
+    cache: {cacheLocation:"sessionStorage"}
+  });
+  await entraMsalInstance.initialize();
+  const result = await entraMsalInstance.handleRedirectPromise();
+  if (result?.account) entraMsalInstance.setActiveAccount(result.account);
+  if (!entraMsalInstance.getActiveAccount()) {
+    const accounts = entraMsalInstance.getAllAccounts();
+    if (accounts.length) entraMsalInstance.setActiveAccount(accounts[0]);
+  }
+}
+
+async function entraAccessToken() {
+  const account = entraMsalInstance?.getActiveAccount();
+  if (!account || !entraMsalConfig?.api_scope) return "";
+  try {
+    const result = await entraMsalInstance.acquireTokenSilent({account, scopes:[entraMsalConfig.api_scope]});
+    return result.accessToken || "";
+  } catch (error) {
+    if (error instanceof msal.InteractionRequiredAuthError) return "";
+    throw error;
+  }
+}
+
+window.fetch = async function(input, init = {}) {
+  const url = typeof input === "string" ? input : input.url;
+  const path = new URL(url, window.location.href).pathname;
+  const bootstrap = ["/_manager/api/authorization/msal-config"];
+  if (entraMsalInstance && (path.startsWith("/_manager/api/") || path.startsWith("/_monitor/api/")) && !bootstrap.includes(path)) {
+    const token = await entraAccessToken();
+    if (token) {
+      const headers = new Headers(init.headers || ((typeof input !== "string") ? input.headers : undefined));
+      headers.set("Authorization", "Bearer " + token);
+      init = {...init, headers};
+    }
+  }
+  return nativeFetch(input, init);
+};
 
 function can(permission) {
   return !managerAuthzEnforced || managerPermissions.has("*") || managerPermissions.has(permission);
@@ -583,15 +666,24 @@ function can(permission) {
 
 async function loadManagerAuthorization() {
   try {
+    await loadEntraMsal();
     const response = await fetch("/_manager/api/authorization/me", { cache: "no-store" });
     const data = await response.json();
     managerAuthzEnforced = data.enforced === true;
     managerPermissions = new Set(data.permissions || []);
     const lifecycle = document.getElementById("lifecycleActions");
     if (lifecycle) lifecycle.style.display = can("system.admin") ? "" : "none";
+    $("sessionIdentity").textContent = data.user?.display_name || data.user?.user_id || "Signed in";
+    $("btnEntraLogin").style.display = "none";
+    $("btnLogout").style.display = "inline-block";
+    $("accountPopover").hidden = true;
+    return true;
   } catch (_) {
     managerAuthzEnforced = true;
     managerPermissions = new Set();
+    $("accountPopover").hidden = false;
+    $("accountButton").setAttribute("aria-expanded", "true");
+    return false;
   }
 }
 
@@ -1151,7 +1243,28 @@ async function refreshAndMem() {
 }
 refresh = refreshAndMem;
 
-loadManagerAuthorization().finally(() => { refresh(); loop(); });
+$("accountButton").onclick = () => {
+  const popover = $("accountPopover");
+  const open = popover.hidden;
+  popover.hidden = !open;
+  $("accountButton").setAttribute("aria-expanded", String(open));
+};
+$("btnEntraLogin").onclick = async () => {
+  await entraMsalInstance.loginRedirect({scopes:[entraMsalConfig.api_scope]});
+};
+$("btnLogout").onclick = async () => {
+  await entraMsalInstance.logoutRedirect({postLogoutRedirectUri:entraMsalConfig.post_logout_redirect_uri || window.location.href});
+};
+document.addEventListener("click", event => {
+  if (!$("accountButton").contains(event.target) && !$("accountPopover").contains(event.target)) {
+    $("accountPopover").hidden = true;
+    $("accountButton").setAttribute("aria-expanded", "false");
+  }
+});
+
+loadManagerAuthorization().then(authenticated => {
+  if (authenticated) { refresh(); loop(); }
+});
 </script>
 </body>
 </html>

@@ -109,6 +109,14 @@ async def test_protected_requires_credentials(_enable_auth):
         assert (await c.get("/agents")).status_code == 401
 
 
+async def test_entra_enabled_does_not_emit_browser_basic_challenge(_enable_auth, monkeypatch):
+    monkeypatch.setattr(config, "ENTRA_ENABLED", True, raising=False)
+    async with _client(_app()) as c:
+        response = await c.get("/_manager/api/fleet")
+    assert response.status_code == 401
+    assert "www-authenticate" not in response.headers
+
+
 async def test_wrong_and_malformed_credentials_rejected(_enable_auth):
     async with _client(_app()) as c:
         assert (await c.get("/_manager/api/fleet", headers=_basic("operator", "nope"))).status_code == 401

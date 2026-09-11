@@ -200,7 +200,7 @@
     <section><label for="sessionUserId">User ID</label><input id="sessionUserId" autocomplete="username" placeholder="operator" /></section>
     <section><label for="sessionPassword">Password</label><input id="sessionPassword" type="password" autocomplete="current-password" placeholder="Local identity password" /></section>
   </div>
-  <div class="actions"><button class="btn primary" id="btnLogin">Sign in</button><button class="btn ghost" id="btnLogout" style="display:none;">Sign out</button><span class="hint" id="sessionIdentity">Not signed in</span></div>
+  <div class="actions"><button class="btn primary" id="btnLogin">Sign in</button><button class="btn primary" id="btnEntraLogin" style="display:none;">Sign in with Entra ID</button><button class="btn ghost" id="btnLogout" style="display:none;">Sign out</button><span class="hint" id="sessionIdentity">Not signed in</span></div>
   <div class="status" id="sessionStatus"></div>
 </div>
 <div class="warn-banner">Admin tool — it accepts database credentials. Run it locally; do not expose publicly.</div>
@@ -647,7 +647,7 @@
     </div>
     <div class="card" id="userManagementPanel" data-requires-permission="users.admin">
       <h2>User management</h2>
-      <div class="hint">Create and disable local identities for the protected management API. Passwords are stored only as salted hashes.</div>
+      <div class="hint">Create and disable managed identities for the protected management API. Entra identities are selected by display name; immutable object IDs are stored for authorization.</div>
       <div class="row">
         <section>
           <label for="newUserId">User ID</label>
@@ -670,12 +670,24 @@
       <div class="grid2">
         <section>
           <label for="newUserIdentitySource">Identity source</label>
-          <select id="newUserIdentitySource"><option value="local">Local password</option><option value="oidc">OIDC subject</option></select>
+          <select id="newUserIdentitySource"><option value="local">Local password</option><option value="oidc">OIDC subject</option><option value="entra">Entra ID user</option></select>
         </section>
         <section id="newUserPasswordField">
           <label for="newUserPassword">Temporary password</label>
           <input id="newUserPassword" type="password" autocomplete="new-password" placeholder="At least 12 characters" />
         </section>
+      </div>
+      <div id="entraUserPicker" style="display:none;">
+        <div class="row">
+          <section>
+            <label for="entraUserSearch">Search Entra users</label>
+            <input id="entraUserSearch" placeholder="Display name or sign-in name" autocomplete="off" />
+          </section>
+          <section>
+            <label for="entraUserResult">Selected user</label>
+            <select id="entraUserResult"><option value="">Search and select a user</option></select>
+          </section>
+        </div>
       </div>
       <div class="actions">
         <button class="btn ghost" id="btnLoadUsers">Load users</button>
@@ -1102,6 +1114,64 @@ const state = {
   sourceCatalog: [],
   addTable: { sourceId:"", objects:[], metadata:null, draft:null },
   globals: { num_splits: 8, split_target_rows: 100000, split_count_min: 1, split_count_max: 256, split_strategy: "modulo" }
+};
+
+let entraMsalConfig = null;
+let entraMsalInstance = null;
+const nativeFetch = window.fetch.bind(window);
+
+async function loadEntraMsal(){
+  const response=await nativeFetch("/_config/api/authorization/msal-config", {cache:"no-store"});
+  entraMsalConfig=await response.json();
+  if(!entraMsalConfig.enabled) return;
+  if(!window.msal){
+    await new Promise((resolve,reject)=>{
+      const script=document.createElement("script");
+      script.src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js";
+      script.onload=resolve; script.onerror=()=>reject(new Error("Unable to load MSAL Browser"));
+      document.head.appendChild(script);
+    });
+  }
+  entraMsalInstance=new msal.PublicClientApplication({
+    auth:{clientId:entraMsalConfig.client_id,authority:entraMsalConfig.authority,
+      redirectUri:entraMsalConfig.redirect_uri||window.location.href,
+      postLogoutRedirectUri:entraMsalConfig.post_logout_redirect_uri||window.location.href},
+    cache:{cacheLocation:"sessionStorage"}
+  });
+  const result=await entraMsalInstance.handleRedirectPromise();
+  if(result?.account) entraMsalInstance.setActiveAccount(result.account);
+  if(!entraMsalInstance.getActiveAccount()){
+    const accounts=entraMsalInstance.getAllAccounts();
+    if(accounts.length) entraMsalInstance.setActiveAccount(accounts[0]);
+  }
+  $("btnEntraLogin").style.display="inline-block";
+}
+
+async function entraAccessToken(){
+  if(!entraMsalInstance||!entraMsalConfig?.api_scope) return "";
+  const account=entraMsalInstance.getActiveAccount();
+  if(!account) return "";
+  try{
+    const result=await entraMsalInstance.acquireTokenSilent({account,scopes:[entraMsalConfig.api_scope]});
+    return result.accessToken||"";
+  }catch(error){
+    if(error instanceof msal.InteractionRequiredAuthError) return "";
+    throw error;
+  }
+}
+
+window.fetch=async function(input, init={}){
+  const url=typeof input==="string"?input:input.url;
+  const path=new URL(url, window.location.href).pathname;
+  if(entraMsalInstance&&path.startsWith("/_config/api/")&&!path.startsWith("/_config/api/authorization/")){
+    const token=await entraAccessToken();
+    if(token){
+      const headers=new Headers(init.headers||((typeof input!=="string")?input.headers:undefined));
+      headers.set("Authorization", "Bearer "+token);
+      init={...init,headers};
+    }
+  }
+  return nativeFetch(input,init);
 };
 
 // Composite key so same-named tables from different sources never collide.
@@ -1630,6 +1700,7 @@ async function loadManagedUsers(){
 async function refreshAuthorization(){
   const status=$("sessionStatus");
   try{
+    await loadEntraMsal();
     const authStatus=await fetch("/_config/api/authorization/status", {cache:"no-store"}).then(response=>response.json());
     state.authzEnforced=authStatus.enforced===true;
     const response=await fetch("/_config/api/authorization/me", {cache:"no-store"});
@@ -1638,10 +1709,10 @@ async function refreshAuthorization(){
     document.body.classList.remove("auth-pending", "auth-locked");
     $("sessionIdentity").textContent=data.user.user_id+" · "+[...state.permissions].join(", ");
     $("sessionCredentials").style.display="none";
-    $("btnLogin").style.display="none"; $("btnLogout").style.display="inline-block";
+    $("btnLogin").style.display="none"; $("btnEntraLogin").style.display="none"; $("btnLogout").style.display="inline-block";
     applyPermissionVisibility();
     await loadManagerFleet();
-  }catch(error){ state.permissions=new Set(); document.body.classList.remove("auth-pending"); document.body.classList.toggle("auth-locked", state.authzEnforced); $("sessionCredentials").style.display="grid"; $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
+  }catch(error){ state.permissions=new Set(); document.body.classList.remove("auth-pending"); document.body.classList.toggle("auth-locked", state.authzEnforced); $("sessionCredentials").style.display="grid"; $("btnEntraLogin").style.display=entraMsalConfig?.enabled?"inline-block":"none"; $("sessionIdentity").textContent="Not signed in"; applyPermissionVisibility(); }
 }
 
 function applyPermissionVisibility(){
@@ -1663,6 +1734,10 @@ function applyPermissionVisibility(){
 }
 
 async function signIn(){
+  if(entraMsalInstance){
+    await entraMsalInstance.loginRedirect({scopes:[entraMsalConfig.api_scope]});
+    return;
+  }
   const status=$("sessionStatus");
   const response=await fetch("/_config/api/authorization/login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:$("sessionUserId").value.trim(),password:$("sessionPassword").value})});
   const data=await response.json();
@@ -1671,17 +1746,27 @@ async function signIn(){
 }
 
 async function signOut(){
+  if(entraMsalInstance){
+    await entraMsalInstance.logoutRedirect({postLogoutRedirectUri:entraMsalConfig.post_logout_redirect_uri||window.location.href});
+    return;
+  }
   await fetch("/_config/api/authorization/logout", {method:"POST"});
   document.body.classList.add("auth-locked");
   $("fleetScale").style.display="none";
-  $("sessionCredentials").style.display="grid"; $("btnLogin").style.display="inline-block"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
+  $("sessionCredentials").style.display="grid"; $("btnLogin").style.display="inline-block"; $("btnEntraLogin").style.display=entraMsalConfig?.enabled?"inline-block":"none"; $("btnLogout").style.display="none"; $("sessionIdentity").textContent="Not signed in"; state.permissions=new Set(); applyPermissionVisibility();
 }
 
 async function createManagedUser(){
   const userId=$("newUserId").value.trim(); const password=$("newUserPassword").value;
   const role=$("newUserRole").value; const identitySource=$("newUserIdentitySource").value; const status=$("userManagementStatus");
+  const payload={user_id:userId,roles:[role],identity_source:identitySource,password:identitySource==="local"?password:""};
+  if(identitySource==="entra"){
+    const selected=$("entraUserResult").selectedOptions[0];
+    if(!selected?.dataset.tenantId||!selected.dataset.objectId){ status.textContent="Select an Entra user first."; status.className="status err"; return; }
+    payload.tenant_id=selected.dataset.tenantId; payload.object_id=selected.dataset.objectId; payload.display_name=selected.dataset.displayName||selected.textContent;
+  }
   if(!userId || (identitySource==="local"&&password.length<12)){ status.textContent=identitySource==="local"?"User ID and a password of at least 12 characters are required.":"User ID is required."; status.className="status err"; return; }
-  const response=await fetch("/_config/api/authorization/users", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:userId,roles:[role],identity_source:identitySource,password:identitySource==="local"?password:""})});
+  const response=await fetch("/_config/api/authorization/users", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
   const data=await response.json();
   status.textContent=data.ok?"User record created.":(data.error||"Unable to create user."); status.className="status "+(data.ok?"ok":"err");
   if(data.ok){ $("newUserId").value=""; $("newUserPassword").value=""; await loadManagedUsers(); }
@@ -4111,7 +4196,16 @@ $("btnGenerateTokenizationKey").onclick=generateTokenizationKey;
 $("btnSaveTokenizationKey").onclick=saveTokenizationKey;
 $("btnLoadUsers").onclick=loadManagedUsers;
 $("btnCreateUser").onclick=createManagedUser;
-$("newUserIdentitySource").onchange=()=>{ const local=$("newUserIdentitySource").value==="local"; $("newUserPasswordField").style.display=local?"":"none"; if(!local) $("newUserPassword").value=""; };
+$("newUserIdentitySource").onchange=()=>{ const source=$("newUserIdentitySource").value; const local=source==="local"; $("newUserPasswordField").style.display=local?"":"none"; $("entraUserPicker").style.display=source==="entra"?"":"none"; if(!local) $("newUserPassword").value=""; };
+$("entraUserSearch").oninput=async()=>{
+  const query=$("entraUserSearch").value.trim(), result=$("entraUserResult");
+  if(query.length<2){ result.innerHTML="<option value=''>Search and select a user</option>"; return; }
+  const response=await fetch("/_config/api/entra/directory/users?q="+encodeURIComponent(query),{cache:"no-store"});
+  const data=await response.json(); result.innerHTML="<option value=''>Select a user</option>";
+  if(!response.ok||!data.ok) return;
+  for(const item of data.results||[]){ const option=document.createElement("option"); option.value=item.id; option.textContent=item.display_name+(item.user_principal_name?" · "+item.user_principal_name:""); option.dataset.tenantId=item.tenant_id||""; option.dataset.objectId=item.id; option.dataset.displayName=item.display_name||""; result.appendChild(option); }
+};
+$("entraUserResult").onchange=()=>{ const option=$("entraUserResult").selectedOptions[0]; if(option?.dataset.objectId) $("newUserId").value="entra:"+(option.dataset.tenantId||"")+":"+option.dataset.objectId; };
 $("btnSavePolicy").onclick=saveTokenizationPolicy;
 $("btnSaveReidentificationMapping").onclick=saveReidentificationMapping;
 $("policyKind").onchange=renderPolicyKeyReferences;

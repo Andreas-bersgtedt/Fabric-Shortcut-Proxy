@@ -22,6 +22,7 @@ _IDENTITY_BOOTSTRAP_PATHS = {
     "/_config/",
     "/_config/api/authorization/login",
     "/_config/api/authorization/status",
+    "/_config/api/authorization/msal-config",
 }
 
 
@@ -89,8 +90,10 @@ def _bearer_ok(request: Request) -> bool:
     if not token:
         return False
     try:
-        from security.identity import authenticate_oidc_token
-        user = authenticate_oidc_token(token)
+        from security.identity import authenticate_entra_token, authenticate_oidc_token
+        user = authenticate_entra_token(token)
+        if user is None:
+            user = authenticate_oidc_token(token)
     except (OSError, RuntimeError, ValueError):
         return False
     if user is None:

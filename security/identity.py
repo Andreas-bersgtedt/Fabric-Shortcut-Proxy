@@ -10,6 +10,7 @@ import os
 import secrets
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -253,6 +254,62 @@ def authenticate_oidc_token(token: str) -> User | None:
     except (ValueError, PermissionError):
         return None
     return user if user.enabled and user.identity_source == "oidc" else None
+
+
+def authenticate_entra_token(token: str) -> User | None:
+    """Validate a delegated Entra API token and resolve its central user record."""
+    import config
+
+    tenant_id = str(config.ENTRA_TENANT_ID or "").strip()
+    audience = str(config.ENTRA_API_AUDIENCE or config.ENTRA_API_CLIENT_ID or "").strip()
+    required_scope = str(config.ENTRA_API_SCOPE or "").strip()
+    if not config.ENTRA_ENABLED or not tenant_id or not audience or not required_scope or not token:
+        return None
+    try:
+        import jwt
+        from security.authorization import entra_subject_id
+        tenant_uuid = str(uuid.UUID(tenant_id))
+    except (ImportError, ValueError, AttributeError):
+        return None
+
+    issuer = f"https://login.microsoftonline.com/{tenant_uuid}/v2.0"
+    jwks_url = str(config.OIDC_JWKS_URL or "").strip()
+    if not jwks_url:
+        jwks_url = f"https://login.microsoftonline.com/{tenant_uuid}/discovery/v2.0/keys"
+    allowed_clients = {
+        value.strip() for value in str(config.ENTRA_ALLOWED_CLIENT_IDS or "").split(",")
+        if value.strip()
+    }
+    try:
+        signing_key = _oidc_jwk_client(jwks_url).get_signing_key_from_jwt(token)
+        claims: dict[str, Any] = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
+            audience=audience,
+            issuer=issuer,
+            options={"require": ["exp", "iat", "iss", "aud", "tid", "oid"]},
+        )
+    except jwt.PyJWTError:
+        return None
+
+    if str(claims.get("tid", "")).lower() != tenant_uuid.lower():
+        return None
+    if str(claims.get("idtyp", "")).lower() == "app":
+        return None
+    scopes = set(str(claims.get("scp", "")).split())
+    if required_scope not in scopes:
+        return None
+    client_id = str(claims.get("azp", "")).strip()
+    if allowed_clients and client_id not in allowed_clients:
+        return None
+    try:
+        user_id = entra_subject_id(tenant_uuid, str(claims["oid"]))
+        from security.authorization import UserDirectory, default_user_directory_path
+        user = UserDirectory.load(default_user_directory_path()).get(user_id)
+    except (KeyError, ValueError, PermissionError):
+        return None
+    return user if user.enabled and user.identity_source == "entra" else None
 
 
 @lru_cache(maxsize=8)

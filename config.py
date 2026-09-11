@@ -68,6 +68,10 @@ from system_config import (
     REIDENTIFICATION_REQUESTS_PER_DAY, ADMIN_TOKEN,
     MANAGER_AUTH_ENABLED, MANAGER_AUTH_USERNAME, MANAGER_AUTH_PASSWORD,
     CORS_ALLOWED_ORIGINS, OIDC_ISSUER, OIDC_AUDIENCE, OIDC_USER_CLAIM, OIDC_JWKS_URL,
+    ENTRA_ENABLED, ENTRA_TENANT_ID, ENTRA_SPA_CLIENT_ID, ENTRA_API_CLIENT_ID,
+    ENTRA_API_AUDIENCE, ENTRA_API_SCOPE, ENTRA_ALLOWED_CLIENT_IDS,
+    ENTRA_REDIRECT_URI, ENTRA_POST_LOGOUT_REDIRECT_URI, ENTRA_GRAPH_CLIENT_ID,
+    ENTRA_GRAPH_CLIENT_SECRET,
 )
 
 from connection_config import (
@@ -216,6 +220,15 @@ _register("FSP_OIDC_ISSUER", "oidc_issuer", "str", OIDC_ISSUER)
 _register("FSP_OIDC_AUDIENCE", "oidc_audience", "str", OIDC_AUDIENCE)
 _register("FSP_OIDC_USER_CLAIM", "oidc_user_claim", "str", OIDC_USER_CLAIM)
 _register("FSP_OIDC_JWKS_URL", "oidc_jwks_url", "str", OIDC_JWKS_URL)
+_register("FSP_ENTRA_ENABLED", "entra_enabled", "bool", ENTRA_ENABLED)
+_register("FSP_ENTRA_TENANT_ID", "entra_tenant_id", "str", ENTRA_TENANT_ID)
+_register("FSP_ENTRA_SPA_CLIENT_ID", "entra_spa_client_id", "str", ENTRA_SPA_CLIENT_ID)
+_register("FSP_ENTRA_API_CLIENT_ID", "entra_api_client_id", "str", ENTRA_API_CLIENT_ID)
+_register("FSP_ENTRA_API_AUDIENCE", "entra_api_audience", "str", ENTRA_API_AUDIENCE)
+_register("FSP_ENTRA_API_SCOPE", "entra_api_scope", "str", ENTRA_API_SCOPE)
+_register("FSP_ENTRA_ALLOWED_CLIENT_IDS", "entra_allowed_client_ids", "str", ENTRA_ALLOWED_CLIENT_IDS)
+_register("FSP_ENTRA_REDIRECT_URI", "entra_redirect_uri", "str", ENTRA_REDIRECT_URI)
+_register("FSP_ENTRA_POST_LOGOUT_REDIRECT_URI", "entra_post_logout_redirect_uri", "str", ENTRA_POST_LOGOUT_REDIRECT_URI)
 _register("AGENT_HOST_ALLOWLIST", "agent_host_allowlist", "str", AGENT_HOST_ALLOWLIST)
 _register("MOUNT_TEST_HOST_ALLOWLIST", "mount_test_host_allowlist", "str", MOUNT_TEST_HOST_ALLOWLIST)
 _register("MOUNT_TEST_REQUESTS_PER_MINUTE", "mount_test_requests_per_minute", "int", MOUNT_TEST_REQUESTS_PER_MINUTE)
@@ -1049,6 +1062,15 @@ SETTINGS_META: dict[str, dict] = {
     "oidc_audience": {"cat": "Operator identity", "help": "Expected access-token audience for the FSP API, normally its Entra application client ID or Application ID URI. Restart to apply."},
     "oidc_user_claim": {"cat": "Operator identity", "help": "Token claim mapped to the FSP user_id. Use 'oid' for a single-tenant Entra deployment; default is 'sub'. Restart to apply."},
     "oidc_jwks_url": {"cat": "Operator identity", "help": "Optional HTTPS JWKS endpoint override. Leave blank to use issuer discovery. Restart to apply."},
+    "entra_enabled": {"cat": "Operator identity", "help": "Enable MSAL/Entra browser sign-in for operator APIs. Requires tenant and API registration settings. Restart to apply."},
+    "entra_tenant_id": {"cat": "Operator identity", "help": "Microsoft Entra tenant ID for operator sign-in."},
+    "entra_spa_client_id": {"cat": "Operator identity", "help": "MSAL SPA application client ID. Non-secret."},
+    "entra_api_client_id": {"cat": "Operator identity", "help": "Protected FSP API application client ID used as the access-token audience."},
+    "entra_api_audience": {"cat": "Operator identity", "help": "Expected Entra API audience, usually api://<client-id> or the API client GUID."},
+    "entra_api_scope": {"cat": "Operator identity", "help": "Delegated scope requested by the MSAL UI and required by the API."},
+    "entra_allowed_client_ids": {"cat": "Operator identity", "help": "Comma-separated allowed SPA client IDs for delegated operator tokens."},
+    "entra_redirect_uri": {"cat": "Operator identity", "help": "Registered MSAL SPA redirect URI."},
+    "entra_post_logout_redirect_uri": {"cat": "Operator identity", "help": "Registered MSAL post-logout redirect URI."},
     "mount_test_host_allowlist": {"cat": "Cluster (scale)", "help": "Exact hosts or IP CIDRs allowed for custom S3/Azure mount test endpoints. Empty blocks custom endpoints. Restart to apply."},
     "mount_test_requests_per_minute": {"cat": "Cluster (scale)", "help": "Maximum mount test and schema inspection requests per identity in a rolling minute. Restart to apply."},
     "mount_test_max_concurrency": {"cat": "Cluster (scale)", "help": "Maximum concurrent mount test and schema inspection requests per process. Restart to apply."},

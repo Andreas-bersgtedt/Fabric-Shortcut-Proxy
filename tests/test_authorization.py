@@ -204,6 +204,62 @@ def test_signed_oidc_subject_uses_central_rights_and_ignores_token_roles(tmp_pat
     assert discovery_urls == [f"{issuer.rstrip('/')}/.well-known/openid-configuration"]
 
 
+def test_entra_access_token_uses_tid_oid_scope_and_central_roles(tmp_path, monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    import config
+    from security.identity import authenticate_entra_token
+
+    tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    object_id = "11111111-2222-3333-4444-555555555555"
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    user_path = tmp_path / "users.json"
+    UserDirectory([User(
+        entra_subject_id(tenant_id, object_id), roles=("viewer",),
+        identity_source="entra", tenant_id=tenant_id, object_id=object_id,
+        display_name="Alex Operator",
+    )]).save(str(user_path))
+    monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
+    monkeypatch.setattr(config, "ENTRA_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "ENTRA_TENANT_ID", tenant_id, raising=False)
+    monkeypatch.setattr(config, "ENTRA_API_AUDIENCE", "api://fsp-api", raising=False)
+    monkeypatch.setattr(config, "ENTRA_API_SCOPE", "operator.access_as_user", raising=False)
+    monkeypatch.setattr(config, "ENTRA_ALLOWED_CLIENT_IDS", "fsp-spa", raising=False)
+    monkeypatch.setattr(config, "OIDC_JWKS_URL", "https://login.example.test/keys", raising=False)
+
+    class StaticJWKClient:
+        def __init__(self, url):
+            assert url == "https://login.example.test/keys"
+
+        def get_signing_key_from_jwt(self, token):
+            return SimpleNamespace(key=private_key.public_key())
+
+    monkeypatch.setattr(jwt, "PyJWKClient", StaticJWKClient)
+
+    def signed(**overrides):
+        now = int(time.time())
+        claims = {
+            "iss": f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+            "aud": "api://fsp-api", "tid": tenant_id, "oid": object_id,
+            "azp": "fsp-spa", "scp": "operator.access_as_user",
+            "iat": now, "exp": now + 300,
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, private_key, algorithm="RS256")
+
+    user = authenticate_entra_token(signed())
+    assert user is not None
+    assert user.user_id == entra_subject_id(tenant_id, object_id)
+    assert user.can("monitor.read")
+    assert authenticate_entra_token(signed(scp="User.Read")) is None
+    assert authenticate_entra_token(signed(idtyp="app")) is None
+    assert authenticate_entra_token(signed(tid="bbbbbbbb-cccc-dddd-eeee-ffffffffffff")) is None
+
+
 async def test_authorization_endpoints_require_admin_and_hide_user_secrets(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
@@ -552,6 +608,7 @@ def test_registered_standalone_operator_routes_have_authorization_decisions():
         ("GET", "/_config/api/authorization/login"),
         ("POST", "/_config/api/authorization/login"),
         ("GET", "/_config/api/authorization/status"),
+            ("GET", "/_config/api/authorization/msal-config"),
         ("GET", "/_manager"),
         ("GET", "/_manager/{rest:path}"),
         ("GET", "/_monitor"),

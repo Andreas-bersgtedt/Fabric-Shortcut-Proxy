@@ -317,7 +317,10 @@ def authenticate_request(
         if user is not None:
             return user
     if bearer_token:
-        from security.identity import authenticate_oidc_token
+        from security.identity import authenticate_entra_token, authenticate_oidc_token
+        user = authenticate_entra_token(bearer_token)
+        if user is not None:
+            return user
         return authenticate_oidc_token(bearer_token)
     return None
 

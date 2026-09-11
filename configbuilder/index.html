@@ -1138,6 +1138,7 @@ async function loadEntraMsal(){
       postLogoutRedirectUri:entraMsalConfig.post_logout_redirect_uri||window.location.href},
     cache:{cacheLocation:"sessionStorage"}
   });
+  await entraMsalInstance.initialize();
   const result=await entraMsalInstance.handleRedirectPromise();
   if(result?.account) entraMsalInstance.setActiveAccount(result.account);
   if(!entraMsalInstance.getActiveAccount()){

@@ -38,6 +38,8 @@ def manager_auth_active() -> bool:
 
 
 def _unauthorized() -> Response:
+    if config.ENTRA_ENABLED:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
     return JSONResponse(
         {"detail": "authentication required"},
         status_code=401,

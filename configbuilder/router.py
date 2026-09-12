@@ -17,6 +17,7 @@ import asyncio
 from datetime import datetime, timezone
 import hmac
 import ipaddress
+from importlib.metadata import PackageNotFoundError, version as package_version
 import os
 import pathlib
 import re
@@ -55,6 +56,13 @@ _BUILDER_TABLES_OVERRIDE: list[dict] | None = None
 _OPEN_MIRROR_JOBS: dict[str, dict] = {}
 _OPEN_MIRROR_TASKS: set[asyncio.Task] = set()
 _LATEST_OPEN_MIRROR_JOB_ID: str | None = None
+
+
+def _package_version() -> str:
+    try:
+        return package_version("fabric-shortcut-proxy")
+    except PackageNotFoundError:
+        return "2.9.1"
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +187,8 @@ def _clean_error(exc: Exception) -> str:
 @router.get("/")
 async def index() -> HTMLResponse:
     # no-store so operators always get the latest builder UI (not a stale cache).
-    return HTMLResponse(_HTML_PATH.read_text(encoding="utf-8"),
+    html = _HTML_PATH.read_text(encoding="utf-8").replace("__FSP_VERSION__", _package_version())
+    return HTMLResponse(html,
                         headers={"Cache-Control": "no-store, max-age=0"})
 
 

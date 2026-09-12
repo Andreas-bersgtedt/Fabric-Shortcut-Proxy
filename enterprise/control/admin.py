@@ -20,6 +20,8 @@ reads stay open. The whole router is gated behind ``ENABLE_ADMIN_UI`` and mounte
 from __future__ import annotations
 
 import asyncio
+from importlib.metadata import PackageNotFoundError, version as package_version
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -31,6 +33,15 @@ from enterprise.control.supervisor import AgentSupervisor
 from observability.logging import get_logger
 
 log = get_logger(__name__)
+
+_MANAGER_STARTED_AT = time.time()
+
+
+def _package_version() -> str:
+  try:
+    return package_version("fabric-shortcut-proxy")
+  except PackageNotFoundError:
+    return "2.9.1"
 
 _ACTIONS = ("start", "stop", "restart", "drain")
 
@@ -130,6 +141,8 @@ def fleet_snapshot(
     ready = total_alive >= 1 and not any(s.crash_looped for s in supervisors)
     return {
         "role": "manager",
+      "version": _package_version(),
+      "manager_uptime_seconds": max(0, time.time() - _MANAGER_STARTED_AT),
         "ready": ready,
       "agents_total": len(agents),
       "agents_alive": total_alive,
@@ -175,7 +188,7 @@ def create_admin_router(
 
     @router.get("/_manager", response_class=HTMLResponse)
     async def manager_page() -> str:
-        return _ADMIN_HTML
+      return _ADMIN_HTML.replace("__FSP_VERSION__", _package_version())
 
     @router.get("/_manager/api/authorization/me")
     async def manager_authorization(request: Request) -> dict:
@@ -396,6 +409,7 @@ _ADMIN_HTML = r"""<!doctype html>
   button.stop { border-color: #5a2230; } button.stop:hover { background: #3a1622; }
   button:disabled { opacity: .4; cursor: not-allowed; }
   .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .version-badge { color: #8a93a6; font-size: 12px; white-space: nowrap; }
   .account-button { border-radius: 50%; width: 34px; height: 34px; padding: 0; font-size: 18px; }
   .account-popover { position: absolute; z-index: 20; right: 20px; top: 48px; width: 220px; padding: 12px; border: 1px solid #313a4f; border-radius: 8px; background: #151c2c; box-shadow: 0 12px 28px #0008; }
   .account-popover[hidden] { display: none; }
@@ -470,6 +484,7 @@ _ADMIN_HTML = r"""<!doctype html>
   <div class="tabs" id="tabs"></div>
   <span id="ready" class="pill muted">…</span>
   <span id="clock" class="muted" style="font-size:12px"></span>
+  <span class="version-badge">v__FSP_VERSION__</span>
   <div class="hdr-right">
     <a class="navbtn" href="/_config">Config UI</a>
     <button class="account-button" id="accountButton" type="button" aria-expanded="false" aria-controls="accountPopover">&#128100; <span id="sessionIdentity">Not signed in</span></button>
@@ -739,7 +754,8 @@ function render(d) {
   const ready = $("ready");
   ready.textContent = d.ready ? "READY" : "NOT READY";
   ready.className = "pill " + (d.ready ? "ok" : "bad");
-  $("clock").textContent = "updated " + new Date().toLocaleTimeString();
+  $("clock").textContent = "updated " + new Date().toLocaleTimeString()
+    + " · uptime " + formatDuration(d.manager_uptime_seconds);
 
   // Aggregate memory stats
   const totalMem = d.agents.reduce((s, a) => s + (a.rss_mb || 0), 0);
@@ -851,6 +867,17 @@ function loop() {
 // ====== MONITOR FUNCTIONS ======
 function fmtBytes(n){ if(n==null) return "–"; const u=["B","KB","MB","GB"]; let i=0,x=n;
   while(x>=1024&&i<u.length-1){x/=1024;i++;} return x.toFixed(x<10&&i>0?1:0)+u[i]; }
+function formatDuration(seconds){
+  if(seconds==null || !Number.isFinite(Number(seconds))) return "–";
+  let remaining=Math.max(0,Math.floor(Number(seconds)));
+  const days=Math.floor(remaining/86400); remaining%=86400;
+  const hours=Math.floor(remaining/3600); remaining%=3600;
+  const minutes=Math.floor(remaining/60); const secs=remaining%60;
+  if(days) return `${days}d ${hours}h`;
+  if(hours) return `${hours}h ${minutes}m`;
+  if(minutes) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
 function fmtNum(n){ return n==null? "–" : Intl.NumberFormat().format(n); }
 function fmtMs(n){ if(n==null) return "–"; return n>=1000? (n/1000).toFixed(2)+"s" : Math.round(n)+"ms"; }
 function ago(ts){ if(!ts) return "–"; const s=Math.max(0,Date.now()/1000-ts);

@@ -14,6 +14,7 @@
   header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   header h1 { margin:0; font-size:18px; }
   header p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+  .version-badge { margin-left:auto; color:var(--muted); font-size:11px; white-space:nowrap; }
   .account-menu { position:relative; margin-left:auto; }
   .account-button { appearance:none; display:flex; align-items:center; gap:9px; max-width:360px; border:1px solid var(--line); border-radius:8px; padding:6px 10px 6px 7px; color:var(--fg); background:#0b1220; cursor:pointer; font:inherit; text-align:left; }
   .account-button:hover, .account-button:focus-visible { border-color:var(--accent2); outline:none; }
@@ -212,6 +213,7 @@
     <p>Define sources, configure tables, and manage proxy settings.</p>
   </div>
   <a class="navbtn" href="/_manager">Back to Manager</a>
+  <span class="version-badge">v__FSP_VERSION__</span>
   <div class="account-menu" id="sessionPanel">
     <button class="account-button" id="accountButton" type="button" aria-expanded="false" aria-controls="accountPopover">
       <span class="account-avatar" aria-hidden="true">&#128100;</span>

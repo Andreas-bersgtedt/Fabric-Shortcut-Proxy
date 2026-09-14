@@ -1077,7 +1077,7 @@ async def apply_config(request: Request) -> JSONResponse:
 
 @router.post("/api/manager/restart")
 async def restart_manager(request: Request) -> JSONResponse:
-    """Restart the Manager after re-authenticating with the current admin password."""
+    """Restart the Manager using Entra admin authorization or the local password."""
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001 - empty body is handled as a missing password
@@ -1085,7 +1085,13 @@ async def restart_manager(request: Request) -> JSONResponse:
     password = str(body.get("password") or "") if isinstance(body, dict) else ""
     if not config.MANAGER_AUTH_ENABLED or not config.MANAGER_AUTH_PASSWORD:
         return JSONResponse({"ok": False, "error": "manager authentication is not configured"}, status_code=503)
-    if not hmac.compare_digest(password, str(config.MANAGER_AUTH_PASSWORD)):
+    user = getattr(request.state, "user", None)
+    entra_admin = bool(
+        user is not None
+        and getattr(user, "identity_source", "") == "entra"
+        and user.can("system.admin")
+    )
+    if not entra_admin and not hmac.compare_digest(password, str(config.MANAGER_AUTH_PASSWORD)):
         return JSONResponse({"ok": False, "error": "current admin password is required"}, status_code=401)
 
     callback = getattr(request.app.state, "restart_manager", None)

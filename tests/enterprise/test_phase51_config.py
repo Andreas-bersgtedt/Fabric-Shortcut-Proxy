@@ -194,6 +194,35 @@ async def test_restart_manager_requires_current_admin_password(monkeypatch):
         assert called["count"] == 1
 
 
+async def test_restart_manager_allows_authenticated_entra_admin(monkeypatch):
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "current-password", raising=False)
+    called = {"count": 0}
+
+    def fake_restart():
+        called["count"] += 1
+        return {"ok": True, "action": "restart"}
+
+    app = _cb_app()
+    app.state.restart_manager = fake_restart
+    from security.authorization import User
+    app.state.user = User(
+        "entra:362353c2-34bc-4dcc-bebc-cd1be76cc068:a4bec7ab-e85e-4664-a78f-4a2fd9660772",
+        roles=("system_administrator",),
+        identity_source="entra",
+        tenant_id="362353c2-34bc-4dcc-bebc-cd1be76cc068",
+        object_id="a4bec7ab-e85e-4664-a78f-4a2fd9660772",
+    )
+    @app.middleware("http")
+    async def authenticated_request(request, call_next):
+        request.state.user = app.state.user
+        return await call_next(request)
+    async with _client(app) as c:
+        response = await c.post("/_config/api/manager/restart", json={})
+        assert response.status_code == 200 and response.json()["action"] == "restart"
+        assert called["count"] == 1
+
+
 async def test_restart_manager_requires_manager_auth(monkeypatch):
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "", raising=False)

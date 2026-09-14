@@ -734,6 +734,10 @@ async def authorization_status() -> JSONResponse:
 async def authorization_msal_config() -> JSONResponse:
     """Return non-secret MSAL browser configuration."""
     enabled = bool(config.ENTRA_ENABLED and config.ENTRA_TENANT_ID and config.ENTRA_SPA_CLIENT_ID)
+    scope_resource = (
+        f"api://{config.ENTRA_API_CLIENT_ID}"
+        if config.ENTRA_API_CLIENT_ID else str(config.ENTRA_API_AUDIENCE or "").rstrip("/")
+    )
     authority = (
         f"https://login.microsoftonline.com/{config.ENTRA_TENANT_ID}/v2.0"
         if config.ENTRA_TENANT_ID else ""
@@ -744,8 +748,8 @@ async def authorization_msal_config() -> JSONResponse:
         "client_id": config.ENTRA_SPA_CLIENT_ID,
         "authority": authority,
         "api_scope": (
-            f"{config.ENTRA_API_AUDIENCE.rstrip('/')}/{config.ENTRA_API_SCOPE}"
-            if config.ENTRA_API_AUDIENCE and config.ENTRA_API_SCOPE else ""
+            f"{scope_resource}/{config.ENTRA_API_SCOPE}"
+            if scope_resource and config.ENTRA_API_SCOPE else ""
         ),
         "redirect_uri": config.ENTRA_REDIRECT_URI,
         "post_logout_redirect_uri": config.ENTRA_POST_LOGOUT_REDIRECT_URI,

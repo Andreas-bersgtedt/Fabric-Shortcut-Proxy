@@ -276,6 +276,24 @@ def test_entra_access_token_uses_tid_oid_scope_and_central_roles(tmp_path, monke
     assert authenticate_entra_token(signed(tid="bbbbbbbb-cccc-dddd-eeee-ffffffffffff")) is None
 
 
+async def test_msal_config_uses_app_id_uri_with_v2_guid_audience(monkeypatch):
+    import json
+
+    import config
+    from configbuilder.router import authorization_msal_config
+
+    monkeypatch.setattr(config, "ENTRA_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "ENTRA_TENANT_ID", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", raising=False)
+    monkeypatch.setattr(config, "ENTRA_SPA_CLIENT_ID", "fsp-spa", raising=False)
+    monkeypatch.setattr(config, "ENTRA_API_CLIENT_ID", "fsp-api", raising=False)
+    monkeypatch.setattr(config, "ENTRA_API_AUDIENCE", "fsp-api", raising=False)
+    monkeypatch.setattr(config, "ENTRA_API_SCOPE", "operator.access_as_user", raising=False)
+
+    response = await authorization_msal_config()
+
+    assert json.loads(response.body)["api_scope"] == "api://fsp-api/operator.access_as_user"
+
+
 async def test_authorization_endpoints_require_admin_and_hide_user_secrets(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI

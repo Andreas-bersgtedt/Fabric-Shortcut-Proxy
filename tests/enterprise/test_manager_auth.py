@@ -1,8 +1,10 @@
 """Standalone HTTP Basic auth gate over the Manager's operator surface."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
+import threading
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
@@ -115,6 +117,31 @@ async def test_entra_enabled_does_not_emit_browser_basic_challenge(_enable_auth,
         response = await c.get("/_manager/api/fleet")
     assert response.status_code == 401
     assert "www-authenticate" not in response.headers
+
+
+async def test_slow_bearer_auth_does_not_block_health_probe(_enable_auth, monkeypatch):
+    from security.authorization import User
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_authenticate(token):
+        started.set()
+        release.wait(timeout=2)
+        return User("entra-operator", roles=("monitor_troubleshooter",))
+
+    monkeypatch.setattr("security.identity.authenticate_entra_token", slow_authenticate)
+    async with _client(_app()) as client:
+        protected_task = asyncio.create_task(client.get(
+            "/_manager/api/fleet", headers={"Authorization": "Bearer signed-token"}
+        ))
+        assert await asyncio.to_thread(started.wait, 1)
+        health = await asyncio.wait_for(client.get("/healthz"), timeout=0.5)
+        release.set()
+        protected = await protected_task
+
+    assert health.status_code == 200
+    assert protected.status_code == 200
 
 
 async def test_wrong_and_malformed_credentials_rejected(_enable_auth):

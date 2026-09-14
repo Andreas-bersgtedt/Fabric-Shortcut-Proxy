@@ -1,6 +1,7 @@
 """Shared Basic, local-session, and OIDC authentication for operator routes."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hmac
@@ -156,7 +157,12 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
         if basic_ok:
             from security.authorization import User
             request.state.user = User("manager-basic", roles=("system_administrator",))
-        if not (basic_ok or _session_ok(request) or _bearer_ok(request)):
+        session_ok = False if basic_ok else _session_ok(request)
+        bearer_ok = (
+            False if basic_ok or session_ok
+            else await asyncio.to_thread(_bearer_ok, request)
+        )
+        if not (basic_ok or session_ok or bearer_ok):
             _audit_operator_auth(request, 401, "denied", "authentication required")
             if request.url.path.startswith("/_config"):
                 return _config_unauthorized()

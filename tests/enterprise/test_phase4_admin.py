@@ -148,6 +148,29 @@ async def test_manager_page_and_fleet_api_served():
         assert api.json()["agents"][0]["name"] == "agent-1"
 
 
+async def test_manager_msal_uses_app_id_uri_and_fleet_fetch_guards_json(monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "ENTRA_ENABLED", True)
+    monkeypatch.setattr(config, "ENTRA_TENANT_ID", "tenant-id")
+    monkeypatch.setattr(config, "ENTRA_SPA_CLIENT_ID", "spa-client-id")
+    monkeypatch.setattr(config, "ENTRA_API_CLIENT_ID", "api-client-id")
+    monkeypatch.setattr(config, "ENTRA_API_AUDIENCE", "api-client-id")
+    monkeypatch.setattr(config, "ENTRA_API_SCOPE", "operator.access_as_user")
+    app = _app(Registry(), [])
+
+    async with _client(app) as client:
+        response = await client.get("/_manager/api/authorization/msal-config")
+        page = await client.get("/_manager")
+
+    assert response.status_code == 200
+    assert response.json()["api_scope"] == (
+        "api://api-client-id/operator.access_as_user"
+    )
+    assert "async function fetchJson" in page.text
+    assert 'fetchJson("/_manager/api/fleet"' in page.text
+
+
 async def test_stop_start_restart_call_supervisor():
     reg = _registry_with(("agent-1", 9100))
     sup = FakeSupervisor("agent-1", 9100, 0, 1)

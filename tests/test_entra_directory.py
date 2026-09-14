@@ -76,3 +76,24 @@ def test_directory_search_filters_security_groups(monkeypatch):
     assert [item["display_name"] for item in results] == ["Proxy Operators"]
     assert results[0]["tenant_id"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     assert results[0]["kind"] == "group"
+
+
+def test_user_group_membership_is_cached(monkeypatch):
+    import config
+    from security.entra_directory import EntraDirectoryClient, _group_cache
+
+    monkeypatch.setattr(config, "ENTRA_TENANT_ID", "cache-test-tenant", raising=False)
+    client = EntraDirectoryClient()
+    calls = 0
+
+    def fake_get(path):
+        nonlocal calls
+        calls += 1
+        return [{"id": "GROUP-ID", "securityEnabled": True}]
+
+    _group_cache.clear()
+    monkeypatch.setattr(client, "_get", fake_get)
+
+    assert client.user_group_ids("USER-ID") == {"group-id"}
+    assert client.user_group_ids("user-id") == {"group-id"}
+    assert calls == 1

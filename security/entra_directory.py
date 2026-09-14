@@ -3,8 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+_GROUP_CACHE_TTL_SECONDS = 60.0
+_group_cache: dict[tuple[str, str], tuple[float, frozenset[str]]] = {}
+_group_cache_lock = threading.Lock()
 
 
 class EntraDirectoryError(RuntimeError):
@@ -115,12 +121,20 @@ class EntraDirectoryClient:
 
     def user_group_ids(self, object_id: str) -> set[str]:
         """Return direct and transitive security-group IDs for an Entra user."""
-        path = (
-            f"users/{quote(object_id, safe='')}/transitiveMemberOf/microsoft.graph.group"
-            "?$select=id,securityEnabled&$top=999"
-        )
-        return {
-            str(item["id"]).lower()
-            for item in self._get(path)
-            if item.get("id") and item.get("securityEnabled") is True
-        }
+        cache_key = (self.tenant_id.lower(), object_id.lower())
+        with _group_cache_lock:
+            now = time.monotonic()
+            cached = _group_cache.get(cache_key)
+            if cached is not None and cached[0] > now:
+                return set(cached[1])
+            path = (
+                f"users/{quote(object_id, safe='')}/transitiveMemberOf/microsoft.graph.group"
+                "?$select=id,securityEnabled&$top=999"
+            )
+            group_ids = frozenset(
+                str(item["id"]).lower()
+                for item in self._get(path)
+                if item.get("id") and item.get("securityEnabled") is True
+            )
+            _group_cache[cache_key] = (now + _GROUP_CACHE_TTL_SECONDS, group_ids)
+            return set(group_ids)

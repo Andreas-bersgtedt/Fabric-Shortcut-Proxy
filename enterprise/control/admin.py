@@ -214,14 +214,18 @@ def create_admin_router(
     async def manager_msal_config() -> dict:
       """Return non-secret MSAL browser configuration for the Manager UI."""
       enabled = bool(config.ENTRA_ENABLED and config.ENTRA_TENANT_ID and config.ENTRA_SPA_CLIENT_ID)
+      scope_resource = (
+        f"api://{config.ENTRA_API_CLIENT_ID}"
+        if config.ENTRA_API_CLIENT_ID else str(config.ENTRA_API_AUDIENCE or "").rstrip("/")
+      )
       authority = (
         f"https://login.microsoftonline.com/{config.ENTRA_TENANT_ID}/v2.0"
         if config.ENTRA_TENANT_ID else ""
       )
       return {"ok": True, "enabled": enabled, "client_id": config.ENTRA_SPA_CLIENT_ID,
           "authority": authority,
-          "api_scope": (f"{config.ENTRA_API_AUDIENCE.rstrip('/')}/{config.ENTRA_API_SCOPE}"
-                        if config.ENTRA_API_AUDIENCE and config.ENTRA_API_SCOPE else ""),
+          "api_scope": (f"{scope_resource}/{config.ENTRA_API_SCOPE}"
+                        if scope_resource and config.ENTRA_API_SCOPE else ""),
           "redirect_uri": config.ENTRA_REDIRECT_URI,
           "post_logout_redirect_uri": config.ENTRA_POST_LOGOUT_REDIRECT_URI}
 
@@ -675,6 +679,23 @@ window.fetch = async function(input, init = {}) {
   return nativeFetch(input, init);
 };
 
+async function fetchJson(input, init = {}) {
+  const response = await fetch(input, init);
+  const contentType = response.headers.get("content-type") || "";
+  if (!response.ok) {
+    let detail = "";
+    if (contentType.includes("application/json")) {
+      const body = await response.json().catch(() => ({}));
+      detail = body.error || body.detail || "";
+    }
+    throw new Error(`HTTP ${response.status}${detail ? ": " + detail : ""}`);
+  }
+  if (!contentType.includes("application/json")) {
+    throw new Error(`HTTP ${response.status}: expected JSON but received ${contentType || "unknown content type"}`);
+  }
+  return response.json();
+}
+
 function can(permission) {
   return !managerAuthzEnforced || managerPermissions.has("*") || managerPermissions.has(permission);
 }
@@ -733,8 +754,7 @@ function msg(text, cls) { const m = $("msg"); m.textContent = text || ""; m.clas
 
 async function refresh() {
   try {
-    const r = await fetch("/_manager/api/fleet", { cache: "no-store" });
-    const d = await r.json();
+    const d = await fetchJson("/_manager/api/fleet", { cache: "no-store" });
     render(d);
   } catch (e) { msg("failed to load fleet: " + e, "err"); }
 }
@@ -1261,8 +1281,7 @@ function renderMemoryGraph(d) {
 let lastFleetData = null;
 async function refreshAndMem() {
   try {
-    const r = await fetch("/_manager/api/fleet", { cache: "no-store" });
-    const d = await r.json();
+    const d = await fetchJson("/_manager/api/fleet", { cache: "no-store" });
     lastFleetData = d;
     render(d);
     if ($("showMemoryTrends").checked) updateMemoryTrends();

@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import struct
 import time
 from typing import Any
 
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.engine import Engine, URL, make_url
 from sqlalchemy import types as satypes
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -26,6 +27,8 @@ log = get_logger(__name__)
 
 _engine: AsyncEngine | None = None
 _sync_engine: Engine | None = None
+_SQL_COPT_SS_ACCESS_TOKEN = 1256
+_SQL_SERVER_TOKEN_SCOPE = "https://database.windows.net/.default"
 
 
 class SourceUnavailable(RuntimeError):
@@ -53,17 +56,80 @@ def _db_url_uses_async_driver(db_url: str) -> bool:
     )
 
 
+def _extract_mssql_workload_identity(db_url: str | URL) -> tuple[str | URL, bool]:
+    """Remove ODBC identity keywords when Azure Identity supplies the token."""
+    url = make_url(db_url)
+    if not url.drivername.lower().startswith("mssql+"):
+        return db_url, False
+    auth_key = next((key for key in url.query if key.lower() == "authentication"), None)
+    if auth_key is None:
+        return db_url, False
+    auth_value = url.query[auth_key]
+    if not isinstance(auth_value, str) or auth_value.lower() not in {
+        "activedirectorymanagedidentity",
+        "activedirectorymsi",
+        "activedirectoryworkloadidentity",
+    }:
+        return db_url, False
+    query = url.difference_update_query([auth_key]).query
+    sanitized = URL.create(
+        drivername=url.drivername,
+        host=url.host,
+        port=url.port,
+        database=url.database,
+        query=query,
+    )
+    return sanitized, True
+
+
+def _odbc_access_token(token: str) -> bytes:
+    encoded = token.encode("utf-16-le")
+    return struct.pack(f"<I{len(encoded)}s", len(encoded), encoded)
+
+
+def _strip_odbc_trusted_connection(
+    connect_args: list[Any], connect_params: dict[str, Any]
+) -> None:
+    """Remove SQLAlchemy's implicit trusted auth from pyodbc/aioodbc inputs."""
+    if connect_args:
+        connect_args[0] = connect_args[0].replace(";Trusted_Connection=Yes", "")
+    elif isinstance(connect_params.get("dsn"), str):
+        connect_params["dsn"] = connect_params["dsn"].replace(
+            ";Trusted_Connection=Yes", ""
+        )
+
+
+def _install_mssql_workload_identity(engine: AsyncEngine) -> None:
+    """Inject a fresh Entra token whenever the pool opens an ODBC connection."""
+    from azure.identity import DefaultAzureCredential
+
+    credential = DefaultAzureCredential()
+
+    @event.listens_for(engine.sync_engine, "do_connect")
+    def provide_token(_dialect, _connection_record, connect_args, connect_params):
+        _strip_odbc_trusted_connection(connect_args, connect_params)
+        attrs_before = dict(connect_params.get("attrs_before") or {})
+        token = credential.get_token(_SQL_SERVER_TOKEN_SCOPE).token
+        attrs_before[_SQL_COPT_SS_ACCESS_TOKEN] = _odbc_access_token(token)
+        connect_params["attrs_before"] = attrs_before
+
+
 def _make_async_engine(
-    db_url: str, timeout_seconds: int | None = None
+    db_url: str | URL, timeout_seconds: int | None = None
 ) -> AsyncEngine:
+    drivername = make_url(db_url).drivername.lower()
+    engine_url, uses_workload_identity = _extract_mssql_workload_identity(db_url)
     kwargs: dict = {"echo": False, "hide_parameters": True}
     # SQLite (including aiosqlite) uses StaticPool and does not accept
     # pool_size / max_overflow / pool_timeout.
-    if "sqlite" not in db_url:
+    if "sqlite" not in drivername:
         kwargs.update({"pool_size": 5, "max_overflow": 10, "pool_timeout": 30})
-    if db_url.lower().startswith("mssql+") and timeout_seconds is not None:
+    if drivername.startswith("mssql+") and timeout_seconds is not None:
         kwargs["connect_args"] = {"timeout": max(1, int(timeout_seconds))}
-    return create_async_engine(db_url, **kwargs)
+    engine = create_async_engine(engine_url, **kwargs)
+    if uses_workload_identity:
+        _install_mssql_workload_identity(engine)
+    return engine
 
 
 def _make_sync_engine(db_url: str, timeout_seconds: int | None = None) -> Engine:

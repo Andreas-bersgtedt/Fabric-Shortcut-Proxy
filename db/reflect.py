@@ -16,10 +16,10 @@ import asyncio
 from sqlalchemy import create_engine
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import URL, Engine
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from db.capabilities import capabilities_for_db_url, missing_required_fields
-from db.executor import sqlalchemy_type_to_iceberg, _split_qualified
+from db.executor import _make_async_engine, sqlalchemy_type_to_iceberg, _split_qualified
 from observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -252,7 +252,7 @@ class SchemaReflector:
 
     async def __aenter__(self) -> "SchemaReflector":
         if self._is_async_driver(self._url.drivername):
-            self._async_engine = create_async_engine(self._url, echo=False)
+            self._async_engine = _make_async_engine(self._url)
         else:
             self._sync_engine = create_engine(self._url, echo=False, pool_pre_ping=True)
         return self

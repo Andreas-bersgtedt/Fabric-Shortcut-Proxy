@@ -255,10 +255,10 @@ def delta_log_objects() -> dict[str, dict]:
                         continue
                     seen.add(s.object_key)
                     cached = cache.peek_parquet(s.object_key)
-                    if cached is not None:
-                        size = len(cached)
-                    elif s.file_size_in_bytes is not None:
+                    if s.file_size_in_bytes is not None:
                         size = s.file_size_in_bytes
+                    elif cached is not None:
+                        size = len(cached)
                     else:
                         size = 10 * 1024 * 1024
                     objects[s.object_key] = {
@@ -266,14 +266,16 @@ def delta_log_objects() -> dict[str, dict]:
                         "last_modified_ms": snap.watermark_ms,
                         "data": None,  # generated / pinned on demand
                         "content_type": "application/octet-stream",
-                        # Real content-hash ETag when the split is already
-                        # cached, so a list-then-get sees the same ETag (see
-                        # the _delta_log commit fix above for why this
-                        # matters). Left unset (key-hash fallback) only when
-                        # the split hasn't been generated/cached yet.
+                        # Prefer the split's durable content hash (survives
+                        # cache eviction and is shared across shards via the
+                        # completion record) over a fresh hash of locally
+                        # cached bytes, which only agrees with a GET served by
+                        # the SAME pod. See the _delta_log commit fix above for
+                        # why list-vs-get ETag agreement matters.
                         "etag": (
-                            hashlib.md5(cached, usedforsecurity=False).hexdigest()
-                            if cached is not None else None
+                            s.content_hash
+                            or (hashlib.md5(cached, usedforsecurity=False).hexdigest()
+                                if cached is not None else None)
                         ),
                     }
     return objects

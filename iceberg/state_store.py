@@ -40,6 +40,13 @@ class SplitDescriptor:
     # readers rely on the declared file size to locate the footer.
     record_count: int | None = None
     file_size_in_bytes: int | None = None
+    # SHA-256 of the split's actual Parquet bytes, set once at materialization
+    # (owner shard) or propagated from the shared completion record (non-owner
+    # shard). Used as the object's ETag so ListObjectsV2 and a subsequent
+    # GET/HEAD always agree, regardless of per-pod LRU cache state — an
+    # S3A/Ozone-style client treats a list-vs-get ETag mismatch as a hard
+    # consistency error.
+    content_hash: str | None = None
     # Per-column Iceberg statistics (F3), keyed by field_id. Populated only when
     # ICEBERG_MANIFEST_STATS is enabled; drives the manifest stat maps.
     stats: dict | None = None

@@ -46,7 +46,8 @@ spec:
             - |
               shard_index="${HOSTNAME##*-}"
               export AGENT_SHARD_INDEX="${shard_index}"
-              if [ "${shard_index}" = "0" ]; then
+              # virtual mode never persists a full image; publishing one conflicts with it.
+              if [ "${shard_index}" = "0" ] && [ "${MATERIALIZE_MODE}" != "virtual" ]; then
                 export PUBLISH_SERVING_IMAGE=1
               else
                 export PUBLISH_SERVING_IMAGE=0

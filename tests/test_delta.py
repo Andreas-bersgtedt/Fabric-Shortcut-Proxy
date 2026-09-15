@@ -274,6 +274,60 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
         assert "numRecords" in json.loads(add["stats"])
 
 
+async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypatch, tmp_path):
+    """Fabric's first ListObjectsV2 request must publish virtual Delta commit 0."""
+    import db.executor as executor
+    import iceberg.state_store as state_store
+    from iceberg.state_store import build_table_snapshot
+    from runtime import materializer
+
+    saved_config = (
+        config.DB_URL, config.BUCKET_NAME, config.TABLE_FORMAT,
+        config.NUM_SPLITS, config.TABLE_NAME, config.DB_SOURCE_TABLE,
+    )
+    saved_snapshots = state_store._snapshots.copy()
+    saved_history = {name: list(history) for name, history in state_store._history.items()}
+    monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'virtual-delta.db'}")
+    monkeypatch.setattr(config, "BUCKET_NAME", "virtual-delta-bucket")
+    monkeypatch.setattr(config, "TABLE_FORMAT", "delta")
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "virtual")
+    monkeypatch.setattr(config, "NUM_SPLITS", 1)
+    monkeypatch.setattr(config, "TABLE_NAME", "sales")
+    monkeypatch.setattr(config, "DB_SOURCE_TABLE", "sales")
+
+    from demo.seed_db import seed_demo_database
+    await seed_demo_database()
+    executor._engine = None
+    materializer._locks.clear()
+    snap = build_table_snapshot(config.TABLES[0], config.BUCKET_NAME, config.WAREHOUSE_PREFIX)
+    from delta import log as delta_log
+    delta_log.reset()
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                f"/{config.BUCKET_NAME}",
+                params={"list-type": "2", "prefix": f"{snap.table_path}/_delta_log/"},
+            )
+        assert response.status_code == 200
+        assert "00000000000000000000.json" in response.text
+        assert delta_log.get_commit_bytes(
+            f"{snap.table_path}/_delta_log/00000000000000000000.json"
+        )
+    finally:
+        if executor._engine is not None:
+            await executor._engine.dispose()
+            executor._engine = None
+        state_store._snapshots.clear()
+        state_store._history.clear()
+        state_store._snapshots.update(saved_snapshots)
+        state_store._history.update(saved_history)
+        (
+            config.DB_URL, config.BUCKET_NAME, config.TABLE_FORMAT,
+            config.NUM_SPLITS, config.TABLE_NAME, config.DB_SOURCE_TABLE,
+        ) = saved_config
+        delta_log.reset()
+
+
 async def test_get_commit_zero_trailing_slash_is_normalized(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)

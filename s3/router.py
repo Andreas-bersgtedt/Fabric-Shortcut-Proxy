@@ -184,6 +184,7 @@ def _make_object_response(
     key: str | None = None,
     kind: str | None = None,
     last_modified_ms: int | None = None,
+    etag: str | None = None,
 ) -> FastAPIResponse:
     total = len(data)
     if _range_is_unsatisfiable(range_header, total):
@@ -203,7 +204,11 @@ def _make_object_response(
     headers = {
         "Content-Type": content_type,
         "Content-Length": str(len(sliced)),
-        "ETag": _object_etag(data),
+        # Prefer the split's durable content hash (shared across shards via the
+        # completion record) over hashing this response's bytes fresh, so a
+        # ListObjectsV2 done just before/after always reports the same ETag
+        # regardless of which pod or cache state served each call.
+        "ETag": f'"{etag}"' if etag else _object_etag(data),
         "Accept-Ranges": "bytes",
         **(extra_headers or {}),
     }
@@ -264,10 +269,10 @@ def _objects_for_snapshot(snap) -> dict[str, dict]:
     # Register data split entries (size is approximate until generated)
     for split in snap.splits:
         cached = cache.peek_parquet(split.object_key)
-        if cached is not None:
-            size = len(cached)
-        elif split.file_size_in_bytes is not None:
+        if split.file_size_in_bytes is not None:
             size = split.file_size_in_bytes
+        elif cached is not None:
+            size = len(cached)
         else:
             size = 10 * 1024 * 1024  # 10 MB placeholder (only before materialization)
         objects[split.object_key] = {
@@ -275,11 +280,14 @@ def _objects_for_snapshot(snap) -> dict[str, dict]:
             "last_modified_ms": snap.watermark_ms,
             "data": None,  # generated on demand
             "content_type": "application/octet-stream",
-            # Real content-hash ETag when already cached, so ListObjectsV2
-            # and a subsequent GET/HEAD agree on the same object.
+            # Prefer the split's durable content hash (survives cache eviction
+            # and is shared across shards via the completion record) so
+            # ListObjectsV2 and a subsequent GET/HEAD always agree, regardless
+            # of which pod or cache state serves each call. Falling back to a
+            # fresh hash of locally-cached bytes only covers the same pod.
             "etag": (
-                hashlib.md5(cached, usedforsecurity=False).hexdigest()
-                if cached is not None else None
+                split.content_hash
+                or (hashlib.md5(cached, usedforsecurity=False).hexdigest() if cached is not None else None)
             ),
         }
 
@@ -359,6 +367,29 @@ async def _ensure_lazy_materialized(key: str) -> None:
         await ensure_snapshot_materialized(snap)
 
 
+async def _ensure_lazy_materialized_for_prefix(prefix: str) -> None:
+    """Materialize the table selected by a first S3 listing in deferred mode.
+
+    Fabric discovers native Delta tables by listing the table root and then
+    ``_delta_log`` before it fetches a specific object. That discovery request
+    has no object key for ``_ensure_lazy_materialized`` to resolve, so map the
+    prefix to the owning snapshot first.
+    """
+    if config.MATERIALIZE_MODE not in ("lazy", "virtual"):
+        return
+    snapshots = [
+        snap for snap in get_all_snapshots()
+        if (
+            prefix.startswith(snap.table_path)
+            or snap.table_path.startswith(prefix)
+            or prefix.startswith(snap.legacy_table_path)
+            or snap.legacy_table_path.startswith(prefix)
+        )
+    ]
+    for snap in snapshots:
+        await _ensure_lazy_materialized(snap.table_path + "/metadata/v1.metadata.json")
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -424,6 +455,7 @@ async def list_objects_v2(
     delimiter = request.query_params.get("delimiter", "")
     prefix, warehouse_alias = _normalize_incoming_prefix(prefix_in)
 
+    await _ensure_lazy_materialized_for_prefix(prefix)
     all_objects = _snapshot_objects()
 
     # Standard S3 delimiter semantics — behave EXACTLY like real AWS S3 (which
@@ -644,7 +676,8 @@ async def get_object(
         )
         return _make_object_response(cached_parquet, "application/octet-stream", range_header,
                                      key=key, kind="data",
-                                     last_modified_ms=split.watermark_ms)
+                                     last_modified_ms=split.watermark_ms,
+                                     etag=split.content_hash)
 
     # SQL pushdown → Parquet (bounded concurrency to protect CPU/memory).
     try:
@@ -675,6 +708,7 @@ async def get_object(
 
     metrics.inc_counter("parquet_generations_total")
     cache.put_parquet(key, parquet_bytes)
+    split.content_hash = hashlib.sha256(parquet_bytes).hexdigest()
     querystats.record_query(
         table=split.table.name, split_index=split.split_index,
         sql_ms=_sql_ms, gen_ms=_gen_ms, total_ms=(time.perf_counter() - _t_data0) * 1000.0,
@@ -682,4 +716,5 @@ async def get_object(
     )
     return _make_object_response(parquet_bytes, "application/octet-stream", range_header,
                                  key=key, kind="data",
-                                 last_modified_ms=split.watermark_ms)
+                                 last_modified_ms=split.watermark_ms,
+                                 etag=split.content_hash)

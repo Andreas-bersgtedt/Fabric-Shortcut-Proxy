@@ -138,4 +138,5 @@ def apply_split_completion(split, completion: SplitCompletion) -> int:
     split.file_size_in_bytes = completion.file_size_in_bytes
     split.record_count = completion.record_count
     split.stats = completion.stats
+    split.content_hash = completion.sha256
     return completion.record_count

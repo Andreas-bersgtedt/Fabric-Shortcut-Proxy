@@ -297,6 +297,19 @@ async def test_head_last_checkpoint_is_optional(delta_client):
     assert response.status_code == 404
 
 
+async def test_list_last_checkpoint_is_optional(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    keys = _extract_keys(r.content)
+    commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
+    checkpoint_key = commit_key.rsplit("/", 1)[0] + "/_last_checkpoint"
+
+    response = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={checkpoint_key}"
+    )
+
+    assert response.status_code == 404
+
+
 async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypatch, tmp_path):
     """Fabric's first ListObjectsV2 request must publish virtual Delta commit 0."""
     import db.executor as executor

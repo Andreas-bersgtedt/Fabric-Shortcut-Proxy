@@ -458,6 +458,18 @@ async def list_objects_v2(
     delimiter = request.query_params.get("delimiter", "")
     prefix, warehouse_alias = _normalize_incoming_prefix(prefix_in)
 
+    # `_last_checkpoint` is an optional Delta marker. It is absent from this
+    # v1/v2 log, so report a real missing object instead of an empty 200 list;
+    # Delta readers use the 404 to continue with commit JSON discovery.
+    if config.TABLE_FORMAT == "delta" and (
+        prefix.endswith("/_last_checkpoint") or prefix.endswith("/_last_checkpoint/")
+    ):
+        return FastAPIResponse(
+            content=error_response("NoSuchKey", "The specified key does not exist."),
+            status_code=404,
+            media_type="application/xml",
+        )
+
     await _ensure_lazy_materialized_for_prefix(prefix)
     all_objects = _snapshot_objects()
 

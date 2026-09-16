@@ -18,6 +18,24 @@ _DEFAULT_OPERATOR_PREFIXES = (
     "/_admin", "/_config", "/_manager", "/_monitor", "/agents", "/control",
 )
 _REALM = "Fabric Shortcut Proxy Manager"
+_INTERNAL_MONITOR_HEADER = "x-fsp-internal-monitor"
+
+
+def internal_monitor_ok(request: Request) -> bool:
+    """True if the Manager's fleet-scrape presented a valid shared token.
+
+    The Manager's /_monitor scrape (control/monitor_proxy.py) authenticates
+    with FSP_INTERNAL_MONITOR_TOKEN instead of an operator credential — this
+    lets operator-facing auth (Basic/session/RBAC) stay enforced for humans
+    while still allowing the internal Manager->Agent control-plane call.
+    """
+    import os
+
+    if not request.url.path.startswith("/_monitor/api/"):
+        return False
+    expected = os.environ.get("FSP_INTERNAL_MONITOR_TOKEN", "")
+    presented = request.headers.get(_INTERNAL_MONITOR_HEADER, "")
+    return bool(expected) and bool(presented) and hmac.compare_digest(presented, expected)
 _IDENTITY_BOOTSTRAP_PATHS = {
     "/_config",
     "/_config/",
@@ -140,6 +158,8 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith(_EXEMPT_PREFIXES):
+            return await call_next(request)
+        if internal_monitor_ok(request):
             return await call_next(request)
         if self._operator_only and not is_operator_route(request.url.path, self._operator_prefixes):
             return await call_next(request)

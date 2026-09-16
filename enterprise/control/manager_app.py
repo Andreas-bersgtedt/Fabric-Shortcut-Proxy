@@ -113,7 +113,10 @@ def _make_supervisor(i: int, count: int, monitor_token: str = "") -> AgentSuperv
 
 
 def create_manager_app() -> FastAPI:
-    monitor_token = secrets.token_urlsafe(32)
+    # Locally-supervised Agents get this token freshly via _agent_env(); externally
+    # deployed Agents (MANAGER_SUPERVISION_MODE=external) have no such channel, so a
+    # random value here would never match theirs — let a shared secret override it.
+    monitor_token = os.environ.get("FSP_INTERNAL_MONITOR_TOKEN") or secrets.token_urlsafe(32)
     registry = Registry(
         heartbeat_ms=config.HEARTBEAT_MS,
         miss_limit=config.HEARTBEAT_MISS_LIMIT,
@@ -231,7 +234,7 @@ def create_manager_app() -> FastAPI:
         if gateway is not None:
             await gateway.aclose()
 
-    app = FastAPI(title="Fabric Shortcut Proxy — Manager", version="2.9.1", lifespan=lifespan)
+    app = FastAPI(title="Fabric Shortcut Proxy — Manager", version="2.9.2", lifespan=lifespan)
     app.state.registry = registry
     app.state.supervisors = supervisors
     app.state.lease = lease

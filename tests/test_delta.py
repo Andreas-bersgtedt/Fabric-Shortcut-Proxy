@@ -310,6 +310,17 @@ async def test_list_last_checkpoint_is_optional(delta_client):
     assert response.status_code == 404
 
 
+async def test_delta_log_start_after_filters_prior_commits(delta_client):
+    prefix = f"{config.WAREHOUSE_PREFIX}/"
+    response = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={prefix}",
+        params={"start-after": "not-before-any-commit"},
+    )
+
+    assert response.status_code == 200
+    assert _extract_keys(response.content) == []
+
+
 async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypatch, tmp_path):
     """Fabric's first ListObjectsV2 request must publish virtual Delta commit 0."""
     import db.executor as executor

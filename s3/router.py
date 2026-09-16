@@ -456,6 +456,7 @@ async def list_objects_v2(
     list_type = request.query_params.get("list-type")
     prefix_in = request.query_params.get("prefix", "")
     delimiter = request.query_params.get("delimiter", "")
+    start_after = request.query_params.get("start-after", "")
     prefix, warehouse_alias = _normalize_incoming_prefix(prefix_in)
 
     # `_last_checkpoint` is an optional Delta marker. It is absent from this
@@ -463,6 +464,19 @@ async def list_objects_v2(
     # Delta readers use the 404 to continue with commit JSON discovery.
     if config.TABLE_FORMAT == "delta" and (
         prefix.endswith("/_last_checkpoint") or prefix.endswith("/_last_checkpoint/")
+    ):
+        return FastAPIResponse(
+            content=error_response("NoSuchKey", "The specified key does not exist."),
+            status_code=404,
+            media_type="application/xml",
+        )
+
+    # Native Delta mode does not expose the legacy Iceberg-style metadata
+    # object. Report that optional probe as absent rather than an empty 200
+    # listing that makes MDSYNC wait for a response that cannot exist.
+    if config.TABLE_FORMAT == "delta" and (
+        prefix.endswith("/_metadata/table.json.gz")
+        or prefix.endswith("/_metadata/table.json.gz/")
     ):
         return FastAPIResponse(
             content=error_response("NoSuchKey", "The specified key does not exist."),
@@ -479,6 +493,8 @@ async def list_objects_v2(
     # while `prefix=warehouse/` returns `warehouse/db/`. This one-level-at-a-time
     # descent is exactly what the folder browser expects.
     matched_keys = [k for k in all_objects if k.startswith(prefix)]
+    if start_after:
+        matched_keys = [k for k in matched_keys if k > start_after]
 
     # Direct Lake discovers commits by listing `_delta_log/`; record exactly which
     # commit files the reader can see so a failed framing can be localized.

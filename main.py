@@ -618,7 +618,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 from security.authorization_middleware import AuthorizationMiddleware
-from security.operator_auth import ManagerAuthMiddleware, is_operator_route
+from security.operator_auth import ManagerAuthMiddleware, internal_monitor_ok, is_operator_route
 
 _STANDALONE_OPERATOR_PREFIXES = ("/_admin", "/_config", "/_monitor")
 
@@ -637,7 +637,6 @@ app.add_middleware(
 # there (see below) instead of rejecting it with a confusing SigV4 403.
 # ---------------------------------------------------------------------------
 _AUTH_EXEMPT_PREFIXES = ("/healthz", "/readyz", "/metrics", "/favicon.ico")
-_INTERNAL_MONITOR_HEADER = "x-fsp-internal-monitor"
 
 
 def _bucket_key_from_path(path: str) -> tuple[str, str]:
@@ -660,11 +659,7 @@ async def sigv4_auth_middleware(request, call_next):
         path, ("/_manager",)
     ):
         return await call_next(request)
-    if path.startswith("/_monitor/api/") and (
-        request.headers.get(_INTERNAL_MONITOR_HEADER)
-        and request.headers[_INTERNAL_MONITOR_HEADER]
-        == os.environ.get("FSP_INTERNAL_MONITOR_TOKEN", "")
-    ):
+    if path.startswith("/_monitor/api/") and internal_monitor_ok(request):
         return await call_next(request)
 
     from s3.xml_responses import error_response

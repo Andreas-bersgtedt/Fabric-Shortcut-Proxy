@@ -207,6 +207,9 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"ok": False, "error": "invalid authorization request"}, status_code=401)
         if request.url.path.startswith(_EXEMPT_PREFIXES):
             return await call_next(request)
+        from security.operator_auth import internal_monitor_ok
+        if internal_monitor_ok(request):
+            return await call_next(request)
         permission = _permission(request.url.path, request.method.upper())
         if permission is None:
             return await call_next(request)

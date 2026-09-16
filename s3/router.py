@@ -386,9 +386,7 @@ async def _ensure_lazy_materialized_for_prefix(prefix: str) -> None:
         snap for snap in get_all_snapshots()
         if (
             prefix.startswith(snap.table_path)
-            or snap.table_path.startswith(prefix)
             or prefix.startswith(snap.legacy_table_path)
-            or snap.legacy_table_path.startswith(prefix)
         )
     ]
     for snap in snapshots:

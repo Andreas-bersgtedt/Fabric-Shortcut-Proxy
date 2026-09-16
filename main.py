@@ -150,6 +150,7 @@ async def lifespan(app: FastAPI):
             os._exit(78)
 
     _generation_context = None
+    app.state.generation_renewal_task = None
     if config.AUTO_REFRESH:
         # Data-freshness path (content-addressed snapshots + background poller).
         # Each chunk is named by the hash of its rows, so a new snapshot (and new
@@ -248,7 +249,12 @@ async def lifespan(app: FastAPI):
             publish_split_completion as _publish_split_completion,
             read_split_completion as _read_split_completion,
         )
-        from runtime.generation import acquire_generation, assign_generation, join_generation
+        from runtime.generation import (
+            acquire_generation,
+            assign_generation,
+            join_generation,
+            renew_generation,
+        )
 
         _mat_sem = asyncio.Semaphore(config.MAX_CONCURRENT_GENERATIONS)
         if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
@@ -273,6 +279,30 @@ async def lifespan(app: FastAPI):
                     ),
                 )
             assign_generation(snapshots, _generation_context)
+
+            if config.AGENT_SHARD_INDEX == 0:
+                async def _generation_renewal_loop():
+                    try:
+                        while True:
+                            await asyncio.sleep(300)
+                            try:
+                                renew_generation(
+                                    _generation_store,
+                                    _generation_context,
+                                    lease_seconds=3600,
+                                )
+                                log.info(
+                                    "generation_lease_renewed",
+                                    generation_id=_generation_context.generation_id,
+                                )
+                            except Exception as exc:  # noqa: BLE001 - keep serving while renewal retries
+                                log.warning("generation_lease_renewal_failed", error=str(exc))
+                    except asyncio.CancelledError:
+                        raise
+
+                app.state.generation_renewal_task = asyncio.create_task(
+                    _generation_renewal_loop(), name="generation-renewal"
+                )
 
         # Size-weighted split ownership (devplan/shardweight.md). When enabled with
         # >1 shard and a shared store, compute a per-table LPT assignment from the
@@ -574,6 +604,11 @@ async def lifespan(app: FastAPI):
     yield  # Application runs here
 
     log.info("shutdown")
+    # Stop generation lease renewal before disposing shared resources.
+    if getattr(app.state, "generation_renewal_task", None) is not None:
+        app.state.generation_renewal_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.generation_renewal_task
     # Stop the Agent control link (if any) first.
     if getattr(app.state, "agent_link", None) is not None:
         await app.state.agent_link.stop()

@@ -377,6 +377,11 @@ async def _ensure_lazy_materialized_for_prefix(prefix: str) -> None:
     """
     if config.MATERIALIZE_MODE not in ("lazy", "virtual"):
         return
+    # Bucket discovery has an empty prefix. It must return the table roots
+    # immediately; materializing every configured table here makes Fabric's
+    # bucket listing wait for database work and eventually time out.
+    if not prefix:
+        return
     snapshots = [
         snap for snap in get_all_snapshots()
         if (

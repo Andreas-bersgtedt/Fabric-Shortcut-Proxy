@@ -56,9 +56,10 @@ def _delta_type(iceberg_type: str) -> str:
         "float": "float", "double": "double", "date": "date",
         "string": "string", "binary": "binary", "uuid": "string",
         "time": "string",
-        # Iceberg `timestamp` has no zone -> Delta timestamp_ntz;
-        # `timestamptz` (UTC) -> Delta `timestamp`.
-        "timestamp": "timestamp_ntz", "timestamptz": "timestamp",
+        # Use the broadly supported Delta timestamp type for both Iceberg
+        # timestamp variants. `timestamp_ntz` requires a newer table-feature
+        # protocol than the v1/v2 log emitted by this compatibility layer.
+        "timestamp": "timestamp", "timestamptz": "timestamp",
     }
     if t in simple:
         return simple[t]

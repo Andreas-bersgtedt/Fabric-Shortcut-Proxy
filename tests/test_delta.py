@@ -37,8 +37,8 @@ def test_delta_type_mapping():
     assert delta_log._delta_type("string") == "string"
     assert delta_log._delta_type("binary") == "binary"
     assert delta_log._delta_type("uuid") == "string"
-    # Iceberg timestamp (no zone) -> Delta timestamp_ntz; timestamptz -> timestamp
-    assert delta_log._delta_type("timestamp") == "timestamp_ntz"
+    # Both timestamp variants use the broadly supported Delta timestamp type.
+    assert delta_log._delta_type("timestamp") == "timestamp"
     assert delta_log._delta_type("timestamptz") == "timestamp"
     # decimal preserved (spaces stripped)
     assert delta_log._delta_type("decimal(10, 2)") == "decimal(10,2)"

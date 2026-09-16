@@ -523,6 +523,14 @@ async def head_object(
 
     metrics.record_s3_request("head", metrics.classify_key(key))
     key = _normalize_incoming_key(key)
+    # Delta readers probe this optional checkpoint marker before listing JSON
+    # commits. It is intentionally absent in our v1/v2 log, so return the
+    # normal S3 404 without triggering lazy materialization or generation
+    # lease validation.
+    if config.TABLE_FORMAT == "delta" and (
+        key.endswith("/_last_checkpoint") or key.endswith("/_last_checkpoint/")
+    ):
+        return FastAPIResponse(status_code=404)
     await _ensure_lazy_materialized(key)
     all_objects = _snapshot_objects()
     obj = all_objects.get(key)

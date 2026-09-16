@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.2]: 2026-09-16
+
+### Fixed
+
+- Restored Manager-to-Agent monitor scrapes by honoring the shared internal
+  monitor token and enabling the Agent monitor router in external deployments.
+- Restored consistent Delta split ETags across Manager, Agent, and S3 responses.
+- Added the missing runtime dependencies required by the enterprise Manager,
+  including `httpx` and `psutil`.
+- Made the Manager monitor charts responsive and compact, with CPU, memory,
+  disk, and network trends displayed side by side where space allows.
+
 ## [2.9.1]: 2026-09-11
 
 ### Added
@@ -565,6 +577,7 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
+[2.9.2]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.1...2.9.2
 [2.9.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.0...2.9.1
 [2.8.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.7.1...2.8.0
 [2.7.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.6.0...2.7.0

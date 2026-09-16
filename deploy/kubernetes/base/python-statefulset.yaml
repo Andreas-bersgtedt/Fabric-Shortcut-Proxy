@@ -63,6 +63,10 @@ spec:
               value: 0.0.0.0
             - name: PORT
               value: "9000"
+            # Exposes /_monitor/api/* so the Manager's fleet-monitor scrape (and its
+            # shared FSP_INTERNAL_MONITOR_TOKEN auth bypass) has a route to hit.
+            - name: ENABLE_MONITOR
+              value: "1"
           ports:
             - name: health
               containerPort: 9000

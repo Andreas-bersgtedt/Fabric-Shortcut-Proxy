@@ -274,6 +274,18 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
         assert "numRecords" in json.loads(add["stats"])
 
 
+async def test_head_delta_log_directory_is_available(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    keys = _extract_keys(r.content)
+    commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
+    log_directory = commit_key.rsplit("/", 1)[0]
+
+    response = await delta_client.head(f"/delta-bucket/{log_directory}/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/x-directory"
+
+
 async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypatch, tmp_path):
     """Fabric's first ListObjectsV2 request must publish virtual Delta commit 0."""
     import db.executor as executor

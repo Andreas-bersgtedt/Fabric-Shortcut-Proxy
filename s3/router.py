@@ -541,6 +541,23 @@ async def head_object(
             headers=headers,
         )
 
+    # Fabric's Delta reader probes the transaction-log directory itself before
+    # listing commit files. Treat an existing `_delta_log` prefix as a valid
+    # directory marker even though no literal S3 object is stored for it.
+    if config.TABLE_FORMAT == "delta" and key.endswith("/_delta_log"):
+        has_log_entry = any(
+            object_key.startswith(f"{key}/")
+            for object_key in all_objects
+        )
+        if has_log_entry:
+            return FastAPIResponse(
+                status_code=200,
+                headers={
+                    "Content-Length": "0",
+                    "Content-Type": "application/x-directory",
+                },
+            )
+
     # No literal object at this key. Real S3 returns 404 for a HEAD on a
     # folder-like prefix (there is no object stored at `warehouse` — only under
     # `warehouse/...`). Fabric relies on this 404 to distinguish a folder prefix

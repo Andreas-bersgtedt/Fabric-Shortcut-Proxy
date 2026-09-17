@@ -456,31 +456,41 @@ async def list_objects_v2(
     list_type = request.query_params.get("list-type")
     prefix_in = request.query_params.get("prefix", "")
     delimiter = request.query_params.get("delimiter", "")
-    start_after = request.query_params.get("start-after", "")
-    prefix, warehouse_alias = _normalize_incoming_prefix(prefix_in)
-
-    # `_last_checkpoint` is an optional Delta marker. It is absent from this
-    # v1/v2 log, so report a real missing object instead of an empty 200 list;
-    # Delta readers use the 404 to continue with commit JSON discovery.
-    if config.TABLE_FORMAT == "delta" and (
-        prefix.endswith("/_last_checkpoint") or prefix.endswith("/_last_checkpoint/")
-    ):
+    start_after = request.query_params.get("start-after")
+    continuation_token = request.query_params.get("continuation-token")
+    max_keys_value = request.query_params.get("max-keys")
+    try:
+        max_keys = 1000 if max_keys_value is None else int(max_keys_value)
+    except ValueError:
+        max_keys = -1
+    if max_keys < 0 or max_keys > 1000:
         return FastAPIResponse(
-            content=error_response("NoSuchKey", "The specified key does not exist."),
-            status_code=404,
+            content=error_response("InvalidArgument", "max-keys must be between 0 and 1000."),
+            status_code=400,
             media_type="application/xml",
         )
+    prefix, warehouse_alias = _normalize_incoming_prefix(prefix_in)
 
-    # Native Delta mode does not expose the legacy Iceberg-style metadata
-    # object. Report that optional probe as absent rather than an empty 200
-    # listing that makes MDSYNC wait for a response that cannot exist.
+    # These optional objects are absent in native Delta mode. ListObjectsV2 on
+    # a valid bucket still returns 200 with an empty page; NoSuchKey applies to
+    # GetObject/HeadObject, not to a prefix listing.
     if config.TABLE_FORMAT == "delta" and (
-        prefix.endswith("/_metadata/table.json.gz")
+        prefix.endswith("/_last_checkpoint")
+        or prefix.endswith("/_last_checkpoint/")
+        or prefix.endswith("/_metadata/table.json.gz")
         or prefix.endswith("/_metadata/table.json.gz/")
     ):
+        body = list_objects_v2_response(
+            bucket,
+            prefix_in,
+            [],
+            delimiter=delimiter,
+            max_keys=max_keys,
+            continuation_token=continuation_token,
+            start_after=start_after,
+        )
         return FastAPIResponse(
-            content=error_response("NoSuchKey", "The specified key does not exist."),
-            status_code=404,
+            content=body,
             media_type="application/xml",
         )
 
@@ -492,15 +502,7 @@ async def list_objects_v2(
     # `prefix=warehouse` returns CommonPrefix `warehouse/` (the folder itself),
     # while `prefix=warehouse/` returns `warehouse/db/`. This one-level-at-a-time
     # descent is exactly what the folder browser expects.
-    matched_keys = [k for k in all_objects if k.startswith(prefix)]
-    if start_after:
-        matched_keys = [k for k in matched_keys if k > start_after]
-
-    # Direct Lake discovers commits by listing `_delta_log/`; record exactly which
-    # commit files the reader can see so a failed framing can be localized.
-    if config.S3_ACCESS_LOG and "_delta_log" in prefix:
-        log.info("s3_list_delta_log", prefix=prefix_in, delimiter=delimiter,
-                 matched=sorted(matched_keys))
+    matched_keys = [key for key in all_objects if key.startswith(prefix)]
 
     if delimiter:
         flat_objects: list[dict] = []
@@ -521,18 +523,68 @@ async def list_objects_v2(
                 common_prefix_set.add(_display_key_for_prefix(cp, warehouse_alias=warehouse_alias))
 
         common_prefixes = sorted(common_prefix_set)
-        log.info("list_objects", bucket=bucket, list_type=list_type, prefix=prefix_in, delimiter=delimiter,
-                 matched=len(flat_objects), common_prefixes=len(common_prefixes))
-        body = list_objects_v2_response(bucket, prefix_in, flat_objects,
-                                        delimiter=delimiter, common_prefixes=common_prefixes)
     else:
         flat_objects = [
             {"key": _display_key_for_prefix(k, warehouse_alias=warehouse_alias), "size": all_objects[k]["size"],
              "last_modified_ms": all_objects[k]["last_modified_ms"], "etag": all_objects[k].get("etag")}
             for k in matched_keys
         ]
-        log.info("list_objects", bucket=bucket, prefix=prefix_in, matched=len(flat_objects))
-        body = list_objects_v2_response(bucket, prefix_in, flat_objects)
+        common_prefixes = []
+
+    candidates = [
+        (obj["key"], "object", obj)
+        for obj in flat_objects
+    ] + [
+        (common_prefix, "prefix", common_prefix)
+        for common_prefix in common_prefixes
+    ]
+    candidates.sort(key=lambda candidate: candidate[0])
+
+    marker = continuation_token if continuation_token is not None else start_after
+    if marker:
+        candidates = [candidate for candidate in candidates if candidate[0] > marker]
+
+    page = candidates[:max_keys]
+    is_truncated = max_keys > 0 and len(candidates) > len(page)
+    next_continuation_token = page[-1][0] if is_truncated else None
+    page_objects = [candidate[2] for candidate in page if candidate[1] == "object"]
+    page_prefixes = [candidate[2] for candidate in page if candidate[1] == "prefix"]
+
+    # Direct Lake discovers commits by listing `_delta_log/`; record exactly which
+    # entries the reader can see so a failed framing can be localized precisely.
+    if config.S3_ACCESS_LOG and "_delta_log" in prefix:
+        log.info(
+            "s3_list_delta_log",
+            prefix=prefix_in,
+            delimiter=delimiter,
+            start_after=start_after,
+            continuation_token=continuation_token,
+            matched=[candidate[0] for candidate in page],
+            is_truncated=is_truncated,
+        )
+
+    log.info(
+        "list_objects",
+        bucket=bucket,
+        list_type=list_type,
+        prefix=prefix_in,
+        delimiter=delimiter,
+        matched=len(page_objects),
+        common_prefixes=len(page_prefixes),
+        is_truncated=is_truncated,
+    )
+    body = list_objects_v2_response(
+        bucket,
+        prefix_in,
+        page_objects,
+        delimiter=delimiter,
+        common_prefixes=page_prefixes,
+        max_keys=max_keys,
+        is_truncated=is_truncated,
+        next_continuation_token=next_continuation_token,
+        continuation_token=continuation_token,
+        start_after=start_after,
+    )
     return FastAPIResponse(content=body, media_type="application/xml")
 
 
@@ -579,23 +631,6 @@ async def head_object(
             status_code=200,
             headers=headers,
         )
-
-    # Fabric's Delta reader probes the transaction-log directory itself before
-    # listing commit files. Treat an existing `_delta_log` prefix as a valid
-    # directory marker even though no literal S3 object is stored for it.
-    if config.TABLE_FORMAT == "delta" and key.endswith("/_delta_log"):
-        has_log_entry = any(
-            object_key.startswith(f"{key}/")
-            for object_key in all_objects
-        )
-        if has_log_entry:
-            return FastAPIResponse(
-                status_code=200,
-                headers={
-                    "Content-Length": "0",
-                    "Content-Type": "application/x-directory",
-                },
-            )
 
     # No literal object at this key. Real S3 returns 404 for a HEAD on a
     # folder-like prefix (there is no object stored at `warehouse` — only under

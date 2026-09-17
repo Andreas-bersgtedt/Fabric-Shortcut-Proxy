@@ -274,16 +274,15 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
         assert "numRecords" in json.loads(add["stats"])
 
 
-async def test_head_delta_log_directory_is_available(delta_client):
+async def test_head_delta_log_directory_is_not_an_object(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)
     commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
     log_directory = commit_key.rsplit("/", 1)[0]
 
-    response = await delta_client.head(f"/delta-bucket/{log_directory}/")
-
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "application/x-directory"
+    for suffix in ("", "/"):
+        response = await delta_client.head(f"/delta-bucket/{log_directory}{suffix}")
+        assert response.status_code == 404
 
 
 async def test_head_last_checkpoint_is_optional(delta_client):
@@ -307,18 +306,121 @@ async def test_list_last_checkpoint_is_optional(delta_client):
         f"/delta-bucket?list-type=2&prefix={checkpoint_key}"
     )
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert _extract_keys(response.content) == []
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.content)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    assert root.findtext("s3:Prefix", namespaces=ns) == checkpoint_key
+    assert root.findtext("s3:KeyCount", namespaces=ns) == "0"
 
 
-async def test_delta_log_start_after_filters_prior_commits(delta_client):
-    prefix = f"{config.WAREHOUSE_PREFIX}/"
+async def test_list_legacy_metadata_probe_is_empty(delta_client):
+    listing = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/"
+    )
+    commit_key = next(
+        key for key in _extract_keys(listing.content)
+        if key.endswith("_delta_log/00000000000000000000.json")
+    )
+    table_root = commit_key.split("/_delta_log/", 1)[0]
+    metadata_probe = f"{table_root}/_metadata/table.json.gz/"
+
     response = await delta_client.get(
-        f"/delta-bucket?list-type=2&prefix={prefix}",
-        params={"start-after": "not-before-any-commit"},
+        "/delta-bucket",
+        params={
+            "list-type": "2",
+            "max-keys": "1000",
+            "delimiter": "/",
+            "prefix": metadata_probe,
+        },
     )
 
     assert response.status_code == 200
     assert _extract_keys(response.content) == []
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.content)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    assert root.findtext("s3:Prefix", namespaces=ns) == metadata_probe
+    assert root.findtext("s3:KeyCount", namespaces=ns) == "0"
+
+
+async def test_delta_log_echoes_fabric_start_after_probe(delta_client):
+    listing = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/"
+    )
+    commit_key = next(
+        key for key in _extract_keys(listing.content)
+        if key.endswith("_delta_log/00000000000000000000.json")
+    )
+    prefix = commit_key.rsplit("/", 1)[0]
+    start_after = f"{prefix}00000000000000000000.jsom"
+    response = await delta_client.get(
+        "/delta-bucket",
+        params={
+            "list-type": "2",
+            "max-keys": "1000",
+            "delimiter": "/",
+            "prefix": prefix,
+            "start-after": start_after,
+        },
+    )
+
+    assert response.status_code == 200
+    assert _extract_keys(response.content) == []
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.content)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    assert root.findtext("s3:StartAfter", namespaces=ns) == start_after
+
+
+async def test_delta_listing_paginates_with_continuation_token(delta_client):
+    import xml.etree.ElementTree as ET
+
+    prefix = f"{config.WAREHOUSE_PREFIX}/"
+    complete = await delta_client.get(
+        "/delta-bucket",
+        params={"list-type": "2", "prefix": prefix},
+    )
+    expected_keys = _extract_keys(complete.content)
+    actual_keys: list[str] = []
+    continuation_token = None
+
+    for _page_number in range(10):
+        params = {"list-type": "2", "prefix": prefix, "max-keys": "2"}
+        if continuation_token is not None:
+            params["continuation-token"] = continuation_token
+        response = await delta_client.get("/delta-bucket", params=params)
+        assert response.status_code == 200
+
+        root = ET.fromstring(response.content)
+        ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+        page_keys = _extract_keys(response.content)
+        actual_keys.extend(page_keys)
+        assert root.findtext("s3:KeyCount", namespaces=ns) == str(len(page_keys))
+        assert root.findtext("s3:MaxKeys", namespaces=ns) == "2"
+        if continuation_token is not None:
+            assert root.findtext("s3:ContinuationToken", namespaces=ns) == continuation_token
+
+        if root.findtext("s3:IsTruncated", namespaces=ns) == "false":
+            break
+        continuation_token = root.findtext("s3:NextContinuationToken", namespaces=ns)
+        assert continuation_token
+    else:
+        pytest.fail("ListObjectsV2 pagination did not terminate")
+
+    assert actual_keys == expected_keys
+
+
+@pytest.mark.parametrize("max_keys", ["invalid", "-1", "1001"])
+async def test_delta_listing_rejects_invalid_max_keys(delta_client, max_keys):
+    response = await delta_client.get(
+        "/delta-bucket",
+        params={"list-type": "2", "max-keys": max_keys},
+    )
+
+    assert response.status_code == 400
+    assert b"<Code>InvalidArgument</Code>" in response.content
 
 
 async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypatch, tmp_path):

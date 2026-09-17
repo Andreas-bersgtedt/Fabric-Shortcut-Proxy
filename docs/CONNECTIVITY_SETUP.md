@@ -71,6 +71,12 @@ sudo ufw allow from <opdg-host-ip> to any port 9000 proto tcp
 | **Data gateway** | select your **OPDG** |
 | Path | browse the `fabric-iceberg-poc` bucket → pick the table folder(s) |
 
+For a schema-enabled lakehouse, create an ordinary table shortcut under
+`Tables/<schema>` (for example, `Tables/dbo`) and target exactly one Delta table
+folder such as `db/<server>/<database>/<schema>/<table>`. Do not create an
+ordinary shortcut at `Tables` that targets a parent containing multiple tables;
+use **New schema shortcut** for that pattern.
+
 Only the queried rows traverse the gateway. Ref:
 <https://learn.microsoft.com/fabric/onelake/create-on-premises-shortcut>.
 

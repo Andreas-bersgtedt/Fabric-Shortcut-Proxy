@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored S3 prefix `HEAD` semantics for virtual Delta log directories,
+  returned empty `ListObjectsV2` pages for absent optional Delta metadata, and
+  completed pagination fields used by Fabric metadata expansion.
+
 ## [2.9.2]: 2026-09-16
 
 ### Fixed

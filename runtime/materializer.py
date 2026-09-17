@@ -31,11 +31,13 @@ from planner.split_planner import arrow_fallback_columns, build_split_query
 from iceberg.stats import collect_split_stats
 from iceberg.state_store import SnapshotState
 from observability.logging import get_logger
+from runtime.artifact_store import get_default_store
 from runtime.split_completion import (
     apply_split_completion,
     publish_split_completion,
     read_split_completion,
 )
+from runtime.generation import GenerationError, join_generation
 
 log = get_logger(__name__)
 
@@ -110,7 +112,7 @@ def _apply_arrow_fallback(rows: list[dict], split) -> list[dict]:
     return tokenize_batch(batch, columns).to_pylist()
 
 
-async def _materialize_split(split) -> int:
+async def _materialize_split_once(split) -> int:
     key = split.object_key
     if not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
         completion = await _wait_for_completion(split)
@@ -163,6 +165,31 @@ async def _materialize_split(split) -> int:
         else:
             cache.put_parquet(key, pq_bytes)
         return nrows
+
+
+async def _materialize_split(split) -> int:
+    try:
+        return await _materialize_split_once(split)
+    except GenerationError:
+        if config.AGENT_SHARD_COUNT <= 1 or not config.ARTIFACT_STORE_SERVING:
+            raise
+        context = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: join_generation(
+                get_default_store(),
+                config.AGENT_SHARD_COUNT,
+                timeout_seconds=config.MATERIALIZE_WAIT_SECONDS,
+            ),
+        )
+        split.generation_id = context.generation_id
+        split.generation_fence = context.fence
+        split.generation_token = context.lease_token
+        log.info(
+            "worker_generation_rejoined",
+            generation_id=context.generation_id,
+            shard_index=config.AGENT_SHARD_INDEX,
+        )
+        return await _materialize_split_once(split)
 
 
 async def ensure_snapshot_materialized(snap: SnapshotState) -> None:

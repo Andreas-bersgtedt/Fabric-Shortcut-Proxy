@@ -112,6 +112,14 @@ def _display_key_for_prefix(key: str, *, warehouse_alias: bool) -> str:
     return key
 
 
+def _is_absent_delta_sidecar(key: str) -> bool:
+    normalized = key.rstrip("/")
+    return config.TABLE_FORMAT == "delta" and (
+        normalized.endswith("/_last_checkpoint")
+        or ("/_delta_log/" in normalized and normalized.endswith(".crc"))
+    )
+
+
 def _apply_range(data: bytes, range_header: str | None) -> tuple[bytes, int, int, bool]:
     """
     Parse an HTTP Range header and return (slice, start, end, is_partial).
@@ -475,8 +483,7 @@ async def list_objects_v2(
     # a valid bucket still returns 200 with an empty page; NoSuchKey applies to
     # GetObject/HeadObject, not to a prefix listing.
     if config.TABLE_FORMAT == "delta" and (
-        prefix.endswith("/_last_checkpoint")
-        or prefix.endswith("/_last_checkpoint/")
+        _is_absent_delta_sidecar(prefix)
         or prefix.endswith("/_metadata/table.json.gz")
         or prefix.endswith("/_metadata/table.json.gz/")
     ):
@@ -607,9 +614,7 @@ async def head_object(
     # commits. It is intentionally absent in our v1/v2 log, so return the
     # normal S3 404 without triggering lazy materialization or generation
     # lease validation.
-    if config.TABLE_FORMAT == "delta" and (
-        key.endswith("/_last_checkpoint") or key.endswith("/_last_checkpoint/")
-    ):
+    if _is_absent_delta_sidecar(key):
         return FastAPIResponse(status_code=404)
     await _ensure_lazy_materialized(key)
     all_objects = _snapshot_objects()
@@ -677,6 +682,12 @@ async def get_object(
     key = _normalize_incoming_key(key)
     range_header = request.headers.get("range")
     log.info("get_object", bucket=bucket, key=key, range=range_header)
+    if _is_absent_delta_sidecar(key):
+        return FastAPIResponse(
+            content=error_response("NoSuchKey", f"Key {key!r} does not exist.", f"/{bucket}/{key}"),
+            status_code=404,
+            media_type="application/xml",
+        )
     await _ensure_lazy_materialized(key)
 
     # ---- Delta transaction log (TABLE_FORMAT=delta) ------------------------

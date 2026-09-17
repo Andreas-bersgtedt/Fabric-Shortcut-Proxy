@@ -552,6 +552,45 @@ async def test_unknown_delta_log_file_404(delta_client):
     assert r.status_code == 404
 
 
+@pytest.mark.parametrize("method", ["get", "head"])
+async def test_delta_crc_probe_is_absent_without_materializing(
+    delta_client, monkeypatch, method
+):
+    from runtime import materializer
+
+    async def unexpected_materialization(_snap):
+        pytest.fail("optional Delta sidecar probe triggered materialization")
+
+    monkeypatch.setattr(materializer, "ensure_snapshot_materialized", unexpected_materialization)
+    key = (
+        f"{config.WAREHOUSE_PREFIX}/{config.TABLE_NAME}/_delta_log/"
+        "00000000000000000000.crc"
+    )
+    response = await getattr(delta_client, method)(f"/delta-bucket/{key}")
+
+    assert response.status_code == 404
+
+
+async def test_delta_crc_listing_is_empty_without_materializing(delta_client, monkeypatch):
+    from runtime import materializer
+
+    async def unexpected_materialization(_snap):
+        pytest.fail("optional Delta sidecar listing triggered materialization")
+
+    monkeypatch.setattr(materializer, "ensure_snapshot_materialized", unexpected_materialization)
+    prefix = (
+        f"{config.WAREHOUSE_PREFIX}/{config.TABLE_NAME}/_delta_log/"
+        "00000000000000000000.crc"
+    )
+    response = await delta_client.get(
+        "/delta-bucket",
+        params={"list-type": "2", "prefix": prefix},
+    )
+
+    assert response.status_code == 200
+    assert _extract_keys(response.content) == []
+
+
 async def test_delta_listing_is_canonical_and_hides_legacy_when_aliases_disabled(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     assert r.status_code == 200

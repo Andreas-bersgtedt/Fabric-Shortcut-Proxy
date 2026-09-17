@@ -74,6 +74,9 @@ def record(
     resp_bytes: int = 0,
     range_header: str | None = None,
     user_agent: str | None = None,
+    query: str | None = None,
+    etag: str | None = None,
+    last_modified: str | None = None,
 ) -> None:
     """Append one request record. Never raises."""
     if not config.REQUEST_TRACE:
@@ -101,6 +104,9 @@ def record(
                 "bytes": resp_bytes,
                 "range": range_header,
                 "ua": (user_agent or "")[:80] or None,
+                "query": query or None,
+                "etag": etag,
+                "last_modified": last_modified,
             })
     except Exception:  # tracing must never break a request
         pass

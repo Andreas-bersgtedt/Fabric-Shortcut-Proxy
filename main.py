@@ -779,6 +779,9 @@ async def request_trace_middleware(request, call_next):
         resp_bytes=resp_bytes,
         range_header=request.headers.get("range"),
         user_agent=request.headers.get("user-agent"),
+        query=request.url.query,
+        etag=response.headers.get("etag"),
+        last_modified=response.headers.get("last-modified"),
     )
     return response
 

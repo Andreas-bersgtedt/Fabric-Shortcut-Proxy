@@ -256,6 +256,9 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
     assert r2.headers["content-type"].startswith("application/json")
     actions = [json.loads(line) for line in r2.text.splitlines() if line.strip()]
 
+    assert list(actions[0]) == ["commitInfo"]
+    assert actions[0]["commitInfo"]["operation"] == "CREATE TABLE"
+
     protocol = next(a["protocol"] for a in actions if "protocol" in a)
     assert protocol["minReaderVersion"] == 1
     assert protocol["minWriterVersion"] == 2

@@ -128,6 +128,15 @@ def _metadata_action(snap) -> dict:
     }}
 
 
+def _commit_info_action(snap, operation: str) -> dict:
+    return {"commitInfo": {
+        "timestamp": snap.watermark_ms,
+        "operation": operation,
+        "operationParameters": {},
+        "engineInfo": "Fabric Shortcut Proxy",
+    }}
+
+
 def _commit_text(actions: list[dict]) -> str:
     return "".join(json.dumps(a, separators=(",", ":")) + "\n" for a in actions)
 
@@ -146,6 +155,7 @@ def _register(snap) -> None:
     commits = _commits.setdefault(name, [])
     actions: list[dict] = []
     if not commits:
+        actions.append(_commit_info_action(snap, "CREATE TABLE"))
         actions.append({"protocol": {"minReaderVersion": 1, "minWriterVersion": 2}})
         actions.append(_metadata_action(snap))
         for p, sz, rc in files:
@@ -171,6 +181,7 @@ def _register(snap) -> None:
         if not actions:
             _committed_version[name] = ver
             return
+        actions.insert(0, _commit_info_action(snap, "WRITE"))
     commits.append(_commit_text(actions))
     _prev_files[name] = files
     _committed_version[name] = ver

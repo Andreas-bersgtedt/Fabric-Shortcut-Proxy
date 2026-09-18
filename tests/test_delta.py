@@ -265,6 +265,7 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
 
     meta = next(a["metaData"] for a in actions if "metaData" in a)
     assert meta["format"]["provider"] == "parquet"
+    assert meta["configuration"]["delta.dataSkippingNumIndexedCols"] == "0"
     schema = json.loads(meta["schemaString"])
     assert schema["type"] == "struct"
     assert len(schema["fields"]) > 0
@@ -274,7 +275,11 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
     for add in adds:
         assert add["path"].startswith("data/")
         assert add["dataChange"] is True
-        assert "numRecords" in json.loads(add["stats"])
+        stats = json.loads(add["stats"])
+        assert "numRecords" in stats
+        assert stats["minValues"] == {}
+        assert stats["maxValues"] == {}
+        assert stats["nullCount"] == {}
 
 
 async def test_head_delta_log_directory_is_not_an_object(delta_client):

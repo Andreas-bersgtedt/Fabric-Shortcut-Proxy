@@ -101,7 +101,12 @@ def _add_action(path: str, size: int, records: int, ts: int) -> dict:
         "size": size,
         "modificationTime": ts,
         "dataChange": True,
-        "stats": json.dumps({"numRecords": records}),
+        "stats": json.dumps({
+            "numRecords": records,
+            "minValues": {},
+            "maxValues": {},
+            "nullCount": {},
+        }, separators=(",", ":")),
     }}
 
 
@@ -123,7 +128,7 @@ def _metadata_action(snap) -> dict:
         "format": {"provider": "parquet", "options": {}},
         "schemaString": _schema_string(snap.table.schema),
         "partitionColumns": [],
-        "configuration": {},
+        "configuration": {"delta.dataSkippingNumIndexedCols": "0"},
         "createdTime": snap.watermark_ms,
     }}
 

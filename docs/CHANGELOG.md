@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.3]: 2026-09-18
+
 ### Fixed
 
 - Preserved literal S3 object-key identity for trailing-slash requests instead
@@ -586,6 +588,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.3...HEAD
+[2.9.3]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.2...2.9.3
 [2.9.2]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.1...2.9.2
 [2.9.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.0...2.9.1
 [2.8.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.7.1...2.8.0

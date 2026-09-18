@@ -115,6 +115,20 @@ async def test_get_metadata_json_is_valid_iceberg(client):
     assert len(metadata["snapshots"]) > 0
 
 
+async def test_iceberg_metadata_trailing_slash_is_literal_key(client):
+    r = await client.get("/test-bucket?list-type=2&prefix=")
+    keys = _extract_keys(r.content)
+    metadata_key = next(k for k in keys if k.endswith("metadata.json"))
+
+    canonical = await client.get(f"/test-bucket/{metadata_key}")
+    slash_head = await client.head(f"/test-bucket/{metadata_key}/")
+    slash_get = await client.get(f"/test-bucket/{metadata_key}/")
+
+    assert canonical.status_code == 200
+    assert slash_head.status_code == 404
+    assert slash_get.status_code == 404
+
+
 async def test_get_manifest_list_avro(client):
     r = await client.get("/test-bucket?list-type=2&prefix=")
     keys = _extract_keys(r.content)

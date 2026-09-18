@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserved literal S3 object-key identity for trailing-slash requests instead
+  of aliasing `file/` to `file`. This restores Fabric metadata expansion, row
+  retrieval, and Direct Lake report rendering.
+- Restored S3 prefix `HEAD` semantics for virtual Delta log directories,
+  returned empty `ListObjectsV2` pages for absent optional Delta metadata, and
+  completed pagination fields used by Fabric metadata expansion.
+
 ## [2.9.2]: 2026-09-16
 
 ### Fixed

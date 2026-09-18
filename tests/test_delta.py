@@ -37,8 +37,8 @@ def test_delta_type_mapping():
     assert delta_log._delta_type("string") == "string"
     assert delta_log._delta_type("binary") == "binary"
     assert delta_log._delta_type("uuid") == "string"
-    # Iceberg timestamp (no zone) -> Delta timestamp_ntz; timestamptz -> timestamp
-    assert delta_log._delta_type("timestamp") == "timestamp_ntz"
+    # Both timestamp variants use the broadly supported Delta timestamp type.
+    assert delta_log._delta_type("timestamp") == "timestamp"
     assert delta_log._delta_type("timestamptz") == "timestamp"
     # decimal preserved (spaces stripped)
     assert delta_log._delta_type("decimal(10, 2)") == "decimal(10,2)"
@@ -256,12 +256,16 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
     assert r2.headers["content-type"].startswith("application/json")
     actions = [json.loads(line) for line in r2.text.splitlines() if line.strip()]
 
+    assert list(actions[0]) == ["commitInfo"]
+    assert actions[0]["commitInfo"]["operation"] == "CREATE TABLE"
+
     protocol = next(a["protocol"] for a in actions if "protocol" in a)
     assert protocol["minReaderVersion"] == 1
     assert protocol["minWriterVersion"] == 2
 
     meta = next(a["metaData"] for a in actions if "metaData" in a)
     assert meta["format"]["provider"] == "parquet"
+    assert meta["configuration"]["delta.dataSkippingNumIndexedCols"] == "0"
     schema = json.loads(meta["schemaString"])
     assert schema["type"] == "struct"
     assert len(schema["fields"]) > 0
@@ -271,7 +275,160 @@ async def test_get_commit_zero_has_protocol_metadata_and_adds(delta_client):
     for add in adds:
         assert add["path"].startswith("data/")
         assert add["dataChange"] is True
-        assert "numRecords" in json.loads(add["stats"])
+        stats = json.loads(add["stats"])
+        assert "numRecords" in stats
+        assert stats["minValues"] == {}
+        assert stats["maxValues"] == {}
+        assert stats["nullCount"] == {}
+
+
+async def test_head_delta_log_directory_is_not_an_object(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    keys = _extract_keys(r.content)
+    commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
+    log_directory = commit_key.rsplit("/", 1)[0]
+
+    for suffix in ("", "/"):
+        response = await delta_client.head(f"/delta-bucket/{log_directory}{suffix}")
+        assert response.status_code == 404
+
+
+async def test_head_last_checkpoint_is_optional(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    keys = _extract_keys(r.content)
+    commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
+    checkpoint_key = commit_key.rsplit("/", 1)[0] + "/_last_checkpoint"
+
+    response = await delta_client.head(f"/delta-bucket/{checkpoint_key}")
+
+    assert response.status_code == 404
+
+
+async def test_list_last_checkpoint_is_optional(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    keys = _extract_keys(r.content)
+    commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
+    checkpoint_key = commit_key.rsplit("/", 1)[0] + "/_last_checkpoint"
+
+    response = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={checkpoint_key}"
+    )
+
+    assert response.status_code == 200
+    assert _extract_keys(response.content) == []
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.content)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    assert root.findtext("s3:Prefix", namespaces=ns) == checkpoint_key
+    assert root.findtext("s3:KeyCount", namespaces=ns) == "0"
+
+
+async def test_list_legacy_metadata_probe_is_empty(delta_client):
+    listing = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/"
+    )
+    commit_key = next(
+        key for key in _extract_keys(listing.content)
+        if key.endswith("_delta_log/00000000000000000000.json")
+    )
+    table_root = commit_key.split("/_delta_log/", 1)[0]
+    metadata_probe = f"{table_root}/_metadata/table.json.gz/"
+
+    response = await delta_client.get(
+        "/delta-bucket",
+        params={
+            "list-type": "2",
+            "max-keys": "1000",
+            "delimiter": "/",
+            "prefix": metadata_probe,
+        },
+    )
+
+    assert response.status_code == 200
+    assert _extract_keys(response.content) == []
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.content)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    assert root.findtext("s3:Prefix", namespaces=ns) == metadata_probe
+    assert root.findtext("s3:KeyCount", namespaces=ns) == "0"
+
+
+async def test_delta_log_echoes_fabric_start_after_probe(delta_client):
+    listing = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/"
+    )
+    commit_key = next(
+        key for key in _extract_keys(listing.content)
+        if key.endswith("_delta_log/00000000000000000000.json")
+    )
+    prefix = commit_key.rsplit("/", 1)[0]
+    start_after = f"{prefix}00000000000000000000.jsom"
+    response = await delta_client.get(
+        "/delta-bucket",
+        params={
+            "list-type": "2",
+            "max-keys": "1000",
+            "delimiter": "/",
+            "prefix": prefix,
+            "start-after": start_after,
+        },
+    )
+
+    assert response.status_code == 200
+    assert _extract_keys(response.content) == []
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.content)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    assert root.findtext("s3:StartAfter", namespaces=ns) == start_after
+
+
+async def test_delta_listing_paginates_with_continuation_token(delta_client):
+    import xml.etree.ElementTree as ET
+
+    prefix = f"{config.WAREHOUSE_PREFIX}/"
+    complete = await delta_client.get(
+        "/delta-bucket",
+        params={"list-type": "2", "prefix": prefix},
+    )
+    expected_keys = _extract_keys(complete.content)
+    actual_keys: list[str] = []
+    continuation_token = None
+
+    for _page_number in range(10):
+        params = {"list-type": "2", "prefix": prefix, "max-keys": "2"}
+        if continuation_token is not None:
+            params["continuation-token"] = continuation_token
+        response = await delta_client.get("/delta-bucket", params=params)
+        assert response.status_code == 200
+
+        root = ET.fromstring(response.content)
+        ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+        page_keys = _extract_keys(response.content)
+        actual_keys.extend(page_keys)
+        assert root.findtext("s3:KeyCount", namespaces=ns) == str(len(page_keys))
+        assert root.findtext("s3:MaxKeys", namespaces=ns) == "2"
+        if continuation_token is not None:
+            assert root.findtext("s3:ContinuationToken", namespaces=ns) == continuation_token
+
+        if root.findtext("s3:IsTruncated", namespaces=ns) == "false":
+            break
+        continuation_token = root.findtext("s3:NextContinuationToken", namespaces=ns)
+        assert continuation_token
+    else:
+        pytest.fail("ListObjectsV2 pagination did not terminate")
+
+    assert actual_keys == expected_keys
+
+
+@pytest.mark.parametrize("max_keys", ["invalid", "-1", "1001"])
+async def test_delta_listing_rejects_invalid_max_keys(delta_client, max_keys):
+    response = await delta_client.get(
+        "/delta-bucket",
+        params={"list-type": "2", "max-keys": max_keys},
+    )
+
+    assert response.status_code == 400
+    assert b"<Code>InvalidArgument</Code>" in response.content
 
 
 async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypatch, tmp_path):
@@ -328,15 +485,33 @@ async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypat
         delta_log.reset()
 
 
-async def test_get_commit_zero_trailing_slash_is_normalized(delta_client):
+async def test_delta_commit_trailing_slash_is_literal_key(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)
     commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
 
-    r2 = await delta_client.get(f"/delta-bucket/{commit_key}/")
-    assert r2.status_code == 200
-    assert r2.headers["content-type"].startswith("application/json")
-    assert r2.text == (await delta_client.get(f"/delta-bucket/{commit_key}")).text
+    canonical = await delta_client.get(f"/delta-bucket/{commit_key}")
+    slash_head = await delta_client.head(f"/delta-bucket/{commit_key}/")
+    slash_get = await delta_client.get(f"/delta-bucket/{commit_key}/")
+
+    assert canonical.status_code == 200
+    assert canonical.headers["content-type"].startswith("application/json")
+    assert slash_head.status_code == 404
+    assert slash_get.status_code == 404
+
+
+async def test_delta_parquet_trailing_slash_is_literal_key(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    keys = _extract_keys(r.content)
+    parquet_key = next(k for k in keys if k.endswith(".parquet"))
+
+    canonical = await delta_client.get(f"/delta-bucket/{parquet_key}")
+    slash_head = await delta_client.head(f"/delta-bucket/{parquet_key}/")
+    slash_get = await delta_client.get(f"/delta-bucket/{parquet_key}/")
+
+    assert canonical.status_code == 200
+    assert slash_head.status_code == 404
+    assert slash_get.status_code == 404
 
 
 def _extract_key_etags(xml_bytes: bytes) -> dict[str, str]:
@@ -384,6 +559,30 @@ async def test_delta_log_etag_matches_between_list_and_head(delta_client):
     assert r2.headers["last-modified"]
 
 
+async def test_parquet_etag_is_md5_and_matches_list_head_get(delta_client):
+    import hashlib
+
+    initial_listing = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/"
+    )
+    parquet_key = next(
+        key for key in _extract_key_etags(initial_listing.content)
+        if key.endswith(".parquet")
+    )
+    get_response = await delta_client.get(f"/delta-bucket/{parquet_key}")
+    head_response = await delta_client.head(f"/delta-bucket/{parquet_key}")
+    materialized_listing = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/"
+    )
+    etags = _extract_key_etags(materialized_listing.content)
+
+    expected = f'"{hashlib.md5(get_response.content, usedforsecurity=False).hexdigest()}"'
+    assert len(expected.strip('"')) == 32
+    assert etags[parquet_key] == expected
+    assert get_response.headers["etag"] == expected
+    assert head_response.headers["etag"] == expected
+
+
 async def test_get_data_parquet_in_delta_mode(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)
@@ -401,6 +600,45 @@ async def test_unknown_delta_log_file_404(delta_client):
     key = f"{config.WAREHOUSE_PREFIX}/{config.TABLE_NAME}/_delta_log/_last_checkpoint"
     r = await delta_client.get(f"/delta-bucket/{key}")
     assert r.status_code == 404
+
+
+@pytest.mark.parametrize("method", ["get", "head"])
+async def test_delta_crc_probe_is_absent_without_materializing(
+    delta_client, monkeypatch, method
+):
+    from runtime import materializer
+
+    async def unexpected_materialization(_snap):
+        pytest.fail("optional Delta sidecar probe triggered materialization")
+
+    monkeypatch.setattr(materializer, "ensure_snapshot_materialized", unexpected_materialization)
+    key = (
+        f"{config.WAREHOUSE_PREFIX}/{config.TABLE_NAME}/_delta_log/"
+        "00000000000000000000.crc"
+    )
+    response = await getattr(delta_client, method)(f"/delta-bucket/{key}")
+
+    assert response.status_code == 404
+
+
+async def test_delta_crc_listing_is_empty_without_materializing(delta_client, monkeypatch):
+    from runtime import materializer
+
+    async def unexpected_materialization(_snap):
+        pytest.fail("optional Delta sidecar listing triggered materialization")
+
+    monkeypatch.setattr(materializer, "ensure_snapshot_materialized", unexpected_materialization)
+    prefix = (
+        f"{config.WAREHOUSE_PREFIX}/{config.TABLE_NAME}/_delta_log/"
+        "00000000000000000000.crc"
+    )
+    response = await delta_client.get(
+        "/delta-bucket",
+        params={"list-type": "2", "prefix": prefix},
+    )
+
+    assert response.status_code == 200
+    assert _extract_keys(response.content) == []
 
 
 async def test_delta_listing_is_canonical_and_hides_legacy_when_aliases_disabled(delta_client):

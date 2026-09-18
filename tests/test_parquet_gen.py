@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import os
+from decimal import Decimal
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
@@ -60,3 +61,14 @@ def test_parquet_bytes_are_nonzero():
     # Parquet magic bytes
     assert data[:4] == b"PAR1"
     assert data[-4:] == b"PAR1"
+
+
+def test_decimal_values_fit_declared_float_columns():
+    rows = _sample_rows(1)
+    rows[0]["unit_price"] = Decimal("282.27")
+    rows[0]["total"] = Decimal("26815.65")
+
+    table = pq.read_table(io.BytesIO(rows_to_parquet(rows, split_index=0)))
+
+    assert table.column("unit_price")[0].as_py() == 282.27
+    assert table.column("total")[0].as_py() == 26815.65

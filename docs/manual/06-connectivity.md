@@ -80,6 +80,11 @@ Point the shortcut at the metadata entry point under the canonical path (chapter
 
 Fabric discovers the remaining objects from that entry point.
 
+In a schema-enabled lakehouse, place a table shortcut under `Tables/<schema>`
+(usually `Tables/dbo`) and point it at that single Delta table root. A parent
+folder containing multiple tables must be added with **New schema shortcut**,
+not as an ordinary shortcut under `Tables`.
+
 ## 6.5 Pattern B: Fabric Spark via Managed Private Endpoint
 
 Use this when Fabric Spark reads a proxy running in an Azure VNet. Spark reaches it over the

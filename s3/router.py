@@ -80,16 +80,8 @@ def _warehouse_alias_enabled() -> bool:
 
 
 def _normalize_incoming_key(key: str) -> str:
-    """Map legacy aliases to active object keys.
-
-    Fabric sometimes retries the same object with a trailing slash on the path
-    (for example ``.../_delta_log/00000000000000000000.json/``). That is not a
-    distinct S3 key; it is the same object with a stray separator, so normalize
-    it back to the canonical object key before any lookup.
-    """
+    """Map legacy aliases to active object keys."""
     k = alias_to_active_key(key)
-    if k.endswith("/"):
-        k = k.rstrip("/")
     if _warehouse_alias_enabled() and k.startswith("warehouse/"):
         k = k[len("warehouse/"):]
     return k
@@ -110,6 +102,14 @@ def _display_key_for_prefix(key: str, *, warehouse_alias: bool) -> str:
     if warehouse_alias and not key.startswith("warehouse/"):
         return f"warehouse/{key}"
     return key
+
+
+def _is_absent_delta_sidecar(key: str) -> bool:
+    normalized = key.rstrip("/")
+    return config.TABLE_FORMAT == "delta" and (
+        normalized.endswith("/_last_checkpoint")
+        or ("/_delta_log/" in normalized and normalized.endswith(".crc"))
+    )
 
 
 def _apply_range(data: bytes, range_header: str | None) -> tuple[bytes, int, int, bool]:
@@ -280,13 +280,13 @@ def _objects_for_snapshot(snap) -> dict[str, dict]:
             "last_modified_ms": snap.watermark_ms,
             "data": None,  # generated on demand
             "content_type": "application/octet-stream",
-            # Prefer the split's durable content hash (survives cache eviction
+            # Prefer the split's durable S3 ETag (survives cache eviction
             # and is shared across shards via the completion record) so
             # ListObjectsV2 and a subsequent GET/HEAD always agree, regardless
             # of which pod or cache state serves each call. Falling back to a
             # fresh hash of locally-cached bytes only covers the same pod.
             "etag": (
-                split.content_hash
+                split.s3_etag
                 or (hashlib.md5(cached, usedforsecurity=False).hexdigest() if cached is not None else None)
             ),
         }
@@ -377,13 +377,16 @@ async def _ensure_lazy_materialized_for_prefix(prefix: str) -> None:
     """
     if config.MATERIALIZE_MODE not in ("lazy", "virtual"):
         return
+    # Bucket discovery has an empty prefix. It must return the table roots
+    # immediately; materializing every configured table here makes Fabric's
+    # bucket listing wait for database work and eventually time out.
+    if not prefix:
+        return
     snapshots = [
         snap for snap in get_all_snapshots()
         if (
             prefix.startswith(snap.table_path)
-            or snap.table_path.startswith(prefix)
             or prefix.startswith(snap.legacy_table_path)
-            or snap.legacy_table_path.startswith(prefix)
         )
     ]
     for snap in snapshots:
@@ -453,7 +456,42 @@ async def list_objects_v2(
     list_type = request.query_params.get("list-type")
     prefix_in = request.query_params.get("prefix", "")
     delimiter = request.query_params.get("delimiter", "")
+    start_after = request.query_params.get("start-after")
+    continuation_token = request.query_params.get("continuation-token")
+    max_keys_value = request.query_params.get("max-keys")
+    try:
+        max_keys = 1000 if max_keys_value is None else int(max_keys_value)
+    except ValueError:
+        max_keys = -1
+    if max_keys < 0 or max_keys > 1000:
+        return FastAPIResponse(
+            content=error_response("InvalidArgument", "max-keys must be between 0 and 1000."),
+            status_code=400,
+            media_type="application/xml",
+        )
     prefix, warehouse_alias = _normalize_incoming_prefix(prefix_in)
+
+    # These optional objects are absent in native Delta mode. ListObjectsV2 on
+    # a valid bucket still returns 200 with an empty page; NoSuchKey applies to
+    # GetObject/HeadObject, not to a prefix listing.
+    if config.TABLE_FORMAT == "delta" and (
+        _is_absent_delta_sidecar(prefix)
+        or prefix.endswith("/_metadata/table.json.gz")
+        or prefix.endswith("/_metadata/table.json.gz/")
+    ):
+        body = list_objects_v2_response(
+            bucket,
+            prefix_in,
+            [],
+            delimiter=delimiter,
+            max_keys=max_keys,
+            continuation_token=continuation_token,
+            start_after=start_after,
+        )
+        return FastAPIResponse(
+            content=body,
+            media_type="application/xml",
+        )
 
     await _ensure_lazy_materialized_for_prefix(prefix)
     all_objects = _snapshot_objects()
@@ -463,13 +501,7 @@ async def list_objects_v2(
     # `prefix=warehouse` returns CommonPrefix `warehouse/` (the folder itself),
     # while `prefix=warehouse/` returns `warehouse/db/`. This one-level-at-a-time
     # descent is exactly what the folder browser expects.
-    matched_keys = [k for k in all_objects if k.startswith(prefix)]
-
-    # Direct Lake discovers commits by listing `_delta_log/`; record exactly which
-    # commit files the reader can see so a failed framing can be localized.
-    if config.S3_ACCESS_LOG and "_delta_log" in prefix:
-        log.info("s3_list_delta_log", prefix=prefix_in, delimiter=delimiter,
-                 matched=sorted(matched_keys))
+    matched_keys = [key for key in all_objects if key.startswith(prefix)]
 
     if delimiter:
         flat_objects: list[dict] = []
@@ -490,18 +522,68 @@ async def list_objects_v2(
                 common_prefix_set.add(_display_key_for_prefix(cp, warehouse_alias=warehouse_alias))
 
         common_prefixes = sorted(common_prefix_set)
-        log.info("list_objects", bucket=bucket, list_type=list_type, prefix=prefix_in, delimiter=delimiter,
-                 matched=len(flat_objects), common_prefixes=len(common_prefixes))
-        body = list_objects_v2_response(bucket, prefix_in, flat_objects,
-                                        delimiter=delimiter, common_prefixes=common_prefixes)
     else:
         flat_objects = [
             {"key": _display_key_for_prefix(k, warehouse_alias=warehouse_alias), "size": all_objects[k]["size"],
              "last_modified_ms": all_objects[k]["last_modified_ms"], "etag": all_objects[k].get("etag")}
             for k in matched_keys
         ]
-        log.info("list_objects", bucket=bucket, prefix=prefix_in, matched=len(flat_objects))
-        body = list_objects_v2_response(bucket, prefix_in, flat_objects)
+        common_prefixes = []
+
+    candidates = [
+        (obj["key"], "object", obj)
+        for obj in flat_objects
+    ] + [
+        (common_prefix, "prefix", common_prefix)
+        for common_prefix in common_prefixes
+    ]
+    candidates.sort(key=lambda candidate: candidate[0])
+
+    marker = continuation_token if continuation_token is not None else start_after
+    if marker:
+        candidates = [candidate for candidate in candidates if candidate[0] > marker]
+
+    page = candidates[:max_keys]
+    is_truncated = max_keys > 0 and len(candidates) > len(page)
+    next_continuation_token = page[-1][0] if is_truncated else None
+    page_objects = [candidate[2] for candidate in page if candidate[1] == "object"]
+    page_prefixes = [candidate[2] for candidate in page if candidate[1] == "prefix"]
+
+    # Direct Lake discovers commits by listing `_delta_log/`; record exactly which
+    # entries the reader can see so a failed framing can be localized precisely.
+    if config.S3_ACCESS_LOG and "_delta_log" in prefix:
+        log.info(
+            "s3_list_delta_log",
+            prefix=prefix_in,
+            delimiter=delimiter,
+            start_after=start_after,
+            continuation_token=continuation_token,
+            matched=[candidate[0] for candidate in page],
+            is_truncated=is_truncated,
+        )
+
+    log.info(
+        "list_objects",
+        bucket=bucket,
+        list_type=list_type,
+        prefix=prefix_in,
+        delimiter=delimiter,
+        matched=len(page_objects),
+        common_prefixes=len(page_prefixes),
+        is_truncated=is_truncated,
+    )
+    body = list_objects_v2_response(
+        bucket,
+        prefix_in,
+        page_objects,
+        delimiter=delimiter,
+        common_prefixes=page_prefixes,
+        max_keys=max_keys,
+        is_truncated=is_truncated,
+        next_continuation_token=next_continuation_token,
+        continuation_token=continuation_token,
+        start_after=start_after,
+    )
     return FastAPIResponse(content=body, media_type="application/xml")
 
 
@@ -520,6 +602,12 @@ async def head_object(
 
     metrics.record_s3_request("head", metrics.classify_key(key))
     key = _normalize_incoming_key(key)
+    # Delta readers probe this optional checkpoint marker before listing JSON
+    # commits. It is intentionally absent in our v1/v2 log, so return the
+    # normal S3 404 without triggering lazy materialization or generation
+    # lease validation.
+    if _is_absent_delta_sidecar(key):
+        return FastAPIResponse(status_code=404)
     await _ensure_lazy_materialized(key)
     all_objects = _snapshot_objects()
     obj = all_objects.get(key)
@@ -586,6 +674,12 @@ async def get_object(
     key = _normalize_incoming_key(key)
     range_header = request.headers.get("range")
     log.info("get_object", bucket=bucket, key=key, range=range_header)
+    if _is_absent_delta_sidecar(key):
+        return FastAPIResponse(
+            content=error_response("NoSuchKey", f"Key {key!r} does not exist.", f"/{bucket}/{key}"),
+            status_code=404,
+            media_type="application/xml",
+        )
     await _ensure_lazy_materialized(key)
 
     # ---- Delta transaction log (TABLE_FORMAT=delta) ------------------------
@@ -677,7 +771,7 @@ async def get_object(
         return _make_object_response(cached_parquet, "application/octet-stream", range_header,
                                      key=key, kind="data",
                                      last_modified_ms=split.watermark_ms,
-                                     etag=split.content_hash)
+                                     etag=split.s3_etag)
 
     # SQL pushdown → Parquet (bounded concurrency to protect CPU/memory).
     try:
@@ -709,6 +803,7 @@ async def get_object(
     metrics.inc_counter("parquet_generations_total")
     cache.put_parquet(key, parquet_bytes)
     split.content_hash = hashlib.sha256(parquet_bytes).hexdigest()
+    split.s3_etag = hashlib.md5(parquet_bytes, usedforsecurity=False).hexdigest()
     querystats.record_query(
         table=split.table.name, split_index=split.split_index,
         sql_ms=_sql_ms, gen_ms=_gen_ms, total_ms=(time.perf_counter() - _t_data0) * 1000.0,
@@ -717,4 +812,4 @@ async def get_object(
     return _make_object_response(parquet_bytes, "application/octet-stream", range_header,
                                  key=key, kind="data",
                                  last_modified_ms=split.watermark_ms,
-                                 etag=split.content_hash)
+                                 etag=split.s3_etag)

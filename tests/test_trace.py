@@ -42,7 +42,8 @@ def test_classify():
 
 def test_record_and_recent_filters():
     trace.record(method="GET", key="warehouse/db/Product/metadata/v1.metadata.json",
-                 status=200, duration_ms=3.0)
+                 status=200, duration_ms=3.0, query="list-type=2",
+                 etag='"metadata-etag"', last_modified="Wed, 17 Sep 2026 10:00:00 GMT")
     trace.record(method="GET", key="warehouse/db/Product/data/split-0-x.parquet",
                  status=200, duration_ms=50.0, resp_bytes=1000)
     trace.record(method="GET", key="warehouse/db/Customer/data/split-9-y.parquet",
@@ -52,6 +53,10 @@ def test_record_and_recent_filters():
     assert len(all_recs) == 3
     # newest first
     assert all_recs[0]["table"] == "Customer"
+    metadata_record = next(record for record in all_recs if record["kind"] == "metadata")
+    assert metadata_record["query"] == "list-type=2"
+    assert metadata_record["etag"] == '"metadata-etag"'
+    assert metadata_record["last_modified"] == "Wed, 17 Sep 2026 10:00:00 GMT"
 
     assert len(trace.recent(table="Product")) == 2
     assert len(trace.recent(kind="data")) == 2

@@ -56,9 +56,10 @@ def _delta_type(iceberg_type: str) -> str:
         "float": "float", "double": "double", "date": "date",
         "string": "string", "binary": "binary", "uuid": "string",
         "time": "string",
-        # Iceberg `timestamp` has no zone -> Delta timestamp_ntz;
-        # `timestamptz` (UTC) -> Delta `timestamp`.
-        "timestamp": "timestamp_ntz", "timestamptz": "timestamp",
+        # Use the broadly supported Delta timestamp type for both Iceberg
+        # timestamp variants. `timestamp_ntz` requires a newer table-feature
+        # protocol than the v1/v2 log emitted by this compatibility layer.
+        "timestamp": "timestamp", "timestamptz": "timestamp",
     }
     if t in simple:
         return simple[t]
@@ -100,7 +101,12 @@ def _add_action(path: str, size: int, records: int, ts: int) -> dict:
         "size": size,
         "modificationTime": ts,
         "dataChange": True,
-        "stats": json.dumps({"numRecords": records}),
+        "stats": json.dumps({
+            "numRecords": records,
+            "minValues": {},
+            "maxValues": {},
+            "nullCount": {},
+        }, separators=(",", ":")),
     }}
 
 
@@ -122,8 +128,17 @@ def _metadata_action(snap) -> dict:
         "format": {"provider": "parquet", "options": {}},
         "schemaString": _schema_string(snap.table.schema),
         "partitionColumns": [],
-        "configuration": {},
+        "configuration": {"delta.dataSkippingNumIndexedCols": "0"},
         "createdTime": snap.watermark_ms,
+    }}
+
+
+def _commit_info_action(snap, operation: str) -> dict:
+    return {"commitInfo": {
+        "timestamp": snap.watermark_ms,
+        "operation": operation,
+        "operationParameters": {},
+        "engineInfo": "Fabric Shortcut Proxy",
     }}
 
 
@@ -145,6 +160,7 @@ def _register(snap) -> None:
     commits = _commits.setdefault(name, [])
     actions: list[dict] = []
     if not commits:
+        actions.append(_commit_info_action(snap, "CREATE TABLE"))
         actions.append({"protocol": {"minReaderVersion": 1, "minWriterVersion": 2}})
         actions.append(_metadata_action(snap))
         for p, sz, rc in files:
@@ -170,6 +186,7 @@ def _register(snap) -> None:
         if not actions:
             _committed_version[name] = ver
             return
+        actions.insert(0, _commit_info_action(snap, "WRITE"))
     commits.append(_commit_text(actions))
     _prev_files[name] = files
     _committed_version[name] = ver
@@ -273,7 +290,7 @@ def delta_log_objects() -> dict[str, dict]:
                         # the SAME pod. See the _delta_log commit fix above for
                         # why list-vs-get ETag agreement matters.
                         "etag": (
-                            s.content_hash
+                            getattr(s, "s3_etag", None)
                             or (hashlib.md5(cached, usedforsecurity=False).hexdigest()
                                 if cached is not None else None)
                         ),

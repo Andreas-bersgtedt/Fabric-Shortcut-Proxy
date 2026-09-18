@@ -8,6 +8,7 @@ import cache.lru_cache as cache
 import config
 from iceberg.stats import ColumnStats
 from runtime.artifact_store import MemoryStore, reset_default_store, set_default_store
+from runtime.generation import acquire_generation
 from runtime.split_completion import publish_split_completion, read_split_completion
 
 
@@ -54,6 +55,10 @@ def test_completion_round_trips_split_metadata(shared_store):
 
     assert loaded == published
     assert shared_store.get(split.object_key) == data
+    assert published.sha256 == __import__("hashlib").sha256(data).hexdigest()
+    assert published.s3_etag == __import__("hashlib").md5(
+        data, usedforsecurity=False
+    ).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -88,6 +93,10 @@ async def test_non_owner_uses_completion_without_loading_or_pinning_parquet(
 
     assert count == 11
     assert split.file_size_in_bytes == len(data)
+    assert split.content_hash == __import__("hashlib").sha256(data).hexdigest()
+    assert split.s3_etag == __import__("hashlib").md5(
+        data, usedforsecurity=False
+    ).hexdigest()
     assert cache._pinned == {}
 
 
@@ -112,6 +121,37 @@ async def test_non_owner_timeout_never_falls_back_to_sql(shared_store, monkeypat
         await materializer._materialize_split(split)
 
     assert sql_called is False
+
+
+@pytest.mark.asyncio
+async def test_fenced_non_owner_rejoins_current_generation(shared_store, monkeypatch):
+    import runtime.materializer as materializer
+
+    stale = acquire_generation(shared_store, 2)
+    current = acquire_generation(shared_store, 2)
+    split = _split(index=1)
+    split.generation_id = current.generation_id
+    split.generation_fence = current.fence
+    split.generation_token = current.lease_token
+    data = b"owner-parquet-bytes"
+    split.file_size_in_bytes = len(data)
+    split.record_count = 11
+    publish_split_completion(split, data)
+    split.file_size_in_bytes = None
+    split.record_count = None
+    split.generation_id = stale.generation_id
+    split.generation_fence = stale.fence
+    split.generation_token = stale.lease_token
+
+    monkeypatch.setattr(config, "AGENT_SHARD_COUNT", 2)
+    monkeypatch.setattr(config, "AGENT_SHARD_INDEX", 0)
+    monkeypatch.setattr(config, "MATERIALIZE_WAIT_SECONDS", 1)
+
+    count = await materializer._materialize_split(split)
+
+    assert count == 11
+    assert split.generation_id == current.generation_id
+    assert split.file_size_in_bytes == len(data)
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ so `Content-Length` can be set accurately in the S3 response.
 from __future__ import annotations
 
 import io
+from decimal import Decimal
 from typing import Any
 
 import pyarrow as pa
@@ -62,6 +63,9 @@ def _build_table(rows: list[dict[str, Any]], cols, schema: "pa.Schema",
     for col in cols:
         raw_values = [row.get(col.name) for row in rows]
         pa_type = schema.field(col.name).type
+        if pa.types.is_floating(pa_type):
+            raw_values = [float(value) if isinstance(value, Decimal) else value
+                          for value in raw_values]
         try:
             arr = pa.array(raw_values, type=pa_type)
         except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:

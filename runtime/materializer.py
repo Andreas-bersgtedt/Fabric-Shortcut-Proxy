@@ -88,6 +88,7 @@ def _apply_bytes(split, data: bytes) -> int:
     split.file_size_in_bytes = len(data)
     split.record_count = pq.read_metadata(io.BytesIO(data)).num_rows
     split.content_hash = hashlib.sha256(data).hexdigest()
+    split.s3_etag = hashlib.md5(data, usedforsecurity=False).hexdigest()
     if config.ICEBERG_MANIFEST_STATS:
         split.stats = collect_split_stats(data, split.table.schema)
     if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
@@ -156,6 +157,7 @@ async def _materialize_split_once(split) -> int:
         split.record_count = nrows
         split.file_size_in_bytes = len(pq_bytes)
         split.content_hash = hashlib.sha256(pq_bytes).hexdigest()
+        split.s3_etag = hashlib.md5(pq_bytes, usedforsecurity=False).hexdigest()
         if config.ICEBERG_MANIFEST_STATS:
             split.stats = collect_split_stats(pq_bytes, split.table.schema)
         if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:

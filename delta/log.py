@@ -274,7 +274,7 @@ def delta_log_objects() -> dict[str, dict]:
                         # the SAME pod. See the _delta_log commit fix above for
                         # why list-vs-get ETag agreement matters.
                         "etag": (
-                            s.content_hash
+                            getattr(s, "s3_etag", None)
                             or (hashlib.md5(cached, usedforsecurity=False).hexdigest()
                                 if cached is not None else None)
                         ),

@@ -55,6 +55,10 @@ def test_completion_round_trips_split_metadata(shared_store):
 
     assert loaded == published
     assert shared_store.get(split.object_key) == data
+    assert published.sha256 == __import__("hashlib").sha256(data).hexdigest()
+    assert published.s3_etag == __import__("hashlib").md5(
+        data, usedforsecurity=False
+    ).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -89,6 +93,10 @@ async def test_non_owner_uses_completion_without_loading_or_pinning_parquet(
 
     assert count == 11
     assert split.file_size_in_bytes == len(data)
+    assert split.content_hash == __import__("hashlib").sha256(data).hexdigest()
+    assert split.s3_etag == __import__("hashlib").md5(
+        data, usedforsecurity=False
+    ).hexdigest()
     assert cache._pinned == {}
 
 

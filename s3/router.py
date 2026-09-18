@@ -288,13 +288,13 @@ def _objects_for_snapshot(snap) -> dict[str, dict]:
             "last_modified_ms": snap.watermark_ms,
             "data": None,  # generated on demand
             "content_type": "application/octet-stream",
-            # Prefer the split's durable content hash (survives cache eviction
+            # Prefer the split's durable S3 ETag (survives cache eviction
             # and is shared across shards via the completion record) so
             # ListObjectsV2 and a subsequent GET/HEAD always agree, regardless
             # of which pod or cache state serves each call. Falling back to a
             # fresh hash of locally-cached bytes only covers the same pod.
             "etag": (
-                split.content_hash
+                split.s3_etag
                 or (hashlib.md5(cached, usedforsecurity=False).hexdigest() if cached is not None else None)
             ),
         }
@@ -779,7 +779,7 @@ async def get_object(
         return _make_object_response(cached_parquet, "application/octet-stream", range_header,
                                      key=key, kind="data",
                                      last_modified_ms=split.watermark_ms,
-                                     etag=split.content_hash)
+                                     etag=split.s3_etag)
 
     # SQL pushdown → Parquet (bounded concurrency to protect CPU/memory).
     try:
@@ -811,6 +811,7 @@ async def get_object(
     metrics.inc_counter("parquet_generations_total")
     cache.put_parquet(key, parquet_bytes)
     split.content_hash = hashlib.sha256(parquet_bytes).hexdigest()
+    split.s3_etag = hashlib.md5(parquet_bytes, usedforsecurity=False).hexdigest()
     querystats.record_query(
         table=split.table.name, split_index=split.split_index,
         sql_ms=_sql_ms, gen_ms=_gen_ms, total_ms=(time.perf_counter() - _t_data0) * 1000.0,
@@ -819,4 +820,4 @@ async def get_object(
     return _make_object_response(parquet_bytes, "application/octet-stream", range_header,
                                  key=key, kind="data",
                                  last_modified_ms=split.watermark_ms,
-                                 etag=split.content_hash)
+                                 etag=split.s3_etag)

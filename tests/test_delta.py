@@ -533,6 +533,30 @@ async def test_delta_log_etag_matches_between_list_and_head(delta_client):
     assert r2.headers["last-modified"]
 
 
+async def test_parquet_etag_is_md5_and_matches_list_head_get(delta_client):
+    import hashlib
+
+    initial_listing = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/"
+    )
+    parquet_key = next(
+        key for key in _extract_key_etags(initial_listing.content)
+        if key.endswith(".parquet")
+    )
+    get_response = await delta_client.get(f"/delta-bucket/{parquet_key}")
+    head_response = await delta_client.head(f"/delta-bucket/{parquet_key}")
+    materialized_listing = await delta_client.get(
+        f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/"
+    )
+    etags = _extract_key_etags(materialized_listing.content)
+
+    expected = f'"{hashlib.md5(get_response.content, usedforsecurity=False).hexdigest()}"'
+    assert len(expected.strip('"')) == 32
+    assert etags[parquet_key] == expected
+    assert get_response.headers["etag"] == expected
+    assert head_response.headers["etag"] == expected
+
+
 async def test_get_data_parquet_in_delta_mode(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)

@@ -20,6 +20,7 @@ class SplitCompletion:
     file_size_in_bytes: int
     record_count: int
     sha256: str
+    s3_etag: str
     stats: dict[int, ColumnStats]
 
 
@@ -77,6 +78,7 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
         file_size_in_bytes=int(split.file_size_in_bytes),
         record_count=int(split.record_count),
         sha256=hashlib.sha256(parquet_bytes).hexdigest(),
+        s3_etag=hashlib.md5(parquet_bytes, usedforsecurity=False).hexdigest(),
         stats=dict(split.stats or {}),
     )
     payload = {
@@ -87,6 +89,7 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
         "file_size_in_bytes": completion.file_size_in_bytes,
         "record_count": completion.record_count,
         "sha256": completion.sha256,
+        "s3_etag": completion.s3_etag,
         "stats": _encode_stats(completion.stats),
     }
     store.put(
@@ -117,6 +120,9 @@ def read_split_completion(split) -> SplitCompletion | None:
             or payload.get("object_key") != split.object_key
         ):
             raise ValueError("completion identity mismatch")
+        s3_etag = payload.get("s3_etag")
+        if not s3_etag:
+            s3_etag = hashlib.md5(store.get(split.object_key), usedforsecurity=False).hexdigest()
         completion = SplitCompletion(
             generation_id=payload["generation_id"],
             fence=int(payload["fence"]),
@@ -124,6 +130,7 @@ def read_split_completion(split) -> SplitCompletion | None:
             file_size_in_bytes=int(payload["file_size_in_bytes"]),
             record_count=int(payload["record_count"]),
             sha256=str(payload["sha256"]),
+            s3_etag=str(s3_etag),
             stats=_decode_stats(payload.get("stats", {})),
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -139,4 +146,5 @@ def apply_split_completion(split, completion: SplitCompletion) -> int:
     split.record_count = completion.record_count
     split.stats = completion.stats
     split.content_hash = completion.sha256
+    split.s3_etag = completion.s3_etag
     return completion.record_count

@@ -238,6 +238,7 @@ async def lifespan(app: FastAPI):
         #     MAX_CONCURRENT_GENERATIONS) unless CONCURRENT_STARTUP_MATERIALIZATION
         #     is disabled.
         import io as _io
+        import hashlib as _hashlib
         import cache.lru_cache as _cache
         import pyarrow.parquet as _pq
         from planner.split_planner import build_split_query
@@ -356,6 +357,8 @@ async def lifespan(app: FastAPI):
         def _apply_warm(split, warm: bytes) -> int:
             split.file_size_in_bytes = len(warm)
             split.record_count = _pq.read_metadata(_io.BytesIO(warm)).num_rows
+            split.content_hash = _hashlib.sha256(warm).hexdigest()
+            split.s3_etag = _hashlib.md5(warm, usedforsecurity=False).hexdigest()
             if config.ICEBERG_MANIFEST_STATS:
                 split.stats = collect_split_stats(warm, split.table.schema)
             if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
@@ -403,6 +406,8 @@ async def lifespan(app: FastAPI):
                     nrows = len(rows)
                 split.record_count = nrows
                 split.file_size_in_bytes = len(pq_bytes)
+                split.content_hash = _hashlib.sha256(pq_bytes).hexdigest()
+                split.s3_etag = _hashlib.md5(pq_bytes, usedforsecurity=False).hexdigest()
                 if config.ICEBERG_MANIFEST_STATS:
                     split.stats = collect_split_stats(pq_bytes, split.table.schema)
                 if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:

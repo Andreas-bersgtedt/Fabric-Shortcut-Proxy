@@ -485,15 +485,33 @@ async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypat
         delta_log.reset()
 
 
-async def test_get_commit_zero_trailing_slash_is_normalized(delta_client):
+async def test_delta_commit_trailing_slash_is_literal_key(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)
     commit_key = next(k for k in keys if k.endswith("_delta_log/00000000000000000000.json"))
 
-    r2 = await delta_client.get(f"/delta-bucket/{commit_key}/")
-    assert r2.status_code == 200
-    assert r2.headers["content-type"].startswith("application/json")
-    assert r2.text == (await delta_client.get(f"/delta-bucket/{commit_key}")).text
+    canonical = await delta_client.get(f"/delta-bucket/{commit_key}")
+    slash_head = await delta_client.head(f"/delta-bucket/{commit_key}/")
+    slash_get = await delta_client.get(f"/delta-bucket/{commit_key}/")
+
+    assert canonical.status_code == 200
+    assert canonical.headers["content-type"].startswith("application/json")
+    assert slash_head.status_code == 404
+    assert slash_get.status_code == 404
+
+
+async def test_delta_parquet_trailing_slash_is_literal_key(delta_client):
+    r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
+    keys = _extract_keys(r.content)
+    parquet_key = next(k for k in keys if k.endswith(".parquet"))
+
+    canonical = await delta_client.get(f"/delta-bucket/{parquet_key}")
+    slash_head = await delta_client.head(f"/delta-bucket/{parquet_key}/")
+    slash_get = await delta_client.get(f"/delta-bucket/{parquet_key}/")
+
+    assert canonical.status_code == 200
+    assert slash_head.status_code == 404
+    assert slash_get.status_code == 404
 
 
 def _extract_key_etags(xml_bytes: bytes) -> dict[str, str]:

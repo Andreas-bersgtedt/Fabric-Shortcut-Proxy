@@ -80,16 +80,8 @@ def _warehouse_alias_enabled() -> bool:
 
 
 def _normalize_incoming_key(key: str) -> str:
-    """Map legacy aliases to active object keys.
-
-    Fabric sometimes retries the same object with a trailing slash on the path
-    (for example ``.../_delta_log/00000000000000000000.json/``). That is not a
-    distinct S3 key; it is the same object with a stray separator, so normalize
-    it back to the canonical object key before any lookup.
-    """
+    """Map legacy aliases to active object keys."""
     k = alias_to_active_key(key)
-    if k.endswith("/"):
-        k = k.rstrip("/")
     if _warehouse_alias_enabled() and k.startswith("warehouse/"):
         k = k[len("warehouse/"):]
     return k

@@ -1,5 +1,10 @@
 # Kubernetes hybrid agent proof
 
+> This directory is for local Kind, CI, and focused validation proofs. Production enterprise
+> AKS deployments use the [FSP Helm chart](../helm/fabric-shortcut-proxy/README.md) and
+> [PowerShell deployment runbook](../../infra/fsp-demo/README.md). Do not promote a Kustomize
+> overlay from this directory as the production release definition.
+
 This deployment runs three Python materializers and two C++ serving replicas against one ReadWriteMany volume. The Python StatefulSet starts all ordinals in parallel so shard 0 cannot block shard 1 or shard 2 during generation coordination. The C++ Pods remain unready until the publisher creates a valid `CURRENT` generation.
 
 ## Requirements
@@ -48,9 +53,9 @@ kubectl apply -k deploy/kubernetes/base
 kubectl -n fabric-shortcut-proxy get pods,pvc,service,hpa
 ```
 
-The AKS validation overlay keeps `fsp-materializer` as the StatefulSet's headless service and
-also creates `fsp-materializer-internal`, an Azure internal LoadBalancer on port `9000` in
-the `aks-app` subnet. Use its assigned private frontend IP for the Agent private DNS A record;
+The development-only AKS validation overlay keeps the StatefulSet's headless Service and also
+creates a separate Azure internal LoadBalancer on port `9000` in the `aks-app` subnet. Use its
+assigned private frontend IP for the Agent private DNS A record;
 do not point external clients at a Pod IP or at the Manager's port `9200`.
 
 Stopping and starting AKS causes a temporary outage but normally preserves this Service and its
@@ -59,7 +64,7 @@ on a private DNS hostname, and reserve or pin the frontend IP when a fixed addre
 
 ```powershell
 kubectl apply -k deploy/kubernetes/overlays/aks-validation
-kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
+kubectl -n fabric-shortcut-proxy get svc -l app.kubernetes.io/name=fsp-materializer -o wide
 Resolve-DnsName <agent-private-fqdn>
 Test-NetConnection <agent-private-fqdn> -Port 9000
 ```

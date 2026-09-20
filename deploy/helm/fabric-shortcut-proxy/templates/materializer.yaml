@@ -1,0 +1,176 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fsp-materializer
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    app.kubernetes.io/name: fsp-materializer
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  serviceName: fsp-materializer
+  replicas: {{ .Values.materializer.replicas }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-materializer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsp-materializer
+        app.kubernetes.io/component: materializer
+        {{- include "fsp.commonLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "fsp.serviceAccountName" . }}
+      {{- include "fsp.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-materializer
+      containers:
+        - name: materializer
+          image: {{ include "fsp.image" .Values.images.python | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              shard_index="${HOSTNAME##*-}"
+              export AGENT_SHARD_INDEX="${shard_index}"
+              # Virtual mode never persists a full image; publishing one conflicts with it.
+              if [ "${shard_index}" = "0" ] && [ "${MATERIALIZE_MODE}" != "virtual" ]; then
+                export PUBLISH_SERVING_IMAGE=1
+              else
+                export PUBLISH_SERVING_IMAGE=0
+              fi
+              exec python -m main
+          envFrom:
+            - configMapRef:
+                name: fsp-common
+            - secretRef:
+                name: {{ .Values.sourceSecret.name }}
+          env:
+            - name: HOST
+              value: 0.0.0.0
+            - name: PORT
+              value: "9000"
+            - name: ENABLE_MONITOR
+              value: "1"
+            - name: ENABLE_AUDIT_LOG
+              value: {{ .Values.materializer.auditLogEnabled | quote }}
+            - name: AGENT_ADVERTISE_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: REQUIRE_SIGV4
+              value: {{ .Values.fsp.requireSigV4 | quote }}
+            - name: ENABLE_CREDENTIAL_STORE
+              value: {{ .Values.materializer.credentialStoreEnabled | quote }}
+            {{- if .Values.storage.azureFiles.enabled }}
+            - name: FSP_CONFIG_DIR
+              value: /config
+            - name: CREDENTIAL_STORE_PATH
+              value: {{ .Values.manager.credentialStorePath | quote }}
+            {{- end }}
+          ports:
+            - name: health
+              containerPort: 9000
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - kill -0 1
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - kill -0 1
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.materializer.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+            {{- if .Values.storage.azureFiles.enabled }}
+            - name: credential-cache
+              mountPath: /config
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: fsp-artifacts
+        {{- if .Values.storage.azureFiles.enabled }}
+        - name: credential-cache
+          persistentVolumeClaim:
+            claimName: fsp-manager-config
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsp-materializer
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    app.kubernetes.io/name: fsp-materializer
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: fsp-materializer
+  ports:
+    - name: health
+      port: 9000
+      targetPort: health
+{{- if .Values.nginx.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsp-python-data
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fsp-materializer
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: health
+{{- end }}

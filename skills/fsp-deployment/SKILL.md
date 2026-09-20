@@ -1,6 +1,6 @@
 ---
 name: fsp-deployment
-description: "Deploy and install Fabric Shortcut Proxy on Windows, Linux, or private Azure Kubernetes Service. Use for Manager.ps1, Manager.sh, Docker, AKS, internal load balancers, private networking, upgrades, and deployment verification."
+description: "Deploy and install Fabric Shortcut Proxy on Windows, Linux, or private Azure Kubernetes Service. Use for Manager.ps1, Manager.sh, Bicep, Helm, Deploy-FspDemo.ps1, Docker, AKS, upgrades, rollback, and deployment verification."
 argument-hint: "Describe the target platform, topology, source database, and deployment constraint."
 ---
 
@@ -19,7 +19,7 @@ argument-hint: "Describe the target platform, topology, source database, and dep
 1. Identify the target platform and whether this is a single process, Manager plus local Agent, or multi-Agent AKS deployment.
 2. Confirm the source database type, output mode (`iceberg` or `delta`), required ports, artifact-store location, and secret-management choice.
 3. Keep populated configuration files, credentials, tenant IDs, hostnames, and private IPs outside source control.
-4. Read the platform-specific installation guide: [Windows deployment](../../docs/installation/Windows_Deployment.md), [Linux deployment](../../docs/installation/Linux_Deployment.md), or the [enterprise AKS guide](../../docs/Enterprise_Deployment_guide.md).
+4. Read the platform-specific installation guide: [Windows deployment](../../docs/installation/Windows_Deployment.md), [Linux deployment](../../docs/installation/Linux_Deployment.md), or the [enterprise AKS runbook](../../infra/fsp-demo/README.md).
 
 ## Local or VM Deployment
 
@@ -56,20 +56,30 @@ certificates need a documented renewal procedure.
 
 ## AKS Deployment Sequence
 
-1. Build and push the image to a private ACR.
-2. Provision the private AKS cluster, namespace, identity/RBAC, ConfigMap, Secrets, Manager config volume, and RWX artifact volume.
-3. Deploy Manager on port `9200` and Agents on the S3 data-plane port, normally `9000`.
-4. Expose the data plane through the AKS overlay's `fsp-materializer-internal` internal LoadBalancer Service on port `9000`, private ingress, or gateway. Do not use a pod IP as a production DNS target.
-5. Create a private DNS A record for the Agent hostname pointing to the internal LoadBalancer frontend. Verify paths from the jump host, OPDG host, AKS pods, source SQL endpoint, Key Vault, ACR, and OneLake as applicable.
-6. Use `/healthz` for process liveness and `/readyz` for readiness. In a Manager deployment, `/readyz` can represent fleet readiness and may remain non-200 until an Agent registers.
-7. Verify an authenticated S3 `HEAD`/`GET` against a known object before connecting Fabric.
+1. Copy the sanitized Bicep, deployment, ingress, and Helm examples to their ignored local paths.
+2. Run `az deployment sub what-if` and review the Azure resource changes. Provision with
+	`main.bicep` only after approval.
+3. Complete external RBAC, push immutable images to ACR, record digests in local Helm values,
+	and create the existing `fsp-source` Secret without placing credentials in Helm values.
+4. Run `Start-FspDemo.ps1 -SkipWorkloadValidation` to start SQL MI, OPDG VM, and AKS.
+5. Run `Deploy-FspDemo.ps1 -WhatIf`, then `Deploy-FspDemo.ps1`. It installs pinned
+	cert-manager, ingress-nginx, and FSP Helm releases through private AKS Run Command.
+6. Publish private DNS for the fixed `fsp-nginx-private` frontend and use HTTPS on port 443.
+	Do not use a pod IP or ClusterIP.
+7. Verify `helm status`, pod readiness, certificate readiness, Manager fleet registration, and
+	an authenticated S3 `HEAD`/`GET` before connecting Fabric.
+
+There is no single all-phases PowerShell script. Keep infrastructure preview/create, runtime
+startup, and Helm deployment as separate review and retry boundaries.
 
 ## Upgrade and Rollback
 
 1. Record the current image digest or Git commit, effective configuration, and health responses.
-2. Deploy the new version without replacing persistent config or artifact storage.
+2. Update immutable image digests or Helm values, render/lint, then run
+	`Deploy-FspDemo.ps1 -WhatIf` and the atomic upgrade.
 3. Check Manager health, Agent registration, readiness, logs, and a representative object read.
-4. Roll back to the recorded image/commit if readiness or object reads regress. Do not delete the shared artifact store during a code rollback.
+4. Use `helm history` and `helm rollback` through AKS Run Command when workload resources
+	regress. Do not delete retained Namespace, PVs, PVCs, or Azure Files shares.
 
 ## AKS Endpoint Durability
 
@@ -83,6 +93,9 @@ fixed address is required. Never use a pod IP.
 
 - [Installation manual](../../docs/manual/04-installation.md)
 - [Connectivity setup](../../docs/CONNECTIVITY_SETUP.md)
-- [Enterprise deployment guide](../../docs/Enterprise_Deployment_guide.md)
+- [Enterprise AKS runbook](../../infra/fsp-demo/README.md)
+- [Helm chart reference](../../deploy/helm/fabric-shortcut-proxy/README.md)
+- [Helm migration guide](../../docs/HELM_MIGRATION_GUIDE.md)
+- [Enterprise deployment design](../../docs/Enterprise_Deployment_guide.md)
 - [Windows deployment](../../docs/installation/Windows_Deployment.md)
 - [Linux deployment](../../docs/installation/Linux_Deployment.md)

@@ -2,6 +2,11 @@
 
 This guide describes the enterprise AKS deployment pattern for Fabric Shortcut Proxy. It is written from the validated branch state and uses placeholders for every environment-specific value. Do not paste live tenant IDs, subscription IDs, hostnames, public IPs, private IPs, database names, registry names, or secrets into this document.
 
+The executable runbook is [infra/fsp-demo/README.md](../infra/fsp-demo/README.md). This document
+explains the topology and design choices. The production workload definition is the
+[Helm chart](../deploy/helm/fabric-shortcut-proxy/README.md); Kustomize overlays under
+`deploy/kubernetes` are development and validation proofs.
+
 Use this guide for a private Azure deployment where:
 
 - The Manager runs in AKS as the control plane.
@@ -33,7 +38,9 @@ Replace the placeholders below with values from your tenant during deployment. K
 | `<source-database>` | Source database name. |
 | `<manager-private-fqdn>` | Private DNS name for Manager administration. |
 | `<agent-private-fqdn>` | Private DNS name for the S3 data-plane endpoint. |
-| `<artifact-volume>` | Azure NetApp Files or other RWX artifact volume. |
+| `<storage-account>` | Premium Azure Files account that owns the NFS shares. |
+| `<artifact-share>` | RWX Azure Files NFS share for artifacts. |
+| `<manager-config-share>` | RWX Azure Files NFS share for Manager configuration and state. |
 | `<workspace-id>` | Fabric workspace ID. |
 | `<mirrored-database-id>` | Fabric mirrored database ID. |
 | `<landing-zone-root>` | OneLake landing-zone URL for Open Mirroring. |
@@ -125,19 +132,21 @@ flowchart TB
         subgraph Namespace[fabric-shortcut-proxy namespace]
           mgrsvc[Manager Service<br/>port 9200]
           manager[Manager Deployment<br/>FastAPI control plane]
-          agent[Python enterprise agent<br/>S3 and Iceberg data plane]
-          cfgpvc[(Manager config PVC<br/>RWO disk)]
-          artpvc[(Artifact PVC<br/>RWX NFS)]
+          materializer[Python materializer StatefulSet<br/>S3 and Iceberg data plane]
+          serving[C++ serving Deployment]
+          nginx[FSP nginx Deployment<br/>TLS data-plane proxy]
+          cfgpvc[(Manager config PVC<br/>RWX Azure Files NFS)]
+          artpvc[(Artifact PVC<br/>RWX Azure Files NFS)]
           common[ConfigMap<br/>common settings]
           source[Secret<br/>source and Manager auth]
-          identity[Secret<br/>Azure client secret]
+          identity[ServiceAccount<br/>Azure workload identity]
         end
       end
 
       acrpe[ACR private endpoint]
       sqlpe[SQL private endpoint]
       kvpe[Key Vault private endpoint]
-      anf[Azure NetApp Files<br/>RWX artifact volume]
+      files[Azure Files NFS<br/>manager-config + artifacts]
     end
 
     acr[Private ACR]
@@ -148,25 +157,30 @@ flowchart TB
 
   AdminVNet <--> AksVNet
   jump --> mgrsvc
-  opdg --> agent
+  opdg --> nginx
   mgrsvc --> manager
-  manager <--> agent
+  manager <--> materializer
+  materializer --> serving
+  nginx --> materializer
   manager --> cfgpvc
-  agent --> artpvc
-  artpvc --> anf
+  materializer --> artpvc
+  serving --> artpvc
+  artpvc --> files
+  cfgpvc --> files
   manager --> kvpe --> kv
   manager --> sqlpe --> sql
-  agent --> sqlpe --> sql
+  materializer --> sqlpe --> sql
   manager --> fabric
   acrpe --> acr
   manager -. image pull .-> acrpe
-  agent -. image pull .-> acrpe
+  materializer -. image pull .-> acrpe
+  serving -. image pull .-> acrpe
   common --> manager
-  common --> agent
+  common --> materializer
   source --> manager
-  source --> agent
+  source --> materializer
   identity --> manager
-  identity --> agent
+  identity --> materializer
 ```
 
 ## Network requirements
@@ -222,9 +236,9 @@ Use separate storage for control-plane configuration and data-plane artifacts.
 
 | Storage | Kubernetes access | Purpose |
 | --- | --- | --- |
-| Manager config PVC | RWO | `config.*.json`, encrypted credential store, Open Mirror state. |
-| Artifact PVC | RWX | Shared Iceberg/Delta artifact store for agents. |
-| Azure NetApp Files NFS | RWX backend | Tenant-safe option when Azure Files shared key is not allowed. |
+| Manager config PVC | RWX | `config.*.json`, encrypted credential store, Open Mirror state. |
+| Artifact PVC | RWX | Shared Iceberg/Delta artifact store for materializers and serving Agents. |
+| Azure Files NFS | RWX backend | Static `manager-config` and `artifacts` shares created by Bicep. |
 
 For NFS-backed artifact storage, validate permissions with the same UID/GID used by the pods. If pods run as non-root, the export must allow that identity to traverse and write the mount.
 
@@ -238,30 +252,21 @@ kubectl -n fabric-shortcut-proxy exec deployment/<agent-deployment> -- sh -c '
 
 ## Identity and secrets
 
-Use one proxy identity for Azure operations where possible. In the validated pattern, the Manager used service-principal auth with the client secret stored only in Kubernetes Secret data.
+Use one user-assigned workload identity for Azure operations. Bicep creates the identity and
+federated credential for the `fsp-workload` ServiceAccount; Helm applies the ServiceAccount
+annotation and workload labels. No Azure client secret is required for the validated pattern.
 
 | Setting | Storage | Notes |
 | --- | --- | --- |
-| `FSP_AUTH_MODE` | ConfigMap or config file | `service_principal`, `managed_identity`, or `default`. |
+| `FSP_AUTH_MODE` | ConfigMap or config file | `managed_identity` in the enterprise demo. |
 | `AZURE_TENANT_ID` | ConfigMap or config file | Non-secret identifier. |
 | `AZURE_CLIENT_ID` | ConfigMap or config file | Non-secret application or managed identity ID. |
-| `AZURE_CLIENT_SECRET` | Kubernetes Secret | Never store in config files or source control. |
 | `FSP_KEYVAULT_URI` | ConfigMap or config file | `https://<key-vault-name>.vault.azure.net/`. |
 | `MANAGER_AUTH_PASSWORD` | Kubernetes Secret | Protects Manager, Monitor, and Config UI. |
 
-Inject the client secret from a private AKS admin host:
-
-```bash
-./set-fsp-aks-azure-client-secret.sh
-```
-
-Or from a host that can resolve the private AKS API:
-
-```powershell
-.\Set-FspAksAzureClientSecret.ps1 \
-  -ResourceGroup <resource-group> \
-  -ClusterName <aks-cluster>
-```
+The Helm chart references an existing `fsp-source` Secret for source and Manager credentials.
+Create it through the approved secret-delivery process before running `Deploy-FspDemo.ps1`.
+The chart never templates credential values.
 
 ## Container images
 
@@ -297,14 +302,17 @@ These install Azure Identity, Key Vault Secrets, Azure Blob/ADLS clients, and On
 flowchart TB
   subgraph ns[fabric-shortcut-proxy namespace]
     manager[Deployment fsp-manager]
-    materializer[Deployment or StatefulSet<br/>Python materializers]
-    serving[Deployment<br/>C++ or Python serving agents]
+    materializer[StatefulSet fsp-materializer<br/>Python materializers]
+    serving[Deployment fsp-cpp-agent<br/>C++ serving agents]
+    nginx[Deployment fsp-nginx<br/>TLS proxy]
     mgrsvc[Service fsp-manager]
-    datasvc[Service data plane]
+    datasvc[Service fsp-python-data]
+    privatesvc[LoadBalancer fsp-nginx-private<br/>fixed private IP, port 443]
+    publicsvc[Service fsp-nginx-public<br/>public ingress backend]
     cm1[ConfigMap fsp-common]
     cm2[ConfigMap table/source config]
     sec1[Secret fsp-source]
-    sec2[Secret fsp-azure-identity]
+    wi[ServiceAccount fsp-workload<br/>workload identity]
     pvc1[(PVC fsp-manager-config)]
     pvc2[(PVC fsp-artifacts)]
   end
@@ -314,13 +322,15 @@ flowchart TB
   cm2 --> materializer
   sec1 --> manager
   sec1 --> materializer
-  sec2 --> manager
-  sec2 --> materializer
+  wi --> manager
+  wi --> materializer
   pvc1 --> manager
   pvc2 --> materializer
   mgrsvc --> manager
   datasvc --> materializer
-  datasvc --> serving
+  datasvc --> nginx
+  nginx --> privatesvc
+  nginx --> publicsvc
 ```
 
 ## Manager deployment
@@ -359,29 +369,25 @@ Use `/healthz` for Manager readiness. `/readyz` is fleet readiness and can retur
 
 The Python agent must advertise a routable IP or DNS name that the Manager and gateway can use.
 
-The checked-in AKS validation overlay creates two Services for the Python StatefulSet:
+The Helm chart creates a headless `fsp-materializer` Service for StatefulSet identity, an
+internal `fsp-python-data` Service for nginx, and the `fsp-nginx-private` Azure internal
+LoadBalancer on port `443`. Its private IP and subnet come from local Helm values and must match
+the Bicep network contract.
 
-- `fsp-materializer` remains headless for stable StatefulSet identity and internal Manager
-  registration.
-- `fsp-materializer-internal` is an Azure internal `LoadBalancer` on port `9000`, restricted to
-  the `aks-app` subnet. This is the data-plane endpoint for OPDG or other private clients.
-
-Apply and record the assigned frontend before configuring private DNS:
-
-```bash
-kubectl apply -k deploy/kubernetes/overlays/aks-validation
-kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
+```powershell
+./infra/fsp-demo/Deploy-FspDemo.ps1 -WhatIf
+./infra/fsp-demo/Deploy-FspDemo.ps1
+az aks command invoke --resource-group <resource-group> --name <aks-cluster> `
+  --command "kubectl -n fabric-shortcut-proxy get svc fsp-nginx-private -o wide"
 ```
 
-Create an A record such as `<agent-private-fqdn>` pointing to that Service `EXTERNAL-IP`, and
-configure the Fabric shortcut or OPDG to use `http(s)://<agent-private-fqdn>:9000`. Do not use
-a pod IP, the Manager frontend, or a previously assigned private IP. The Azure frontend IP is
-the source of truth after a Service recreation.
+Create the private DNS A record for `<agent-private-fqdn>` at that fixed private IP and configure
+OPDG or another private client for `https://<agent-private-fqdn>`. Do not use a pod IP, Manager
+frontend, or ClusterIP.
 
-Stopping and starting the existing AKS cluster causes a data-plane outage while nodes and Agent
-pods return, but it does not normally recreate the Service frontend. Deleting and recreating the
-`LoadBalancer` Service can change the private IP. Use the private DNS hostname for clients and
-reserve or pin the frontend IP when the endpoint must remain fixed.
+Stopping and starting AKS causes an outage while nodes and pods return, but it does not normally
+recreate the LoadBalancer frontend. The chart requests a fixed private IP, so a failed
+reconciliation usually indicates subnet or AKS identity permissions rather than a new address.
 
 For AKS pods, use the pod IP for registration:
 
@@ -409,7 +415,10 @@ env:
     value: "0"
 ```
 
-For SQL Server service-principal auth through ODBC, build the runtime connection URL from a secret-safe `odbc_connect` string. This avoids driver conflicts between SQLAlchemy URL credentials and ODBC authentication fields.
+The validated Helm values use workload identity for Azure SDK access. If a separate SQL source
+requires service-principal ODBC authentication, build the runtime connection URL from a
+secret-safe `odbc_connect` string. This optional source credential is distinct from the
+pod's workload identity.
 
 ```bash
 odbc_connect=$(python -c 'import os, urllib.parse; secret=os.environ["AZURE_CLIENT_SECRET"].replace("}", "}}"); conn="Driver={ODBC Driver 18 for SQL Server};Server=tcp:<source-sql-host>,1433;Database=<source-database>;Authentication=ActiveDirectoryServicePrincipal;UID="+os.environ["AZURE_CLIENT_ID"]+";PWD={"+secret+"};Encrypt=yes;TrustServerCertificate=yes"; print(urllib.parse.quote_plus(conn))')
@@ -435,26 +444,18 @@ A pod IP is acceptable only for a short smoke test. For production, use one of t
 | Gateway service | Private gateway IP | Use when one data-plane endpoint fronts multiple agents. |
 | Temporary A record to pod IP | Pod IP | Smoke test only; update after every pod restart. |
 
-Create an internal LoadBalancer service for the data plane:
+Configure the chart's internal LoadBalancer rather than applying a second Service:
 
 ```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: fsp-data-plane-ilb
-  namespace: fabric-shortcut-proxy
-  annotations:
-    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
-    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: <aks-app-subnet>
-spec:
-  type: LoadBalancer
-  selector:
-    app.kubernetes.io/name: <agent-label>
-  ports:
-    - name: s3
-      port: 9000
-      targetPort: 9000
-      protocol: TCP
+nginx:
+  enabled: true
+  privateService:
+    enabled: true
+    subnet: <aks-app-subnet>
+    ipAddress: <data-plane-private-ip>
+tls:
+  enabled: true
+  hostname: <agent-private-fqdn>
 ```
 
 The AKS control-plane identity needs permission to create internal load balancers and join the subnet:
@@ -672,20 +673,22 @@ Expected results:
 
 ```mermaid
 flowchart TD
-  start[Start] --> infra[Create Azure resource group, VNets, subnets]
-  infra --> peer[Peer admin VNet and AKS VNet]
-  peer --> dns[Create private DNS zones and VNet links]
-  dns --> storage[Create Manager config PVC and RWX artifact storage]
-  storage --> acr[Create private ACR and private endpoint]
-  acr --> image[Build and push enterprise image]
-  image --> aks[Deploy Manager and agents to AKS]
-  aks --> secrets[Inject Manager password and Azure client secret]
-  secrets --> config[Use Config UI to save sources, tables, Key Vault, Open Mirror]
-  config --> restart[Restart Manager from System tab]
-  restart --> validate[Validate Fleet, Monitor, S3 shortcut, Key Vault, Open Mirror]
-  validate --> expose[Create stable private Agent endpoint and DNS]
-  expose --> opdg[Configure OPDG and Fabric shortcut]
+  examples[Copy sanitized examples<br/>to ignored local inputs] --> preview[az deployment sub what-if]
+  preview --> bicep[az deployment sub create<br/>main.bicep]
+  bicep --> roles[Complete external RBAC<br/>AcrPull + LoadBalancer scopes]
+  roles --> images[Build and push images<br/>record immutable digests]
+  images --> secrets[Create fsp-source Secret<br/>outside Helm]
+  secrets --> start[Start-FspDemo.ps1<br/>start SQL MI, OPDG VM, AKS]
+  start --> helmcheck[Deploy-FspDemo.ps1 -WhatIf<br/>DNS, RBAC, chart validation]
+  helmcheck --> helm[Deploy-FspDemo.ps1<br/>atomic remote Helm upgrades]
+  helm --> releases[cert-manager + ingress-nginx + fsp]
+  releases --> validate[Validate Helm status, pods,<br/>certificate, S3 read]
+  validate --> fabric[Configure OPDG/Fabric shortcut]
 ```
+
+There is no single all-phases PowerShell orchestrator. Infrastructure what-if/create, runtime
+startup, and Helm deployment remain separate review and retry boundaries. See the
+[automation runbook](../infra/fsp-demo/README.md).
 
 ## Operational checks
 

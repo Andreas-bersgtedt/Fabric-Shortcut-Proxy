@@ -222,23 +222,24 @@ sections above.
 
 ## 6. Verify
 
-For an AKS deployment using the repository manifests, expose the Agent with the dedicated
-internal Service before creating the Fabric shortcut:
+For the production AKS deployment, install the Helm releases and inspect the fixed private
+nginx Service before creating the Fabric shortcut:
 
-```bash
-kubectl apply -k deploy/kubernetes/overlays/aks-validation
-kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
+```powershell
+./infra/fsp-demo/Deploy-FspDemo.ps1 -WhatIf
+./infra/fsp-demo/Deploy-FspDemo.ps1
+az aks command invoke --resource-group <resource-group> --name <aks-name> `
+  --command "kubectl -n fabric-shortcut-proxy get svc fsp-nginx-private -o wide"
 ```
 
-Publish the Service `EXTERNAL-IP` behind a private DNS name such as `<agent-private-fqdn>`.
-The client endpoint must be `http(s)://<agent-private-fqdn>:9000`; never use a pod IP or an old
-frontend address. The existing Manager endpoint on port `9200` is administrative unless
-Manager gateway mode is enabled.
+Publish the configured private IP behind a private DNS name such as `<agent-private-fqdn>`.
+The client endpoint is `https://<agent-private-fqdn>` on port `443`; never use a pod IP,
+ClusterIP, or old frontend address. Manager port `9200` remains administrative.
 
 An AKS stop/start causes a temporary outage while nodes and Agent pods recover, but it normally
-preserves the Service frontend. Deleting and recreating the `LoadBalancer` Service can allocate
-a different private IP. Keep the client on the DNS hostname, reserve or pin the frontend IP for
-deployments that require a fixed address, and recheck the DNS record after any Service change.
+preserves the Service frontend. Helm values request a fixed application-subnet IP. Keep clients
+on the DNS hostname and recheck Service events, subnet ownership, and AKS identity permissions
+after any failed reconciliation.
 
 ```bash
 # Proxy is healthy and the source is reachable (run on the proxy host)

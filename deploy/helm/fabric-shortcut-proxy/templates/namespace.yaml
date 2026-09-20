@@ -1,0 +1,11 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "fsp.namespace" . }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+    fabric-shortcut-proxy.io/data-plane-access: "true"
+{{- end }}

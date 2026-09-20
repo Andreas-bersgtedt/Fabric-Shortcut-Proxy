@@ -1,0 +1,21 @@
+{
+  "subscriptionId": "00000000-0000-0000-0000-000000000001",
+  "tenantId": "00000000-0000-0000-0000-000000000002",
+  "resourceGroup": "FSP_Demo_example_swedencentral",
+  "aksName": "aks-fspdemo-example-swc",
+  "hostname": "fsp.example.com",
+  "publicIpName": "pip-fspdemo-nginx",
+  "vnetName": "vnet-fspdemo-example-swc",
+  "appSubnetName": "snet-aks-app",
+  "sqlServerName": "sql-fspdemo-example-xxxxxxxx",
+  "sqlDatabaseName": "fspdemo",
+  "sqlManagedInstanceResourceGroup": "existing-sqlmi-rg",
+  "sqlManagedInstanceName": "existing-sqlmi",
+  "opdgResourceGroup": "existing-opdg-rg",
+  "opdgVmName": "existing-opdg-vm",
+  "namespace": "fabric-shortcut-proxy",
+  "helmReleaseName": "fsp",
+  "sourceSecretName": "fsp-source",
+  "helmValuesFile": "deploy/helm/fabric-shortcut-proxy/values-enterprise-demo.local.yaml",
+  "ingressValuesFile": "infra/fsp-demo/ingress-nginx-values.local.yaml"
+}

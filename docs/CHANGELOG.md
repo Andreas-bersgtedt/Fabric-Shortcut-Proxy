@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added the `fabric-shortcut-proxy` Helm chart at application/chart version `2.9.3`, including
+  a values schema, digest-pinned images, retained storage policy, and render tests.
+- Added parameterized enterprise-demo Bicep, sanitized local-input examples, and
+  `Deploy-FspDemo.ps1` for atomic Helm upgrades through private AKS Run Command.
+- Added a Helm migration guide, enterprise deployment architecture diagrams, and Helm-first
+  guidance across the README, FAQs, user manual, runbooks, and repository skills.
+
+### Changed
+
+- Retired the ignored enterprise-demo Kustomize overlay as the production AKS release
+  definition. Local Kind and focused validation overlays remain development tooling.
+- Narrowed demo ignore rules to local environment inputs and generated Bicep output; reusable
+  infrastructure, chart, scripts, examples, and documentation are visible to Git.
+
 ## [2.9.3]: 2026-09-18
 
 ### Fixed

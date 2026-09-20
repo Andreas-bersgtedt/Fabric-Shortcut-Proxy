@@ -14,6 +14,8 @@ is the edition-agnostic path and the map to those guides.
 | Git | any recent | to clone the repository |
 | Source driver | per source | see §4.4; SQLite is bundled for the demo |
 | ODBC Driver 18 for SQL Server | current | OS-level, only for SQL Server sources |
+| Helm | 3.18.6 or later | Enterprise AKS deployment only |
+| Azure CLI with Bicep | current | Enterprise AKS infrastructure and Run Command |
 
 Sizing baselines (from the deployment guides): a small deployment is 2 vCPU / 4 GB for
 one agent and small-to-medium tables; a moderate deployment is 4 vCPU / 8–16 GB for two or
@@ -49,7 +51,7 @@ The repository builds two distributions. Install the one that matches your deplo
 | **Enterprise (cluster)** | `fabric-shortcut-proxy-enterprise` | `python -m enterprise.manager` | `pip install -e . -e ./enterprise` |
 
 The enterprise wheel is pinned to the exact core version it was built against
-(`fabric-shortcut-proxy==2.8.0`). A Lite-only install runs the standalone proxy unchanged;
+(`fabric-shortcut-proxy==2.9.3`). A Lite-only install runs the standalone proxy unchanged;
 the cluster hooks in `main.py` import the enterprise package lazily and print a clear hint
 if it is not installed.
 
@@ -152,7 +154,43 @@ The launcher also has flags for building and running the optional C++ serving ag
 (`-BuildCppAgent`, `-RunCppAgent`, and related `-Cpp*` options). Those are advanced; the
 Python agent is the default path.
 
-## 4.7 Verify the install
+## 4.7 Install on enterprise AKS
+
+Production AKS uses parameterized Bicep plus the
+[versioned Helm chart](../../deploy/helm/fabric-shortcut-proxy/README.md). The host launchers
+in §4.6 are not the Kubernetes installer.
+
+Create ignored local files from the sanitized examples:
+
+```powershell
+Copy-Item infra/fsp-demo/main.example.bicepparam infra/fsp-demo/main.local.bicepparam
+Copy-Item infra/fsp-demo/deployment.example.json infra/fsp-demo/deployment.local.json
+Copy-Item infra/fsp-demo/ingress-nginx-values.example.yaml infra/fsp-demo/ingress-nginx-values.local.yaml
+Copy-Item deploy/helm/fabric-shortcut-proxy/values-enterprise-demo.example.yaml `
+  deploy/helm/fabric-shortcut-proxy/values-enterprise-demo.local.yaml
+```
+
+Preview and create infrastructure, then start dependencies and deploy workloads:
+
+```powershell
+az deployment sub what-if --name fsp-demo-whatif --location <region> `
+  --template-file infra/fsp-demo/main.bicep `
+  --parameters infra/fsp-demo/main.local.bicepparam
+az deployment sub create --name fsp-demo --location <region> `
+  --template-file infra/fsp-demo/main.bicep `
+  --parameters infra/fsp-demo/main.local.bicepparam
+
+./infra/fsp-demo/Start-FspDemo.ps1 -SkipWorkloadValidation
+./infra/fsp-demo/Deploy-FspDemo.ps1 -WhatIf
+./infra/fsp-demo/Deploy-FspDemo.ps1
+```
+
+Provisioning, startup, and workload deployment are deliberately separate. Use the
+[enterprise runbook](../../infra/fsp-demo/README.md) for RBAC, image digests, Secret delivery,
+verification, and rollback. Existing Kustomize enterprise-demo users must follow the
+[Helm migration guide](../HELM_MIGRATION_GUIDE.md).
+
+## 4.8 Verify the install
 
 ```powershell
 # Liveness and readiness (readiness also checks the source DB is reachable)
@@ -165,19 +203,28 @@ returns `503`, the source connection or configuration is not ready; chapter 8 co
 troubleshooting. To validate the served table objects with a reference Iceberg reader, run
 `python validate_pyiceberg.py`.
 
-## 4.8 Host-specific baselines
+For AKS, query the private cluster through Run Command:
+
+```powershell
+az aks command invoke --resource-group <resource-group> --name <aks-name> `
+  --command "helm status fsp -n fabric-shortcut-proxy && kubectl -n fabric-shortcut-proxy get pods,svc,certificate"
+```
+
+## 4.9 Host-specific baselines
 
 For OS-level details (service accounts, firewalls, OPDG placement, systemd units, TLS), use
 the deployment guides:
 
-- [installation/Windows_Deployment.md](../installation/Windows_Deployment.md) — Windows
+- [installation/Windows_Deployment.md](../installation/Windows_Deployment.md): Windows
   Server / 10 / 11, OPDG on the same host or LAN.
-- [installation/Linux_Deployment.md](../installation/Linux_Deployment.md) — Ubuntu / Debian
+- [installation/Linux_Deployment.md](../installation/Linux_Deployment.md): Ubuntu / Debian
   / RHEL, private and public patterns.
-- [SSL_Deployment.md](../../SSL_Deployment.md) — public-internet TLS with Linux + nginx.
-- [LINUX_MANAGER_TROUBLESHOOTING.md](../LINUX_MANAGER_TROUBLESHOOTING.md) — launcher fixes.
+- [SSL_Deployment.md](../../SSL_Deployment.md): public-internet TLS with Linux + nginx.
+- [LINUX_MANAGER_TROUBLESHOOTING.md](../LINUX_MANAGER_TROUBLESHOOTING.md): launcher fixes.
+- [Enterprise_Deployment_guide.md](../Enterprise_Deployment_guide.md): AKS architecture.
+- [infra/fsp-demo/README.md](../../infra/fsp-demo/README.md): Bicep and Helm automation.
 
-## 4.9 Next
+## 4.10 Next
 
 Continue to [Chapter 5: Configuration](05-configuration.md) to point the proxy at your
 source and register tables.

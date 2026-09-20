@@ -173,7 +173,8 @@ array in `config.tables.json`.
 that manages sources, reflected tables, tokenization policies, storage credentials, access
 keys, encrypted backups, and Open Mirroring targets. It applies changes to the split config
 files and encrypted credential store. It accepts DB credentials, so keep it on a trusted network. See
-[configbuilder/](configbuilder/) and [docs/CONFIG_BUILDER_PLAN.md](docs/CONFIG_BUILDER_PLAN.md).
+[configbuilder/](configbuilder/) and
+[docs/archive/CONFIG_BUILDER_PLAN.md](docs/archive/CONFIG_BUILDER_PLAN.md) (historical design).
 
 **What does backup and restore include?** The Config Builder **Security** area creates a
 password-protected `.fspbackup` containing the split config files, locally stored connection
@@ -185,6 +186,33 @@ Restore re-encrypts secrets for the destination host and requires a Manager rest
 ---
 
 ## 5. Deployment
+
+**How do I deploy the enterprise edition to AKS?**
+Use the parameterized Bicep and Helm workflow under [infra/fsp-demo](infra/fsp-demo/README.md):
+
+1. Copy the committed examples to the ignored `*.local.*` files and supply the environment's
+  subscription, tenant, network, app-registration, registry, and image-digest values.
+2. Run `az deployment sub what-if`, then `az deployment sub create` with
+  `infra/fsp-demo/main.bicep` and `main.local.bicepparam`.
+3. Run `Start-FspDemo.ps1 -SkipWorkloadValidation` to start stopped dependencies and AKS.
+4. Run `Deploy-FspDemo.ps1 -WhatIf`, then `Deploy-FspDemo.ps1` to install or upgrade
+  cert-manager, ingress-nginx, and FSP as Helm releases through AKS Run Command.
+
+The chart is [deploy/helm/fabric-shortcut-proxy](deploy/helm/fabric-shortcut-proxy/README.md).
+It does not create credential-bearing Kubernetes Secrets.
+
+**Why are infrastructure, startup, and workload deployment separate?**
+They have different review and retry boundaries. Bicep provisioning can change Azure resources
+and must pass `what-if`; `Start-FspDemo.ps1` only starts existing dependencies and AKS;
+`Deploy-FspDemo.ps1` packages and atomically upgrades Helm releases. There is currently no
+single PowerShell script that runs all three phases.
+
+**Does enterprise AKS still use Kustomize?**
+No. The former ignored enterprise-demo Kustomize deployment is retired. Existing
+resources are adopted into the `fsp` Helm release with `--take-ownership` during migration.
+Kustomize remains in the repository for local Kind and focused AKS validation proofs; those
+overlays are not the production enterprise installer. See
+[HELM_MIGRATION_GUIDE.md](docs/HELM_MIGRATION_GUIDE.md).
 
 **How do I start a single node?**
 ```bash
@@ -329,7 +357,7 @@ change alters a chunk's bytes but not its path, and Fabric caches by path. The p
 with **content‑addressed identity**: each chunk file is named `split-{i}-{sha(rows)[:12]}.parquet`
 — same content keeps the path (no churn), changed content gets a new path (Fabric re‑reads), and
 the snapshot id is a root hash that changes iff some chunk changed. See
-[docs/FRESHNESS_PLAN.md](docs/FRESHNESS_PLAN.md).
+[docs/archive/FRESHNESS_PLAN.md](docs/archive/FRESHNESS_PLAN.md) (historical design).
 
 **How does the poller work?** With `AUTO_REFRESH=1`, every `REFRESH_POLL_SECONDS` (default 600 =
 10 min) it runs the `REFRESH_STRATEGY` cascade and publishes a new snapshot only when content
@@ -356,7 +384,7 @@ only on `POST /_admin/refresh`.
 (e.g. the SQL Server DMV is empty after a restart/failover, or the login lacks permission), and
 `REFRESH_ALLOW_FULL_PULL=0`, so the poller **skips** that table to avoid hammering the DB. Fix by
 setting `refresh_allow_full_pull: true`, switching to `content_hash`, or triggering a manual
-refresh. See [docs/FRESHNESS_PLAN.md](docs/FRESHNESS_PLAN.md).
+refresh. See [docs/archive/FRESHNESS_PLAN.md](docs/archive/FRESHNESS_PLAN.md) (historical design).
 
 ---
 
@@ -390,7 +418,7 @@ overridable per table.
 (`PIN_MATERIALIZED_SPLITS=1`, default on) keeps snapshot data files byte‑stable to prevent
 size‑drift read errors. Streaming materialization (`STREAMING_PARQUET`, `STREAM_BATCH_ROWS`)
 bounds memory for huge tables. See [README.md](README.md) and
-[docs/PLANNING.md](docs/PLANNING.md).
+[docs/archive/PLANNING.md](docs/archive/PLANNING.md) (historical plan).
 
 ---
 
@@ -487,8 +515,8 @@ storage proxy (local/S3/Azure) with per‑key ACLs, credential mediation, and au
 multi‑table; content‑addressed refresh (`AUTO_REFRESH`); disk cache; snapshot history;
 config-builder + monitor UIs; authenticated Manager health cards and historical host-resource
 trends; Open Mirroring publishing; Oracle & Databricks (limited); TLS at the proxy or a fronting
-LB; `MANAGER_AUTH` gate. See [docs/PLANNING.md](docs/PLANNING.md),
-[docs/Roadmap.md](docs/Roadmap.md), [docs/CHANGELOG.md](docs/CHANGELOG.md).
+LB; `MANAGER_AUTH` gate. See [docs/archive/PLANNING.md](docs/archive/PLANNING.md),
+[docs/archive/Roadmap.md](docs/archive/Roadmap.md), and [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **In progress / planned:** split‑planner enhancements (row‑target sizing, richer range/date/auto
 cascades); a zero‑dependency **C++ serving agent** (`agent-cpp/`); further control‑plane
@@ -513,7 +541,7 @@ hardening and Manager HA.
 - **All settings:** [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 - **Security (auth/TLS/audit/credentials):** [docs/SECURITY.md](docs/SECURITY.md)
 - **Delta output:** [docs/DELTA_FORMAT.md](docs/DELTA_FORMAT.md)
-- **Freshness design:** [docs/FRESHNESS_PLAN.md](docs/FRESHNESS_PLAN.md)
+- **Freshness design:** [docs/archive/FRESHNESS_PLAN.md](docs/archive/FRESHNESS_PLAN.md) (historical design)
 - **Scale architecture:** [docs/SCALE_ARCHITECTURE_PLAN.md](docs/SCALE_ARCHITECTURE_PLAN.md)
 - **Fabric connectivity patterns:** [docs/UsecasesAndScenarios.md](docs/UsecasesAndScenarios.md)
 - **Component architecture:** [docs/TechnicalArchitecture.md](docs/TechnicalArchitecture.md)

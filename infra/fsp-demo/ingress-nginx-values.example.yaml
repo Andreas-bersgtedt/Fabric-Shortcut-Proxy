@@ -1,0 +1,31 @@
+controller:
+  replicaCount: 3
+  service:
+    externalTrafficPolicy: Local
+    annotations:
+      service.beta.kubernetes.io/azure-pip-name: pip-fspdemo-nginx
+      service.beta.kubernetes.io/azure-load-balancer-resource-group: FSP_Demo_example_swedencentral
+  admissionWebhooks:
+    enabled: true
+  metrics:
+    enabled: true
+  config:
+    allow-snippet-annotations: "false"
+    ssl-protocols: TLSv1.2 TLSv1.3
+  nodeSelector:
+    agentpool: app
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+      add:
+        - NET_BIND_SERVICE
+    runAsNonRoot: true
+    runAsUser: 101
+defaultBackend:
+  enabled: false

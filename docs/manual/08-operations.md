@@ -10,6 +10,9 @@ Manager/Agent model from chapter 3.
 - **Enterprise:** `Manager.ps1` / `Manager.sh` start the Manager (control plane, port 9200)
   and one or more supervised agents (data plane, port 9000 and up). See chapter 4 for the
   launcher flags.
+- **Enterprise AKS:** Kubernetes runs the Manager, materializer StatefulSet, C++ serving
+  Deployment, and nginx proxy as the `fsp` Helm release. `Start-FspDemo.ps1` starts Azure
+  dependencies; `Deploy-FspDemo.ps1` installs or upgrades workloads.
 
 Run under a dedicated low-privilege account. On Linux, wrap the launcher in a systemd unit
 (see [installation/Linux_Deployment.md](../installation/Linux_Deployment.md)); on Windows,
@@ -25,18 +28,40 @@ for `/readyz` and Service endpoints before testing Fabric.
 
 Deleting and recreating the `LoadBalancer` Service is different. Azure can assign a new private
 frontend IP, leaving a manually configured gateway or DNS record pointed at the old address.
-Use a private DNS hostname for the Fabric endpoint, record the Service `EXTERNAL-IP` after every
-Service change, and reserve or pin the frontend IP when the deployment requires a fixed address.
-Never use a pod IP as the gateway endpoint.
+Use a private DNS hostname for the Fabric endpoint. The enterprise Helm values pin
+`fsp-nginx-private` to a private application-subnet IP on port 443. Never use a pod IP or
+ClusterIP as the gateway endpoint.
 
 After a cluster restart or Service change, verify:
 
 ```bash
-kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
+kubectl -n fabric-shortcut-proxy get svc fsp-nginx-private -o wide
 kubectl -n fabric-shortcut-proxy get endpointslice \
-  -l kubernetes.io/service-name=fsp-materializer-internal -o wide
-curl -fsS http://<agent-private-fqdn>:9000/healthz
+  -l kubernetes.io/service-name=fsp-nginx-private -o wide
+curl -fsS https://<agent-private-fqdn>/healthz
 ```
+
+### Helm release operations
+
+Run the supported upgrade path from the repository root:
+
+```powershell
+./infra/fsp-demo/Deploy-FspDemo.ps1 -WhatIf
+./infra/fsp-demo/Deploy-FspDemo.ps1
+```
+
+Inspect history or roll back through private AKS Run Command:
+
+```powershell
+az aks command invoke --resource-group <resource-group> --name <aks-name> `
+  --command "helm history fsp -n fabric-shortcut-proxy"
+az aks command invoke --resource-group <resource-group> --name <aks-name> `
+  --command "helm rollback fsp <revision> -n fabric-shortcut-proxy --wait --timeout 15m"
+```
+
+The Namespace, PVs, and PVCs use Helm's keep policy. A Helm uninstall or rollback must not be
+treated as infrastructure or data cleanup. See the
+[migration guide](../HELM_MIGRATION_GUIDE.md).
 
 ## 8.2 Operational endpoints
 

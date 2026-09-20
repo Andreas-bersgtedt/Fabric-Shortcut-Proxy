@@ -17,6 +17,10 @@ moderate IT skills**: every step has commands you can paste.
 [../../SSL_Deployment.md](../../SSL_Deployment.md) (public‑internet TLS) ·
 [Windows_Deployment.md](Windows_Deployment.md).
 
+> This guide installs FSP directly on a Linux host. It is not the enterprise AKS installer.
+> Production AKS uses the [Bicep and Helm runbook](../../infra/fsp-demo/README.md). The operator
+> commands currently target Windows PowerShell, while workloads run on Linux AKS nodes.
+
 ---
 
 ## 1. Architecture choices

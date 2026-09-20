@@ -9,6 +9,11 @@ renderer keeps the nginx `upstream` in sync with the live fleet.
 See [architecture-distributed.excalidraw](architecture-distributed.excalidraw) for
 the deployment topology and component view.
 
+> This runbook describes the host-based Tier 2 renderer topology. The enterprise AKS Helm chart
+> uses a separate in-cluster `fsp-nginx` proxy with static Kubernetes Service discovery. For AKS,
+> use the [enterprise runbook](../infra/fsp-demo/README.md) and do not deploy
+> `enterprise.control.lb_renderer` beside the chart's nginx Deployment.
+
 ## Topology
 
 ```

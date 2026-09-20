@@ -12,11 +12,15 @@ connectivity, security, operations, and tutorials.
 | Manager fleet, monitoring, and lifecycle controls | [MANAGER_GUIDE.md](MANAGER_GUIDE.md) |
 | Linux and Windows deployment | [installation/](installation/) |
 | Enterprise and AKS deployment | [Enterprise_Deployment_guide.md](Enterprise_Deployment_guide.md) |
+| Enterprise AKS automation | [../infra/fsp-demo/README.md](../infra/fsp-demo/README.md) |
+| Helm chart and values | [../deploy/helm/fabric-shortcut-proxy/README.md](../deploy/helm/fabric-shortcut-proxy/README.md) |
+| Kustomize-to-Helm migration | [HELM_MIGRATION_GUIDE.md](HELM_MIGRATION_GUIDE.md) |
 | Fabric private connectivity | [CONNECTIVITY_SETUP.md](CONNECTIVITY_SETUP.md) |
 | Security, TLS, audit, and OIDC | [SECURITY.md](SECURITY.md) |
 | Backup and restore | [BACKUP_RESTORE.md](BACKUP_RESTORE.md) |
 | Delta output | [DELTA_FORMAT.md](DELTA_FORMAT.md) |
 | System architecture | [TechnicalArchitecture.md](TechnicalArchitecture.md) |
+| Editable enterprise deployment diagram | [architecture-enterprise-helm.excalidraw](architecture-enterprise-helm.excalidraw) |
 | External load balancing | [EXTERNAL_LB_RUNBOOK.md](EXTERNAL_LB_RUNBOOK.md) |
 | Source-specific operations | [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md) |
 | Tokenization design and UAT | [TOKENIZATION_PUSHDOWN.md](TOKENIZATION_PUSHDOWN.md), [TOKENIZATION_UAT.md](TOKENIZATION_UAT.md), and [TOKENIZATION_MULTI_DIALECT_UAT.md](TOKENIZATION_MULTI_DIALECT_UAT.md) |

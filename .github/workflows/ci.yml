@@ -88,6 +88,35 @@ jobs:
       - name: Run Enterprise tests
         run: pytest tests/enterprise -v
 
+  helm-chart:
+    name: Helm chart validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.6
+
+      - name: Install chart test dependencies
+        run: python -m pip install pytest
+
+      - name: Validate chart renders
+        run: python -m pytest tests/test_helm_chart.py -v
+
+      - name: Validate Bicep source and example parameters
+        run: |
+          set -e
+          az bicep install
+          az bicep build --file infra/fsp-demo/main.bicep --stdout > /dev/null
+          az bicep build-params --file infra/fsp-demo/main.example.bicepparam --stdout > /dev/null
+
   fabric-compat:
     name: pyiceberg reference-reader validation
     runs-on: ubuntu-latest

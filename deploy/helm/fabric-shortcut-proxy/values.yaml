@@ -1,0 +1,160 @@
+namespace:
+  create: true
+  name: fabric-shortcut-proxy
+
+images:
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+  python:
+    repository: fabric-shortcut-proxy-python
+    tag: "2.9.3"
+    digest: ""
+  cpp:
+    repository: fabric-shortcut-proxy-cpp
+    tag: "2.9.3"
+    digest: ""
+  nginx:
+    repository: nginx
+    tag: 1.27-alpine
+    digest: sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+
+fsp:
+  s3Bucket: fabric-iceberg-poc
+  artifactStoreBackend: local
+  artifactStoreDir: /artifacts
+  artifactStoreServing: "1"
+  materializeMode: eager
+  shardStrategy: modulo
+  materializeWaitSeconds: "600"
+  generationSourceConsistency: best_effort
+  streamingParquet: "1"
+  streamBatchRows: "10000"
+  sourceMaxConcurrency: "2"
+  maxConcurrentGenerations: "2"
+  pinMaterializedSplits: "0"
+  requireSigV4: "0"
+  authMode: local
+  keyVaultUri: ""
+  keyVaultWriteBack: "0"
+  azureTenantId: ""
+  azureClientId: ""
+
+sourceSecret:
+  name: fsp-source
+
+workloadIdentity:
+  enabled: false
+  serviceAccountName: fsp-workload
+  clientId: ""
+
+nodeSelector: {}
+
+storage:
+  artifacts:
+    size: 100Gi
+    storageClassName: null
+    existingVolumeName: ""
+  azureFiles:
+    enabled: false
+    resourceGroup: ""
+    storageAccount: ""
+    protocol: nfs
+    encryptInTransit: "true"
+    reclaimPolicy: Retain
+    mountOptions:
+      - nconnect=4
+      - noresvport
+      - actimeo=30
+    artifacts:
+      shareName: artifacts
+      volumeHandle: ""
+    managerConfig:
+      shareName: manager-config
+      volumeHandle: ""
+      size: 100Gi
+
+manager:
+  replicas: 1
+  auditLogEnabled: "0"
+  configBuilderEnabled: "0"
+  monitorEnabled: "1"
+  adminUiEnabled: "0"
+  userDirectoryFile: /config/users.json
+  credentialStorePath: /config/credentials.json
+  agentHostAllowlist: "127.0.0.1,0.0.0.0,::1,::,localhost"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  entra:
+    enabled: false
+    tenantId: ""
+    spaClientId: ""
+    apiClientId: ""
+    apiAudience: ""
+    apiScope: operator.access_as_user
+    allowedClientIds: ""
+    redirectUri: ""
+    postLogoutRedirectUri: ""
+
+materializer:
+  replicas: 3
+  auditLogEnabled: "0"
+  credentialStoreEnabled: "0"
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+
+cppAgent:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: "2"
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCpuUtilization: 70
+    scaleDownStabilizationSeconds: 300
+  disruptionBudget:
+    minAvailable: 1
+
+nginx:
+  enabled: false
+  replicas: 3
+  certificateSecretName: fsp-nginx-tls
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  disruptionBudget:
+    minAvailable: 2
+  privateService:
+    enabled: true
+    subnet: ""
+    ipAddress: ""
+
+tls:
+  enabled: false
+  hostname: ""
+  clusterIssuer:
+    create: true
+    name: letsencrypt-prod
+    acmeServer: https://acme-v02.api.letsencrypt.org/directory
+    email: ""
+  ingress:
+    className: nginx

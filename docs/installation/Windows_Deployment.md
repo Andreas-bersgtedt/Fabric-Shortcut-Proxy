@@ -18,6 +18,10 @@ paste from an elevated (Administrator) prompt.
 [Linux_Deployment.md](Linux_Deployment.md) · [../../SSL_Deployment.md](../../SSL_Deployment.md)
 (public‑internet TLS, Linux/nginx).
 
+> This guide installs FSP directly on a Windows host. It is not the enterprise AKS installer.
+> For private AKS, use the [Bicep and Helm runbook](../../infra/fsp-demo/README.md) from Windows
+> PowerShell and the [enterprise deployment design](../Enterprise_Deployment_guide.md).
+
 ---
 
 ## 1. Architecture choices (OPDG is mandatory)

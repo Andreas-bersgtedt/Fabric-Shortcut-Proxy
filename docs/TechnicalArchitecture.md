@@ -13,6 +13,7 @@ beneath it.
 > Companion docs: [README.md](../README.md) (setup), [CONFIGURATION.md](CONFIGURATION.md)
 > (settings), [SECURITY.md](SECURITY.md) (auth/TLS/audit),
 > [Enterprise_Deployment_guide.md](Enterprise_Deployment_guide.md) (fleet),
+> [../infra/fsp-demo/README.md](../infra/fsp-demo/README.md) (AKS automation),
 > [DELTA_FORMAT.md](DELTA_FORMAT.md) (Delta output).
 
 ---
@@ -499,6 +500,62 @@ flowchart TB
   A1 & A2 & AN -->|read/write materialized splits| OBJ
   ADMIN --- REG & SUP
 ```
+
+---
+
+## 12. Enterprise AKS deployment architecture
+
+Azure resources and Kubernetes workloads have separate ownership boundaries. Bicep owns the
+subscription/resource-group resources. Helm owns the in-cluster application resources. Local
+parameter files bridge the environment without committing tenant identifiers or image digests.
+
+```mermaid
+flowchart TB
+  subgraph Workstation[Windows PowerShell operator]
+    PARAMS[Ignored local inputs<br/>main.local.bicepparam<br/>deployment.local.json<br/>values-enterprise-demo.local.yaml]
+    AZ[Azure CLI + Bicep]
+    START[Start-FspDemo.ps1]
+    DEPLOY[Deploy-FspDemo.ps1<br/>Helm 3.18.6 package + preflight]
+  end
+
+  subgraph Azure[Azure subscription]
+    ARM[Azure Resource Manager]
+    SQLMI[(External SQL MI)]
+    OPDG[OPDG VM]
+    subgraph Platform[FSP resource group]
+      AKS[Private AKS]
+      ACR[ACR]
+      KV[Key Vault]
+      FILES[Azure Files NFS]
+      NET[VNet, subnets, DNS,<br/>private endpoints, public IP]
+      WI[User-assigned identity]
+    end
+  end
+
+  subgraph Releases[Helm releases in private AKS]
+    CM[cert-manager]
+    INGRESS[ingress-nginx]
+    FSP[fsp 2.9.3<br/>Manager + materializers + C++ + nginx]
+  end
+
+  PARAMS --> AZ --> ARM --> Platform
+  START --> SQLMI & OPDG & AKS
+  DEPLOY -->|az aks command invoke| AKS
+  AKS --> CM & INGRESS & FSP
+  ACR --> FSP
+  KV --> FSP
+  FILES --> FSP
+  WI --> FSP
+  NET --> AKS
+```
+
+`Deploy-FspDemo.ps1` packages the chart locally, attaches the archive and local values to a
+transient AKS Run Command pod, and runs `helm upgrade --install --atomic --take-ownership`.
+Credential-bearing Secrets are created outside Helm. Namespace and persistent storage objects
+carry Helm's `keep` policy so release removal does not delete retained state.
+
+The editable companion is
+[architecture-enterprise-helm.excalidraw](architecture-enterprise-helm.excalidraw).
 
 ### 11a. Register / heartbeat contract
 

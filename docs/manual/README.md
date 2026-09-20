@@ -27,8 +27,8 @@ duplicating it.
 |---|---|---|
 | 1 | [Introduction](01-introduction.md) | What the proxy does, the two serving modes, editions, and where it fits |
 | 2 | [Core concepts](02-concepts.md) | S3 front door, warehouse vs mount, Iceberg/Delta output, Open Mirroring, splits, snapshots, freshness, dialects |
-| 3 | [Architecture](03-architecture.md) | Request lifecycle, Open Mirror publishing path, module map, data plane vs control plane, Manager/Agent |
-| 4 | [Installation](04-installation.md) | Prerequisites, getting the code, virtual environment, drivers, Lite vs cluster |
+| 3 | [Architecture](03-architecture.md) | Request lifecycle, Open Mirror publishing path, Manager/Agent, Bicep and Helm ownership |
+| 4 | [Installation](04-installation.md) | Prerequisites, host installs, enterprise AKS Bicep and Helm workflow |
 | 5 | [Configuration](05-configuration.md) | Settings model, split config files, Config Builder, tables, sources, and Open Mirroring |
 | 6 | [Connecting Microsoft Fabric](06-connectivity.md) | Shortcut setup, OPDG and public patterns, storage-proxy mounts |
 | 7 | [Security](07-security.md) | Credentials, SigV4 keys and ACL, encrypted backup, Key Vault, TLS, audit, tokenization |
@@ -53,6 +53,8 @@ duplicating it.
 - **Tokenizing columns:** chapter 14, then chapter 7 for security controls.
 - **Re-identification:** chapter 15, then chapter 7 for identity and audit controls.
 - **Tuning or scaling:** chapters 2 and 8.
+- **Enterprise AKS:** chapter 4, then the [AKS automation runbook](../../infra/fsp-demo/README.md).
+- **Migrating from Kustomize:** [HELM_MIGRATION_GUIDE.md](../HELM_MIGRATION_GUIDE.md).
 - **Hardening:** chapter 7.
 
 ## Conventions
@@ -68,12 +70,15 @@ duplicating it.
 
 The manual links these where relevant; they carry the full detail behind a topic.
 
-- [CONFIGURATION.md](../CONFIGURATION.md) — complete PostgreSQL/SQL Server configuration reference
-- [TechnicalArchitecture.md](../TechnicalArchitecture.md) — component-level flow diagrams
-- [SECURITY.md](../SECURITY.md) — authentication, TLS, and audit policy
-- [DELTA_FORMAT.md](../DELTA_FORMAT.md) — native Delta output mode
-- [TOKENIZATION_PUSHDOWN.md](../TOKENIZATION_PUSHDOWN.md) — column tokenization design
-- [CONNECTIVITY_SETUP.md](../CONNECTIVITY_SETUP.md) — network patterns (OPDG, Private Link)
-- [UsecasesAndScenarios.md](../UsecasesAndScenarios.md) — connectivity scenarios
-- [installation/Windows_Deployment.md](../installation/Windows_Deployment.md) and [installation/Linux_Deployment.md](../installation/Linux_Deployment.md) — host-specific baselines
-- [FAQ.md](../FAQ.md) — frequently asked questions and quick answers
+- [CONFIGURATION.md](../CONFIGURATION.md): complete PostgreSQL/SQL Server configuration reference
+- [TechnicalArchitecture.md](../TechnicalArchitecture.md): component-level flow diagrams
+- [Enterprise_Deployment_guide.md](../Enterprise_Deployment_guide.md): AKS topology and design
+- [infra/fsp-demo/README.md](../../infra/fsp-demo/README.md): executable Bicep and Helm runbook
+- [deploy/helm/fabric-shortcut-proxy/README.md](../../deploy/helm/fabric-shortcut-proxy/README.md): chart values and lifecycle
+- [SECURITY.md](../SECURITY.md): authentication, TLS, and audit policy
+- [DELTA_FORMAT.md](../DELTA_FORMAT.md): native Delta output mode
+- [TOKENIZATION_PUSHDOWN.md](../TOKENIZATION_PUSHDOWN.md): column tokenization design
+- [CONNECTIVITY_SETUP.md](../CONNECTIVITY_SETUP.md): network patterns (OPDG, Private Link)
+- [UsecasesAndScenarios.md](../UsecasesAndScenarios.md): connectivity scenarios
+- [installation/Windows_Deployment.md](../installation/Windows_Deployment.md) and [installation/Linux_Deployment.md](../installation/Linux_Deployment.md): host-specific baselines
+- [FAQ.md](../FAQ.md): frequently asked questions and quick answers

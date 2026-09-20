@@ -1,2 +1,6 @@
-*
-!.gitignore
+# Compiled Bicep output and deployment-specific local inputs
+main.json
+*.local.bicepparam
+deployment.local.json
+ingress-nginx-values.local.yaml
+# Keep reusable infrastructure and deployment source visible to Git.

@@ -1,0 +1,106 @@
+{{- if .Values.storage.azureFiles.enabled }}
+{{- $resourceGroup := required "storage.azureFiles.resourceGroup is required" .Values.storage.azureFiles.resourceGroup }}
+{{- $storageAccount := required "storage.azureFiles.storageAccount is required" .Values.storage.azureFiles.storageAccount }}
+{{- $artifactsHandle := required "storage.azureFiles.artifacts.volumeHandle is required" .Values.storage.azureFiles.artifacts.volumeHandle }}
+{{- $managerHandle := required "storage.azureFiles.managerConfig.volumeHandle is required" .Values.storage.azureFiles.managerConfig.volumeHandle }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: fsp-artifacts-pv
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    storage.fsp.microsoft.com/share: artifacts
+spec:
+  capacity:
+    storage: {{ .Values.storage.artifacts.size }}
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: {{ .Values.storage.azureFiles.reclaimPolicy }}
+  storageClassName: ""
+  mountOptions:
+    {{- toYaml .Values.storage.azureFiles.mountOptions | nindent 4 }}
+  csi:
+    driver: file.csi.azure.com
+    readOnly: false
+    volumeHandle: {{ $artifactsHandle | quote }}
+    volumeAttributes:
+      resourceGroup: {{ $resourceGroup | quote }}
+      storageAccount: {{ $storageAccount | quote }}
+      shareName: {{ .Values.storage.azureFiles.artifacts.shareName | quote }}
+      protocol: {{ .Values.storage.azureFiles.protocol | quote }}
+      encryptInTransit: {{ .Values.storage.azureFiles.encryptInTransit | quote }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: fsp-manager-config-pv
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    storage.fsp.microsoft.com/share: manager-config
+spec:
+  capacity:
+    storage: {{ .Values.storage.azureFiles.managerConfig.size }}
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: {{ .Values.storage.azureFiles.reclaimPolicy }}
+  storageClassName: ""
+  mountOptions:
+    {{- toYaml .Values.storage.azureFiles.mountOptions | nindent 4 }}
+  csi:
+    driver: file.csi.azure.com
+    readOnly: false
+    volumeHandle: {{ $managerHandle | quote }}
+    volumeAttributes:
+      resourceGroup: {{ $resourceGroup | quote }}
+      storageAccount: {{ $storageAccount | quote }}
+      shareName: {{ .Values.storage.azureFiles.managerConfig.shareName | quote }}
+      protocol: {{ .Values.storage.azureFiles.protocol | quote }}
+      encryptInTransit: {{ .Values.storage.azureFiles.encryptInTransit | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fsp-artifacts
+  namespace: {{ include "fsp.namespace" . }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.storage.artifacts.size }}
+  {{- if .Values.storage.azureFiles.enabled }}
+  storageClassName: ""
+  volumeName: fsp-artifacts-pv
+  {{- else if .Values.storage.artifacts.storageClassName }}
+  storageClassName: {{ .Values.storage.artifacts.storageClassName | quote }}
+  {{- end }}
+  {{- with .Values.storage.artifacts.existingVolumeName }}
+  volumeName: {{ . | quote }}
+  {{- end }}
+{{- if .Values.storage.azureFiles.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fsp-manager-config
+  namespace: {{ include "fsp.namespace" . }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: fsp-manager-config-pv
+  resources:
+    requests:
+      storage: {{ .Values.storage.azureFiles.managerConfig.size }}
+{{- end }}

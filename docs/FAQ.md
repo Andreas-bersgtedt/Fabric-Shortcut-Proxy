@@ -100,6 +100,32 @@ A production deployment would also need, at minimum:
 
 The repository contains pieces of this architecture, but production use still requires an owning engineering team to validate, operate, secure, and support the deployment. In particular, validate the chosen private connectivity path, durable artifact/state storage, TLS termination, identity permissions, and failure recovery.
 
+For Azure Kubernetes Service, the repository now includes a parameterized Bicep and Helm
+reference deployment. Start with [infra/fsp-demo/README.md](../infra/fsp-demo/README.md), then
+use [Enterprise_Deployment_guide.md](Enterprise_Deployment_guide.md) for the topology and
+[HELM_MIGRATION_GUIDE.md](HELM_MIGRATION_GUIDE.md) when adopting resources previously applied
+with Kustomize. This remains customer-operated reference code rather than a managed service.
+
+## Is there one PowerShell script for the complete AKS deployment?
+
+No. The supported sequence has three separate boundaries:
+
+1. `az deployment sub what-if/create` provisions Azure resources from Bicep.
+2. `Start-FspDemo.ps1` starts existing SQL MI, OPDG VM, and AKS resources.
+3. `Deploy-FspDemo.ps1` validates and atomically upgrades cert-manager, ingress-nginx, and FSP
+	Helm releases through private AKS Run Command.
+
+Infrastructure changes require an explicit what-if review, so they are not hidden behind the
+runtime startup script. See the [enterprise automation runbook](../infra/fsp-demo/README.md).
+
+## Does the AKS deployment use Helm or Kustomize?
+
+Production enterprise AKS uses the versioned Helm chart under
+[`deploy/helm/fabric-shortcut-proxy`](../deploy/helm/fabric-shortcut-proxy/README.md).
+Kustomize remains for local Kind and focused validation proofs under `deploy/kubernetes`.
+The retired enterprise-demo overlay is adopted into Helm with `--take-ownership` during the
+first migration.
+
 ## What is the current overall position?
 
 The project demonstrates a technically viable pattern and includes substantial implementation for Iceberg and Delta metadata, SQL-to-Parquet generation, caching, freshness, monitoring, a Manager/Agent model, and a secured storage proxy (local/S3/Azure passthrough with per-key authorization, TLS, and audit). It should still be positioned as open-source reference code rather than a managed Fabric capability.

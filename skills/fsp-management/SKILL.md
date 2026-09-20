@@ -62,6 +62,8 @@ public network.
 For AKS, inspect the whole control path:
 
 ```bash
+helm status fsp -n fabric-shortcut-proxy
+helm history fsp -n fabric-shortcut-proxy
 kubectl -n fabric-shortcut-proxy get pods,svc,pvc
 kubectl -n fabric-shortcut-proxy get endpointslices
 kubectl -n fabric-shortcut-proxy logs deployment/fsp-manager --tail=200
@@ -92,9 +94,15 @@ and its LoadBalancer frontend. After startup, wait for ready Agent endpoints bef
 Fabric. If a Service was recreated, compare its `EXTERNAL-IP` with the private DNS A record;
 update DNS or restore the reserved frontend IP before reopening the gateway.
 
+For the supported private-AKS path, run these commands through `az aks command invoke` when the
+operator machine has no route to the API server. Use `Deploy-FspDemo.ps1` for upgrades; do not
+apply edited rendered YAML over Helm-owned resources.
+
 ## References
 
 - [Operations manual](../../docs/manual/08-operations.md)
 - [Manager guide](../../docs/MANAGER_GUIDE.md)
 - [External load balancer runbook](../../docs/EXTERNAL_LB_RUNBOOK.md)
 - [Enterprise deployment guide](../../docs/Enterprise_Deployment_guide.md)
+- [Enterprise AKS runbook](../../infra/fsp-demo/README.md)
+- [Helm migration guide](../../docs/HELM_MIGRATION_GUIDE.md)

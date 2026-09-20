@@ -1,0 +1,51 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cpp-agent-private-ingress
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-cpp-agent
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              fabric-shortcut-proxy.io/data-plane-access: "true"
+          podSelector:
+            matchLabels:
+              fabric-shortcut-proxy.io/data-plane-client: "true"
+      ports:
+        - protocol: TCP
+          port: 9400
+{{- if .Values.nginx.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: python-data-from-nginx
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-materializer
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-manager
+      ports:
+        - protocol: TCP
+          port: 9000
+{{- end }}

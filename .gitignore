@@ -63,6 +63,9 @@ config.py.backup
 # Local development plans / notes - DO NOT commit
 devplan/
 
+# FSP enterprise demo local Helm values
+deploy/helm/fabric-shortcut-proxy/values-*.local.yaml
+
 # Local per-deployment config files - DO NOT commit
 # Credentials come from environment variables; table lists are environment-specific.
 # Fresh installs fall back to built-in defaults (SQLite poc_source.db + 'sales' table).

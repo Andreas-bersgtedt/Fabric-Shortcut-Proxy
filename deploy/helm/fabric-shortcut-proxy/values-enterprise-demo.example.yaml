@@ -1,0 +1,62 @@
+images:
+  pullSecrets:
+    - acr-pull
+  python:
+    repository: example.azurecr.io/fabric-shortcut-proxy-python
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  cpp:
+    repository: example.azurecr.io/fabric-shortcut-proxy-cpp
+    digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+
+fsp:
+  materializeMode: virtual
+  streamBatchRows: "500000"
+  requireSigV4: "1"
+  authMode: managed_identity
+  keyVaultUri: https://kv-fspdemo-example.vault.azure.net/
+  azureTenantId: 00000000-0000-0000-0000-000000000001
+  azureClientId: 00000000-0000-0000-0000-000000000002
+
+workloadIdentity:
+  enabled: true
+  clientId: 00000000-0000-0000-0000-000000000002
+
+nodeSelector:
+  agentpool: app
+
+storage:
+  artifacts:
+    size: 256Gi
+  azureFiles:
+    enabled: true
+    resourceGroup: FSP_Demo_example_swedencentral
+    storageAccount: stfspdemoexample
+    artifacts:
+      volumeHandle: fsp-demo-example-artifacts
+    managerConfig:
+      volumeHandle: fsp-demo-example-manager-config
+
+manager:
+  configBuilderEnabled: "1"
+  adminUiEnabled: "1"
+  credentialStorePath: /config/secrets/credentials.json
+  agentHostAllowlist: "127.0.0.1,0.0.0.0,::1,::,localhost,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  entra:
+    enabled: true
+    tenantId: 00000000-0000-0000-0000-000000000001
+    spaClientId: 00000000-0000-0000-0000-000000000003
+    apiClientId: 00000000-0000-0000-0000-000000000004
+    apiAudience: 00000000-0000-0000-0000-000000000004
+    allowedClientIds: 00000000-0000-0000-0000-000000000003
+    redirectUri: https://fsp.example.com/_config/
+    postLogoutRedirectUri: https://fsp.example.com/_config/
+
+nginx:
+  enabled: true
+  privateService:
+    subnet: snet-aks-app
+    ipAddress: 10.240.4.100
+
+tls:
+  enabled: true
+  hostname: fsp.example.com

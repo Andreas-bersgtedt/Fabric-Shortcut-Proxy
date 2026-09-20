@@ -1,0 +1,6 @@
+.git/
+.gitignore
+*.local.yaml
+*.local.yml
+*.tmp
+rendered/

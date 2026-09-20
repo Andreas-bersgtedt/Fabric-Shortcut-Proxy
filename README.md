@@ -14,6 +14,11 @@ table objects and generates Parquet files on demand from SQL pushdown queries.
 > **Looking for a runbook or reference?** [docs/README.md](docs/README.md) maps
 > the maintained configuration, deployment, security, UAT, and troubleshooting guides.
 
+> **Deploying to enterprise AKS?** Start with the
+> [enterprise demo runbook](infra/fsp-demo/README.md). Bicep provisions Azure resources,
+> [Start-FspDemo.ps1](infra/fsp-demo/Start-FspDemo.ps1) starts stopped dependencies, and
+> [Deploy-FspDemo.ps1](infra/fsp-demo/Deploy-FspDemo.ps1) installs or upgrades the Helm releases.
+
 > The proxy supports two output modes from the same backend data path:
 > `TABLE_FORMAT=iceberg` and `TABLE_FORMAT=delta`.
 > In Fabric environments, Delta mode is often preferred because Fabric reads `_delta_log`
@@ -107,6 +112,10 @@ s3emulator/
 │   ├── CONFIGURATION.md         Full configuration manual (PostgreSQL / SQL Server)
 │   ├── DELTA_FORMAT.md          Native Delta output design (TABLE_FORMAT=delta)
 │   └── ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md  Real Oracle/Databricks operations + smoke tests
+├── deploy/
+│   ├── helm/fabric-shortcut-proxy/ Production AKS Helm chart (2.9.3)
+│   └── kubernetes/             Development Kind and validation proofs
+├── infra/fsp-demo/          Parameterized Azure Bicep + PowerShell AKS automation
 ├── s3/
 │   ├── router.py            GET / HEAD / ListObjectsV2 endpoints (warehouse + mount routing)
 │   ├── auth.py              AWS SigV4 verification (multi-key resolver; H3)
@@ -256,6 +265,40 @@ pytest tests/ --ignore=tests/enterprise -v    # Lite suite
 pip install -e . -e ./enterprise
 pytest tests/enterprise -v                    # Enterprise suite
 ```
+
+### Enterprise AKS with Helm
+
+Production AKS deployments use the versioned chart under
+[deploy/helm/fabric-shortcut-proxy](deploy/helm/fabric-shortcut-proxy), not the development
+Kustomize overlays. The Azure infrastructure and real environment values are separate:
+
+```powershell
+# 1. Create ignored local inputs from the sanitized examples.
+Copy-Item infra/fsp-demo/main.example.bicepparam infra/fsp-demo/main.local.bicepparam
+Copy-Item infra/fsp-demo/deployment.example.json infra/fsp-demo/deployment.local.json
+Copy-Item infra/fsp-demo/ingress-nginx-values.example.yaml infra/fsp-demo/ingress-nginx-values.local.yaml
+Copy-Item deploy/helm/fabric-shortcut-proxy/values-enterprise-demo.example.yaml `
+  deploy/helm/fabric-shortcut-proxy/values-enterprise-demo.local.yaml
+
+# 2. Preview and provision Azure infrastructure.
+az deployment sub what-if --name fsp-demo-whatif --location <region> `
+  --template-file infra/fsp-demo/main.bicep `
+  --parameters infra/fsp-demo/main.local.bicepparam
+az deployment sub create --name fsp-demo --location <region> `
+  --template-file infra/fsp-demo/main.bicep `
+  --parameters infra/fsp-demo/main.local.bicepparam
+
+# 3. Start dependencies, then install the private-AKS Helm releases.
+./infra/fsp-demo/Start-FspDemo.ps1 -SkipWorkloadValidation
+./infra/fsp-demo/Deploy-FspDemo.ps1 -WhatIf
+./infra/fsp-demo/Deploy-FspDemo.ps1
+```
+
+There is no single script that provisions Azure, starts external dependencies, and deploys
+workloads. The split is intentional: Bicep changes require an Azure what-if review, while
+runtime startup and Helm upgrades are independently repeatable. See the
+[enterprise deployment design](docs/Enterprise_Deployment_guide.md) and
+[Helm migration guide](docs/HELM_MIGRATION_GUIDE.md).
 
 ## C++ serving Agent (Windows + Linux)
 

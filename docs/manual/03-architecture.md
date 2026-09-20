@@ -169,8 +169,10 @@ both the data endpoints and, if enabled, the config/monitor surfaces on its own 
 
 ## 3.7 The Manager/Agent model (enterprise)
 
-The enterprise edition adds a Manager that supervises one or more Agent processes and,
-optionally, fronts them with a built-in gateway.
+The enterprise edition adds a Manager that tracks one or more Agents. On a host,
+`Manager.ps1` or `Manager.sh` can supervise child Agent processes and optionally front them
+with the built-in gateway. In AKS, `MANAGER_SUPERVISION_MODE=external`; Kubernetes owns pod
+lifecycle while the Manager owns registration, heartbeat, config, and fleet status.
 
 ```mermaid
 flowchart TB
@@ -204,7 +206,34 @@ For production you can also front the agents with an external L7 load balancer i
 the built-in gateway. See [EXTERNAL_LB_RUNBOOK.md](../EXTERNAL_LB_RUNBOOK.md). The scale
 design is in [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md).
 
-## 3.8 The artifact store
+## 3.8 Enterprise deployment ownership
+
+The AKS deployment has two declarative owners and two repeatable operator actions:
+
+```mermaid
+flowchart LR
+  PARAMS[Ignored local inputs] --> BICEP[Bicep<br/>Azure platform]
+  PARAMS --> HELM[Helm chart 2.9.3<br/>Kubernetes workloads]
+  BICEP --> AKS[Private AKS + ACR + Key Vault<br/>Azure Files + networking + identity]
+  START[Start-FspDemo.ps1] --> AKS
+  DEPLOY[Deploy-FspDemo.ps1<br/>AKS Run Command] --> HELM
+  HELM --> RELEASES[cert-manager<br/>ingress-nginx<br/>fsp]
+  AKS --> RELEASES
+```
+
+- Bicep provisions Azure resources and emits a deployment contract.
+- `Start-FspDemo.ps1` starts stopped SQL MI, OPDG VM, and AKS resources; it does not provision.
+- `Deploy-FspDemo.ps1` validates, packages, and atomically upgrades Helm releases through the
+  private cluster's Run Command endpoint.
+- The Helm chart references an existing `fsp-source` Secret and does not template credentials.
+
+The first Helm migration adopts matching Kustomize-created resources with
+`--take-ownership`. Namespace and persistent storage objects use Helm's keep policy. See the
+[enterprise deployment design](../Enterprise_Deployment_guide.md),
+[automation runbook](../../infra/fsp-demo/README.md), and
+[migration guide](../HELM_MIGRATION_GUIDE.md).
+
+## 3.9 The artifact store
 
 Published table images (metadata plus data splits) live in an artifact store so any agent
 can serve any split. The default backend is a local directory; the store abstraction
@@ -212,7 +241,7 @@ can serve any split. The default backend is a local directory; the store abstrac
 gateway. A complete "serving image" can be published and served directly, including by the
 optional standalone C++ serving agent.
 
-## 3.9 Configuration surfaces
+## 3.10 Configuration surfaces
 
 Configuration resolves from three surfaces, highest precedence first: environment
 variables, external JSON files, then built-in defaults. The JSON is split by concern
@@ -220,7 +249,7 @@ variables, external JSON files, then built-in defaults. The JSON is split by con
 structure stay separated. Chapter 5 covers the full model; the settings registry in
 `config.py` is the source of truth.
 
-## 3.10 Next
+## 3.11 Next
 
 Continue to [Chapter 4: Installation](04-installation.md) to stand up either edition, or
 jump to [Chapter 8: Operations](08-operations.md) for running and scaling the fleet.

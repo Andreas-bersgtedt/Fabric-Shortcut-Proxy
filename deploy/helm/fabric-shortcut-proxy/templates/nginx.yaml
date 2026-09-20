@@ -1,0 +1,208 @@
+{{- include "fsp.validateNginxTls" . }}
+{{- if .Values.nginx.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fsp-nginx
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    worker_processes auto;
+    pid /tmp/nginx.pid;
+    events { worker_connections 4096; }
+    http {
+      access_log /dev/stdout;
+      error_log /dev/stderr warn;
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path /tmp/proxy_temp;
+      proxy_buffering off;
+      proxy_request_buffering off;
+      client_max_body_size 0;
+      upstream fsp_python { server fsp-python-data:9000; keepalive 64; }
+      server {
+        listen 8080;
+        location = /healthz { access_log off; return 200 "ok\n"; }
+      }
+      server {
+        listen 8443 ssl;
+        ssl_certificate /etc/nginx/tls/tls.crt;
+        ssl_certificate_key /etc/nginx/tls/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        location ~ ^/(?:_manager|_monitor|_config|control|agents)(?:/|$) { return 404; }
+        location / {
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_set_header Host $http_host;
+          proxy_set_header Authorization $http_authorization;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_connect_timeout 10s;
+          proxy_read_timeout 300s;
+          proxy_send_timeout 300s;
+          proxy_pass http://fsp_python;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-nginx
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    app.kubernetes.io/name: fsp-nginx
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.nginx.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-nginx
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsp-nginx
+        app.kubernetes.io/component: proxy
+        {{- include "fsp.commonLabels" . | nindent 8 }}
+    spec:
+      {{- include "fsp.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-nginx
+      containers:
+        - name: nginx
+          image: {{ include "fsp.image" .Values.images.nginx | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - |
+              certificate_checksum="$(sha256sum /etc/nginx/tls/tls.crt /etc/nginx/tls/tls.key)"
+              (
+                while sleep 300; do
+                  updated_checksum="$(sha256sum /etc/nginx/tls/tls.crt /etc/nginx/tls/tls.key)"
+                  if [ "$updated_checksum" != "$certificate_checksum" ]; then
+                    certificate_checksum="$updated_checksum"
+                    nginx -s reload
+                  fi
+                done
+              ) &
+              exec nginx -g 'daemon off;'
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          resources:
+            {{- toYaml .Values.nginx.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: tls
+              mountPath: /etc/nginx/tls
+              readOnly: true
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: fsp-nginx
+        - name: tls
+          secret:
+            secretName: {{ .Values.nginx.certificateSecretName }}
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fsp-nginx
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.nginx.disruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-nginx
+{{- if .Values.nginx.privateService.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsp-nginx-private
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: {{ required "nginx.privateService.subnet is required" .Values.nginx.privateService.subnet | quote }}
+    service.beta.kubernetes.io/azure-load-balancer-ipv4: {{ required "nginx.privateService.ipAddress is required" .Values.nginx.privateService.ipAddress | quote }}
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: fsp-nginx
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsp-nginx-public
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fsp-nginx
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+{{- end }}

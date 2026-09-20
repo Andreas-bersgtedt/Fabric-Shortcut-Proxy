@@ -201,14 +201,18 @@ extra remains accepted but installs no additional package.
 
 ## 9.9 Related documents
 
-- [CONFIGURATION.md](../CONFIGURATION.md) — complete settings and reflection reference
-- [TechnicalArchitecture.md](../TechnicalArchitecture.md) — component flow diagrams
-- [SECURITY.md](../SECURITY.md) — authentication, TLS, and audit policy
-- [DELTA_FORMAT.md](../DELTA_FORMAT.md) — native Delta output
-- [TOKENIZATION_PUSHDOWN.md](../TOKENIZATION_PUSHDOWN.md) — tokenization design
-- [CONNECTIVITY_SETUP.md](../CONNECTIVITY_SETUP.md) — network patterns
-- [EXTERNAL_LB_RUNBOOK.md](../EXTERNAL_LB_RUNBOOK.md) and [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md) — scaling
-- [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](../ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md) — Oracle/Databricks operations
+- [CONFIGURATION.md](../CONFIGURATION.md): complete settings and reflection reference
+- [TechnicalArchitecture.md](../TechnicalArchitecture.md): component flow diagrams
+- [SECURITY.md](../SECURITY.md): authentication, TLS, and audit policy
+- [DELTA_FORMAT.md](../DELTA_FORMAT.md): native Delta output
+- [TOKENIZATION_PUSHDOWN.md](../TOKENIZATION_PUSHDOWN.md): tokenization design
+- [CONNECTIVITY_SETUP.md](../CONNECTIVITY_SETUP.md): network patterns
+- [Enterprise_Deployment_guide.md](../Enterprise_Deployment_guide.md): AKS design and topology
+- [infra/fsp-demo/README.md](../../infra/fsp-demo/README.md): Bicep, startup, and Helm runbook
+- [deploy/helm/fabric-shortcut-proxy/README.md](../../deploy/helm/fabric-shortcut-proxy/README.md): chart values and release lifecycle
+- [HELM_MIGRATION_GUIDE.md](../HELM_MIGRATION_GUIDE.md): Kustomize ownership adoption
+- [EXTERNAL_LB_RUNBOOK.md](../EXTERNAL_LB_RUNBOOK.md) and [SCALE_ARCHITECTURE_PLAN.md](../SCALE_ARCHITECTURE_PLAN.md): scaling
+- [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](../ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md): Oracle/Databricks operations
 
 This is the last reference chapter. For end-to-end worked examples, see
 [Chapter 10: Tutorials](10-tutorials.md), or return to the [manual index](README.md) for the

@@ -1,0 +1,178 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-cpp-agent
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    app.kubernetes.io/name: fsp-cpp-agent
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.cppAgent.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-cpp-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsp-cpp-agent
+        app.kubernetes.io/component: serving
+        {{- include "fsp.commonLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "fsp.serviceAccountName" . }}
+      {{- include "fsp.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-cpp-agent
+      containers:
+        - name: agent
+          image: {{ include "fsp.image" .Values.images.cpp | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            - name: HOST
+              value: 0.0.0.0
+            - name: PORT
+              value: "9400"
+            - name: STORE_DIR
+              value: /artifacts
+            - name: INDEX_FILE
+              value: /var/lib/fsp/objects.index
+            - name: REQUIRE_GENERATION
+              value: "1"
+            - name: INDEX_REFRESH_SECONDS
+              value: "5"
+            - name: AGENT_DRAIN_GRACE_SECONDS
+              value: "15"
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: fsp-common
+                  key: S3_BUCKET
+            - name: AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MANAGER_AUTH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sourceSecret.name }}
+                  key: MANAGER_AUTH_USERNAME
+                  optional: true
+            - name: MANAGER_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sourceSecret.name }}
+                  key: MANAGER_AUTH_PASSWORD
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 9400
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.cppAgent.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+              readOnly: true
+            - name: index
+              mountPath: /var/lib/fsp
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: fsp-artifacts
+        - name: index
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shortcut-proxy
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    app.kubernetes.io/name: fsp-cpp-agent
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fsp-cpp-agent
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if .Values.cppAgent.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fsp-cpp-agent
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fsp-cpp-agent
+  minReplicas: {{ .Values.cppAgent.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.cppAgent.autoscaling.maxReplicas }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: {{ .Values.cppAgent.autoscaling.scaleDownStabilizationSeconds }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.cppAgent.autoscaling.targetCpuUtilization }}
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fsp-cpp-agent
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.cppAgent.disruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-cpp-agent

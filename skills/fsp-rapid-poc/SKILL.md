@@ -15,7 +15,7 @@ target that answers the question:
 | --- | --- |
 | Prove the proxy and S3 read path on one machine | Lite |
 | Prove the multi-worker Kubernetes image and artifact flow | Local `kind` |
-| Prove the private AKS Service, source, and Fabric network path | AKS validation |
+| Prove the private AKS Service, source, and Fabric network path | AKS Helm validation |
 
 This skill is for evaluation and integration discovery. It does not establish production HA,
 backup, TLS, capacity, public ingress, or a security review.
@@ -98,37 +98,39 @@ kubectl -n fabric-shortcut-proxy exec fsp-smoke-client -- curl -fsS http://short
 Use `kubectl -n fabric-shortcut-proxy logs fsp-materializer-0` when readiness waits on snapshot
 publication. This path uses disposable local storage and is not an AKS durability test.
 
-## Path C: AKS Validation POC
+## Path C: AKS Helm Validation POC
 
 Use this when the cluster and private network already exist. Complete the
 [infrastructure prerequisites](../fsp-infrastructure-prerequisites/SKILL.md) first.
 
-1. Confirm AKS is running and the source Secret, `fsp-common` ConfigMap, artifact PVC, Manager,
-   and intended Agent workload are present.
-2. Render the overlay before applying it:
+1. Create the ignored local Bicep, deployment, ingress, and Helm values from their sanitized
+   examples. Confirm AKS is running and create the `fsp-source` Secret outside Helm.
+2. Lint and render the same chart used in production:
 
-```bash
-kubectl kustomize deploy/kubernetes/overlays/aks-validation
+```powershell
+helm lint deploy/helm/fabric-shortcut-proxy `
+  -f deploy/helm/fabric-shortcut-proxy/values-enterprise-demo.local.yaml
+helm template fsp deploy/helm/fabric-shortcut-proxy `
+  -f deploy/helm/fabric-shortcut-proxy/values-enterprise-demo.local.yaml `
+  --namespace fabric-shortcut-proxy
 ```
 
-3. Apply the validation overlay. It adds `fsp-materializer-internal`, an Azure internal
-   LoadBalancer on port `9000`, while keeping the headless StatefulSet Service.
+3. Run the deployment preflight and atomic Helm upgrade through private AKS Run Command:
 
-```bash
-kubectl apply -k deploy/kubernetes/overlays/aks-validation
-kubectl -n fabric-shortcut-proxy get pods,svc,pvc
-kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal -o wide
-kubectl -n fabric-shortcut-proxy get endpointslice \
-  -l kubernetes.io/service-name=fsp-materializer-internal -o wide
+```powershell
+./infra/fsp-demo/Deploy-FspDemo.ps1 -WhatIf
+./infra/fsp-demo/Deploy-FspDemo.ps1
+az aks command invoke --resource-group <resource-group> --name <aks-name> `
+  --command "helm status fsp -n fabric-shortcut-proxy && kubectl -n fabric-shortcut-proxy get pods,svc,pvc,certificate"
 ```
 
-4. Create or update the private DNS A record to the Service `EXTERNAL-IP`. Use a hostname such
-   as `agent-poc.<private-zone>` for the Fabric shortcut or OPDG, with port `9000`.
+4. Create or update the private DNS A record for the fixed `fsp-nginx-private` IP. Use a hostname
+   such as `agent-poc.<private-zone>` for the Fabric shortcut or OPDG on HTTPS port `443`.
 5. Verify from the OPDG, jump box, or other client network, not only from the operator laptop:
 
 ```powershell
 Resolve-DnsName agent-poc.<private-zone>
-Test-NetConnection agent-poc.<private-zone> -Port 9000
+Test-NetConnection agent-poc.<private-zone> -Port 443
 ```
 
 6. Test `/healthz`, `/readyz`, and one authenticated `HEAD` or `GET` for a known object. A
@@ -156,8 +158,9 @@ kubectl delete -k deploy/kubernetes/overlays/kind
 kind delete cluster --name fsp-proof
 ```
 
-AKS: remove only the POC namespace/workloads and DNS record after recording results. Do not delete
-shared production PVCs, artifact storage, Key Vault secrets, or the AKS cluster as POC cleanup.
+AKS: use Helm history and rollback for a shared environment. Do not use `helm uninstall` as data
+cleanup; Namespace, PVs, and PVCs are retained. Delete a dedicated POC environment only through
+its approved Bicep and retention process.
 
 ## Next Step
 
@@ -169,5 +172,7 @@ skills before sharing it with users or connecting production Fabric workloads.
 
 - [Installation manual](../../docs/manual/04-installation.md)
 - [Kubernetes proof](../../deploy/kubernetes/README.md)
+- [Helm chart](../../deploy/helm/fabric-shortcut-proxy/README.md)
+- [Enterprise AKS runbook](../../infra/fsp-demo/README.md)
 - [Connectivity setup](../../docs/CONNECTIVITY_SETUP.md)
 - [Configuration manual](../../docs/CONFIGURATION.md)

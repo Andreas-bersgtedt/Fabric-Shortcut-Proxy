@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fsp-common
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+data:
+  S3_BUCKET: {{ .Values.fsp.s3Bucket | quote }}
+  ARTIFACT_STORE_BACKEND: {{ .Values.fsp.artifactStoreBackend | quote }}
+  ARTIFACT_STORE_DIR: {{ .Values.fsp.artifactStoreDir | quote }}
+  ARTIFACT_STORE_SERVING: {{ .Values.fsp.artifactStoreServing | quote }}
+  MATERIALIZE_MODE: {{ .Values.fsp.materializeMode | quote }}
+  AGENT_SHARD_COUNT: {{ .Values.materializer.replicas | quote }}
+  SHARD_STRATEGY: {{ .Values.fsp.shardStrategy | quote }}
+  MATERIALIZE_WAIT_SECONDS: {{ .Values.fsp.materializeWaitSeconds | quote }}
+  GENERATION_SOURCE_CONSISTENCY: {{ .Values.fsp.generationSourceConsistency | quote }}
+  MANAGER_URL: http://fsp-manager:9200
+  STREAMING_PARQUET: {{ .Values.fsp.streamingParquet | quote }}
+  STREAM_BATCH_ROWS: {{ .Values.fsp.streamBatchRows | quote }}
+  SOURCE_MAX_CONCURRENCY: {{ .Values.fsp.sourceMaxConcurrency | quote }}
+  MAX_CONCURRENT_GENERATIONS: {{ .Values.fsp.maxConcurrentGenerations | quote }}
+  PIN_MATERIALIZED_SPLITS: {{ .Values.fsp.pinMaterializedSplits | quote }}
+  REQUIRE_SIGV4: {{ .Values.fsp.requireSigV4 | quote }}
+  FSP_AUTH_MODE: {{ .Values.fsp.authMode | quote }}
+  FSP_KEYVAULT_WRITE_BACK: {{ .Values.fsp.keyVaultWriteBack | quote }}
+  {{- with .Values.fsp.keyVaultUri }}
+  FSP_KEYVAULT_URI: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.fsp.azureTenantId }}
+  AZURE_TENANT_ID: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.fsp.azureClientId }}
+  AZURE_CLIENT_ID: {{ . | quote }}
+  {{- end }}

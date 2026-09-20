@@ -32,13 +32,17 @@ Keep the Manager control plane private to administrators. Give Fabric or OPDG on
 1. Choose the Azure subscription, region, resource group, AKS VNet, application subnet, admin VNet, and private DNS ownership.
 2. Create or identify a private ACR and grant the AKS kubelet identity pull permission.
 3. Create or identify Key Vault and choose managed identity, service principal, or default Azure credential. Grant only the required secret read/write permissions.
-4. Create the private AKS cluster, namespace, node pools, and workload identity/RBAC model.
-4. Provision persistent storage: Manager configuration storage and an RWX artifact volume such as Azure NetApp Files where multiple Agents require shared artifacts.
-5. Create private endpoints and DNS links for ACR, Key Vault, source SQL, and other private services. Verify that AKS resolves private addresses, not public addresses.
-6. Peer the admin and AKS VNets in both directions. Add NSG/firewall rules for only the required paths.
-7. Prepare the jump box with Azure CLI, `kubectl`, Docker, Git, and network test tools. Use private AKS API access where required.
-8. Deploy the AKS overlay's `fsp-materializer-internal` Service, which creates an Azure internal LoadBalancer on port `9000` in the `aks-app` subnet. Reserve or record its frontend IP, then create the Agent private DNS A record.
-9. Prepare the OPDG host, if using a Fabric S3-compatible shortcut, and confirm it can resolve and reach the private data-plane name on port `9000`.
+4. Populate `main.local.bicepparam`, run Bicep what-if, and provision the private AKS cluster,
+  node pools, workload identity, ACR, Key Vault, Azure Files shares, and network resources.
+5. Keep Kubernetes Namespace, ConfigMap, Services, PVs, and PVCs under Helm ownership rather
+  than creating parallel copies manually.
+6. Create private endpoints and DNS links for ACR, Key Vault, source SQL, and other private services. Verify that AKS resolves private addresses, not public addresses.
+7. Peer the admin and AKS VNets in both directions. Add NSG/firewall rules for only the required paths.
+8. Prepare the operator host with Azure CLI, Helm 3.18.6, Git, and network test tools. Private
+  cluster workload operations use `az aks command invoke`; direct kubectl access is optional.
+9. Configure the Helm chart's `fsp-nginx-private` Service with a fixed IP in the application
+  subnet, then create the private DNS A record.
+10. Prepare the OPDG host, if used, and confirm it reaches the private HTTPS endpoint on port 443.
 
 ## Private Networking Checks
 
@@ -63,15 +67,19 @@ Expected results are private DNS answers, reachable TCP ports, and no public rou
 
 ## Internal Load Balancer and Private Link
 
-For the AKS data plane, apply the AKS validation overlay. It preserves `fsp-materializer` as the StatefulSet's headless service and adds `fsp-materializer-internal` as the dedicated Azure internal LoadBalancer on port `9000`:
+The production Helm chart creates `fsp-nginx-private`, an Azure internal LoadBalancer on port
+443. It selects the in-cluster FSP nginx TLS proxy, which forwards data requests to the Python
+materializers. The private IP and subnet are required Helm values.
 
-```bash
-kubectl apply -k deploy/kubernetes/overlays/aks-validation
-kubectl -n fabric-shortcut-proxy get svc fsp-materializer-internal \
-  -o wide
+```powershell
+./infra/fsp-demo/Deploy-FspDemo.ps1 -WhatIf
+az aks command invoke --resource-group <resource-group> --name <aks-cluster> `
+  --command "kubectl -n fabric-shortcut-proxy get svc fsp-nginx-private -o wide"
 ```
 
-The Service selects only ready Agent pods through the Kubernetes readiness gate and uses the `aks-app` subnet annotation. Read the assigned `EXTERNAL-IP` from the Service and publish the Agent hostname to private DNS. Do not hardcode a pod IP or reuse an old frontend IP after recreating the Service.
+Publish the configured private IP behind private DNS. Do not hardcode a pod IP or ClusterIP.
+The `deploy/kubernetes/overlays/aks-validation` overlay is retained only for focused development
+validation and is not the enterprise release definition.
 
 An AKS stop/start causes a temporary data-plane outage while nodes and Agent pods recover, but it
 normally preserves this Service frontend. A Service deletion and recreation can allocate a new
@@ -117,7 +125,9 @@ Infrastructure is ready when the AKS API is reachable from the jump box, AKS pod
 
 ## References
 
+- [Enterprise AKS runbook](../../infra/fsp-demo/README.md)
 - [Enterprise deployment guide](../../docs/Enterprise_Deployment_guide.md)
+- [Helm chart reference](../../deploy/helm/fabric-shortcut-proxy/README.md)
 - [Connectivity setup](../../docs/CONNECTIVITY_SETUP.md)
 - [Installation manual](../../docs/manual/04-installation.md)
 - [Security](../../docs/SECURITY.md)

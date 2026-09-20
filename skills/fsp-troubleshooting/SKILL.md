@@ -28,6 +28,8 @@ git -C /opt/fabric-shortcut-proxy log --oneline -1
 On Windows, inspect the Manager terminal/service log and confirm the `.venv` path. In AKS:
 
 ```bash
+helm status fsp -n fabric-shortcut-proxy
+helm history fsp -n fabric-shortcut-proxy
 kubectl -n fabric-shortcut-proxy get pods,svc,endpointslices
 kubectl -n fabric-shortcut-proxy logs deployment/fsp-manager --tail=200
 ```
@@ -90,8 +92,10 @@ register that exact URI in the Entra SPA application.
 
 - If `/healthz` fails, inspect process startup, bind host, port collision, and logs.
 - If `/healthz` works but `/readyz` is `503`, inspect source DB reachability, schema reflection, snapshot/materialization errors, or missing ready Agents.
-- If localhost works but a private endpoint fails, test DNS resolution, route, NSG/firewall, the `fsp-materializer-internal` Service frontend and port `9000`, internal LoadBalancer health probes, and TLS termination.
-- If the gateway still targets `10.60.2.16`, treat it as stale until the current `EXTERNAL-IP` of `fsp-materializer-internal` is confirmed and the private DNS A record is updated.
+- If localhost works but the enterprise private endpoint fails, test DNS, route, NSG/firewall,
+	the fixed `fsp-nginx-private` frontend on port `443`, certificate readiness, and nginx pods.
+- If a gateway targets an old address, compare private DNS with the configured
+	`nginx.privateService.ipAddress` and the current `fsp-nginx-private` frontend.
 - A stopped and restarted AKS cluster can be temporarily unavailable while nodes and Agent pods recover. A changed IP after the outage points to Service or LoadBalancer recreation; compare `EXTERNAL-IP` with private DNS before investigating application authentication.
 - In AKS, check Service selectors and EndpointSlices before changing application code. Never point production DNS at a pod IP.
 - Manager `/healthz` is process health; Manager `/readyz` can be fleet readiness and may be non-200 with zero registered Agents.
@@ -115,3 +119,5 @@ After each corrective change, rerun the smallest failing check, then `/healthz`,
 - [Connectivity setup](../../docs/CONNECTIVITY_SETUP.md)
 - [Security](../../docs/SECURITY.md)
 - [Enterprise deployment guide](../../docs/Enterprise_Deployment_guide.md)
+- [Enterprise AKS runbook](../../infra/fsp-demo/README.md)
+- [Helm migration guide](../../docs/HELM_MIGRATION_GUIDE.md)

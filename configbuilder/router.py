@@ -404,7 +404,7 @@ async def delete_tokenization_key(key_ref: str, request: Request) -> JSONRespons
 @router.get("/api/tokenization/policies")
 async def tokenization_policies() -> JSONResponse:
     """Return the central policy catalog without returning secret values."""
-    from tokenization import algorithm_specs, load_default_registry
+    from tokenization import algorithm_specs, default_registry_path, load_default_registry
 
     try:
         registry = load_default_registry()
@@ -412,7 +412,7 @@ async def tokenization_policies() -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
     return JSONResponse({
         "ok": True,
-        "path": os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"),
+        "path": default_registry_path(),
         "algorithms": [spec.name for spec in algorithm_specs()],
         "policies": registry.list_public(),
     })
@@ -535,12 +535,14 @@ async def save_tokenization_policy(request: Request) -> JSONResponse:
     except PermissionError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
     try:
-        from tokenization import TokenizationPolicy, load_default_registry, save_registry
+        from tokenization import (
+            TokenizationPolicy, default_registry_path, load_default_registry, save_registry,
+        )
         body = await request.json()
         policy = TokenizationPolicy.from_dict(body)
         registry = load_default_registry()
         registry.replace(policy)
-        save_registry(os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"), registry)
+        save_registry(default_registry_path(), registry)
     except (ValueError, TypeError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     log.info("tokenization_policy_saved", policy_id=policy.policy_id, enabled=policy.enabled)
@@ -555,10 +557,10 @@ async def disable_tokenization_policy(policy_id: str, request: Request) -> JSONR
     except PermissionError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=401)
     try:
-        from tokenization import load_default_registry, save_registry
+        from tokenization import default_registry_path, load_default_registry, save_registry
         registry = load_default_registry()
         registry.disable(policy_id)
-        save_registry(os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json"), registry)
+        save_registry(default_registry_path(), registry)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
     log.info("tokenization_policy_disabled", policy_id=policy_id)

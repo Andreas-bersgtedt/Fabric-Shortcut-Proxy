@@ -353,7 +353,11 @@ def save_registry(path: str, registry: TokenizationPolicyRegistry) -> None:
 
 def default_registry_path() -> str:
     """Return the operator-selected policy file without importing application config."""
-    return os.environ.get("TOKENIZATION_POLICY_FILE", "config.tokenization.json")
+    configured = os.environ.get("TOKENIZATION_POLICY_FILE", "").strip()
+    if configured:
+        return configured
+    config_dir = os.environ.get("FSP_CONFIG_DIR", "").strip()
+    return os.path.join(config_dir, "config.tokenization.json") if config_dir else "config.tokenization.json"
 
 
 def load_default_registry() -> TokenizationPolicyRegistry:

@@ -212,6 +212,46 @@ def test_default_registry_uses_operator_selected_path(tmp_path, monkeypatch):
     assert load_default_registry().list_public() == registry.list_public()
 
 
+def test_default_registry_uses_fsp_config_dir(tmp_path, monkeypatch):
+    monkeypatch.delenv("TOKENIZATION_POLICY_FILE", raising=False)
+    monkeypatch.setenv("FSP_CONFIG_DIR", str(tmp_path))
+
+    assert default_registry_path() == str(tmp_path / "config.tokenization.json")
+
+
+async def test_config_builder_policy_mutation_uses_fsp_config_dir(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+
+    monkeypatch.delenv("TOKENIZATION_POLICY_FILE", raising=False)
+    monkeypatch.setenv("FSP_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
+    from configbuilder.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    payload = {
+        "policy_id": "customer-pii-v1", "kind": "durable_token",
+        "key_ref": "customer-pii-v1", "domain": "customer-email",
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        saved = await client.post(
+            "/_config/api/tokenization/policies", json=payload,
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+        catalog = await client.get(
+            "/_config/api/tokenization/policies",
+            headers={"X-Admin-Token": "admin-test-token"},
+        )
+
+    assert saved.status_code == 200
+    assert (tmp_path / "config.tokenization.json").is_file()
+    assert catalog.json()["path"] == str(tmp_path / "config.tokenization.json")
+    assert catalog.json()["policies"][0]["policy_id"] == "customer-pii-v1"
+
+
 async def test_config_builder_policy_catalog_is_secret_free(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI

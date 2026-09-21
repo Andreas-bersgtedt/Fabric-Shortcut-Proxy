@@ -24,6 +24,7 @@ data:
   REQUIRE_SIGV4: {{ .Values.fsp.requireSigV4 | quote }}
   FSP_AUTH_MODE: {{ .Values.fsp.authMode | quote }}
   FSP_KEYVAULT_WRITE_BACK: {{ .Values.fsp.keyVaultWriteBack | quote }}
+  TOKENIZATION_POLICY_FILE: /config/config.tokenization.json
   {{- with .Values.fsp.keyVaultUri }}
   FSP_KEYVAULT_URI: {{ . | quote }}
   {{- end }}

@@ -79,6 +79,7 @@ def test_enterprise_render_contains_complete_demo() -> None:
     assert counts["ClusterIssuer"] == 1
     assert 'S3_BUCKET: "fsp-demo"' in rendered
     assert 'S3_BUCKET: "fabric-iceberg-poc"' not in rendered
+    assert "TOKENIZATION_POLICY_FILE: /config/config.tokenization.json" in rendered
 
 
 @pytest.mark.parametrize(

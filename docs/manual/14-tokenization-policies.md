@@ -24,7 +24,10 @@ relationship and are incompatible with content-hash refresh.
 Use the Config Builder **Security** area. Creating or changing a policy requires
 `tokenization.policy.admin`; listing policies requires `tokenization.policy.read`.
 The builder writes the secret-free catalog to `config.tokenization.json` by default.
-Set `TOKENIZATION_POLICY_FILE` to use another path.
+When `FSP_CONFIG_DIR` is set, the default is
+`$FSP_CONFIG_DIR/config.tokenization.json`. Set `TOKENIZATION_POLICY_FILE` to use another
+path. AKS must place the catalog on the writable Manager config volume, normally
+`/config/config.tokenization.json`; the application image root is read-only.
 
 A durable policy needs a stable id, `sha256`, a key reference, domain, and
 normalization rule. A random policy has no key reference.

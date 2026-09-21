@@ -17,7 +17,10 @@ argument-hint: "Describe the source dialect, columns to protect, token behavior,
 ## Policy Model
 
 Central policies are stored in `config.tokenization.json` by default. Set
-`TOKENIZATION_POLICY_FILE` to use another path. The catalog contains no key values.
+`TOKENIZATION_POLICY_FILE` to use another path. When `FSP_CONFIG_DIR` is set, the default
+catalog lives under that directory. In AKS, verify the effective path is
+`/config/config.tokenization.json` on the writable Manager config PVC before diagnosing
+authorization or policy syntax. The catalog contains no key values.
 
 A table-side selection contains one of these actions:
 

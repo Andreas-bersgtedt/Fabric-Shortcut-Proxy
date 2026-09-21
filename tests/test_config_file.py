@@ -246,3 +246,18 @@ def test_effective_settings_reads_system_file(tmp_path, monkeypatch):
     assert by_key["keyvault_uri"]["source"] == "file"
     assert by_key["enable_gateway"]["value"] is True
     assert by_key["enable_gateway"]["source"] == "file"
+
+
+def test_effective_settings_reports_s3_bucket_environment_override(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.system.json").write_text(
+        json.dumps({"system": {"bucket": "fsp_demo"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("S3_BUCKET", "deployment-bucket")
+
+    bucket = {s["key"]: s for s in config.effective_settings()}["bucket"]
+
+    assert bucket["env"] == "S3_BUCKET"
+    assert bucket["value"] == "deployment-bucket"
+    assert bucket["source"] == "env"

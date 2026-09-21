@@ -57,7 +57,9 @@ schema, remote Helm ownership support, and the existing source Secret before mut
 ## Values
 
 - `images`: immutable application image digests and optional pull Secret names.
-- `fsp`: shared runtime configuration. Credentials do not belong here.
+- `fsp`: shared runtime configuration. Set `fsp.s3Bucket` explicitly for each environment;
+  Helm publishes it as `S3_BUCKET`, which overrides the Config UI's persisted `bucket` value.
+  Keep both values identical. Credentials do not belong here.
 - `workloadIdentity`: Azure workload identity service account configuration.
 - `storage`: dynamic storage defaults or static Azure Files NFS volumes.
 - `manager`, `materializer`, `cppAgent`: workload sizing and feature settings.

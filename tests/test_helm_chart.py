@@ -67,7 +67,8 @@ def test_base_render_contains_core_fleet_only() -> None:
 
 
 def test_enterprise_render_contains_complete_demo() -> None:
-    counts = _kind_counts(_render("-f", str(EXAMPLE_VALUES)))
+    rendered = _render("-f", str(EXAMPLE_VALUES))
+    counts = _kind_counts(rendered)
 
     assert sum(counts.values()) == 27
     assert counts["Deployment"] == 3
@@ -76,6 +77,8 @@ def test_enterprise_render_contains_complete_demo() -> None:
     assert counts["Ingress"] == 2
     assert counts["Certificate"] == 1
     assert counts["ClusterIssuer"] == 1
+    assert 'S3_BUCKET: "fsp-demo"' in rendered
+    assert 'S3_BUCKET: "fabric-iceberg-poc"' not in rendered
 
 
 @pytest.mark.parametrize(

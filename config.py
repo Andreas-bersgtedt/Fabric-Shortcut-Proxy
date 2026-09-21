@@ -179,7 +179,7 @@ _register("TABLE_RETRY_SECONDS", "table_retry_seconds", "int", TABLE_RETRY_SECON
 
 # Register system settings so they're recognized by the config builder UI
 # (these are imported from system_config, so we register them manually)
-_register("BUCKET_NAME", "bucket", "str", BUCKET_NAME)
+_register("S3_BUCKET", "bucket", "str", BUCKET_NAME)
 _register("S3_ACCESS_KEY_ID", "access_key_id", "str", ACCESS_KEY_ID)
 _register("S3_SECRET_ACCESS_KEY", "secret_access_key", "str", SECRET_ACCESS_KEY)
 _register("REQUIRE_SIGV4", "require_sigv4", "bool", REQUIRE_SIGV4)

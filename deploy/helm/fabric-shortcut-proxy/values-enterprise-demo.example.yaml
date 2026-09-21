@@ -9,6 +9,7 @@ images:
     digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
 
 fsp:
+  s3Bucket: fsp-demo
   materializeMode: virtual
   streamBatchRows: "500000"
   requireSigV4: "1"

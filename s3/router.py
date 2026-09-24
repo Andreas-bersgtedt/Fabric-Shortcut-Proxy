@@ -602,6 +602,11 @@ async def head_object(
 
     metrics.record_s3_request("head", metrics.classify_key(key))
     key = _normalize_incoming_key(key)
+    # FSP does not create S3 folder-marker objects. Return the expected 404
+    # before deferred materialization so a folder probe cannot block on SQL.
+    if key.endswith("/"):
+        log.debug("head_object_not_found", key=key)
+        return FastAPIResponse(status_code=404)
     # Delta readers probe this optional checkpoint marker before listing JSON
     # commits. It is intentionally absent in our v1/v2 log, so return the
     # normal S3 404 without triggering lazy materialization or generation

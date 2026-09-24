@@ -500,6 +500,26 @@ async def test_delta_commit_trailing_slash_is_literal_key(delta_client):
     assert slash_get.status_code == 404
 
 
+async def test_delta_folder_head_does_not_trigger_virtual_materialization(
+    delta_client, monkeypatch
+):
+    from runtime import materializer
+
+    async def unexpected_materialization(_snap):
+        raise AssertionError("folder HEAD must not trigger materialization")
+
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "virtual")
+    monkeypatch.setattr(
+        materializer, "ensure_snapshot_materialized", unexpected_materialization
+    )
+
+    response = await delta_client.head(
+        f"/delta-bucket/{config.WAREHOUSE_PREFIX}/sales/_delta_log/"
+    )
+
+    assert response.status_code == 404
+
+
 async def test_delta_parquet_trailing_slash_is_literal_key(delta_client):
     r = await delta_client.get(f"/delta-bucket?list-type=2&prefix={config.WAREHOUSE_PREFIX}/")
     keys = _extract_keys(r.content)

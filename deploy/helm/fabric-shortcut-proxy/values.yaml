@@ -7,7 +7,7 @@ images:
   pullSecrets: []
   python:
     repository: fabric-shortcut-proxy-python
-    tag: "2.9.4"
+    tag: "2.9.3"
     digest: ""
   cpp:
     repository: fabric-shortcut-proxy-cpp

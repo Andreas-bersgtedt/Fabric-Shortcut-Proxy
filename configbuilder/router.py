@@ -62,7 +62,7 @@ def _package_version() -> str:
     try:
         return package_version("fabric-shortcut-proxy")
     except PackageNotFoundError:
-        return "2.9.4"
+        return "2.9.3"
 
 
 # ---------------------------------------------------------------------------

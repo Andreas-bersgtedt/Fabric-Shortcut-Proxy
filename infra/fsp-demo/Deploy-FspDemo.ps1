@@ -245,10 +245,7 @@ try {
     Invoke-Native $helmPath @("template", $releaseName, $chartPath, "-f", $valuesPath, "--namespace", $namespace) | Out-Null
     Invoke-Native $helmPath @("package", $chartPath, "--destination", $temporaryDirectory) | Write-Host
 
-    $chartArchive = Get-ChildItem $temporaryDirectory -Filter "fabric-shortcut-proxy-*.tgz"
-    if (@($chartArchive).Count -ne 1) {
-        throw "Expected exactly one packaged chart archive in $temporaryDirectory, found $(@($chartArchive).Count)."
-    }
+    $chartArchive = Get-ChildItem $temporaryDirectory -Filter "fabric-shortcut-proxy-*.tgz" | Select-Object -Single
     $attachedValues = Join-Path $temporaryDirectory "fsp-values.yaml"
     $attachedIngressValues = Join-Path $temporaryDirectory "ingress-values.yaml"
     Copy-Item $valuesPath $attachedValues

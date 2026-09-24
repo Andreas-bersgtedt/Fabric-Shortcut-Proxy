@@ -23,17 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Narrowed demo ignore rules to local environment inputs and generated Bicep output; reusable
   infrastructure, chart, scripts, examples, and documentation are visible to Git.
 
-## [2.9.4]: 2026-09-24
-
-### Fixed
-
-- Returned an immediate S3 404 for HEAD requests on trailing-slash "folder
-  probe" keys before invoking deferred (lazy/virtual) materialization.
-  Fabric's Delta log discovery HEAD on `_delta_log/` no longer triggers a
-  full on-demand SQL + Parquet materialization pass, which previously hung
-  until the client's own timeout and surfaced in Fabric as `408
-  WebRequestTimeout` / "A task was canceled."
-
 ## [2.9.3]: 2026-09-18
 
 ### Fixed

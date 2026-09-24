@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fabric-shortcut-proxy-enterprise"
-version = "2.9.3"
+version = "2.9.4"
 description = "Scale-out (cluster) components for Fabric Shortcut Proxy: Manager control plane, agent link, retention GC, and the external-LB renderer."
 requires-python = ">=3.11"
 # Pinned to the exact Lite core it was built against. The enterprise wheel carries

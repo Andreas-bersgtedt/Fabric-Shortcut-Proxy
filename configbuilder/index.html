@@ -2340,6 +2340,10 @@ function policyLabel(kind){
   return ({keep:"Keep", deterministic_hash:"Deterministic token", random_token:"Random token", remove:"Remove"})[kind] || kind;
 }
 
+function materializeModeIsVirtual(){
+  return $("materializeMode").value === "virtual";
+}
+
 function policyErrors(entry){
   const errors = [];
   const kept = entry.columns.filter(column=>column.policy!=="remove");
@@ -2356,6 +2360,9 @@ function policyErrors(entry){
   const random = kept.some(column=>column.policy==="random_token");
   if(random && $("autoRefresh").checked && $("refreshStrategy").value==="content_hash"){
     errors.push("Random tokens cannot be used with content-hash refresh.");
+  }
+  if(random && materializeModeIsVirtual()){
+    errors.push("Random tokens cannot be used with materialize mode 'virtual' (regenerated splits must be byte-identical; random tokens never are). Use Deterministic token, or switch materialize mode to eager/lazy.");
   }
   return errors;
 }
@@ -2408,6 +2415,7 @@ function renderPolicyEditor(entry, opts){
   head.innerHTML="<span>Source column</span><span>Output name</span><span>Policy</span><span>Type</span>";
   editor.appendChild(head);
   const tokenCapable = opts.tokenCapable !== undefined ? opts.tokenCapable : connectionSupportsTokens(entry);
+  const virtualMode = materializeModeIsVirtual();
   for(const column of entry.columns){
     const row = document.createElement("div"); row.className="policy-row";
     const source = document.createElement("div"); source.className="policy-source"; source.textContent=column.source;
@@ -2416,10 +2424,18 @@ function renderPolicyEditor(entry, opts){
     output.oninput=()=>{ column.name=output.value; onEdit(); };
     const policy = document.createElement("select");
     for(const kind of ["keep","deterministic_hash","random_token","remove"]){
-      const option=document.createElement("option"); option.value=kind; option.textContent=policyLabel(kind);
+      // Random token is removed from the selection entirely under
+      // materialize_mode=virtual (splits must regenerate byte-identically,
+      // which a random token can never do). Still shown, disabled, if a
+      // column already carries that policy so the invalid state is visible
+      // and fixable rather than silently hidden.
+      if(kind==="random_token" && virtualMode && column.policy!=="random_token") continue;
+      const option=document.createElement("option"); option.value=kind;
+      option.textContent=policyLabel(kind) + (kind==="random_token" && virtualMode ? " (unavailable in virtual mode)" : "");
       option.selected=column.policy===kind;
       option.disabled=(kind!=="keep" && column.source===entry.key_column)
-        || ((kind==="deterministic_hash" || kind==="random_token") && !tokenCapable);
+        || ((kind==="deterministic_hash" || kind==="random_token") && !tokenCapable)
+        || (kind==="random_token" && virtualMode);
       policy.appendChild(option);
     }
     policy.title = tokenCapable ? "Select how this source column is exposed" : "Tokenization is not supported for this source";
@@ -2691,8 +2707,8 @@ function tableConfig(entry){
 }
 
 ["bucket","numSplits","tableFormat","materializeMode","requireSigv4","autoRefresh","refreshPoll","refreshStrategy","refreshTtl","refreshFullPull"].forEach(id=>{
-  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; });
-  $(id).addEventListener("change", ()=>{ if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") $("matHint").style.display = $(id).value!=="eager"?"block":"none"; });
+  $(id).addEventListener("input", ()=>{ saveForm(); if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") { $("matHint").style.display = $(id).value!=="eager"?"block":"none"; renderSelected(); } });
+  $(id).addEventListener("change", ()=>{ if(id==="autoRefresh") $("refreshOpts").style.display = $(id).checked?"block":"none"; if(id==="tableFormat") $("fmtHint").style.display = $(id).value==="delta"?"block":"none"; if(id==="materializeMode") { $("matHint").style.display = $(id).value!=="eager"?"block":"none"; renderSelected(); } });
 });
 
 $("btnApplyTables").onclick = applyTables;

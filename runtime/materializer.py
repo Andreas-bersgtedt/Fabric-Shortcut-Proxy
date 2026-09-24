@@ -102,12 +102,9 @@ def _apply_arrow_fallback(rows: list[dict], split) -> list[dict]:
     """Apply only explicitly selected Arrow fallback transforms to SQL rows."""
     if not rows:
         return rows
-    fallback = [column for column in arrow_fallback_columns(split) if column.transform]
-    if not fallback:
+    columns = arrow_fallback_columns(split)
+    if not any(column.transform for column in columns):
         return rows
-    original = split.table.schema
-    native_passthrough = [column for column in original if not column.transform]
-    columns = [*native_passthrough, *fallback]
     from storage.tokenizer import tokenize_batch
     batch = pa.RecordBatch.from_pylist(rows)
     return tokenize_batch(batch, columns).to_pylist()

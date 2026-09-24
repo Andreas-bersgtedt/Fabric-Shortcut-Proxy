@@ -367,6 +367,22 @@ def test_arrow_fallback_tokenizes_aliased_rows_before_parquet(monkeypatch):
     )
 
 
+def test_arrow_fallback_passes_through_native_pushdown_rows(monkeypatch):
+    """Regression: a natively SQL-pushed-down transform (e.g. MSSQL random_token)
+    must not be re-tokenized in Arrow. The query already renamed/computed the
+    column under its output name (``email_token``); re-running the tokenizer
+    would look for the original ``email`` source column, which the query no
+    longer returns, and raise TokenizerError — this previously broke
+    materialization of any table with a natively-pushed-down transform column
+    (e.g. AdventureWorksLT's SalesLT.Product.Weight)."""
+    from runtime.materializer import _apply_arrow_fallback
+
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    rows = [{"customer_id": 1, "email_token": "already-tokenized-by-sql"}]
+    transformed = _apply_arrow_fallback(rows, _table_split(_tokenized_table(random=True)))
+    assert transformed == rows
+
+
 def test_split_key_transform_is_rejected(monkeypatch):
     monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
     table = _tokenized_table()

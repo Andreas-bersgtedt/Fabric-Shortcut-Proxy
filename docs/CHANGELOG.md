@@ -23,6 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Narrowed demo ignore rules to local environment inputs and generated Bicep output; reusable
   infrastructure, chart, scripts, examples, and documentation are visible to Git.
 
+## [2.9.5]: 2026-09-24
+
+### Fixed
+
+- Fixed the Arrow tokenization fallback so columns whose transform is natively pushed
+  down into the source SQL (e.g. MSSQL `random_token` via `CONVERT(varchar(36),
+  NEWID())`) are treated as resolved passthrough instead of being re-tokenized
+  client-side against a source column name the SQL query no longer returns. This
+  previously raised `TokenizerError` on every materialization of any table with a
+  natively-tokenized column (e.g. `SalesLT.Product.Weight`), 500ing the table entirely.
+- Added a config validation error rejecting `random_token` transforms combined with
+  `MATERIALIZE_MODE=virtual`: virtual mode requires byte-identical split regeneration,
+  which a random token (a new value on every run, by design) can never satisfy. The
+  config builder UI now removes `Random token` from the column policy selection when
+  materialize mode is `virtual`, leaving Keep / Deterministic token / Remove.
+
 ## [2.9.3]: 2026-09-18
 
 ### Fixed

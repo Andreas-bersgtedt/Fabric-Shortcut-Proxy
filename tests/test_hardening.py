@@ -256,6 +256,18 @@ def test_validate_config_rejects_random_token_content_refresh(monkeypatch):
         config.validate_config()
 
 
+def test_validate_config_rejects_random_token_virtual_materialize_mode(monkeypatch):
+    # random_token (e.g. MSSQL NEWID()) produces a new value on every
+    # regeneration, which can never satisfy virtual mode's byte-identical
+    # regeneration requirement (see runtime.materializer._verify_determinism).
+    table = _transformed_table(config.ColumnTransform(kind="random_token"))
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
+    monkeypatch.setattr(config, "TABLES", [table])
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "virtual")
+    with pytest.raises(ValueError, match="incompatible with MATERIALIZE_MODE=virtual"):
+        config.validate_config()
+
+
 def test_redact_db_url_masks_password():
     assert (
         config.redact_db_url("mssql+aioodbc://user:s3cr3t@host/db")

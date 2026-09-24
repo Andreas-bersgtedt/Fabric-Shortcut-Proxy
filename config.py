@@ -868,6 +868,16 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
                         f"Table {t.name!r}: random_token is incompatible with "
                         "content-based auto-refresh."
                     )
+                if col.transform.kind == "random_token" and MATERIALIZE_MODE == "virtual":
+                    problems.append(
+                        f"Table {t.name!r}: random_token is incompatible with "
+                        "MATERIALIZE_MODE=virtual, which regenerates each split on "
+                        "demand and requires byte-identical output every time; "
+                        "random_token deliberately produces a new value on every "
+                        "regeneration. Use a deterministic transform "
+                        "(deterministic_hash) for this column, or switch "
+                        "MATERIALIZE_MODE to 'eager' or 'lazy'."
+                    )
 
     # Open Mirror projection policies use the same dialect capability and key
     # resolution rules as shortcut table projections.

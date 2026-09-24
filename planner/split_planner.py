@@ -415,10 +415,16 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
 
 
 def arrow_fallback_columns(split: SplitDescriptor) -> list:
-    """Return source projections with only unsupported transforms stripped.
+    """Return the full column list as it actually appears in the SQL result.
 
-    The original transform remains available to the materializer, which applies
-    those columns in Arrow after the source query returns.
+    Only columns whose transform backend is ``"arrow"`` still carry a
+    transform; the materializer applies those in Arrow after the source query
+    returns. Columns natively pushed down to SQL (backend ``"native"``) are
+    already fully resolved under their output name by the query itself, so
+    their transform is stripped here and their source is re-pointed at the
+    output name too — otherwise the materializer would try to re-tokenize an
+    already-tokenized value and look for a source column the query no longer
+    returns (it was rewritten to the output alias in SQL).
     """
     table = split.table
     dialect_caps = capabilities_for_db_url(config.effective_db_url(table.connection_id))
@@ -431,7 +437,9 @@ def arrow_fallback_columns(split: SplitDescriptor) -> list:
             continue
         backend = dialect_caps.tokenization_backend(transform.kind, "arrow" if allow_arrow else "none")
         if backend != "arrow":
-            columns.append(column)
+            # SQL already produced the final value under the output name;
+            # treat it as a plain passthrough, not a pending Arrow transform.
+            columns.append(replace(column, source=column.name, transform=None))
             continue
         # The query aliases the source into the output name; Arrow must therefore
         # read the returned output name while preserving the transform metadata.

@@ -119,7 +119,7 @@ def _make_async_engine(
 ) -> AsyncEngine:
     drivername = make_url(db_url).drivername.lower()
     engine_url, uses_workload_identity = _extract_mssql_workload_identity(db_url)
-    kwargs: dict = {"echo": False, "hide_parameters": True}
+    kwargs: dict = {"echo": False, "hide_parameters": True, "pool_pre_ping": True}
     # SQLite (including aiosqlite) uses StaticPool and does not accept
     # pool_size / max_overflow / pool_timeout.
     if "sqlite" not in drivername:
@@ -446,39 +446,63 @@ async def stream_split_query(
 
     Yields ``list[dict]`` partitions of up to ``batch_rows`` rows using a
     server-side/streaming result, so peak memory is ~one batch rather than the
-    whole split. Single-attempt (no mid-stream retry — a failure mid-stream
-    raises :class:`SourceUnavailable`); the non-streaming
-    :func:`execute_split_query` keeps the retrying path.
+    whole split. Connection or execution failures are retried only before the
+    first batch is yielded. A failure after yielding rows raises
+    :class:`SourceUnavailable` immediately to avoid duplicate output.
     """
-    try:
-        async with _gate_for(connection):
-            async with asyncio.timeout(_query_timeout_for(connection)):
-                log.info("sql_stream", split_index=split_index, sql=sql,
-                         params=_params_for_log(params), batch_rows=batch_rows,
-                         connection=connection,
-                         mode=("async" if _async_mode_for(connection) else "sync-fallback"))
+    max_retries = _max_retries_for(connection)
+    backoff = _retry_backoff_for(connection)
+    for attempt in range(max_retries + 1):
+        yielded_batch = False
+        try:
+            async with _gate_for(connection):
+                async with asyncio.timeout(_query_timeout_for(connection)):
+                    log.info("sql_stream", split_index=split_index, sql=sql,
+                             params=_params_for_log(params), batch_rows=batch_rows,
+                             connection=connection, attempt=attempt,
+                             mode=("async" if _async_mode_for(connection) else "sync-fallback"))
 
-                if _async_mode_for(connection):
-                    engine = _engine_for(connection)
-                    async with engine.connect() as conn:
-                        result = await conn.stream(text(sql), params)
-                        columns = list(result.keys())
-                        total = 0
-                        async for partition in result.partitions(batch_rows):
-                            total += len(partition)
-                            yield [dict(zip(columns, row)) for row in partition]
-                        log.info("sql_stream_complete", split_index=split_index, rows_returned=total)
-                else:
-                    rows = await _execute_once(sql, params, split_index, connection)
-                    total = len(rows)
-                    for i in range(0, total, batch_rows):
-                        yield rows[i:i + batch_rows]
-                    log.info("sql_stream_complete", split_index=split_index, rows_returned=total)
-    except (SourceUnavailable, asyncio.CancelledError):
-        raise
-    except Exception as exc:  # noqa: BLE001
-        log.error("query_stream_error", split_index=split_index, error=str(exc))
-        raise SourceUnavailable(f"streamed SQL query failed: {exc}") from exc
+                    if _async_mode_for(connection):
+                        engine = _engine_for(connection)
+                        async with engine.connect() as conn:
+                            result = await conn.stream(text(sql), params)
+                            columns = list(result.keys())
+                            total = 0
+                            async for partition in result.partitions(batch_rows):
+                                total += len(partition)
+                                yielded_batch = True
+                                yield [dict(zip(columns, row)) for row in partition]
+                            log.info("sql_stream_complete", split_index=split_index,
+                                     rows_returned=total, attempt=attempt)
+                    else:
+                        rows = await _execute_once(sql, params, split_index, connection)
+                        total = len(rows)
+                        for i in range(0, total, batch_rows):
+                            yielded_batch = True
+                            yield rows[i:i + batch_rows]
+                        log.info("sql_stream_complete", split_index=split_index,
+                                 rows_returned=total, attempt=attempt)
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if not yielded_batch and attempt < max_retries:
+                log.warning(
+                    "query_stream_retry",
+                    split_index=split_index,
+                    attempt=attempt,
+                    error=str(exc),
+                )
+                await asyncio.sleep(backoff * (attempt + 1))
+                continue
+            log.error(
+                "query_stream_error",
+                split_index=split_index,
+                attempt=attempt,
+                yielded_batch=yielded_batch,
+                error=str(exc),
+            )
+            raise SourceUnavailable(f"streamed SQL query failed: {exc}") from exc
 
 
 async def ping(timeout_seconds: float = 3.0, connection: str = "default") -> bool:

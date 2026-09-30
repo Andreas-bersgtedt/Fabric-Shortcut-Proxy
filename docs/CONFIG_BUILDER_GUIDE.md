@@ -40,6 +40,13 @@ Select **Save source** to store a credential in the encrypted credential store.
 The password is not returned to the browser after saving. Use **Save all database
 sources** when staged changes span several sources.
 
+Saved source rows have **Edit** and **Validate** actions. Edit restores the
+non-secret connection fields and leaves password, token, and client-secret fields
+blank. Validate uses the credential already held by the Manager, so a saved source
+can be checked after restart without entering its password again. A successful
+validation also makes that saved source ready for table changes; it is not necessary
+to open, test, and save an unchanged source before adding a table.
+
 Use **Files & object storage** in the same tab to configure local, S3-compatible,
 or Azure mounts. A mount bucket must not reuse the warehouse bucket name.
 
@@ -61,9 +68,17 @@ the new configuration.
 
 ## 4. Configure column policies
 
-In an expanded table, select **Edit column policies**. The split key is locked to
-**Keep**. For each other column, select Keep, Deterministic token, Random token,
-or Remove, and set the output name when needed.
+In an expanded table, select **Edit columns**. If the table uses an inferred schema,
+the builder validates it against the saved source and loads its columns before
+opening the editor. **Validate** refreshes source metadata and preserves existing
+output names and tokenization settings. A green **validated** badge confirms that
+the source columns and split key passed validation. Reflected output names are
+normalized for Parquet and SQL compatibility: spaces and punctuation become
+`_`, leading numbers receive a `_` prefix, and collisions receive a
+numeric suffix. For example, `Order Total` becomes `Order_Total`. The original
+source name remains in the mapping used to read the database. The split key is
+locked to **Keep**. For each other column, select Keep, Deterministic token,
+Random token, or Remove, and set the output name when needed.
 
 ![Column policy editor](images/config-builder-column-policies.png)
 

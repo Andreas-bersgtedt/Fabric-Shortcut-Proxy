@@ -110,6 +110,81 @@ async def test_stream_end_to_end_materialize(stream_db):
     assert _read(pq_bytes) == (100, list(range(1, 101)))
 
 
+async def test_stream_split_query_retries_before_first_batch(monkeypatch):
+    import db.executor as ex
+
+    attempts = 0
+
+    async def execute_once(sql, params, split_index, connection):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("connection reset")
+        return [{"id": 1}, {"id": 2}]
+
+    monkeypatch.setattr(ex, "_async_mode_for", lambda _connection: False)
+    monkeypatch.setattr(ex, "_execute_once", execute_once)
+    monkeypatch.setattr(ex, "_max_retries_for", lambda _connection: 2)
+    monkeypatch.setattr(ex, "_retry_backoff_for", lambda _connection: 0)
+
+    rows = []
+    async for batch in ex.stream_split_query(
+        "SELECT id FROM s", {}, split_index=0, batch_rows=10
+    ):
+        rows.extend(batch)
+
+    assert attempts == 2
+    assert rows == [{"id": 1}, {"id": 2}]
+
+
+async def test_stream_split_query_does_not_retry_after_first_batch(monkeypatch):
+    import db.executor as ex
+
+    class FailingResult:
+        def keys(self):
+            return ["id"]
+
+        async def partitions(self, _batch_rows):
+            yield [(1,)]
+            raise OSError("connection reset")
+
+    class Connection:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def stream(self, _sql, _params):
+            return FailingResult()
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+    connections = 0
+
+    def engine_for(_connection):
+        nonlocal connections
+        connections += 1
+        return Engine()
+
+    monkeypatch.setattr(ex, "_async_mode_for", lambda _connection: True)
+    monkeypatch.setattr(ex, "_engine_for", engine_for)
+    monkeypatch.setattr(ex, "_max_retries_for", lambda _connection: 2)
+    monkeypatch.setattr(ex, "_retry_backoff_for", lambda _connection: 0)
+
+    rows = []
+    with pytest.raises(ex.SourceUnavailable, match="connection reset"):
+        async for batch in ex.stream_split_query(
+            "SELECT id FROM s", {}, split_index=0, batch_rows=10
+        ):
+            rows.extend(batch)
+
+    assert rows == [{"id": 1}]
+    assert connections == 1
+
+
 # ---------------------------------------------------------------------------
 # Source backpressure: cap concurrent source queries per Agent.
 # ---------------------------------------------------------------------------

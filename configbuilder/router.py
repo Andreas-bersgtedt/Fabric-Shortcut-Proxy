@@ -62,7 +62,7 @@ def _package_version() -> str:
     try:
         return package_version("fabric-shortcut-proxy")
     except PackageNotFoundError:
-        return "2.9.5"
+        return "2.9.6"
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +139,71 @@ def _flavor_from_url(db_url: str) -> str:
     """Best-effort dialect label from a SQLAlchemy URL scheme (for UI display)."""
     from db.capabilities import flavor_from_db_url
     return flavor_from_db_url(db_url)
+
+
+def _connection_form_fields(connection_id: str, db_url: str) -> dict:
+    """Return editable, non-secret form fields for a saved SQLAlchemy URL."""
+    from sqlalchemy.engine import make_url
+
+    url = make_url(db_url)
+    driver = url.drivername.lower()
+    dialect = (
+        "postgresql" if driver.startswith("postgresql")
+        else "mssql" if driver.startswith("mssql")
+        else "oracle" if driver.startswith("oracle")
+        else "databricks" if driver.startswith("databricks")
+        else "redshift" if driver.startswith("redshift")
+        else "teradata" if driver.startswith("teradatasql")
+        else "impala" if driver.startswith("impala")
+        else "sqlite" if driver.startswith("sqlite")
+        else driver.split("+", 1)[0]
+    )
+    query = {str(key).lower(): str(value) for key, value in url.query.items()}
+    auth_method = "sql"
+    client_id = ""
+    if dialect == "mssql":
+        authentication = query.get("authentication", "").lower()
+        trusted = query.get("trusted_connection", "").lower()
+        if trusted in {"yes", "true", "1"}:
+            auth_method = "windows"
+        elif authentication == "activedirectoryserviceprincipal":
+            auth_method = "spn"
+            client_id = url.username or ""
+        elif authentication in {
+            "activedirectorymanagedidentity", "activedirectorydefault",
+        }:
+            auth_method = "entra_proxy"
+            client_id = url.username or ""
+
+    database = url.database or ""
+    port = str(url.port or "")
+    if dialect == "teradata":
+        database = query.get("database", database)
+        port = query.get("dbs_port", port)
+
+    return {
+        "id": connection_id,
+        "dialect": dialect,
+        "host": url.host or "",
+        "port": port,
+        "database": database,
+        "username": (
+            ""
+            if dialect == "databricks" or auth_method in {"spn", "entra_proxy"}
+            else (url.username or "")
+        ),
+        "password": "",
+        "driver": query.get("driver", ""),
+        "trust_cert": query.get("trustservercertificate", "").lower()
+        in {"yes", "true", "1"},
+        "token": "",
+        "http_path": query.get("http_path", ""),
+        "catalog": query.get("catalog", ""),
+        "schema": query.get("schema", ""),
+        "auth_method": auth_method,
+        "client_id": client_id,
+        "client_secret": "",
+    }
 
 
 def _clean_error(exc: Exception) -> str:
@@ -936,6 +1001,7 @@ async def bootstrap_builder() -> JSONResponse:
             "id": cid,
             "db_url_masked": config.redact_db_url(conn.db_url),
             "flavor": _flavor_from_url(conn.db_url),
+            "fields": _connection_form_fields(cid, conn.db_url),
         })
 
     return JSONResponse({
@@ -943,6 +1009,7 @@ async def bootstrap_builder() -> JSONResponse:
             "db_url_masked": config.redact_db_url(config.DB_URL),
             "has_db_url": bool(config.DB_URL),
             "flavor": _flavor_from_url(config.DB_URL),
+            "default_connection_fields": _connection_form_fields("default", config.DB_URL),
             "bucket": config.BUCKET_NAME,
             "num_splits": int(config.NUM_SPLITS),
             "split_target_rows": int(config.SPLIT_TARGET_ROWS),
@@ -1808,6 +1875,42 @@ async def discover_source_objects(source_id: str) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 - return a clean builder error
         return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
     return JSONResponse({"ok": True, "source_id": source_id, "objects": objects})
+
+
+@router.post("/api/sources/{source_id}/validate")
+async def validate_source(source_id: str) -> JSONResponse:
+    """Validate one saved source through its effective credentialed URL."""
+    try:
+        kind, runtime_id = _source_ref(source_id)
+        if kind != "database":
+            raise ValueError("source validation is available for database sources only")
+        if runtime_id != "default" and (
+            runtime_id not in config.CONNECTIONS
+            or runtime_id in _REMOVED_CONNECTION_IDS
+        ):
+            raise ValueError(f"unknown database source {runtime_id!r}")
+        url = _connection_url_for(runtime_id)
+        async with SchemaReflector(url) as reflector:
+            objects = await reflector.list_tables()
+            version = await reflector.server_version()
+        dialect = _flavor_from_url(url.render_as_string(hide_password=True))
+        capabilities = capabilities_for_dialect(dialect).to_dict()
+        warnings = flavor_warnings(dialect)
+    except Exception as exc:  # noqa: BLE001 - return a clean builder error
+        log.warning(
+            "config_builder_source_validation_failed",
+            source_id=source_id,
+            error=_clean_error(exc),
+        )
+        return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
+    return JSONResponse({
+        "ok": True,
+        "source_id": source_id,
+        "server_version": version,
+        "objects": objects,
+        "capabilities": capabilities,
+        "warnings": warnings,
+    })
 
 
 @router.post("/api/sources/{source_id}/inspect")

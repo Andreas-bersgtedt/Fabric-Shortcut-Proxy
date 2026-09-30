@@ -56,10 +56,12 @@ def test_naive_datetime_ntz_opt_out(monkeypatch):
 
 def test_type_mapping_uuid_and_money():
     # GUIDs -> string (avoids the fixed(16) binary path); SQL Server money -> decimal.
-    from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER, MONEY
+    from sqlalchemy.dialects.mssql import DECIMAL, MONEY, SMALLMONEY, UNIQUEIDENTIFIER
     assert sqlalchemy_type_to_iceberg(satypes.Uuid()) == "string"
     assert sqlalchemy_type_to_iceberg(UNIQUEIDENTIFIER()) == "string"
     assert sqlalchemy_type_to_iceberg(MONEY()) == "decimal(19,4)"
+    assert sqlalchemy_type_to_iceberg(SMALLMONEY()) == "decimal(19,4)"
+    assert sqlalchemy_type_to_iceberg(DECIMAL(8, 2)) == "decimal(8,2)"
 
 
 def test_type_mapping_semi_structured_text_is_stringified():

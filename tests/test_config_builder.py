@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 import db.reflect as reflect
 from db.reflect import build_url, detect_key_column, UnsupportedDialect
-from configbuilder.router import _clean_error, _conn_fields
+from configbuilder.router import _clean_error, _conn_fields, _connection_form_fields
 from configbuilder.router import router as cb_router
 
 _DB = pathlib.Path(__file__).parent / "test_cfgbuilder.db"
@@ -66,6 +66,62 @@ def test_build_url_mssql_adds_driver_and_cert():
     assert s.startswith("mssql+aioodbc://")
     assert "ODBC" in s and "Driver" in s
     assert "TrustServerCertificate" in s
+
+
+def test_connection_form_fields_restore_non_secret_mssql_settings():
+    url = build_url(
+        dialect="mssql",
+        host="sql.example.com",
+        port=1444,
+        database="sales",
+        username="reader",
+        driver="ODBC Driver 18 for SQL Server",
+        trust_cert=True,
+    )
+
+    fields = _connection_form_fields(
+        "warehouse", url.render_as_string(hide_password=False)
+    )
+
+    assert fields == {
+        "id": "warehouse",
+        "dialect": "mssql",
+        "host": "sql.example.com",
+        "port": "1444",
+        "database": "sales",
+        "username": "reader",
+        "password": "",
+        "driver": "ODBC Driver 18 for SQL Server",
+        "trust_cert": True,
+        "token": "",
+        "http_path": "",
+        "catalog": "",
+        "schema": "",
+        "auth_method": "sql",
+        "client_id": "",
+        "client_secret": "",
+    }
+
+
+def test_connection_form_fields_restore_mssql_auth_mode_without_secret():
+    from sqlalchemy.engine import URL
+
+    url = URL.create(
+        "mssql+aioodbc",
+        host="sql.example.com",
+        database="sales",
+        username="application-id",
+        query={"Authentication": "ActiveDirectoryServicePrincipal"},
+    )
+
+    fields = _connection_form_fields(
+        "warehouse", url.render_as_string(hide_password=False)
+    )
+
+    assert fields["auth_method"] == "spn"
+    assert fields["client_id"] == "application-id"
+    assert fields["client_secret"] == ""
+    assert fields["username"] == ""
 
 
 def test_build_url_mssql_prefers_installed_driver(monkeypatch):
@@ -494,6 +550,8 @@ async def test_bootstrap_api_prefills_running_builder_config(app):
     assert b.get("materialize_mode") in ("eager", "lazy")
     assert isinstance(b.get("tables"), list)
     assert isinstance(b.get("flavor"), str)
+    assert b["default_connection_fields"]["password"] == ""
+    assert b["default_connection_fields"]["client_secret"] == ""
 
 
 async def test_bootstrap_api_preserves_column_policies(app, monkeypatch):
@@ -632,3 +690,51 @@ async def test_saved_source_discovery_and_inspection(app, db_path, monkeypatch):
     assert {column["name"] for column in metadata["columns"]} == {"gadget_id", "label", "price"}
     assert rejected.status_code == 400
     assert "not part of the selected database source" in rejected.json()["error"]
+
+
+async def test_saved_source_validation_uses_effective_url(app, db_path, monkeypatch):
+    import config
+
+    url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setattr(config, "effective_db_url", lambda connection_id="default": url)
+    async with _client(app) as client:
+        response = await client.post(
+            "/_config/api/sources/database:default/validate", json={}
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "gadgets" in {item["name"] for item in payload["objects"]}
+    assert payload["capabilities"]["flavor"] == "sqlite"
+    assert db_path not in response.text
+
+
+async def test_saved_source_validation_rejects_unknown_source(app):
+    async with _client(app) as client:
+        response = await client.post(
+            "/_config/api/sources/database:missing/validate", json={}
+        )
+
+    assert response.status_code == 400
+    assert "unknown database source" in response.json()["error"]
+
+
+def test_builder_has_source_and_table_edit_actions():
+    html = (pathlib.Path(__file__).parents[1] / "configbuilder" / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'edit.textContent = "Edit"' in html
+    assert 'validate.textContent = c.validating ? "Validating…" : "Validate"' in html
+    assert 'editColumns.textContent="Edit columns"' in html
+    assert "validateConfiguredTable(entry" in html
+    assert "mergeReflectedColumns(entry" in html
+    assert "c.saved_source_validated=true;" in html
+    assert "c.persisted && c.saved_source_validated && c.db_url_masked" in html
+    assert ".filter(c=>c.id!==\"default\" && connectionReadyForTables(c))" in html
+    assert '<span class="badge ok">validated</span>' in html
+    assert "Passed validation:" in html
+    assert "function parquetSafeName(" in html
+    assert "normalizeOutputNames(merged)" in html
+    assert 'safe=safe.replace(/[^A-Za-z0-9_]+/g,"_")' in html

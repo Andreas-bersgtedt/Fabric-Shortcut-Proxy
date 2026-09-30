@@ -16,6 +16,7 @@ TOKENIZATION_NATIVE = "native"
 TOKENIZATION_ARROW = "arrow"
 TOKENIZATION_NONE = "none"
 TOKENIZATION_FALLBACKS = (TOKENIZATION_NONE, TOKENIZATION_ARROW)
+SOURCE_SNAPSHOT_NONE = "none"
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,9 @@ class FlavorCapabilities:
     supports_random_tokenization: bool = False
     supports_ntile: bool = True
     supports_stats_histogram: bool = False
+    source_snapshot_provider: str = SOURCE_SNAPSHOT_NONE
+    supports_distributed_snapshot: bool = False
+    source_snapshot_reopenable: bool = False
     required_connection_fields: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
@@ -50,6 +54,9 @@ class FlavorCapabilities:
             "supports_random_tokenization": self.supports_random_tokenization,
             "supports_ntile": self.supports_ntile,
             "supports_stats_histogram": self.supports_stats_histogram,
+            "source_snapshot_provider": self.source_snapshot_provider,
+            "supports_distributed_snapshot": self.supports_distributed_snapshot,
+            "source_snapshot_reopenable": self.source_snapshot_reopenable,
             "required_connection_fields": list(self.required_connection_fields),
         }
 
@@ -100,6 +107,8 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_deterministic_tokenization=True,
         supports_random_tokenization=True,
         supports_stats_histogram=True,
+        source_snapshot_provider="postgresql_exported",
+        supports_distributed_snapshot=True,
     ),
     "mssql": FlavorCapabilities(
         flavor="mssql",
@@ -113,6 +122,7 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_deterministic_tokenization=True,
         supports_random_tokenization=True,
         supports_stats_histogram=True,
+        source_snapshot_provider="mssql_transaction",
     ),
     "oracle": FlavorCapabilities(
         flavor="oracle",

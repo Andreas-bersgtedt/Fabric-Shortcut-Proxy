@@ -75,12 +75,13 @@ def publish_serving_image(
             raise GenerationError("generation index verification failed")
 
         ready = {
-            "version": 1,
+            "version": max(2, context.version),
             "state": "READY",
             "generation_id": context.generation_id,
             "fence": context.fence,
             "lease_token": context.lease_token,
             "source_consistency": context.source_consistency,
+            "plan_sha256": context.plan_sha256,
             "object_count": len(entries),
             "index_sha256": hashlib.sha256(index_bytes).hexdigest(),
         }
@@ -92,22 +93,23 @@ def publish_serving_image(
 
         assert_generation_lease(store, context)
         current = {
-            "version": 1,
+            "version": max(2, context.version),
             "generation_id": context.generation_id,
             "fence": context.fence,
             "lease_token": context.lease_token,
             "source_consistency": context.source_consistency,
+            "plan_sha256": context.plan_sha256,
             "ready_sha256": hashlib.sha256(ready_bytes).hexdigest(),
         }
         store.put(CURRENT_KEY, _json_bytes(current))
         store.put(BUILD_KEY, _json_bytes({**ready, "state": "ACTIVE"}))
     except Exception as exc:
         failed = {
-            "version": 1,
+            "version": max(2, context.version),
             "state": "FAILED",
             "generation_id": context.generation_id,
             "fence": context.fence,
-            "lease_token": context.lease_token,
+            "plan_sha256": context.plan_sha256,
             "error": str(exc)[:500],
         }
         try:

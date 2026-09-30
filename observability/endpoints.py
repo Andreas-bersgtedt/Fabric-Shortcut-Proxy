@@ -64,6 +64,10 @@ async def readyz() -> JSONResponse:
         "checks": checks,
         "source": {"flavor": caps.flavor, "execution_mode": caps.to_dict()["execution_mode"]},
     }
+    if config.GENERATION_SOURCE_CONSISTENCY == "snapshot":
+        from runtime.snapshot_planning import snapshot_status
+
+        content["source_read_point"] = snapshot_status()
     # Object-store tokenizer (issue #12): advertise tokenizing mounts + the
     # per-format capability matrix. Best-effort; never affects readiness.
     try:
@@ -225,4 +229,3 @@ async def admin_schemas(table: str | None = None) -> dict:
             "risky_types": risky,
         })
     return {"tables": out}
-

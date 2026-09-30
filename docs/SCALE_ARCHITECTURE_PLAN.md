@@ -345,9 +345,24 @@ specified.
 - **Retention window:** keep the last K epochs' files (bounded, like
   `SNAPSHOT_HISTORY_LIMIT`) so lagging readers don't 404 during a flip. Background
   GC deletes files no live epoch references after the window.
-- **Consistency model:** eventually-consistent reads across the fleet within one
-  heartbeat interval; each individual read is snapshot-consistent (serves one
-  epoch's net file set). Good enough for Fabric's periodic sync.
+- **Serving consistency:** readers only observe one activated epoch's complete
+  file set. Fleet members converge on the activated epoch within one heartbeat.
+- **Source-read consistency:** serving-epoch atomicity does not prove that source
+  split queries observed one database state. The current `best_effort` mode allows
+  planning and split queries to run at different source moments.
+- **Snapshot mode:** `snapshot` provides one source read point per table
+  generation. It includes row-count planning, range or quantile planning, retries,
+  and every split query. It does not provide one transaction across multiple
+  tables or databases.
+- **Phase 1 providers:** SQL Server uses one owned snapshot transaction and
+  sequential split reads for a table. PostgreSQL exports one snapshot from the
+  coordinator and workers import it before querying.
+- **Fail-closed rule:** an unsupported source, expired read point, lost owner, or
+  incompatible materialization mode fails the generation without updating
+  `CURRENT`. Snapshot mode never falls back to `best_effort`.
+- **Mode boundary:** eager and lazy can hold a transaction-bound read point until
+  full table materialization completes. Virtual mode is rejected until a provider
+  offers a durable version that can be reopened after cache eviction.
 - **Manager restart:** state is durable → fast recovery; in-flight materialization
   tasks are re-derived and re-dispatched (idempotent).
 

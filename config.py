@@ -54,6 +54,7 @@ from system_config import (
     # Fleet
     AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
     MANAGER_SUPERVISION_MODE, GENERATION_SOURCE_CONSISTENCY,
+    SNAPSHOT_MAX_LIFETIME_SECONDS,
     # Control Plane
     MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT, AGENT_HOST_ALLOWLIST,
     MOUNT_TEST_HOST_ALLOWLIST, MOUNT_TEST_REQUESTS_PER_MINUTE, MOUNT_TEST_MAX_CONCURRENCY,
@@ -204,6 +205,7 @@ _register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
 _register("MANAGER_SUPERVISION_MODE", "manager_supervision_mode", "str", MANAGER_SUPERVISION_MODE)
 _register("GENERATION_SOURCE_CONSISTENCY", "generation_source_consistency", "str", GENERATION_SOURCE_CONSISTENCY)
+_register("SNAPSHOT_MAX_LIFETIME_SECONDS", "snapshot_max_lifetime_seconds", "int", SNAPSHOT_MAX_LIFETIME_SECONDS)
 _register("ENABLE_GATEWAY", "enable_gateway", "bool", ENABLE_GATEWAY)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
 _register("ENABLE_REIDENTIFICATION", "enable_reidentification", "bool", ENABLE_REIDENTIFICATION)
@@ -748,12 +750,42 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
             "GENERATION_SOURCE_CONSISTENCY must be 'best_effort' or 'snapshot' "
             f"(got {GENERATION_SOURCE_CONSISTENCY!r})."
         )
-    elif GENERATION_SOURCE_CONSISTENCY == "snapshot":
+    if SNAPSHOT_MAX_LIFETIME_SECONDS <= 0:
         problems.append(
-            "GENERATION_SOURCE_CONSISTENCY='snapshot' is not yet supported: distributed "
-            "workers do not share a source snapshot token. Use 'best_effort', or keep "
-            "materialization on one worker until a source-specific snapshot provider exists."
+            "SNAPSHOT_MAX_LIFETIME_SECONDS must be > 0 "
+            f"(got {SNAPSHOT_MAX_LIFETIME_SECONDS})."
         )
+    elif GENERATION_SOURCE_CONSISTENCY == "snapshot":
+        from db.capabilities import capabilities_for_db_url
+
+        if MATERIALIZE_MODE == "virtual":
+            problems.append(
+                "GENERATION_SOURCE_CONSISTENCY='snapshot' cannot use "
+                "MATERIALIZE_MODE='virtual': transaction-bound read points cannot be "
+                "reopened after cache eviction."
+            )
+        if AUTO_REFRESH:
+            problems.append(
+                "GENERATION_SOURCE_CONSISTENCY='snapshot' cannot use AUTO_REFRESH: "
+                "refresh snapshot lifecycle support is not implemented."
+            )
+        if AGENT_SHARD_COUNT > 1 and not ARTIFACT_STORE_SERVING:
+            problems.append(
+                "GENERATION_SOURCE_CONSISTENCY='snapshot' with multiple shards "
+                "requires ARTIFACT_STORE_SERVING=1."
+            )
+        unsupported = []
+        for table in TABLES:
+            if not table.enabled:
+                continue
+            caps = capabilities_for_db_url(effective_db_url(table.connection_id))
+            if caps.source_snapshot_provider == "none":
+                unsupported.append(f"{table.name} ({caps.flavor})")
+        if unsupported:
+            problems.append(
+                "GENERATION_SOURCE_CONSISTENCY='snapshot' has no provider for: "
+                + ", ".join(unsupported)
+            )
     if AGENT_SHARD_COUNT < 1:
         problems.append(f"AGENT_SHARD_COUNT must be >= 1 (got {AGENT_SHARD_COUNT}).")
     if not (0 <= AGENT_SHARD_INDEX < AGENT_SHARD_COUNT):
@@ -1052,7 +1084,8 @@ SETTINGS_META: dict[str, dict] = {
     "agent_max_rapid_restarts": {"cat": "Cluster (scale)", "help": "Manager: crash-loop guard — stop respawning after this many restarts in the window."},
     "agent_count": {"cat": "Cluster (scale)", "help": "Manager: number of Agents to supervise (each on PORT+i)."},
     "manager_supervision_mode": {"cat": "Cluster (scale)", "help": "Manager Agent ownership: 'local' spawns child processes; 'external' accepts orchestrator-managed Agent registrations and spawns none.", "choices": ["local", "external"]},
-    "generation_source_consistency": {"cat": "Cluster (scale)", "help": "Source-read contract for a generation. 'best_effort' permits independently timed split reads. 'snapshot' is rejected until shared source snapshot tokens are supported.", "choices": ["best_effort", "snapshot"]},
+    "generation_source_consistency": {"cat": "Cluster (scale)", "help": "Per-table source-read contract. 'best_effort' permits independently timed split reads. 'snapshot' requires a registered provider and fails closed.", "choices": ["best_effort", "snapshot"]},
+    "snapshot_max_lifetime_seconds": {"cat": "Cluster (scale)", "help": "Maximum lifetime for a transaction-bound source read point before queries fail closed.", "min": 1},
     "agent_shard_index": {"cat": "Cluster (scale)", "help": "This Agent's materialization shard (set by the Manager)."},
     "agent_shard_count": {"cat": "Cluster (scale)", "help": "Total materialization shards (= agent_count)."},
     "shard_strategy": {"cat": "Cluster (scale)", "help": "Split-ownership across shards: 'modulo' (round-robin by split index) or 'weighted' (size-weighted, balances bytes using observed split sizes from the prior run; needs a shared artifact store). Restart to apply.", "choices": ["modulo", "weighted"]},
@@ -1170,6 +1203,7 @@ _KEY_TO_ATTR: dict[str, str] = {
     "agent_count": "AGENT_COUNT",
     "manager_supervision_mode": "MANAGER_SUPERVISION_MODE",
     "generation_source_consistency": "GENERATION_SOURCE_CONSISTENCY",
+    "snapshot_max_lifetime_seconds": "SNAPSHOT_MAX_LIFETIME_SECONDS",
     "shard_strategy": "SHARD_STRATEGY",
     "table_format": "TABLE_FORMAT",
     "metadata_cache_ttl": "METADATA_CACHE_TTL_SECONDS",
@@ -1272,6 +1306,7 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "agent_count": "config.system.json",
     "manager_supervision_mode": "config.system.json",
     "generation_source_consistency": "config.system.json",
+    "snapshot_max_lifetime_seconds": "config.system.json",
     "agent_shard_index": "config.system.json",
     "agent_shard_count": "config.system.json",
     "shard_strategy": "config.system.json",
@@ -1739,6 +1774,70 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                     f"open_mirror_targets[{target.get('id', '?')}]: connection {cid!r} is not defined "
                     f"(known: {sorted(known)})"
                 )
+    consistency = str(
+        clean.get("generation_source_consistency", GENERATION_SOURCE_CONSISTENCY)
+    )
+    if consistency == "snapshot":
+        mode = str(clean.get("materialize_mode", MATERIALIZE_MODE))
+        if mode == "virtual":
+            errors.append(
+                "generation_source_consistency: snapshot cannot use "
+                "materialize_mode=virtual"
+            )
+        if bool(clean.get("auto_refresh", AUTO_REFRESH)):
+            errors.append(
+                "generation_source_consistency: snapshot cannot use auto_refresh"
+            )
+        shard_count = int(clean.get("agent_shard_count", AGENT_SHARD_COUNT))
+        store_serving = bool(
+            clean.get("artifact_store_serving", ARTIFACT_STORE_SERVING)
+        )
+        if shard_count > 1 and not store_serving:
+            errors.append(
+                "generation_source_consistency: snapshot with multiple shards "
+                "requires artifact_store_serving"
+            )
+
+        named_urls = {
+            connection_id: connection.db_url
+            for connection_id, connection in CONNECTIONS.items()
+        }
+        for entry in clean.get("connections", []):
+            if isinstance(entry, dict) and entry.get("id") and entry.get("db_url"):
+                named_urls[str(entry["id"])] = str(entry["db_url"])
+        raw_tables = clean.get("tables")
+        table_sources = []
+        if isinstance(raw_tables, list):
+            table_sources = [
+                (
+                    str(table.get("name") or table.get("source_table") or "table"),
+                    str(table.get("connection") or "default"),
+                )
+                for table in raw_tables
+                if isinstance(table, dict) and table.get("enabled", True) is not False
+            ]
+        else:
+            table_sources = [
+                (table.name, table.connection_id)
+                for table in TABLES
+                if table.enabled
+            ]
+        from db.capabilities import capabilities_for_db_url
+
+        unsupported = []
+        for table_name, connection_id in table_sources:
+            url = DB_URL if connection_id == "default" else named_urls.get(connection_id)
+            if not url:
+                continue
+            caps = capabilities_for_db_url(url)
+            if caps.source_snapshot_provider == "none":
+                unsupported.append(f"{table_name} ({caps.flavor})")
+        if unsupported:
+            errors.append(
+                "generation_source_consistency: no snapshot provider for "
+                + ", ".join(unsupported)
+            )
+
     return clean, errors
 
 

@@ -20,6 +20,7 @@ import math
 import config
 from config import TableDef
 from db.capabilities import capabilities_for_db_url
+from db.read_points import BestEffortReadSession, ReadSession
 from iceberg.state_store import SplitDescriptor
 from planner.dialects import get_dialect
 from observability.logging import get_logger
@@ -203,7 +204,13 @@ def mins_from_equidepth(bounds, n: int):
     return [bounds[(i * (b - 1)) // n] for i in range(n)]
 
 
-async def _balanced_ranges(table: TableDef, key: str, key_type: str | None, n: int):
+async def _balanced_ranges(
+    table: TableDef,
+    key: str,
+    key_type: str | None,
+    n: int,
+    read_session: ReadSession,
+):
     """Equal-count ranges from a stats histogram (zero-scan, capability-gated) or
     NTILE quantiles, or None to fall back to equal-span.
 
@@ -213,15 +220,15 @@ async def _balanced_ranges(table: TableDef, key: str, key_type: str | None, n: i
     """
     if key_type is None or n < 1:
         return None
-    from db.executor import fetch_key_histogram_bounds, fetch_key_quantile_bounds
-
     result = None
     caps = capabilities_for_db_url(config.effective_db_url(table.connection_id))
     # Histogram-first: derive boundaries from optimizer stats with no data scan.
     if (config.SPLIT_USE_STATS_HISTOGRAM and caps.supports_stats_histogram
             and key_type in _INTEGER_TYPES):
         try:
-            result = await fetch_key_histogram_bounds(table.source_table, key, n, connection=table.connection_id)
+            result = await read_session.fetch_key_histogram_bounds(
+                table.source_table, key, n
+            )
         except Exception as exc:  # noqa: BLE001 - stats read must not break planning
             log.warning("histogram_planning_error_fallback_ntile", table=table.name, key=key, error=str(exc))
             result = None
@@ -230,8 +237,8 @@ async def _balanced_ranges(table: TableDef, key: str, key_type: str | None, n: i
 
     if result is None:
         try:
-            result = await fetch_key_quantile_bounds(
-                table.source_table, key, n, connection=table.connection_id,
+            result = await read_session.fetch_key_quantile_bounds(
+                table.source_table, key, n,
                 sample_rows=table.effective_split_sample_rows,
                 key_is_integer=key_type in _INTEGER_TYPES,
             )
@@ -275,7 +282,9 @@ def compute_split_count(
     return max(min_splits, min(max_splits, proposed))
 
 
-async def choose_table_num_splits(table: TableDef) -> int:
+async def choose_table_num_splits(
+    table: TableDef, read_session: ReadSession | None = None
+) -> int:
     """Choose a table split count using SPLIT_TARGET_ROWS guardrails.
 
     Returns the existing ``table.num_splits`` when dynamic planning is disabled
@@ -285,10 +294,10 @@ async def choose_table_num_splits(table: TableDef) -> int:
     if target_rows <= 0:
         return table.num_splits
 
-    from db.executor import fetch_table_row_count
+    session = read_session or BestEffortReadSession(table.connection_id)
 
     try:
-        est = await fetch_table_row_count(table.source_table, connection=table.connection_id)
+        est = await session.fetch_table_row_count(table.source_table)
     except Exception as exc:  # noqa: BLE001 - startup should not fail here
         log.warning(
             "split_count_estimation_failed",
@@ -463,7 +472,9 @@ def _query_projection_columns(split: SplitDescriptor) -> list:
     ]
 
 
-async def plan_ranges_for_snapshot(snap) -> bool:
+async def plan_ranges_for_snapshot(
+    snap, read_session: ReadSession | None = None
+) -> bool:
     """Assign contiguous key ranges to a snapshot's splits (SPLIT_STRATEGY="range").
 
     Fetches the source key MIN/MAX once and slices ``[min, max]`` into
@@ -472,9 +483,8 @@ async def plan_ranges_for_snapshot(snap) -> bool:
     non-integer key). Idempotent and best-effort — never raises, so a planning
     hiccup degrades to the known-good modulo path rather than failing startup.
     """
-    from db.executor import fetch_column_bounds, fetch_key_bounds
-
     table = snap.table
+    session = read_session or BestEffortReadSession(table.connection_id)
     strategy = table.effective_split_strategy
     # Dynamic split planning targets bounded rows/split; when enabled, treat the
     # legacy modulo default as range planning so each split reads only its slice.
@@ -502,7 +512,9 @@ async def plan_ranges_for_snapshot(snap) -> bool:
     if (table.effective_split_balance == "count"
             and (caps.supports_ntile or caps.supports_stats_histogram)
             and key_type in (_INTEGER_TYPES | _TEMPORAL_TYPES)):
-        qranges = await _balanced_ranges(table, key, key_type, len(snap.splits))
+        qranges = await _balanced_ranges(
+            table, key, key_type, len(snap.splits), session
+        )
         if qranges is not None:
             for split, (rlo, rhi) in zip(snap.splits, qranges):
                 split.key_lo, split.key_hi = rlo, rhi
@@ -514,7 +526,7 @@ async def plan_ranges_for_snapshot(snap) -> bool:
 
     if strategy in ("range", "auto") and key_type in _INTEGER_TYPES:
         try:
-            bounds = await fetch_key_bounds(table.source_table, key, connection=table.connection_id)
+            bounds = await session.fetch_key_bounds(table.source_table, key)
         except Exception as exc:  # noqa: BLE001 - planning must not break startup
             log.warning("range_planning_error_fallback_modulo", table=table.name, key=key, error=str(exc))
             bounds = None
@@ -533,7 +545,7 @@ async def plan_ranges_for_snapshot(snap) -> bool:
 
     if strategy in ("date", "auto") and key_type in _TEMPORAL_TYPES:
         try:
-            bounds = await fetch_column_bounds(table.source_table, key, connection=table.connection_id)
+            bounds = await session.fetch_column_bounds(table.source_table, key)
         except Exception as exc:  # noqa: BLE001 - planning must not break startup
             log.warning("date_range_planning_error_fallback_modulo", table=table.name, key=key, error=str(exc))
             bounds = None

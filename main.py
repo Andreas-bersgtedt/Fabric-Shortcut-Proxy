@@ -151,6 +151,7 @@ async def lifespan(app: FastAPI):
 
     _generation_context = None
     app.state.generation_renewal_task = None
+    app.state.snapshot_preparation = None
     if config.AUTO_REFRESH:
         # Data-freshness path (content-addressed snapshots + background poller).
         # Each chunk is named by the hash of its rows, so a new snapshot (and new
@@ -196,36 +197,90 @@ async def lifespan(app: FastAPI):
             )
     else:
         runtime_tables = list(healthy_tables)
+        _snapshot_mode = config.GENERATION_SOURCE_CONSISTENCY == "snapshot"
+        _generation_store = None
+        _snapshot_preparation = None
+        if _snapshot_mode:
+            from runtime.artifact_store import MemoryStore
+            from runtime.artifact_store import build_store as _generation_store_factory
+            from runtime.generation import acquire_generation, join_generation
+            from runtime.snapshot_planning import (
+                activate_snapshot_preparation,
+                hydrate_snapshot_generation,
+                prepare_snapshot_generation,
+            )
 
-        # Phase 2 split planner v2 (opt-in): dynamic split-count selection from
-        # row-target planning with min/max guardrails.
-        if any(t.effective_split_target_rows > 0 for t in runtime_tables):
-            from planner.split_planner import choose_table_num_splits
-            for t in runtime_tables:
-                t.num_splits = await choose_table_num_splits(t)
+            _generation_store = (
+                _generation_store_factory(
+                    config.ARTIFACT_STORE_BACKEND,
+                    local_dir=config.ARTIFACT_STORE_DIR,
+                )
+                if config.ARTIFACT_STORE_SERVING
+                else MemoryStore()
+            )
+            if config.AGENT_SHARD_INDEX == 0:
+                _generation_context = acquire_generation(
+                    _generation_store,
+                    config.AGENT_SHARD_COUNT,
+                    lease_seconds=3600,
+                    source_consistency="snapshot",
+                    prepare_plan=True,
+                )
+                _snapshot_preparation = await prepare_snapshot_generation(
+                    _generation_store,
+                    _generation_context,
+                    runtime_tables,
+                    bucket=config.BUCKET_NAME,
+                    warehouse_prefix=config.WAREHOUSE_PREFIX,
+                    owner_shard=0,
+                )
+            else:
+                _generation_context = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: join_generation(
+                        _generation_store,
+                        config.AGENT_SHARD_COUNT,
+                        timeout_seconds=config.MATERIALIZE_WAIT_SECONDS,
+                    ),
+                )
+                _snapshot_preparation = await hydrate_snapshot_generation(
+                    _generation_context,
+                    runtime_tables,
+                    bucket=config.BUCKET_NAME,
+                    warehouse_prefix=config.WAREHOUSE_PREFIX,
+                    shard_index=config.AGENT_SHARD_INDEX,
+                )
+            _generation_context = _snapshot_preparation.context
+            snapshots = _snapshot_preparation.snapshots
+            activate_snapshot_preparation(_snapshot_preparation)
+            app.state.snapshot_preparation = _snapshot_preparation
+        else:
+            # Dynamic split-count selection from row-target planning.
+            if any(t.effective_split_target_rows > 0 for t in runtime_tables):
+                from planner.split_planner import choose_table_num_splits
+                for t in runtime_tables:
+                    t.num_splits = await choose_table_num_splits(t)
 
-        # Build the Iceberg snapshot for every configured table (F1 — multi-table).
-        snapshots = build_all_snapshots(
-            runtime_tables,
-            bucket=config.BUCKET_NAME,
-            warehouse_prefix=config.WAREHOUSE_PREFIX,
-        )
+            snapshots = build_all_snapshots(
+                runtime_tables,
+                bucket=config.BUCKET_NAME,
+                warehouse_prefix=config.WAREHOUSE_PREFIX,
+            )
+
+            if any(
+                t.effective_split_strategy in ("range", "date", "auto")
+                for t in runtime_tables
+            ) or any(t.effective_split_target_rows > 0 for t in runtime_tables):
+                from planner.split_planner import plan_ranges_for_snapshot
+                for snap in snapshots:
+                    await plan_ranges_for_snapshot(snap)
+
         log.info(
             "snapshots_ready",
             tables=[s.table.name for s in snapshots],
             count=len(snapshots),
+            source_consistency=config.GENERATION_SOURCE_CONSISTENCY,
         )
-
-        # Phase 4 scale engine: range-based split planning. Assign each split a
-        # contiguous key range (from the source MIN/MAX) so materialization reads
-        # only its slice off the PK index instead of a full-table modulo scan.
-        # Best-effort: falls back to modulo per table on empty/non-integer keys.
-        if any(t.effective_split_strategy in ("range", "date", "auto") for t in runtime_tables) or any(
-            t.effective_split_target_rows > 0 for t in runtime_tables
-        ):
-            from planner.split_planner import plan_ranges_for_snapshot
-            for snap in snapshots:
-                await plan_ranges_for_snapshot(snap)
 
         # Eagerly materialize every split's Parquet bytes so the Iceberg manifest
         # reports ACCURATE record_count and file_size_in_bytes. Iceberg/Parquet
@@ -260,34 +315,37 @@ async def lifespan(app: FastAPI):
         _mat_sem = asyncio.Semaphore(config.MAX_CONCURRENT_GENERATIONS)
         if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
             from runtime.artifact_store import build_store as _generation_store_factory
-            _generation_store = _generation_store_factory(
-                config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR
-            )
-            if config.AGENT_SHARD_INDEX == 0:
-                _generation_context = acquire_generation(
-                    _generation_store,
-                    config.AGENT_SHARD_COUNT,
-                    lease_seconds=3600,
-                    source_consistency=config.GENERATION_SOURCE_CONSISTENCY,
+            if _generation_store is None:
+                _generation_store = _generation_store_factory(
+                    config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR
                 )
-            else:
-                _generation_context = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: join_generation(
+            if _generation_context is None:
+                if config.AGENT_SHARD_INDEX == 0:
+                    _generation_context = acquire_generation(
                         _generation_store,
                         config.AGENT_SHARD_COUNT,
-                        timeout_seconds=config.MATERIALIZE_WAIT_SECONDS,
-                    ),
-                )
-            assign_generation(snapshots, _generation_context)
+                        lease_seconds=3600,
+                        source_consistency=config.GENERATION_SOURCE_CONSISTENCY,
+                    )
+                else:
+                    _generation_context = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: join_generation(
+                            _generation_store,
+                            config.AGENT_SHARD_COUNT,
+                            timeout_seconds=config.MATERIALIZE_WAIT_SECONDS,
+                        ),
+                    )
+                assign_generation(snapshots, _generation_context)
 
             if config.AGENT_SHARD_INDEX == 0:
                 async def _generation_renewal_loop():
+                    nonlocal _generation_context
                     try:
                         while True:
                             await asyncio.sleep(300)
                             try:
-                                renew_generation(
+                                _generation_context = renew_generation(
                                     _generation_store,
                                     _generation_context,
                                     lease_seconds=3600,
@@ -337,6 +395,15 @@ async def lifespan(app: FastAPI):
             n = config.AGENT_SHARD_COUNT
             if n <= 1:
                 return True
+            if (
+                config.GENERATION_SOURCE_CONSISTENCY == "snapshot"
+                and not bool(
+                    getattr(split, "generation_distributed_snapshot", False)
+                )
+            ):
+                return int(
+                    getattr(split, "generation_owner_shard", 0)
+                ) == config.AGENT_SHARD_INDEX
             if _shard_assignment is not None:
                 from planner.shard_weight import stable_key
                 owner = _shard_assignment.get(stable_key(split.table.name, split.split_index))
@@ -387,19 +454,48 @@ async def lifespan(app: FastAPI):
                 if warm is not None:
                     return _apply_warm(split, warm)
                 sql, params = build_split_query(split)
+                _read_session = None
+                if config.GENERATION_SOURCE_CONSISTENCY == "snapshot":
+                    from runtime.snapshot_planning import read_session_for
+
+                    _read_session = read_session_for(split.table)
+                    if _read_session is None:
+                        raise RuntimeError(
+                            f"snapshot read session is unavailable for "
+                            f"{split.table.name!r}"
+                        )
                 if config.STREAMING_PARQUET:
                     # Bounded-memory path: stream row batches straight into Parquet.
-                    batches = stream_split_query(
-                        sql, params, split_index=split.split_index,
-                        batch_rows=config.STREAM_BATCH_ROWS,
-                        connection=split.table.connection_id,
+                    batches = (
+                        _read_session.stream_split_query(
+                            sql,
+                            params,
+                            split_index=split.split_index,
+                            batch_rows=config.STREAM_BATCH_ROWS,
+                        )
+                        if _read_session is not None
+                        else stream_split_query(
+                            sql, params, split_index=split.split_index,
+                            batch_rows=config.STREAM_BATCH_ROWS,
+                            connection=split.table.connection_id,
+                        )
                     )
                     pq_bytes, nrows = await stream_rows_to_parquet(
                         batches, split_index=split.split_index, columns=split.table.schema
                     )
                 else:
-                    rows = await execute_split_query(sql, params, split_index=split.split_index,
-                                                     connection=split.table.connection_id)
+                    rows = (
+                        await _read_session.execute_split_query(
+                            sql, params, split_index=split.split_index
+                        )
+                        if _read_session is not None
+                        else await execute_split_query(
+                            sql,
+                            params,
+                            split_index=split.split_index,
+                            connection=split.table.connection_id,
+                        )
+                    )
                     pq_bytes = rows_to_parquet(
                         rows, split_index=split.split_index, columns=split.table.schema
                     )
@@ -429,11 +525,20 @@ async def lifespan(app: FastAPI):
             _failed_snaps: list = []
             for snap in snapshots:
                 try:
-                    if config.CONCURRENT_STARTUP_MATERIALIZATION:
+                    if (
+                        config.CONCURRENT_STARTUP_MATERIALIZATION
+                        and config.GENERATION_SOURCE_CONSISTENCY != "snapshot"
+                    ):
                         counts = await asyncio.gather(*(_materialize(s) for s in snap.splits))
                     else:
                         counts = [await _materialize(s) for s in snap.splits]
                 except Exception as exc:  # noqa: BLE001 - isolate a table whose splits fail to materialize
+                    if config.GENERATION_SOURCE_CONSISTENCY == "snapshot":
+                        from runtime.snapshot_planning import close_active_table
+
+                        await close_active_table(
+                            snap.table, abort_reason="table materialization failed"
+                        )
                     if not config.QUARANTINE_FAILED_TABLES:
                         raise
                     from runtime import quarantine
@@ -445,6 +550,10 @@ async def lifespan(app: FastAPI):
                     _failed_snaps.append(snap)
                     continue
                 snap.total_records = sum(counts)
+                if config.GENERATION_SOURCE_CONSISTENCY == "snapshot":
+                    from runtime.snapshot_planning import close_active_table
+
+                    await close_active_table(snap.table)
                 log.info("splits_materialized", table=snap.table.name,
                          total_records=snap.total_records, splits=len(snap.splits))
             for snap in _failed_snaps:
@@ -636,6 +745,13 @@ async def lifespan(app: FastAPI):
     if config.AUTO_REFRESH:
         from iceberg import freshness
         await freshness.stop_poller()
+    if getattr(app.state, "snapshot_preparation", None) is not None:
+        from runtime.snapshot_planning import close_snapshot_preparation
+
+        await close_snapshot_preparation(
+            app.state.snapshot_preparation,
+            abort_reason="application shutdown",
+        )
     # Dispose DB engines cleanly (async-native and sync-fallback modes).
     from db.executor import dispose_engines
     await dispose_engines()

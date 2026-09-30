@@ -81,3 +81,19 @@ def test_expanded_sources_capabilities_are_conservative():
         assert matrix[flavor]["supports_stats_histogram"] is False
         assert matrix[flavor]["supports_fast_row_estimate"] is False
         assert matrix[flavor]["required_connection_fields"] == []
+
+
+def test_snapshot_capabilities_advertise_only_implemented_providers():
+    matrix = capability_matrix()
+    assert matrix["postgresql"]["source_snapshot_provider"] == "postgresql_exported"
+    assert matrix["postgresql"]["supports_distributed_snapshot"] is True
+    assert matrix["postgresql"]["source_snapshot_reopenable"] is False
+    assert matrix["mssql"]["source_snapshot_provider"] == "mssql_transaction"
+    assert matrix["mssql"]["supports_distributed_snapshot"] is False
+    assert matrix["mssql"]["source_snapshot_reopenable"] is False
+    for flavor, capabilities in matrix.items():
+        if flavor in {"postgresql", "mssql"}:
+            continue
+        assert capabilities["source_snapshot_provider"] == "none"
+        assert capabilities["supports_distributed_snapshot"] is False
+        assert capabilities["source_snapshot_reopenable"] is False

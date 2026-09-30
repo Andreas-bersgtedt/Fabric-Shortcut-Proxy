@@ -245,7 +245,7 @@ try {
     Invoke-Native $helmPath @("template", $releaseName, $chartPath, "-f", $valuesPath, "--namespace", $namespace) | Out-Null
     Invoke-Native $helmPath @("package", $chartPath, "--destination", $temporaryDirectory) | Write-Host
 
-    $chartArchive = Get-ChildItem $temporaryDirectory -Filter "fabric-shortcut-proxy-*.tgz" | Select-Object -Single
+    $chartArchive = Get-ChildItem $temporaryDirectory -Filter "fabric-shortcut-proxy-*.tgz" | Select-Object -First 1
     $attachedValues = Join-Path $temporaryDirectory "fsp-values.yaml"
     $attachedIngressValues = Join-Path $temporaryDirectory "ingress-values.yaml"
     Copy-Item $valuesPath $attachedValues

@@ -7,12 +7,16 @@ import io
 import os
 from decimal import Decimal
 
+import pytest
+
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
 import pyarrow.parquet as pq
 
+import parquet.generator as generator
 from parquet.generator import rows_to_parquet
 import config
+from config import ColumnDef
 
 
 def _sample_rows(n: int = 10) -> list[dict]:
@@ -72,3 +76,59 @@ def test_decimal_values_fit_declared_float_columns():
 
     assert table.column("unit_price")[0].as_py() == 282.27
     assert table.column("total")[0].as_py() == 26815.65
+
+
+def test_decimal_value_uses_deterministic_bytes_for_stale_binary_schema():
+    columns = [
+        ColumnDef(field_id=1, name="weight", iceberg_type="binary", nullable=True)
+    ]
+
+    data = rows_to_parquet(
+        [{"weight": Decimal("189.5000")}, {"weight": None}],
+        split_index=3,
+        columns=columns,
+    )
+    table = pq.read_table(io.BytesIO(data))
+
+    assert table.column("weight").to_pylist() == [b"189.5000", None]
+
+
+def test_decimal_value_converts_directly_for_stale_string_schema(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(
+        generator.log, "warning", lambda event, **values: warnings.append(event)
+    )
+    columns = [
+        ColumnDef(field_id=1, name="weight", iceberg_type="string", nullable=True)
+    ]
+
+    data = rows_to_parquet(
+        [{"weight": Decimal("189.5000")}, {"weight": None}],
+        split_index=0,
+        columns=columns,
+    )
+    table = pq.read_table(io.BytesIO(data))
+
+    assert table.column("weight").to_pylist() == ["189.5000", None]
+    assert "type_cast_fallback" not in warnings
+
+
+@pytest.mark.asyncio
+async def test_streaming_decimal_value_uses_binary_compatibility_path():
+    from parquet.generator import stream_rows_to_parquet
+
+    columns = [
+        ColumnDef(field_id=1, name="weight", iceberg_type="binary", nullable=True)
+    ]
+
+    async def batches():
+        yield [{"weight": Decimal("2.50")}]
+        yield [{"weight": Decimal("3.75")}]
+
+    data, row_count = await stream_rows_to_parquet(
+        batches(), split_index=1, columns=columns
+    )
+    table = pq.read_table(io.BytesIO(data))
+
+    assert row_count == 2
+    assert table.column("weight").to_pylist() == [b"2.50", b"3.75"]

@@ -217,9 +217,9 @@ The access log only shows the status; the reason is in the JSON response body
 (config-builder red banner, or DevTools → Network → Response). Common causes:
 
 - **No encryption backend** — see §4; restart the Manager after installing.
-- **Masked URL** — the password field shows the stored `***`. Enter the real
-  password, click **Test connection & list tables**, then Save. Saving is only
-  valid on a freshly tested, unmasked URL.
+- **Masked URL**: select **Edit** on the saved source. Secret fields remain blank
+  by design. Use **Validate** to test the stored Manager credential, or enter a
+  replacement password and select **Test connection** before saving the source.
 - Empty form (`provide db_url or connection fields`) or
   `ENABLE_CREDENTIAL_STORE=0`.
 

@@ -114,6 +114,10 @@ manage credentials, access keys, and encrypted backups. Changes are written to t
 `config.*.json` files and encrypted credential store. Removing a source or table is persisted;
 an empty table selection writes an empty registry instead of restoring defaults on reload.
 
+Saved database rows expose **Edit** and **Validate**. Validate uses the effective stored
+credential. In **Tables**, **Validate** loads current source metadata and **Edit columns** opens
+the mapping editor even when the table was originally saved with an inferred schema.
+
 The builder is **off by default** and accepts database credentials, so expose it only on a
 trusted administrative network. The Manager bootstrap installs the supported Python database
 drivers. See [BACKUP_RESTORE.md](BACKUP_RESTORE.md) before moving configuration between hosts.

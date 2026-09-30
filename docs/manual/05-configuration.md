@@ -153,6 +153,12 @@ tokenization policies, **Security** for scoped access keys and encrypted backup/
 immediately. Applying an empty table selection writes an empty registry, so deleted entries do
 not return on bootstrap or reload.
 
+Each saved database source has **Edit** and **Validate** actions. Edit restores non-secret
+settings; Validate checks the effective Manager credential without returning it to the browser.
+Configured database tables also have **Validate** and **Edit columns** actions. Validation loads
+an inferred schema when necessary and merges reflected columns with existing output names and
+tokenization policies.
+
 The builder is off by default and accepts database credentials, so run it on a private surface
 only. It preserves existing explicit schemas and transforms across reloads and apply operations.
 See chapter 7 for credential and backup protections.

@@ -1222,7 +1222,8 @@ function newConn(id){
   return { id, dialect:"postgresql", host:"", port:"", database:"", username:"", password:"",
     driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"",
     auth_method:"sql", client_id:"", client_secret:"",
-    db_url:"", db_url_masked:"", flavor:"", tested:false, connection:null, discovered:null };
+    db_url:"", db_url_masked:"", flavor:"", tested:false, connection:null, discovered:null,
+    persisted:false, dirty:false, validating:false, saved_source_validated:false };
 }
 
 // ---- persistence (never the password) ----
@@ -1305,6 +1306,11 @@ function selectConn(id){
   writeFormFromConn(c);
   $("connStatus").textContent=""; $("connStatus").className="status";
   renderConnList(); renderSelected(); persistConns();
+}
+function editConn(id){
+  selectConn(id);
+  $("connEditTitle").scrollIntoView({behavior:"smooth",block:"start"});
+  $("host").focus();
 }
 function addConn(){
   commitActive();
@@ -1408,6 +1414,14 @@ function renderConnList(){
       + `<div class="meta">${c.flavor || c.dialect || ""} · ${urlLine}</div>`
       + `<div class="meta">${n} table(s) selected</div>`;
     const acts = document.createElement("div"); acts.className = "connacts";
+    const edit = document.createElement("button"); edit.className = "btn ghost";
+    edit.textContent = "Edit"; edit.title = "Load this source into the editor";
+    edit.onclick = (e)=>{ e.stopPropagation(); editConn(c.id); };
+    const validate = document.createElement("button"); validate.className = "btn ghost";
+    validate.textContent = c.validating ? "Validating…" : "Validate";
+    validate.title = "Validate this source using its saved Manager credential";
+    validate.disabled = c.validating;
+    validate.onclick = (e)=>{ e.stopPropagation(); validateConnection(c.id); };
     const rm = document.createElement("button"); rm.className = "iconbtn";
     if(c.id === "default"){
       // The default connection is the reserved primary (the db_url) and is always
@@ -1420,7 +1434,7 @@ function renderConnList(){
       rm.title = "Remove this connection and its tables";
       rm.onclick = (e)=>{ e.stopPropagation(); removeConn(c.id); };
     }
-    acts.appendChild(rm);
+    acts.append(edit, validate, rm);
     row.append(left, acts);
     row.onclick = ()=> selectConn(c.id);
     wrap.appendChild(row);
@@ -1467,11 +1481,15 @@ function applyBootstrap(builder){
   // value can never be mistaken for a real, connectable URL (or saved as a secret).
   if(builder.has_db_url && builder.db_url_masked){ d.db_url_masked = builder.db_url_masked; }
   d.flavor = builder.flavor || "";
+  Object.assign(d, builder.default_connection_fields||{});
+  d.persisted = !!builder.has_db_url; d.dirty = false;
   state.connections.set("default", d);
   for(const c of (builder.connections||[])){
     if(!c || !c.id) continue;
     const nc = newConn(String(c.id));
     nc.db_url_masked = c.db_url_masked || ""; nc.flavor = c.flavor || "";
+    Object.assign(nc, c.fields||{});
+    nc.persisted = true; nc.dirty = false;
     state.connections.set(nc.id, nc);
   }
   if(!state.connections.has(state.activeConnId)) state.activeConnId = "default";
@@ -1895,6 +1913,8 @@ async function testActiveConnection(){
   c.capabilities = data.capabilities || null;
   c.connection = conn;
   c.discovered = data.tables || [];
+  c.dirty = false;
+  c.saved_source_validated = false;
   state.connections.set(connId, c);
   state.connection = conn; state.db_url = data.db_url; state.db_url_masked = data.db_url_masked;
   s.className="status ok";
@@ -1903,6 +1923,39 @@ async function testActiveConnection(){
   return c;
 }
 $("btnConnect").onclick = testActiveConnection;
+
+async function validateConnection(id){
+  const c=state.connections.get(id);
+  if(!c) return null;
+  if(id===state.activeConnId && c.dirty) return testActiveConnection();
+  if(!c.persisted) {
+    selectConn(id);
+    return testActiveConnection();
+  }
+  const status=$("connStatus");
+  c.validating=true; renderConnList();
+  status.className="status"; status.textContent=`Validating '${id}' with its saved credential…`;
+  const result=await api("/_config/api/sources/"+encodeURIComponent("database:"+id)+"/validate", {});
+  c.validating=false;
+  if(!result.ok){
+    c.tested=false; c.saved_source_validated=false; renderConnList();
+    status.className="status err"; status.textContent="Validation failed: "+(result.error||"unknown error");
+    return null;
+  }
+  c.tested=true;
+  c.saved_source_validated=true;
+  c.capabilities=result.capabilities||null;
+  c.discovered=result.objects||[];
+  status.className="status ok";
+  status.textContent=`Validated '${id}'${result.server_version?(" (v"+result.server_version+")"):""}.`;
+  const warningBox=$("connWarnings");
+  if(warningBox){
+    warningBox.textContent=(result.warnings||[]).join(" ");
+    warningBox.className="status "+((result.warnings||[]).length?"warn":"");
+  }
+  renderConnList(); refreshSourceCatalog();
+  return c;
+}
 
 async function saveActiveSource(){
   const status=$("connStatus");
@@ -1933,6 +1986,7 @@ async function saveActiveSource(){
     const result=await response.json();
     if(!response.ok){ throw new Error((result.errors&&result.errors.join("; "))||result.error||String(response.status)); }
     await refreshCredStatus();
+    connection.persisted=true; connection.dirty=false; connection.saved_source_validated=true;
     renderConnList(); refreshSourceCatalog();
     status.className="status ok";
     status.textContent="Source saved. Table selection is available from the Tables tab.";
@@ -2291,8 +2345,91 @@ function policyColumn(column, index){
   };
 }
 
+function parquetSafeName(value, fallbackIndex=1){
+  let safe=String(value||"").trim();
+  if(safe.normalize) safe=safe.normalize("NFKD").replace(/[\u0300-\u036f]/g,"");
+  safe=safe.replace(/[^A-Za-z0-9_]+/g,"_").replace(/_+/g,"_").replace(/^_+|_+$/g,"");
+  if(!safe) safe="column_"+fallbackIndex;
+  if(/^[0-9]/.test(safe)) safe="_"+safe;
+  return safe;
+}
+function normalizeOutputNames(columns){
+  const used=new Set();
+  const renamed=[];
+  for(let index=0;index<(columns||[]).length;index++){
+    const column=columns[index];
+    const original=String(column.name||column.source||"");
+    const base=parquetSafeName(original,index+1);
+    let candidate=base, suffix=2;
+    while(used.has(candidate.toLowerCase())) candidate=base+"_"+suffix++;
+    used.add(candidate.toLowerCase());
+    column.name=candidate;
+    if(candidate!==original) renamed.push({source:column.source,from:original,to:candidate});
+  }
+  return renamed;
+}
 function reflectedPolicyColumns(columns){
-  return (columns||[]).map((column, index)=>policyColumn({...column, field_id:index+1}, index));
+  const reflected=(columns||[]).map((column,index)=>policyColumn({...column,field_id:index+1},index));
+  normalizeOutputNames(reflected);
+  return reflected;
+}
+function mergeReflectedColumns(entry, reflected){
+  const existing=new Map((entry.columns||[]).map(column=>[column.source,column]));
+  let nextFieldId=Math.max(0,...(entry.columns||[]).map(column=>Number(column.field_id)||0))+1;
+  const merged=[];
+  for(const column of (reflected||[])){
+    const prior=existing.get(column.name);
+    if(prior){
+      merged.push({...prior,type:String(column.type||prior.type),nullable:column.nullable!==false,missing:false});
+      existing.delete(column.name);
+    }else{
+      merged.push(policyColumn({...column,field_id:nextFieldId++},nextFieldId-2));
+    }
+  }
+  for(const prior of existing.values()) merged.push({...prior,missing:true});
+  return {columns:merged,renamed:normalizeOutputNames(merged)};
+}
+async function validateConfiguredTable(entry, openEditor=false){
+  if(entry.validating) return false;
+  entry.validating=true; entry.validation_status="pending";
+  entry.validation_message="Checking source metadata…"; entry.validation_error=""; renderSelected();
+  const sourceId="database:"+(entry.connection||"default");
+  const result=await api("/_config/api/sources/"+encodeURIComponent(sourceId)+"/inspect",{
+    schema:entry.schema||null,
+    name:entry.source_table.split(".").pop()
+  });
+  entry.validating=false;
+  if(!result.ok){
+    entry.validation_status="error"; entry.validation_message="";
+    entry.validation_error=result.error||"Metadata validation failed.";
+    renderSelected();
+    return false;
+  }
+  const metadata=result.object||{};
+  const merged=mergeReflectedColumns(entry,metadata.columns||[]);
+  entry.columns=merged.columns;
+  entry.integer_keys=metadata.integer_keys||[];
+  entry.approx_rows=metadata.approx_rows;
+  if(!entry.key_column) entry.key_column=metadata.detected_key||(entry.integer_keys[0]||null);
+  entry.invalid=!entry.key_column;
+  entry.pending=false;
+  const errors=policyErrors(entry);
+  entry.validation_status=errors.length?"error":"ok";
+  entry.validation_error=errors.join(" ");
+  entry.validation_message=errors.length ? "Validation found configuration issues."
+    : `Passed validation: ${entry.columns.length} column(s) and split key verified.`
+      +(merged.renamed.length?` ${merged.renamed.length} output name(s) normalized; apply table changes to save them.`:"");
+  if(openEditor) entry.policies_open=true;
+  renderSelected();
+  return !errors.length;
+}
+async function editConfiguredColumns(entry){
+  if(!(entry.columns||[]).length){
+    await validateConfiguredTable(entry,true);
+    return;
+  }
+  entry.policies_open=true;
+  renderSelected();
 }
 function toggleTable(t, on){
   const key = selKey(state.activeConnId, (t.schema? t.schema+"." : "") + t.name);
@@ -2346,8 +2483,12 @@ function materializeModeIsVirtual(){
 
 function policyErrors(entry){
   const errors = [];
+  const missing=entry.columns.filter(column=>column.missing).map(column=>column.source);
+  if(missing.length) errors.push("Missing source columns: "+missing.join(", ")+".");
   const kept = entry.columns.filter(column=>column.policy!=="remove");
   const names = kept.map(column=>column.name.trim());
+  const incompatible=kept.filter((column,index)=>column.name.trim()!==parquetSafeName(column.name,index+1));
+  if(incompatible.length) errors.push("Output names may contain only letters, numbers, and underscores, and cannot start with a number.");
   const splitKey = entry.columns.find(column=>column.source===entry.key_column);
   if(splitKey && splitKey.policy!=="keep") errors.push("The split key must be kept.");
   if(names.some(name=>!name)) errors.push("Every kept column needs an output name.");
@@ -2422,6 +2563,7 @@ function renderPolicyEditor(entry, opts){
     const output = document.createElement("input"); output.value=column.name; output.placeholder="Output column";
     output.disabled = column.policy==="remove" || column.source===entry.key_column;
     output.oninput=()=>{ column.name=output.value; onEdit(); };
+    output.onblur=()=>{ normalizeOutputNames(entry.columns); onEdit(); rerender(); };
     const policy = document.createElement("select");
     for(const kind of ["keep","deterministic_hash","random_token","remove"]){
       // Random token is removed from the selection entirely under
@@ -2445,7 +2587,7 @@ function renderPolicyEditor(entry, opts){
       if(column.policy_id && column.policy!=="deterministic_hash" && column.policy!=="random_token") column.policy_id="";
       const available=centralPoliciesFor(column.policy);
       if(available.length && !available.some(item=>item.policy_id===column.policy_id)) column.policy_id=available[0].policy_id;
-      if(column.policy!=="keep" && column.policy!=="remove" && column.name===column.source) column.name=column.source+"_token";
+      if(column.policy!=="keep" && column.policy!=="remove" && column.name===column.source) column.name=parquetSafeName(column.source)+"_token";
       if(column.policy==="deterministic_hash" && !column.domain) column.domain=entry.name+"."+column.source;
       rerender();
     };
@@ -2586,6 +2728,12 @@ function renderSelected(){
       src.innerHTML = `<strong>${s.name}</strong><br><span class="rows">${s.source_table}${
         s.approx_rows!=null? " · ~"+Intl.NumberFormat().format(s.approx_rows)+" rows":""}</span>`;
       if(s.pending){ src.innerHTML += `<br><span class="rows">reflecting…</span>`; }
+      if(s.validation_status==="ok"){
+        src.innerHTML += ` <span class="badge ok">validated</span><br><span class="rows">${omEsc(s.validation_message||"Passed validation.")}</span>`;
+      }else if(s.validation_status==="pending"){
+        src.innerHTML += ` <span class="badge warn">validating</span><br><span class="rows">${omEsc(s.validation_message||"Checking source metadata…")}</span>`;
+      }
+      if(s.validation_error){ src.innerHTML += `<br><span class="invalid">${omEsc(s.validation_error)}</span>`; }
       const cands = keyCandidates(s);
       if(cands.length===0){ src.innerHTML += `<br><span class="invalid">no columns known — reflect the table to pick a key</span>`; }
       else if(!s.key_column){ src.innerHTML += `<br><span class="invalid">choose a key column to split</span>`; }
@@ -2603,7 +2751,7 @@ function renderSelected(){
         s.key_column = keysel.value || null;
         s.invalid = !s.key_column;
         const splitColumn=s.columns.find(column=>column.source===s.key_column);
-        if(splitColumn){ splitColumn.policy="keep"; splitColumn.name=splitColumn.source; }
+        if(splitColumn) splitColumn.policy="keep";
         renderSelected(); persistConns();
       };
 
@@ -2660,6 +2808,16 @@ function renderSelected(){
       };
 
       row.append(src, keysel, strat, bal, splits, target, enable, rm); table.appendChild(row);
+      const tableActions=document.createElement("div"); tableActions.className="actions";
+      const validate=document.createElement("button"); validate.className="btn ghost";
+      validate.textContent=s.validating?"Validating…":(s.validation_status==="ok"?"✓ Validated":"Validate");
+      validate.disabled=!!s.validating;
+      validate.onclick=()=>validateConfiguredTable(s,false);
+      const editColumns=document.createElement("button"); editColumns.className="btn ghost";
+      editColumns.textContent="Edit columns";
+      editColumns.disabled=!!s.validating;
+      editColumns.onclick=()=>editConfiguredColumns(s);
+      tableActions.append(validate,editColumns); table.appendChild(tableActions);
       if(s.columns.length){
         const toggle=document.createElement("button"); toggle.className="iconbtn policy-toggle";
         toggle.textContent=(s.policies_open ? "Hide" : "Edit")+" column policies";
@@ -2804,18 +2962,23 @@ async function applyTables(options={}){
   // password is already saved in the Manager store (config gets a password-stripped
   // URL either way; the store hydrates the real password at runtime).
   const refIds = [...new Set(valid.map(s=>s.connection||"default"))].filter(c=>c!=="default");
-  const isReady = (cid)=>{ const c=state.connections.get(cid); return !!c && ((c.tested && c.db_url) || (state.storedCreds.has(cid) && (c.db_url || c.db_url_masked))); };
+  const connectionReadyForTables = (c)=>!!c && (
+    (c.tested && c.db_url)
+    || (c.persisted && c.saved_source_validated && c.db_url_masked)
+    || (state.storedCreds.has(c.id) && (c.db_url || c.db_url_masked))
+  );
+  const isReady = (cid)=>connectionReadyForTables(state.connections.get(cid));
   const notReady = refIds.filter(cid=>!isReady(cid));
   if(notReady.length){
     status.className="status err";
     status.textContent="These sources aren't ready yet: "+notReady.join(", ")
-      +". Open Sources and either test each one or save its credentials, then apply again.";
+      +". Validate each saved source, or test and save any edited source, then apply again.";
     return false;
   }
   // Persist the referenced named sources alongside the tables (passwords stripped)
   // so config.tables.json never references an undefined connection.
   const connections = [...state.connections.values()]
-    .filter(c=>c.id!=="default" && ((c.tested && c.db_url) || (state.storedCreds.has(c.id) && (c.db_url || c.db_url_masked))))
+    .filter(c=>c.id!=="default" && connectionReadyForTables(c))
     .map(c=>({id:c.id, db_url: stripPw(c.db_url || c.db_url_masked)}));
   const settings = {tables};
   if(connections.length) settings.connections = connections;
@@ -2877,6 +3040,8 @@ function onConnFormEdit(){
   if(!c) return;
   readFormIntoConn(c);
   c.tested = false;            // edits invalidate a prior successful test
+  c.dirty = true;
+  c.saved_source_validated = false;
   renderConnList(); persistConns();
 }
 CONN_FIELDS.forEach(f => { const el = $(f); if(el) el.addEventListener("input", onConnFormEdit); });

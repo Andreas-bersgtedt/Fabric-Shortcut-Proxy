@@ -63,9 +63,43 @@ def _build_table(rows: list[dict[str, Any]], cols, schema: "pa.Schema",
     for col in cols:
         raw_values = [row.get(col.name) for row in rows]
         pa_type = schema.field(col.name).type
+        fallback_action = None
+        fallback_count = 0
         if pa.types.is_floating(pa_type):
-            raw_values = [float(value) if isinstance(value, Decimal) else value
-                          for value in raw_values]
+            fallback_count = sum(isinstance(value, Decimal) for value in raw_values)
+            if fallback_count:
+                raw_values = [
+                    float(value) if isinstance(value, Decimal) else value
+                    for value in raw_values
+                ]
+                fallback_action = "decimal_to_float"
+        elif pa.types.is_binary(pa_type) or pa.types.is_large_binary(pa_type):
+            fallback_count = sum(isinstance(value, Decimal) for value in raw_values)
+            if fallback_count:
+                raw_values = [
+                    format(value, "f").encode("utf-8")
+                    if isinstance(value, Decimal) else value
+                    for value in raw_values
+                ]
+                fallback_action = "decimal_to_utf8_bytes"
+        elif pa.types.is_string(pa_type) or pa.types.is_large_string(pa_type):
+            fallback_count = sum(isinstance(value, Decimal) for value in raw_values)
+            if fallback_count:
+                raw_values = [
+                    format(value, "f") if isinstance(value, Decimal) else value
+                    for value in raw_values
+                ]
+                fallback_action = "decimal_to_string"
+        if fallback_action:
+            log.info(
+                "type_value_normalized",
+                column=col.name,
+                split_index=split_index,
+                target_type=str(pa_type),
+                source_type="decimal.Decimal",
+                value_count=fallback_count,
+                action=fallback_action,
+            )
         try:
             arr = pa.array(raw_values, type=pa_type)
         except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:
@@ -75,9 +109,17 @@ def _build_table(rows: list[dict[str, Any]], cols, schema: "pa.Schema",
                 split_index=split_index,
                 error=str(exc),
             )
-            # Fallback: cast via string
-            str_arr = pa.array([str(v) if v is not None else None for v in raw_values])
-            arr = str_arr.cast(pa_type, safe=False)
+            try:
+                str_arr = pa.array([
+                    str(value) if value is not None else None
+                    for value in raw_values
+                ])
+                arr = str_arr.cast(pa_type, safe=False)
+            except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as fallback_exc:
+                raise ValueError(
+                    f"Column {col.name!r} cannot be converted to declared Arrow "
+                    f"type {pa_type}: {fallback_exc}"
+                ) from exc
         columns_out[col.name] = arr
 
     return pa.table(columns_out, schema=schema)

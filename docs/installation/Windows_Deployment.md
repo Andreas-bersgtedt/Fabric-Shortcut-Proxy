@@ -242,8 +242,9 @@ Keep secrets out of the JSON files.
 
 **DB password → DPAPI credential store (recommended on Windows).** After the service is
 running (section 9), open the config UI at `http://127.0.0.1:9200/_config`, go to the
-**Connection** tab, enter the real password, **Test connection**, then **Save credentials
-to Manager**. It is encrypted with DPAPI and survives restarts — no plaintext in config.
+**Sources** tab, enter the real password, select **Test connection**, then **Save source**.
+It is encrypted with DPAPI and survives restarts, with no plaintext in config. After a
+restart, use the source row's **Validate** action to test the stored credential.
 
 **Other secrets → machine environment variables** (readable by the service account). Set
 them from an elevated prompt (`/M` = machine scope):

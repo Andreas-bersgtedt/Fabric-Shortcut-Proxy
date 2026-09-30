@@ -23,6 +23,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Narrowed demo ignore rules to local environment inputs and generated Bicep output; reusable
   infrastructure, chart, scripts, examples, and documentation are visible to Git.
 
+## [2.9.6]: 2026-09-28
+
+### Added
+
+- Added explicit **Edit** and **Validate** actions for saved database sources. Editing restores
+  non-secret connection fields, while validation uses the Manager's effective stored credential.
+- Added **Validate** and **Edit columns** actions to configured tables, including tables that use
+  an inferred schema and previously had no mapping editor after reload.
+- Added a visible per-table validation result and automatic Parquet-safe output names for
+  reflected columns. Spaces and punctuation become underscores, leading numbers are prefixed,
+  and collisions receive deterministic numeric suffixes.
+
+### Changed
+
+- Table metadata validation now merges reflected columns with saved output names and
+  tokenization settings instead of replacing the configured mapping.
+- Updated package, Manager, Agent, and Helm release versions to 2.9.6.
+
+### Fixed
+
+- Fixed Parquet generation for `decimal.Decimal` values under stale binary schemas by using a
+  deterministic fixed-point UTF-8 byte representation. Reflected decimal columns continue to
+  use their declared precision and scale.
+- Fixed stale string schemas reaching the generic Arrow cast fallback for `decimal.Decimal`
+  values. Decimal-to-string conversion now uses the canonical fixed-point representation
+  directly and records an informational normalization event instead of a cast warning.
+- Added bounded retries for streaming source queries when the connection fails before the
+  first row batch. Failures after rows are emitted still stop immediately to prevent duplicate
+  Parquet rows.
+- Fixed the table apply readiness gate so validating an unchanged saved source is sufficient
+  before adding a table. Operators no longer need to open and resave that source first.
+
 ## [2.9.5]: 2026-09-24
 
 ### Fixed

@@ -313,9 +313,86 @@ Agent child processes. Set `MANAGER_SUPERVISION_MODE=external` only when Kuberne
 another orchestrator owns the Agent lifecycle; the Manager then accepts registered Agents
 but does not spawn them.
 
-`GENERATION_SOURCE_CONSISTENCY=best_effort` is the only supported distributed source-read
-contract. Each split can observe the source at a different time during a generation.
-`snapshot` is reserved for a future shared source snapshot token and fails validation today.
+### Source-read consistency contract
+
+`GENERATION_SOURCE_CONSISTENCY` controls source reads for one published table generation.
+It does not change the atomic serving-image activation described in the scale architecture.
+
+Current runtime:
+
+- `best_effort` is supported for every source;
+- `snapshot` is supported for SQL Server and PostgreSQL;
+- unsupported sources and mode combinations fail configuration validation.
+
+`best_effort` allows planning and split queries to run on independent connections at
+different times. It is suitable for static tables, append-only tables with an external
+write fence, or materialization during a controlled quiet period. It does not guarantee
+that concurrent source inserts, updates, deletes, or key changes produce one point-in-time
+table image.
+
+The `snapshot` contract is per table:
+
+> Row-count planning, range planning, and every split query used for one table generation
+> observe one source read point.
+
+It is not an atomic snapshot across multiple tables or databases.
+
+Phase 1 support:
+
+| Source | Eager | Lazy | Virtual | Mechanism |
+|---|---:|---:|---:|---|
+| SQL Server | Yes | Yes | No | One owned `SNAPSHOT` transaction and connection per table |
+| PostgreSQL | Yes | Yes | No | Exported snapshot imported by worker transactions |
+| Other sources | No | No | No | Fail closed until a source provider is implemented |
+
+Lazy snapshot mode acquires and plans the read point at process startup, then holds it until
+the complete table is materialized on first access. If the table is not read before
+`SNAPSHOT_MAX_LIFETIME_SECONDS`, the first read fails closed and requires a process restart
+to acquire a new generation. Transaction-bound snapshot providers do not support virtual
+mode because an evicted split cannot reopen the expired transaction read point.
+
+Snapshot mode will fail before publication when:
+
+- the source has no registered provider;
+- SQL Server snapshot isolation is disabled;
+- a worker cannot join the PostgreSQL exported snapshot;
+- the read point expires or its owner is lost;
+- the materialization mode cannot retain or reopen the read point.
+
+The runtime must not fall back from `snapshot` to `best_effort`. A failed snapshot
+generation must not update `CURRENT`.
+
+`AUTO_REFRESH=1` is not supported with snapshot mode in this phase. Each refresh requires
+a new read-point lifecycle and will be enabled only after refresh publication uses the same
+plan and fencing rules.
+
+SQL Server prerequisite:
+
+```sql
+ALTER DATABASE [your_database] SET ALLOW_SNAPSHOT_ISOLATION ON;
+```
+
+Long-running SQL Server snapshot transactions retain row versions in `tempdb`. Long-running
+PostgreSQL exported snapshots retain an old `xmin` horizon and can delay vacuum cleanup.
+Monitor snapshot age and keep `SNAPSHOT_MAX_LIFETIME_SECONDS` below the source's operational
+limit. The default is 3,600 seconds.
+
+Changing an existing multi-shard fleet between `best_effort` and `snapshot` requires a
+coordinated materializer restart. Do not use an ordinal StatefulSet rolling update for this
+mode change: the first new worker would see the old active generation, while shard 0 would
+still run the previous mode.
+
+```bash
+kubectl -n fabric-shortcut-proxy scale statefulset/fsp-materializer --replicas=0
+kubectl -n fabric-shortcut-proxy wait \
+  --for=delete pod -l app.kubernetes.io/name=fsp-materializer --timeout=300s
+kubectl -n fabric-shortcut-proxy scale statefulset/fsp-materializer --replicas=<count>
+kubectl -n fabric-shortcut-proxy rollout status \
+  statefulset/fsp-materializer --timeout=1200s
+```
+
+Ordinary image updates that keep the same consistency mode can continue to use the normal
+rolling strategy.
 
 An Agent sends a heartbeat every `HEARTBEAT_MS` (2,000 by default). The Manager marks it
 dead after `HEARTBEAT_MISS_LIMIT` misses (3 by default). `AGENT_RESTART_BACKOFF_SECONDS`

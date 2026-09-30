@@ -50,6 +50,7 @@
         "shardStrategy": { "type": "string" },
         "materializeWaitSeconds": { "type": "string" },
         "generationSourceConsistency": { "type": "string" },
+        "snapshotMaxLifetimeSeconds": { "type": "string" },
         "streamingParquet": { "type": "string" },
         "streamBatchRows": { "type": "string" },
         "sourceMaxConcurrency": { "type": "string" },

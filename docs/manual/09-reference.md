@@ -77,7 +77,8 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `ENABLE_GATEWAY` | `enable_gateway` | `0` | Built-in round-robin S3 gateway (enterprise) |
 | `CONTROL_PORT` | `control_port` | `9200` | Manager control-plane port |
 | `MANAGER_SUPERVISION_MODE` | `manager_supervision_mode` | `local` | `local` Manager-owned or `external` orchestrator-owned Agents |
-| `GENERATION_SOURCE_CONSISTENCY` | `generation_source_consistency` | `best_effort` | `best_effort` only; `snapshot` currently fails validation |
+| `GENERATION_SOURCE_CONSISTENCY` | `generation_source_consistency` | `best_effort` | `best_effort` for every source; per-table `snapshot` for SQL Server and PostgreSQL, with no silent fallback. See chapter 8 |
+| `SNAPSHOT_MAX_LIFETIME_SECONDS` | `snapshot_max_lifetime_seconds` | `3600` | Maximum lifetime of a transaction-bound table read point before queries fail closed |
 | `HEARTBEAT_MS` / `HEARTBEAT_MISS_LIMIT` | `heartbeat_ms` / `heartbeat_miss_limit` | `2000` / `3` | Agent liveness interval and miss threshold |
 | `MATERIALIZE_WAIT_SECONDS` | `materialize_wait_seconds` | `30` | Non-owner Agent wait for an owner-published split |
 | `MEMORY_ALERT_THRESHOLD_MB` / `MEMORY_RESTART_THRESHOLD_MB` | `memory_alert_threshold_mb` / `memory_restart_threshold_mb` | `800` / `1200` | Agent memory alert and restart thresholds |

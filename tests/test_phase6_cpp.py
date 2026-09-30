@@ -1,6 +1,7 @@
 """Phase 6: serving-image publisher (enables the stateless/C++ Agent)."""
 from __future__ import annotations
 
+import json
 import os
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
@@ -35,6 +36,11 @@ def test_publish_serving_image_writes_data_and_metadata(monkeypatch):
     assert store.get(prefix + "warehouse/db/sales/data/split-0-1.parquet") == b"PARQ"
     assert store.get(prefix + "warehouse/db/sales/data/split-1-1.parquet") == b"PARQ"
     assert result["generation_id"].encode() in store.get("CURRENT")
+    current = json.loads(store.get("CURRENT"))
+    ready = json.loads(store.get(prefix + "READY.json"))
+    assert current["version"] == 2
+    assert current["plan_sha256"]
+    assert current["plan_sha256"] == ready["plan_sha256"]
 
 
 def test_publish_fails_closed_when_object_has_no_bytes(monkeypatch):
@@ -49,6 +55,14 @@ def test_publish_fails_closed_when_object_has_no_bytes(monkeypatch):
         serving_image.publish_serving_image(store)
     with pytest.raises(ObjectNotFound):
         store.get("CURRENT")
+    failed = [
+        json.loads(store.get(item.key))
+        for item in store.list("generations/")
+        if item.key.endswith("/FAILED.json")
+    ]
+    assert len(failed) == 1
+    assert "lease_token" not in failed[0]
+    assert failed[0]["plan_sha256"]
 
 
 def test_publish_reads_split_bytes_from_shared_store_when_not_cached(monkeypatch):

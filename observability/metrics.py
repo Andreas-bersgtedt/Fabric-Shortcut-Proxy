@@ -11,6 +11,7 @@ Metrics exposed:
   - ``cache_events_total{cache,result}`` cache hit/miss by cache
   - ``sql_errors_total``               failed/timed-out SQL attempts
   - ``sql_query_duration_seconds``     SQL latency histogram (+ sum/count)
+  - ``source_read_point_events_total`` read-point lifecycle events
   - ``process_uptime_seconds``         process uptime gauge
 """
 from __future__ import annotations
@@ -72,6 +73,14 @@ def record_sql(latency_seconds: float, *, error: bool = False) -> None:
                 _sql_bucket_counts[b] += 1
     if error:
         inc_counter("sql_errors_total")
+
+
+def record_read_point(event: str, provider: str) -> None:
+    inc_counter(
+        "source_read_point_events_total",
+        event=event,
+        provider=provider or "unknown",
+    )
 
 
 def classify_key(key: str) -> str:

@@ -327,12 +327,15 @@ ENABLE_GATEWAY: bool = _get_bool("ENABLE_GATEWAY", "enable_gateway", False)
 # Non-owner Agent: max wait for a sharded split to appear in the store
 MATERIALIZE_WAIT_SECONDS: float = float(_get_int("MATERIALIZE_WAIT_SECONDS", "materialize_wait_seconds", 30))
 
-# Cross-worker source-read contract. "best_effort" allows each split query to
-# observe the source independently. "snapshot" is reserved for a future shared,
-# source-specific snapshot token and currently fails validation.
+# Cross-worker source-read contract.
 GENERATION_SOURCE_CONSISTENCY: str = _get_str(
     "GENERATION_SOURCE_CONSISTENCY", "generation_source_consistency", "best_effort"
 ).strip().lower()
+
+# Maximum lifetime for a transaction-bound source read point.
+SNAPSHOT_MAX_LIFETIME_SECONDS: int = _get_int(
+    "SNAPSHOT_MAX_LIFETIME_SECONDS", "snapshot_max_lifetime_seconds", 3600
+)
 
 # ---------------------------------------------------------------------------
 # Control Plane (Phase 1)

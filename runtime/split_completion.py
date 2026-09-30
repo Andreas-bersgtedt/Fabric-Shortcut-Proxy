@@ -16,6 +16,7 @@ _PREFIX = ".fsp/generations"
 class SplitCompletion:
     generation_id: str
     fence: int
+    plan_sha256: str
     object_key: str
     file_size_in_bytes: int
     record_count: int
@@ -68,12 +69,16 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
     generation_id = str(getattr(split, "generation_id", "legacy"))
     fence = int(getattr(split, "generation_fence", 0))
     lease_token = str(getattr(split, "generation_token", ""))
+    plan_sha256 = str(getattr(split, "generation_plan_sha256", ""))
     if generation_id != "legacy":
-        assert_generation_identity(store, generation_id, fence, lease_token)
+        assert_generation_identity(
+            store, generation_id, fence, lease_token, plan_sha256
+        )
     store.put(split.object_key, parquet_bytes)
     completion = SplitCompletion(
         generation_id=generation_id,
         fence=fence,
+        plan_sha256=plan_sha256,
         object_key=split.object_key,
         file_size_in_bytes=int(split.file_size_in_bytes),
         record_count=int(split.record_count),
@@ -82,9 +87,10 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
         stats=dict(split.stats or {}),
     )
     payload = {
-        "version": 1,
+        "version": 2,
         "generation_id": completion.generation_id,
         "fence": completion.fence,
+        "plan_sha256": completion.plan_sha256,
         "object_key": completion.object_key,
         "file_size_in_bytes": completion.file_size_in_bytes,
         "record_count": completion.record_count,
@@ -105,8 +111,11 @@ def read_split_completion(split) -> SplitCompletion | None:
     generation_id = str(getattr(split, "generation_id", "legacy"))
     fence = int(getattr(split, "generation_fence", 0))
     lease_token = str(getattr(split, "generation_token", ""))
+    plan_sha256 = str(getattr(split, "generation_plan_sha256", ""))
     if generation_id != "legacy":
-        assert_generation_identity(store, generation_id, fence, lease_token)
+        assert_generation_identity(
+            store, generation_id, fence, lease_token, plan_sha256
+        )
     try:
         raw = store.get(completion_key(split.object_key, generation_id))
     except ObjectNotFound:
@@ -114,10 +123,14 @@ def read_split_completion(split) -> SplitCompletion | None:
     try:
         payload = json.loads(raw)
         if (
-            payload.get("version") != 1
+            payload.get("version") not in {1, 2}
             or payload.get("generation_id") != generation_id
             or int(payload.get("fence", -1)) != fence
             or payload.get("object_key") != split.object_key
+            or (
+                plan_sha256
+                and str(payload.get("plan_sha256") or "") != plan_sha256
+            )
         ):
             raise ValueError("completion identity mismatch")
         s3_etag = payload.get("s3_etag")
@@ -126,6 +139,7 @@ def read_split_completion(split) -> SplitCompletion | None:
         completion = SplitCompletion(
             generation_id=payload["generation_id"],
             fence=int(payload["fence"]),
+            plan_sha256=str(payload.get("plan_sha256") or ""),
             object_key=payload["object_key"],
             file_size_in_bytes=int(payload["file_size_in_bytes"]),
             record_count=int(payload["record_count"]),

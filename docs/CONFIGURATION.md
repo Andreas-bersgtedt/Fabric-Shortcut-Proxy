@@ -628,6 +628,8 @@ Create one Fabric shortcut per table.
 | `REQUIRE_SIGV4` | `1` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
 | `AGENT_HOST_ALLOWLIST` | `127.0.0.1,0.0.0.0,::1,::,localhost` | Hosts or CIDRs accepted in Manager agent registration |
+| `GENERATION_SOURCE_CONSISTENCY` | `best_effort` | Source-read contract for one table generation. SQL Server and PostgreSQL support fail-closed per-table `snapshot` |
+| `SNAPSHOT_MAX_LIFETIME_SECONDS` | `3600` | Maximum lifetime of a transaction-bound table read point |
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |
@@ -639,6 +641,33 @@ Create one Fabric shortcut per table.
 > (both schema-free). Environment variables still override the matching split-file keys,
 > for example `DB_URL` overrides `config.connection.json` and `S3_BUCKET` overrides
 > `config.system.json`.
+
+### 8.1 Distributed source-read consistency
+
+The `best_effort` mode allows planning and split queries to observe the source at different
+times. `snapshot` is a per-table guarantee covering row-count planning, boundary planning,
+split queries, and retries.
+
+The first provider set supports:
+
+- SQL Server eager and lazy materialization through one owned `SNAPSHOT` transaction;
+- PostgreSQL eager and lazy materialization through an exported snapshot;
+- fail-closed behavior for other sources;
+- rejection of transaction-bound snapshot providers with virtual materialization.
+- rejection of snapshot mode with auto-refresh until refresh read-point lifecycle support is
+  added.
+
+Lazy mode acquires the read point during startup planning and holds it until first table
+materialization. Set `SNAPSHOT_MAX_LIFETIME_SECONDS` above the expected startup-to-first-read
+interval, or use eager mode to materialize and release the transaction immediately.
+
+Changing a running multi-shard deployment between `best_effort` and `snapshot` requires a
+coordinated materializer restart. See the manual operations chapter for the scale-to-zero
+procedure. Image updates that retain the same consistency mode can roll normally.
+
+This guarantee does not cover multiple tables or databases in one transaction. See
+[chapter 8 of the manual](manual/08-operations.md#source-read-consistency-contract) for
+prerequisites, source costs, and failure behavior.
 
 ---
 

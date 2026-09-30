@@ -27,6 +27,7 @@ fsp:
   shardStrategy: modulo
   materializeWaitSeconds: "600"
   generationSourceConsistency: best_effort
+  snapshotMaxLifetimeSeconds: "3600"
   streamingParquet: "1"
   streamBatchRows: "10000"
   sourceMaxConcurrency: "2"

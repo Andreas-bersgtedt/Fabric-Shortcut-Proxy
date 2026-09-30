@@ -178,10 +178,115 @@ def test_validate_config_accepts_best_effort_generation_consistency(monkeypatch)
     config.validate_config()
 
 
-def test_validate_config_rejects_unsupported_snapshot_consistency(monkeypatch):
+def test_validate_config_accepts_registered_snapshot_provider(monkeypatch):
     monkeypatch.setattr(config, "GENERATION_SOURCE_CONSISTENCY", "snapshot")
-    with pytest.raises(ValueError, match="do not share a source snapshot token"):
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "eager")
+    monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://host/database")
+    monkeypatch.setattr(
+        config,
+        "TABLES",
+        [config.TableDef("orders", "sales.orders", list(config.TABLE_SCHEMA))],
+    )
+    config.validate_config()
+
+
+def test_validate_config_rejects_snapshot_without_provider(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_SOURCE_CONSISTENCY", "snapshot")
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "eager")
+    monkeypatch.setattr(config, "DB_URL", "sqlite+aiosqlite:///source.db")
+    monkeypatch.setattr(
+        config,
+        "TABLES",
+        [config.TableDef("orders", "sales", list(config.TABLE_SCHEMA))],
+    )
+    with pytest.raises(ValueError, match="no provider"):
         config.validate_config()
+
+
+def test_validate_config_rejects_snapshot_virtual_mode(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_SOURCE_CONSISTENCY", "snapshot")
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "virtual")
+    monkeypatch.setattr(config, "DB_URL", "postgresql+asyncpg://host/database")
+    monkeypatch.setattr(
+        config,
+        "TABLES",
+        [config.TableDef("orders", "sales.orders", list(config.TABLE_SCHEMA))],
+    )
+    with pytest.raises(ValueError, match="cannot use.*virtual"):
+        config.validate_config()
+
+
+def test_validate_config_rejects_snapshot_auto_refresh(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_SOURCE_CONSISTENCY", "snapshot")
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "eager")
+    monkeypatch.setattr(config, "AUTO_REFRESH", True)
+    monkeypatch.setattr(config, "DB_URL", "postgresql+asyncpg://host/database")
+    monkeypatch.setattr(
+        config,
+        "TABLES",
+        [config.TableDef("orders", "sales.orders", list(config.TABLE_SCHEMA))],
+    )
+    with pytest.raises(ValueError, match="cannot use AUTO_REFRESH"):
+        config.validate_config()
+
+
+def test_validate_config_rejects_multishard_snapshot_without_store(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_SOURCE_CONSISTENCY", "snapshot")
+    monkeypatch.setattr(config, "MATERIALIZE_MODE", "eager")
+    monkeypatch.setattr(config, "AGENT_SHARD_COUNT", 2)
+    monkeypatch.setattr(config, "ARTIFACT_STORE_SERVING", False)
+    monkeypatch.setattr(config, "DB_URL", "postgresql+asyncpg://host/database")
+    monkeypatch.setattr(
+        config,
+        "TABLES",
+        [config.TableDef("orders", "sales.orders", list(config.TABLE_SCHEMA))],
+    )
+    with pytest.raises(ValueError, match="requires ARTIFACT_STORE_SERVING"):
+        config.validate_config()
+
+
+def test_validate_config_rejects_invalid_snapshot_lifetime(monkeypatch):
+    monkeypatch.setattr(config, "SNAPSHOT_MAX_LIFETIME_SECONDS", 0)
+    with pytest.raises(ValueError, match="SNAPSHOT_MAX_LIFETIME_SECONDS"):
+        config.validate_config()
+
+
+def test_setting_updates_reject_invalid_snapshot_combinations():
+    _, virtual_errors = config.validate_setting_updates({
+        "generation_source_consistency": "snapshot",
+        "materialize_mode": "virtual",
+    })
+    assert any("materialize_mode=virtual" in error for error in virtual_errors)
+
+    _, source_errors = config.validate_setting_updates({
+        "generation_source_consistency": "snapshot",
+        "tables": [{
+            "name": "orders",
+            "source_table": "orders",
+            "key_column": "id",
+        }],
+    })
+    assert any("no snapshot provider" in error for error in source_errors)
+
+
+def test_setting_updates_accept_snapshot_provider_source():
+    clean, errors = config.validate_setting_updates({
+        "generation_source_consistency": "snapshot",
+        "materialize_mode": "eager",
+        "connections": [{
+            "id": "warehouse",
+            "db_url": "mssql+aioodbc://host/database",
+        }],
+        "tables": [{
+            "name": "orders",
+            "source_table": "sales.orders",
+            "key_column": "id",
+            "connection": "warehouse",
+        }],
+    })
+
+    assert errors == []
+    assert clean["generation_source_consistency"] == "snapshot"
 
 
 def test_validate_config_rejects_duplicate_field_ids(monkeypatch):

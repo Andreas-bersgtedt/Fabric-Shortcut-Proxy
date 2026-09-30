@@ -63,6 +63,13 @@ def _owns_split(split) -> bool:
     n = config.AGENT_SHARD_COUNT
     if n <= 1:
         return True
+    if (
+        config.GENERATION_SOURCE_CONSISTENCY == "snapshot"
+        and not bool(getattr(split, "generation_distributed_snapshot", False))
+    ):
+        return int(
+            getattr(split, "generation_owner_shard", 0)
+        ) == config.AGENT_SHARD_INDEX
     return split.split_index % n == config.AGENT_SHARD_INDEX
 
 
@@ -128,11 +135,29 @@ async def _materialize_split_once(split) -> int:
         if warm is not None:
             return _apply_bytes(split, warm)
         sql, params = build_split_query(split)
+        read_session = None
+        if config.GENERATION_SOURCE_CONSISTENCY == "snapshot":
+            from runtime.snapshot_planning import read_session_for
+
+            read_session = read_session_for(split.table)
+            if read_session is None:
+                raise RuntimeError(
+                    f"snapshot read session is unavailable for {split.table.name!r}"
+                )
         if config.STREAMING_PARQUET:
-            batches = stream_split_query(
-                sql, params, split_index=split.split_index,
-                batch_rows=config.STREAM_BATCH_ROWS,
-                connection=split.table.connection_id,
+            batches = (
+                read_session.stream_split_query(
+                    sql,
+                    params,
+                    split_index=split.split_index,
+                    batch_rows=config.STREAM_BATCH_ROWS,
+                )
+                if read_session is not None
+                else stream_split_query(
+                    sql, params, split_index=split.split_index,
+                    batch_rows=config.STREAM_BATCH_ROWS,
+                    connection=split.table.connection_id,
+                )
             )
             async def transformed_batches():
                 async for batch in batches:
@@ -142,9 +167,15 @@ async def _materialize_split_once(split) -> int:
                 transformed_batches(), split_index=split.split_index, columns=split.table.schema
             )
         else:
-            rows = await execute_split_query(
-                sql, params, split_index=split.split_index,
-                connection=split.table.connection_id,
+            rows = (
+                await read_session.execute_split_query(
+                    sql, params, split_index=split.split_index
+                )
+                if read_session is not None
+                else await execute_split_query(
+                    sql, params, split_index=split.split_index,
+                    connection=split.table.connection_id,
+                )
             )
             pq_bytes = rows_to_parquet(
                 _apply_arrow_fallback(rows, split), split_index=split.split_index,
@@ -183,6 +214,7 @@ async def _materialize_split(split) -> int:
         split.generation_id = context.generation_id
         split.generation_fence = context.fence
         split.generation_token = context.lease_token
+        split.generation_plan_sha256 = context.plan_sha256
         log.info(
             "worker_generation_rejoined",
             generation_id=context.generation_id,
@@ -202,10 +234,24 @@ async def ensure_snapshot_materialized(snap: SnapshotState) -> None:
     async with _lock_for(snap.table.name):
         if _is_materialized(snap):
             return
-        if config.CONCURRENT_STARTUP_MATERIALIZATION:
-            counts = await asyncio.gather(*(_materialize_split(s) for s in snap.splits))
-        else:
-            counts = [await _materialize_split(s) for s in snap.splits]
+        try:
+            if (
+                config.CONCURRENT_STARTUP_MATERIALIZATION
+                and config.GENERATION_SOURCE_CONSISTENCY != "snapshot"
+            ):
+                counts = await asyncio.gather(
+                    *(_materialize_split(s) for s in snap.splits)
+                )
+            else:
+                counts = [await _materialize_split(s) for s in snap.splits]
+        except Exception:
+            if config.GENERATION_SOURCE_CONSISTENCY == "snapshot":
+                from runtime.snapshot_planning import close_active_table
+
+                await close_active_table(
+                    snap.table, abort_reason="table materialization failed"
+                )
+            raise
         snap.total_records = sum(counts)
         # Discard any placeholder-sized metadata a pre-materialization browse may
         # have memoized, so it rebuilds with the true sizes.
@@ -217,6 +263,10 @@ async def ensure_snapshot_materialized(snap: SnapshotState) -> None:
             delta_log.invalidate_table(snap.table.name)
         if config.MATERIALIZE_MODE == "virtual" and snap.splits:
             await _verify_determinism(snap.splits[0])
+        if config.GENERATION_SOURCE_CONSISTENCY == "snapshot":
+            from runtime.snapshot_planning import close_active_table
+
+            await close_active_table(snap.table)
         log.info("deferred_materialized", mode=config.MATERIALIZE_MODE, table=snap.table.name,
                  total_records=snap.total_records, splits=len(snap.splits))
 

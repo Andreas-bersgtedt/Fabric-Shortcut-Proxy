@@ -8,7 +8,7 @@ import cache.lru_cache as cache
 import config
 from iceberg.stats import ColumnStats
 from runtime.artifact_store import MemoryStore, reset_default_store, set_default_store
-from runtime.generation import acquire_generation
+from runtime.generation import GenerationError, acquire_generation
 from runtime.split_completion import publish_split_completion, read_split_completion
 
 
@@ -133,6 +133,7 @@ async def test_fenced_non_owner_rejoins_current_generation(shared_store, monkeyp
     split.generation_id = current.generation_id
     split.generation_fence = current.fence
     split.generation_token = current.lease_token
+    split.generation_plan_sha256 = current.plan_sha256
     data = b"owner-parquet-bytes"
     split.file_size_in_bytes = len(data)
     split.record_count = 11
@@ -142,6 +143,7 @@ async def test_fenced_non_owner_rejoins_current_generation(shared_store, monkeyp
     split.generation_id = stale.generation_id
     split.generation_fence = stale.fence
     split.generation_token = stale.lease_token
+    split.generation_plan_sha256 = stale.plan_sha256
 
     monkeypatch.setattr(config, "AGENT_SHARD_COUNT", 2)
     monkeypatch.setattr(config, "AGENT_SHARD_INDEX", 0)
@@ -151,7 +153,25 @@ async def test_fenced_non_owner_rejoins_current_generation(shared_store, monkeyp
 
     assert count == 11
     assert split.generation_id == current.generation_id
+    assert split.generation_plan_sha256 == current.plan_sha256
     assert split.file_size_in_bytes == len(data)
+
+
+def test_completion_rejects_plan_digest_mismatch(shared_store):
+    context = acquire_generation(shared_store, 1)
+    split = _split(index=0)
+    split.generation_id = context.generation_id
+    split.generation_fence = context.fence
+    split.generation_token = context.lease_token
+    split.generation_plan_sha256 = context.plan_sha256
+    data = b"owner-parquet-bytes"
+    split.file_size_in_bytes = len(data)
+    split.record_count = 1
+    publish_split_completion(split, data)
+
+    split.generation_plan_sha256 = "different-plan"
+    with pytest.raises(GenerationError, match="table plan"):
+        read_split_completion(split)
 
 
 @pytest.mark.asyncio

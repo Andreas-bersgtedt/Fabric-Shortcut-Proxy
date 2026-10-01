@@ -477,7 +477,7 @@ static bool json_i64_value(const std::string& text, const std::string& name, lon
 
 static bool activate_current_generation() {
     fs::path store_root = canonical_store_root();
-    if (!CFG.require_generation) {
+    if (CFG.materialize_mode == "lazy" && !CFG.require_generation) {
         rebuild_object_index();
         std::lock_guard<std::mutex> lock(g_object_index_mu);
         g_active_root = store_root;
@@ -487,7 +487,13 @@ static bool activate_current_generation() {
     }
     std::string current;
     if (!read_file_text(store_root / "CURRENT", current)) {
-        return false;
+        if (CFG.require_generation) return false;
+        rebuild_object_index();
+        std::lock_guard<std::mutex> lock(g_object_index_mu);
+        g_active_root = store_root;
+        g_active_generation.clear();
+        g_generation_ready = true;
+        return true;
     }
 
     std::string generation_id, expected_ready_sha;

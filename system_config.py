@@ -404,6 +404,23 @@ LEADER_LEASE_TTL_MS: int = _get_int("LEADER_LEASE_TTL_MS", "leader_lease_ttl_ms"
 # Leader lease renew interval (ms); must be < TTL
 LEADER_LEASE_RENEW_MS: int = _get_int("LEADER_LEASE_RENEW_MS", "leader_lease_renew_ms", 3_000)
 
+# Dispatch lazy materialization through the durable Manager work queue.
+MATERIALIZATION_WORK_QUEUE: bool = _get_bool(
+    "MATERIALIZATION_WORK_QUEUE", "materialization_work_queue", True
+)
+
+# Keep terminal queue records for this many seconds. Published manifests remain.
+WORK_QUEUE_RETENTION_SECONDS: int = _get_int(
+    "WORK_QUEUE_RETENTION_SECONDS", "work_queue_retention_seconds", 604_800
+)
+
+# End-to-end deadline for one queued table materialization request.
+WORK_QUEUE_REQUEST_TIMEOUT_SECONDS: int = _get_int(
+    "WORK_QUEUE_REQUEST_TIMEOUT_SECONDS",
+    "work_queue_request_timeout_seconds",
+    600,
+)
+
 # Retention GC (Agent shard 0: periodically prune orphaned splits)
 RETENTION_GC: bool = _get_bool("RETENTION_GC", "retention_gc", False)
 

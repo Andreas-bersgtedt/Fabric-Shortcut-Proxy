@@ -88,6 +88,28 @@ In HA mode, one Manager holds the leader lease and supervises the fleet. A
 standby remains available for control-plane health but its gateway returns `503`
 until it becomes leader and Agents register.
 
+### Control contract and materialization queue
+
+Manager and Agent registration uses control contract 1.1. Version 1.0 Agents remain
+compatible during the migration window. Agents advertise `materializer` or `serving`
+capabilities so queue scheduling does not send source-query work to serving-only Agents.
+
+The durable queue is enabled by default. `POST /control/materialize` creates or reuses a
+request in the shared artifact store, Python materializer Agents run the split queries,
+and the Manager verifies each Parquet object before publishing the snapshot. C++ Agents
+keep the existing request shape and remain serving-only.
+
+Check `GET /control/work-queue` for state counts and oldest queued age. Cancel a request
+with `POST /control/work-queue/requests/{request_id}/cancel`. Retry a failed task with
+`POST /control/work-queue/tasks/{task_id}/retry`.
+
+Set `MATERIALIZATION_WORK_QUEUE=0` and restart the Manager to use the direct compatibility
+path during the migration window. This stops queue dispatch without deleting queue records
+or published objects.
+
+See [CONTROL_WORK_QUEUE.md](CONTROL_WORK_QUEUE.md) for task states, ownership fields,
+result codes, security rules, and compatibility behavior.
+
 ## 6. Use the Config UI
 
 Select **Config UI** to manage sources, tables, Open Mirroring targets,
@@ -104,6 +126,8 @@ that all expected Agents register and serve the correct tables.
 1. Confirm `/_manager` reports every expected Agent as alive and registered.
 2. Confirm `/healthz` returns `200`; use `/readyz` to confirm the source and
    table snapshots are ready.
+3. Confirm `/control/work-queue` reports `scheduler_running=true` on the primary
+   Manager when queued materialization is enabled.
 3. Review Monitor for quarantined tables, restart counts, and memory alerts.
 4. Before a rolling restart, confirm a second Agent or a maintenance window is
    available for every table.

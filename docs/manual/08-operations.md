@@ -286,8 +286,9 @@ restart threshold or source reads exceed their table timeout.
   tables cost nothing at startup, so it suits large catalogs where consumers read a subset.
   Works for Iceberg and Delta; a multi-agent fleet needs a shared artifact store so shards
   serve byte-identical splits. The C++ serving agent participates via the Manager: on a store
-  miss it asks the Manager (`POST /control/materialize`) to materialize the table into the
-  shared store, then serves it.
+  miss it asks the Manager (`POST /control/materialize`) to enqueue the table. Python
+  materializer Agents query the source and write the splits. The Manager verifies the stored
+  Parquet objects, publishes the metadata, and returns to the C++ Agent.
 - **`virtual`**: build a table's splits on first read to learn their sizes, then keep **zero
   bytes at rest** — each split is regenerated deterministically on demand. It suits
   **immutable / append-only / snapshot-isolated** sources where the rows are stable between
@@ -305,6 +306,42 @@ Enable Manager HA with `-Ha` (leader lease over the shared artifact store). Only
 Manager supervises agents; a standby is a warm spare and reports as ready. The gateway on a
 standby naturally returns 503 because no agents register to it. Roll agents with health-gated
 restarts (`rolling_restart_health_timeout`).
+
+### Durable materialization queue
+
+`MATERIALIZATION_WORK_QUEUE=1` is the default. Queue requests, split tasks, claims, results,
+and published manifests are stored under `_control/work-queue/v1` in the shared artifact
+store. A Manager restart does not discard accepted work.
+
+Check `GET /control/work-queue` on the Manager for queue state and scheduler ownership. The
+primary reports `scheduler_running=true`; a standby reports a null scheduler. Manager
+`/metrics` includes request, event, and result counters with the
+`materialization_queue_` prefix.
+
+Cancel a request:
+
+```text
+POST /control/work-queue/requests/{request_id}/cancel
+```
+
+Retry one failed task:
+
+```text
+POST /control/work-queue/tasks/{task_id}/retry
+```
+
+The Manager rejects stale claims after Agent lease changes, leadership takeover, or
+generation replacement. `WORK_QUEUE_RETENTION_SECONDS` controls terminal queue-record
+retention and defaults to 604,800 seconds. Retention does not remove published manifests or
+data objects.
+
+SQL Server snapshot transactions are owner-only. The scheduler uses the shard index from
+Agent registration and sends those tasks only to the transaction owner. PostgreSQL exported
+snapshots can run on each Agent that joined the generation.
+
+For rollback during the 1.0 compatibility window, set
+`MATERIALIZATION_WORK_QUEUE=0` and restart the Manager. The direct Manager query path resumes;
+durable queue records remain available for diagnosis.
 
 ## 8.10 Agent supervision
 

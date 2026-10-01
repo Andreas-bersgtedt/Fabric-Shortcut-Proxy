@@ -28,6 +28,7 @@ service ControlPlane {
 
   // Report the outcome of a MaterializeTask.
   rpc ReportTaskResult (TaskResult) returns (Ack);
+  int32  shard_index = 10;
 }
 
 // ---- Value types -----------------------------------------------------------
@@ -38,11 +39,21 @@ message KeyRange {
   int64 hi = 2;
 }
 
+message ColumnTransform {
+  string kind = 1;
+  string key_ref = 2;
+  string domain = 3;
+  string normalization = 4;
+}
+
 message Column {
   int32  field_id = 1;
   string name = 2;
   string iceberg_type = 3;   // "long", "string", "decimal(P,S)", "timestamptz", ...
   bool   nullable = 4;
+  string source = 5;
+  ColumnTransform transform = 6;
+  string policy_id = 7;
 }
 
 message SplitRef {
@@ -61,6 +72,11 @@ message SnapshotManifest {
   string            table_format = 3;   // "iceberg" | "delta"
   repeated SplitRef splits = 4;         // net-current file set
   repeated string   metadata_keys = 5;  // artifact keys of metadata / _delta_log
+  string            generation_id = 6;
+  int64             generation_fence = 7;
+  string            plan_sha256 = 8;
+  int64             published_at_ms = 9;
+  string            request_id = 10;
 }
 
 // ---- Agent lifecycle -------------------------------------------------------
@@ -73,6 +89,8 @@ message RegisterRequest {
   string version = 5;          // build/git sha
   int64  capacity_hint = 6;    // cores/mem hint for scheduling
   string contract_version = 7;
+  string advertise_host = 8;
+  repeated string capabilities = 9; // materializer | serving
 }
 
 message RegisterResponse {
@@ -94,6 +112,7 @@ message HeartbeatRequest {
   AgentHealth     health = 3;
   repeated string serving_tables = 4;
   map<string, int64> epochs = 5;   // table -> epoch currently served
+  repeated string active_task_ids = 6;
 }
 
 // Manager -> Agent pushes over the Heartbeat stream.
@@ -134,6 +153,21 @@ message MaterializeTask {
   string          output_key = 5;   // artifact-store key to write
   repeated Column schema = 6;
   KeyRange        range = 7;
+  string          task_id = 8;
+  string          request_id = 9;
+  string          claim_token = 10;
+  int32           attempt = 11;
+  int64           claim_expires_at_ms = 12;
+  string          connection_id = 13;
+  string          generation_id = 14;
+  int64           generation_fence = 15;
+  string          plan_sha256 = 16;
+  string          table_format = 17;
+  int64           deadline_ms = 18;
+  int32           num_splits = 19;
+  string          key_column = 20;
+  string          split_strategy = 21;
+  string          connection_fingerprint = 22;
 }
 
 message TaskResult {
@@ -146,6 +180,22 @@ message TaskResult {
   int64  record_count = 7;
   string content_hash = 8;
   string error = 9;
+  string task_id = 10;
+  string request_id = 11;
+  string claim_token = 12;
+  int32  attempt = 13;
+  string generation_id = 14;
+  int64  generation_fence = 15;
+  string plan_sha256 = 16;
+  bool   retryable = 17;
+  int64  completed_at_ms = 18;
+  string error_code = 19;
 }
 
-message Ack { bool ok = 1; }
+message Ack {
+  bool   ok = 1;
+  string state = 2;
+  bool   duplicate = 3;
+  bool   terminal = 4;
+  string reason_code = 5;
+}

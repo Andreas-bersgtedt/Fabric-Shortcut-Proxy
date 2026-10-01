@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import os
 import pathlib
+import asyncio
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import httpx
+import pytest
 
 import config
 
@@ -127,29 +129,100 @@ async def test_materialize_service_unknown_key(tmp_path, monkeypatch):
         _executor._engine = None
 
 
-async def test_control_materialize_endpoint(tmp_path, monkeypatch):
+@pytest.mark.parametrize("table_format", ["iceberg", "delta"])
+async def test_control_materialize_endpoint(
+    tmp_path, monkeypatch, table_format
+):
     from enterprise.control.manager_app import create_manager_app
     from iceberg.state_store import get_all_snapshots
 
     db = tmp_path / "src.db"
     store = tmp_path / "store"
-    await _seed_and_configure(monkeypatch, db, store, "iceberg")
+    await _seed_and_configure(monkeypatch, db, store, table_format)
     monkeypatch.setattr(config, "ENABLE_GATEWAY", False, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator", raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "s3cret", raising=False)
+    monkeypatch.setattr(config, "ARTIFACT_STORE_SERVING", True)
+    monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True)
 
     from enterprise.control import materialize_service
+    from enterprise.materialize_worker import execute_task
+    from runtime.artifact_store import get_default_store
+    from runtime.generation import acquire_generation
     await materialize_service._ensure_snapshots()
     snap = get_all_snapshots()[0]
+    acquire_generation(get_default_store(), shard_count=1)
 
     app = create_manager_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                  base_url="http://mgr",
                                  auth=("operator", "s3cret")) as c:
-        r = await c.post("/control/materialize", json={"key": snap.metadata_key})
+        request = asyncio.create_task(
+            c.post("/control/materialize", json={"key": snap.metadata_key})
+        )
+        concurrent_request = asyncio.create_task(
+            c.post("/control/materialize", json={"key": snap.metadata_key})
+        )
+        for _ in range(100):
+            tasks = app.state.work_queue.runnable_tasks()
+            if tasks:
+                break
+            await asyncio.sleep(0.01)
+        assert tasks
+        for record in tasks:
+            claimed = app.state.work_queue.claim_task(
+                record["task_id"],
+                agent_id="agent-test",
+                agent_lease_id="lease-test",
+                manager_owner="manager-test",
+                manager_fence=1,
+            )
+            result = await execute_task(claimed, "agent-test")
+            ack = app.state.work_queue.accept_result(
+                result, agent_lease_id="lease-test"
+            )
+            assert ack.ok
+        r = await asyncio.wait_for(request, timeout=10)
+        concurrent = await asyncio.wait_for(concurrent_request, timeout=10)
         assert r.status_code == 200
         assert r.json()["ok"] is True
+        assert concurrent.status_code == 200
+        assert concurrent.json()["request_id"] == r.json()["request_id"]
+        published = app.state.work_queue.get_snapshot("sales", snap.version)
+        assert published is not None
+        assert all(split.size_bytes > 0 for split in published.splits)
+        assert all(split.record_count > 0 for split in published.splits)
+        status = await c.get("/control/work-queue")
+        assert status.status_code == 200
+        assert status.json()["published_snapshots"] == 1
+        metrics = await c.get("/metrics")
+        assert "materialization_queue_results_total" in metrics.text
+        cancelled = await c.post(
+            "/control/work-queue/requests/missing/cancel",
+            headers={"X-Request-ID": "cancel-audit-test"},
+        )
+        retried = await c.post(
+            "/control/work-queue/tasks/missing/retry",
+            headers={"X-Request-ID": "retry-audit-test"},
+        )
+        assert cancelled.status_code == 404
+        assert retried.status_code == 409
+        from observability.audit import recent
+
+        queue_audits = [
+            event
+            for event in recent()
+            if event.get("action") == "work_queue_operation"
+            and event.get("request_id") in {
+                "cancel-audit-test",
+                "retry-audit-test",
+            }
+        ]
+        assert {
+            (event["operation"], event["outcome"])
+            for event in queue_audits
+        } == {("cancel", "not_found"), ("retry", "rejected")}
 
         missing = await c.post("/control/materialize", json={})
         assert missing.status_code == 400

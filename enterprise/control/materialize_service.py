@@ -14,14 +14,39 @@ Agents use. Materialization is idempotent and per-table locked in the materializ
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import time
 
 import config
+from enterprise.control.contract import (
+    Column,
+    KeyRange,
+    MaterializeTask,
+    SnapshotManifest,
+    SplitRef,
+)
+from enterprise.control.work_queue import DurableWorkQueue
 from observability.logging import get_logger
 
 log = get_logger(__name__)
 
 _snapshots_ready = False
 _build_lock = asyncio.Lock()
+_queue: DurableWorkQueue | None = None
+_publication_locks: dict[str, asyncio.Lock] = {}
+
+
+def configure(queue: DurableWorkQueue) -> None:
+    global _queue
+    _queue = queue
+
+
+def _publication_lock(request_id: str) -> asyncio.Lock:
+    lock = _publication_locks.get(request_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _publication_locks[request_id] = lock
+    return lock
 
 
 async def _ensure_snapshots() -> None:
@@ -64,7 +89,7 @@ def _snapshot_for_key(key: str):
     return None
 
 
-def _publish_snapshot_objects(snap) -> int:
+def _publish_snapshot_objects(snap) -> tuple[int, list[str]]:
     """Write the snapshot's data splits and metadata objects to the shared store
     so a stateless Agent can serve them. Idempotent (overwrites with identical
     bytes). Data splits are pinned in memory by the materializer; here we persist
@@ -74,6 +99,7 @@ def _publish_snapshot_objects(snap) -> int:
 
     store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
     written = 0
+    metadata_keys = []
     for s in snap.splits:
         data = cache.peek_parquet(s.object_key)
         if data is not None:
@@ -85,6 +111,7 @@ def _publish_snapshot_objects(snap) -> int:
         for k, meta in delta_log.delta_log_objects().items():
             if k.startswith(snap.table_path + "/") and meta.get("data") is not None:
                 store.put(k, meta["data"])
+                metadata_keys.append(k)
                 written += 1
     else:
         from iceberg.metadata import build_metadata_json
@@ -94,11 +121,17 @@ def _publish_snapshot_objects(snap) -> int:
         store.put(snap.manifest_list_key, build_manifest_list(snap))
         store.put(snap.manifest_file_key, build_manifest_file(snap))
         store.put(snap.version_hint_key, str(snap.version).encode())
+        metadata_keys.extend([
+            snap.metadata_key,
+            snap.manifest_list_key,
+            snap.manifest_file_key,
+            snap.version_hint_key,
+        ])
         written += 4
-    return written
+    return written, metadata_keys
 
 
-async def materialize_for_key(key: str) -> dict:
+async def _materialize_direct(key: str) -> dict:
     """Materialize the table owning ``key`` into the shared store. Idempotent.
 
     Returns ``{"ok": bool, "materialized": bool, ...}``.
@@ -110,13 +143,197 @@ async def materialize_for_key(key: str) -> dict:
     from runtime.materializer import ensure_snapshot_materialized
 
     await ensure_snapshot_materialized(snap)
-    published = _publish_snapshot_objects(snap)
+    published, _ = _publish_snapshot_objects(snap)
     log.info("manager_materialized_for_agent", key=key, table=snap.table.name,
              objects_published=published)
     return {"ok": True, "materialized": True, "table": snap.table.name}
+
+
+def _task_columns(table) -> list[Column]:
+    columns = []
+    for column in table.schema:
+        transform = None
+        if column.transform is not None:
+            transform = {
+                "kind": column.transform.kind,
+                "key_ref": column.transform.key_ref,
+                "domain": column.transform.domain,
+                "normalization": column.transform.normalization,
+            }
+        columns.append(
+            Column(
+                field_id=column.field_id,
+                name=column.name,
+                iceberg_type=column.iceberg_type,
+                nullable=column.nullable,
+                source=column.source or "",
+                transform=transform,
+                policy_id=column.policy_id or "",
+            )
+        )
+    return columns
+
+
+async def materialize_for_key(key: str) -> dict:
+    """Enqueue the key's table and wait for verified durable publication."""
+    if _queue is None:
+        return await _materialize_direct(key)
+    await _ensure_snapshots()
+    snap = _snapshot_for_key(key)
+    if snap is None:
+        return {"ok": False, "materialized": False, "reason": "unknown_key"}
+
+    from runtime.artifact_store import get_default_store
+    from runtime.generation import current_generation
+
+    generation = await asyncio.to_thread(
+        current_generation, get_default_store()
+    )
+    if generation is None:
+        return {
+            "ok": False,
+            "materialized": False,
+            "reason": "generation_unavailable",
+        }
+    tasks = [
+        MaterializeTask(
+            table=snap.table.name,
+            epoch=snap.version,
+            split_index=split.split_index,
+            output_key=split.object_key,
+            deadline_ms=int(time.time() * 1000) + 300_000,
+            schema=_task_columns(snap.table),
+            range=KeyRange(lo=split.key_lo, hi=split.key_hi),
+            connection_id=snap.table.connection_id,
+            source_table=snap.table.source_table,
+            connection_fingerprint=hashlib.sha256(
+                config.redact_db_url(
+                    config.effective_db_url(snap.table.connection_id)
+                ).encode("utf-8")
+            ).hexdigest(),
+            generation_id=generation.generation_id,
+            generation_fence=generation.fence,
+            plan_sha256=generation.plan_sha256,
+            num_splits=len(snap.splits),
+            key_column=snap.table.key_column or "",
+            split_strategy=snap.table.effective_split_strategy,
+        )
+        for split in snap.splits
+    ]
+    timeout_seconds = config.WORK_QUEUE_REQUEST_TIMEOUT_SECONDS
+    deadline_ms = int(time.time() * 1000) + timeout_seconds * 1000
+    request = await asyncio.to_thread(
+        _queue.create_request,
+        requested_key=key,
+        table=snap.table.name,
+        epoch=snap.version,
+        table_format=config.TABLE_FORMAT,
+        generation_id=generation.generation_id,
+        generation_fence=generation.fence,
+        plan_sha256=generation.plan_sha256,
+        tasks=tasks,
+        deadline_ms=deadline_ms,
+    )
+    terminal = await _queue.wait_request(
+        request["request_id"], timeout_seconds=float(timeout_seconds)
+    )
+    if terminal["state"] != "SUCCEEDED":
+        return {
+            "ok": False,
+            "materialized": False,
+            "reason": terminal.get("error") or terminal["state"].lower(),
+            "request_id": terminal["request_id"],
+        }
+    async with _publication_lock(terminal["request_id"]):
+        existing = await asyncio.to_thread(
+            _queue.get_snapshot, snap.table.name, snap.version
+        )
+        if existing is not None and existing.request_id == terminal["request_id"]:
+            return {
+                "ok": True,
+                "materialized": True,
+                "table": snap.table.name,
+                "request_id": terminal["request_id"],
+            }
+        split_refs = []
+        for task_id in terminal["task_ids"]:
+            record = await asyncio.to_thread(_queue.get_task, task_id)
+            if record is None or not record.get("result"):
+                raise RuntimeError(f"completed queue task has no result: {task_id}")
+            task_payload = MaterializeTask.from_dict(record["task"])
+            result = record["result"]
+            snap_split = next(
+                (
+                    item
+                    for item in snap.splits
+                    if item.split_index == task_payload.split_index
+                    and item.object_key == task_payload.output_key
+                ),
+                None,
+            )
+            if snap_split is None:
+                raise RuntimeError(
+                    f"queue result does not match snapshot split: {task_id}"
+                )
+            output_data = await asyncio.to_thread(
+                get_default_store().get, task_payload.output_key
+            )
+            snap_split.file_size_in_bytes = int(result["size_bytes"])
+            snap_split.record_count = int(result["record_count"])
+            snap_split.content_hash = str(result["content_hash"])
+            snap_split.s3_etag = hashlib.md5(
+                output_data, usedforsecurity=False
+            ).hexdigest()
+            split_refs.append(
+                SplitRef(
+                    object_key=task_payload.output_key,
+                    size_bytes=int(result["size_bytes"]),
+                    record_count=int(result["record_count"]),
+                    content_hash=str(result["content_hash"]),
+                    range=task_payload.range,
+                )
+            )
+        if config.TABLE_FORMAT == "delta":
+            from delta import log as delta_log
+
+            delta_log.invalidate_table(snap.table.name)
+        published, metadata_keys = await asyncio.to_thread(
+            _publish_snapshot_objects, snap
+        )
+        manifest = SnapshotManifest(
+            table=snap.table.name,
+            epoch=snap.version,
+            table_format=config.TABLE_FORMAT,
+            splits=split_refs,
+            metadata_keys=metadata_keys,
+            generation_id=generation.generation_id,
+            generation_fence=generation.fence,
+            plan_sha256=generation.plan_sha256,
+            request_id=terminal["request_id"],
+            published_at_ms=int(time.time() * 1000),
+        )
+        await asyncio.to_thread(
+            _queue.publish_snapshot, terminal["request_id"], manifest
+        )
+    log.info(
+        "manager_queue_materialized_for_agent",
+        key=key,
+        table=snap.table.name,
+        request_id=terminal["request_id"],
+        objects_published=published,
+    )
+    return {
+        "ok": True,
+        "materialized": True,
+        "table": snap.table.name,
+        "request_id": terminal["request_id"],
+    }
 
 
 def reset() -> None:
     """Test hook: forget the built-snapshots flag so a fresh registry is built."""
     global _snapshots_ready
     _snapshots_ready = False
+    global _queue
+    _queue = None
+    _publication_locks.clear()

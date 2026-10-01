@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the durable Manager materialization queue for issue #90. Requests, tasks,
+  claim ownership, results, and published snapshots persist in the shared artifact store.
+- Added materializer capability scheduling, Agent-side split execution, claim renewal,
+  bounded retries, leadership fencing, generation cancellation, retention, queue metrics,
+  and operator cancel and retry endpoints.
+- Added active task IDs to Agent heartbeats. Claims are renewed only after the Agent
+  confirms execution, allowing a lost heartbeat command to expire and retry.
+- Added explicit audit events for operator queue cancellation and retry actions.
+- Added 10-minute Manager and C++ queue deadlines for owner-only snapshot tables whose
+  splits run sequentially.
+- Wired the Helm C++ Agent to the Manager and materialization mode, disabled serving-image
+  enforcement for lazy queue objects, and added the Nginx data-plane client label.
+- Added Agent shard identity to registration so SQL Server snapshot tasks stay on the
+  Agent that owns the transaction. PostgreSQL tasks remain schedulable on joined Agents.
+- Added a queue-backed `POST /control/materialize` adapter for C++ Agent store misses.
+  The request body remains `{"key": "<object key>"}`.
 - Added the `fabric-shortcut-proxy` Helm chart at application/chart version `2.9.3`, including
   a values schema, digest-pinned images, retained storage policy, and render tests.
 - Added parameterized enterprise-demo Bicep, sanitized local-input examples, and
@@ -18,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Manager `get_snapshot` now reads verified durable publications. Task results are accepted
+  only after size, SHA-256, and Parquet row-count checks.
+- Python Agents advertise `materializer`; C++ Agents advertise `serving`. The scheduler
+  excludes dead, draining, serving-only, and at-capacity Agents.
 - Retired the ignored enterprise-demo Kustomize overlay as the production AKS release
   definition. Local Kind and focused validation overlays remain development tooling.
 - Narrowed demo ignore rules to local environment inputs and generated Bicep output; reusable

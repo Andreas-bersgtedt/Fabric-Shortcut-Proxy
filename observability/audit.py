@@ -164,6 +164,45 @@ def record_operator_auth(
                 _log.warning("audit_file_write_failed", error=str(exc))
 
 
+def record_queue_operation(
+    *,
+    request_id: str,
+    identity: str,
+    operation: str,
+    target_id: str,
+    status: int,
+    outcome: str,
+) -> None:
+    """Record an operator queue mutation without task payload or claim data."""
+    import config
+
+    if not getattr(config, "ENABLE_AUDIT_LOG", True):
+        return
+    event = {
+        "ts": time.time(),
+        "request_id": request_id,
+        "identity": identity or "-",
+        "action": "work_queue_operation",
+        "operation": operation,
+        "target_id": _scrub(target_id),
+        "status": int(status),
+        "outcome": outcome,
+    }
+    with _lock:
+        _buf.append(event)
+    _log.info("audit", **event)
+    with _fh_lock:
+        fh = _file_handle()
+        if fh is not None:
+            try:
+                import json
+
+                fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+                fh.flush()
+            except OSError as exc:  # noqa: BLE001
+                _log.warning("audit_file_write_failed", error=str(exc))
+
+
 def record_directory_search(
     *, request_id: str, identity: str, object_type: str, query: str,
     result_count: int, status: int, outcome: str,

@@ -82,6 +82,8 @@ spec:
           volumeMounts:
             - name: artifacts
               mountPath: /config
+            - name: artifacts
+              mountPath: /artifacts
       volumes:
         - name: artifacts
           persistentVolumeClaim:

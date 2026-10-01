@@ -24,7 +24,85 @@ from typing import Any
 
 # Bump only for breaking changes to the wire shapes. Agents and the Manager
 # exchange this on Register so a mismatch fails fast.
-CONTRACT_VERSION = "1.0"
+CONTRACT_VERSION = "1.1"
+MIN_COMPATIBLE_CONTRACT_VERSION = "1.0"
+
+TASK_QUEUED = "QUEUED"
+TASK_CLAIMED = "CLAIMED"
+TASK_SUCCEEDED = "SUCCEEDED"
+TASK_RETRY_WAIT = "RETRY_WAIT"
+TASK_FAILED = "FAILED"
+TASK_EXPIRED = "EXPIRED"
+TASK_CANCELLED = "CANCELLED"
+TASK_STATES = (
+    TASK_QUEUED,
+    TASK_CLAIMED,
+    TASK_SUCCEEDED,
+    TASK_RETRY_WAIT,
+    TASK_FAILED,
+    TASK_EXPIRED,
+    TASK_CANCELLED,
+)
+TASK_TERMINAL_STATES = (TASK_SUCCEEDED, TASK_FAILED, TASK_CANCELLED)
+TASK_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    TASK_QUEUED: (TASK_CLAIMED, TASK_FAILED, TASK_CANCELLED),
+    TASK_CLAIMED: (
+        TASK_SUCCEEDED,
+        TASK_RETRY_WAIT,
+        TASK_FAILED,
+        TASK_EXPIRED,
+        TASK_CANCELLED,
+    ),
+    TASK_RETRY_WAIT: (TASK_QUEUED, TASK_FAILED, TASK_CANCELLED),
+    TASK_EXPIRED: (TASK_QUEUED, TASK_FAILED, TASK_CANCELLED),
+    TASK_SUCCEEDED: (),
+    TASK_FAILED: (),
+    TASK_CANCELLED: (),
+}
+
+RESULT_ACCEPTED = "accepted"
+RESULT_DUPLICATE = "duplicate"
+RESULT_STALE_CLAIM = "stale_claim"
+RESULT_STALE_GENERATION = "stale_generation"
+RESULT_WRONG_OWNER = "wrong_owner"
+RESULT_INVALID_OUTPUT = "invalid_output"
+RESULT_CONFLICT = "conflict"
+RESULT_REJECTED = "rejected"
+RESULT_CODES = (
+    RESULT_ACCEPTED,
+    RESULT_DUPLICATE,
+    RESULT_STALE_CLAIM,
+    RESULT_STALE_GENERATION,
+    RESULT_WRONG_OWNER,
+    RESULT_INVALID_OUTPUT,
+    RESULT_CONFLICT,
+    RESULT_REJECTED,
+)
+
+
+def _version_tuple(value: str) -> tuple[int, int]:
+    major, separator, minor = str(value or "").partition(".")
+    if not separator:
+        raise ValueError(f"invalid control contract version {value!r}")
+    return int(major), int(minor)
+
+
+def contract_compatible(value: str) -> bool:
+    """Accept the current major and the documented compatibility floor."""
+    try:
+        current = _version_tuple(CONTRACT_VERSION)
+        minimum = _version_tuple(MIN_COMPATIBLE_CONTRACT_VERSION)
+        candidate = _version_tuple(value)
+    except (TypeError, ValueError):
+        return False
+    return (
+        candidate[0] == current[0]
+        and minimum <= candidate <= current
+    )
+
+
+def valid_task_transition(current: str, target: str) -> bool:
+    return target in TASK_TRANSITIONS.get(current, ())
 
 
 # ---------------------------------------------------------------------------
@@ -52,15 +130,38 @@ class Column:
     name: str
     iceberg_type: str
     nullable: bool = True
+    source: str = ""
+    transform: dict[str, Any] | None = None
+    policy_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"field_id": self.field_id, "name": self.name,
-                "iceberg_type": self.iceberg_type, "nullable": self.nullable}
+        result = {
+            "field_id": self.field_id,
+            "name": self.name,
+            "iceberg_type": self.iceberg_type,
+            "nullable": self.nullable,
+        }
+        if self.source:
+            result["source"] = self.source
+        if self.transform is not None:
+            result["transform"] = dict(self.transform)
+        if self.policy_id:
+            result["policy_id"] = self.policy_id
+        return result
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Column":
-        return cls(field_id=int(d["field_id"]), name=str(d["name"]),
-                   iceberg_type=str(d["iceberg_type"]), nullable=bool(d.get("nullable", True)))
+        return cls(
+            field_id=int(d["field_id"]),
+            name=str(d["name"]),
+            iceberg_type=str(d["iceberg_type"]),
+            nullable=bool(d.get("nullable", True)),
+            source=str(d.get("source", "")),
+            transform=(
+                dict(d["transform"]) if isinstance(d.get("transform"), dict) else None
+            ),
+            policy_id=str(d.get("policy_id", "")),
+        )
 
 
 @dataclass
@@ -107,15 +208,31 @@ class SnapshotManifest:
     table_format: str            # "iceberg" | "delta"
     splits: list[SplitRef] = field(default_factory=list)
     metadata_keys: list[str] = field(default_factory=list)  # keys of metadata/_delta_log objects
+    generation_id: str = ""
+    generation_fence: int = 0
+    plan_sha256: str = ""
+    published_at_ms: int = 0
+    request_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "table": self.table,
             "epoch": self.epoch,
             "table_format": self.table_format,
             "splits": [s.to_dict() for s in self.splits],
             "metadata_keys": list(self.metadata_keys),
         }
+        if self.generation_id:
+            result["generation_id"] = self.generation_id
+        if self.generation_fence:
+            result["generation_fence"] = self.generation_fence
+        if self.plan_sha256:
+            result["plan_sha256"] = self.plan_sha256
+        if self.published_at_ms:
+            result["published_at_ms"] = self.published_at_ms
+        if self.request_id:
+            result["request_id"] = self.request_id
+        return result
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "SnapshotManifest":
@@ -125,6 +242,11 @@ class SnapshotManifest:
             table_format=str(d["table_format"]),
             splits=[SplitRef.from_dict(s) for s in d.get("splits", [])],
             metadata_keys=list(d.get("metadata_keys", [])),
+            generation_id=str(d.get("generation_id", "")),
+            generation_fence=int(d.get("generation_fence", 0)),
+            plan_sha256=str(d.get("plan_sha256", "")),
+            published_at_ms=int(d.get("published_at_ms", 0)),
+            request_id=str(d.get("request_id", "")),
         )
 
 
@@ -142,6 +264,8 @@ class RegisterRequest:
     capacity_hint: int = 0       # cores/mem hint for scheduling
     advertise_host: str = ""     # routable host the LB/gateway should dial (blank = host)
     contract_version: str = CONTRACT_VERSION
+    capabilities: list[str] = field(default_factory=list)
+    shard_index: int = -1
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -153,7 +277,13 @@ class RegisterRequest:
             os=str(d["os"]), version=str(d["version"]),
             capacity_hint=int(d.get("capacity_hint", 0)),
             advertise_host=str(d.get("advertise_host", "")),
-            contract_version=str(d.get("contract_version", CONTRACT_VERSION)),
+            contract_version=str(
+                d.get("contract_version", MIN_COMPATIBLE_CONTRACT_VERSION)
+            ),
+            capabilities=sorted({
+                str(value) for value in d.get("capabilities", []) if str(value)
+            }),
+            shard_index=int(d.get("shard_index", -1)),
         )
 
 
@@ -169,7 +299,9 @@ class RegisterResponse:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "RegisterResponse":
         return cls(lease_id=str(d["lease_id"]), heartbeat_ms=int(d["heartbeat_ms"]),
-                   contract_version=str(d.get("contract_version", CONTRACT_VERSION)))
+                   contract_version=str(
+                       d.get("contract_version", MIN_COMPATIBLE_CONTRACT_VERSION)
+                   ))
 
 
 @dataclass
@@ -195,6 +327,7 @@ class HeartbeatRequest:
     health: AgentHealth = field(default_factory=AgentHealth)
     serving_tables: list[str] = field(default_factory=list)
     epochs: dict[str, int] = field(default_factory=dict)   # table -> epoch currently served
+    active_task_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -203,6 +336,7 @@ class HeartbeatRequest:
             "health": self.health.to_dict(),
             "serving_tables": list(self.serving_tables),
             "epochs": dict(self.epochs),
+            "active_task_ids": list(self.active_task_ids),
         }
 
     @classmethod
@@ -212,6 +346,11 @@ class HeartbeatRequest:
             health=AgentHealth.from_dict(d.get("health", {})),
             serving_tables=list(d.get("serving_tables", [])),
             epochs={str(k): int(v) for k, v in d.get("epochs", {}).items()},
+            active_task_ids=sorted({
+                str(value)
+                for value in d.get("active_task_ids", [])
+                if str(value)
+            }),
         )
 
 
@@ -228,6 +367,21 @@ class MaterializeTask:
     output_key: str              # where to write in the artifact store
     schema: list[Column] = field(default_factory=list)
     range: KeyRange | None = None
+    task_id: str = ""
+    request_id: str = ""
+    claim_token: str = ""
+    attempt: int = 0
+    claim_expires_at_ms: int = 0
+    connection_id: str = "default"
+    connection_fingerprint: str = ""
+    generation_id: str = ""
+    generation_fence: int = 0
+    plan_sha256: str = ""
+    table_format: str = ""
+    deadline_ms: int = 0
+    num_splits: int = 1
+    key_column: str = ""
+    split_strategy: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -237,6 +391,31 @@ class MaterializeTask:
         }
         if self.range is not None:
             d["range"] = self.range.to_dict()
+        for key in (
+            "task_id",
+            "request_id",
+            "claim_token",
+            "connection_id",
+            "connection_fingerprint",
+            "generation_id",
+            "plan_sha256",
+            "table_format",
+            "key_column",
+            "split_strategy",
+        ):
+            value = getattr(self, key)
+            if value:
+                d[key] = value
+        for key in (
+            "attempt",
+            "claim_expires_at_ms",
+            "generation_fence",
+            "deadline_ms",
+            "num_splits",
+        ):
+            value = int(getattr(self, key))
+            if value:
+                d[key] = value
         return d
 
     @classmethod
@@ -247,6 +426,21 @@ class MaterializeTask:
             source_table=str(d["source_table"]), output_key=str(d["output_key"]),
             schema=[Column.from_dict(c) for c in d.get("schema", [])],
             range=KeyRange.from_dict(rng) if rng else None,
+            task_id=str(d.get("task_id", "")),
+            request_id=str(d.get("request_id", "")),
+            claim_token=str(d.get("claim_token", "")),
+            attempt=int(d.get("attempt", 0)),
+            claim_expires_at_ms=int(d.get("claim_expires_at_ms", 0)),
+            connection_id=str(d.get("connection_id", "default")),
+            connection_fingerprint=str(d.get("connection_fingerprint", "")),
+            generation_id=str(d.get("generation_id", "")),
+            generation_fence=int(d.get("generation_fence", 0)),
+            plan_sha256=str(d.get("plan_sha256", "")),
+            table_format=str(d.get("table_format", "")),
+            deadline_ms=int(d.get("deadline_ms", 0)),
+            num_splits=int(d.get("num_splits", 1)),
+            key_column=str(d.get("key_column", "")),
+            split_strategy=str(d.get("split_strategy", "")),
         )
 
 
@@ -261,6 +455,16 @@ class TaskResult:
     record_count: int = 0
     content_hash: str = ""
     error: str = ""
+    task_id: str = ""
+    request_id: str = ""
+    claim_token: str = ""
+    attempt: int = 0
+    generation_id: str = ""
+    generation_fence: int = 0
+    plan_sha256: str = ""
+    retryable: bool = False
+    completed_at_ms: int = 0
+    error_code: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -272,6 +476,16 @@ class TaskResult:
             split_index=int(d["split_index"]), ok=bool(d["ok"]),
             size_bytes=int(d.get("size_bytes", 0)), record_count=int(d.get("record_count", 0)),
             content_hash=str(d.get("content_hash", "")), error=str(d.get("error", "")),
+            task_id=str(d.get("task_id", "")),
+            request_id=str(d.get("request_id", "")),
+            claim_token=str(d.get("claim_token", "")),
+            attempt=int(d.get("attempt", 0)),
+            generation_id=str(d.get("generation_id", "")),
+            generation_fence=int(d.get("generation_fence", 0)),
+            plan_sha256=str(d.get("plan_sha256", "")),
+            retryable=bool(d.get("retryable", False)),
+            completed_at_ms=int(d.get("completed_at_ms", 0)),
+            error_code=str(d.get("error_code", "")),
         )
 
 
@@ -365,13 +579,32 @@ class ControlCommand:
 @dataclass
 class Ack:
     ok: bool = True
+    state: str = ""
+    duplicate: bool = False
+    terminal: bool = False
+    reason_code: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"ok": self.ok}
+        result = {"ok": self.ok}
+        if self.state:
+            result["state"] = self.state
+        if self.duplicate:
+            result["duplicate"] = True
+        if self.terminal:
+            result["terminal"] = True
+        if self.reason_code:
+            result["reason_code"] = self.reason_code
+        return result
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Ack":
-        return cls(ok=bool(d.get("ok", True)))
+        return cls(
+            ok=bool(d.get("ok", True)),
+            state=str(d.get("state", "")),
+            duplicate=bool(d.get("duplicate", False)),
+            terminal=bool(d.get("terminal", False)),
+            reason_code=str(d.get("reason_code", "")),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -92,6 +92,8 @@ class AgentLink:
         self._lease_id: str | None = None
         self._running = False
         self._task: asyncio.Task | None = None
+        self._materialize_tasks: dict[str, asyncio.Task] = {}
+        self._completed_materialize_deliveries: set[tuple[str, int, str]] = set()
 
     async def start(self) -> None:
         self._running = True
@@ -108,6 +110,13 @@ class AgentLink:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        for task in self._materialize_tasks.values():
+            task.cancel()
+        if self._materialize_tasks:
+            await asyncio.gather(
+                *self._materialize_tasks.values(), return_exceptions=True
+            )
+        self._materialize_tasks.clear()
         try:
             await self._client.aclose()
         except Exception:
@@ -119,6 +128,8 @@ class AgentLink:
             os=_os_name(), version=_APP_VERSION,
             capacity_hint=(0),
             advertise_host=config.AGENT_ADVERTISE_HOST,
+            capabilities=["materializer"],
+            shard_index=config.AGENT_SHARD_INDEX,
         )
         backoff = 0.5
         for attempt in range(1, retries + 1):
@@ -149,13 +160,16 @@ class AgentLink:
                     continue
                 try:
                     tables, epochs = _serving_state()
+                    health = _agent_health()
+                    health.inflight += len(self._materialize_tasks)
                     hb = HeartbeatRequest(
                         agent_id=self.agent_id, lease_id=self._lease_id,
-                        health=_agent_health(), serving_tables=tables, epochs=epochs,
+                        health=health, serving_tables=tables, epochs=epochs,
+                        active_task_ids=sorted(self._materialize_tasks),
                     )
                     cmds = await self._client.heartbeat(hb)
                     for cmd in cmds:
-                        self._handle_command(cmd)
+                        await self._handle_command(cmd)
                 except StaleLeaseError:
                     log.info("agent_lease_stale_reregister", agent_id=self.agent_id)
                     self._lease_id = None
@@ -166,7 +180,38 @@ class AgentLink:
         except asyncio.CancelledError:
             raise
 
-    def _handle_command(self, cmd) -> None:
+    async def _run_materialize(self, task) -> None:
+        from enterprise.materialize_worker import execute_task
+
+        try:
+            result = await execute_task(task, self.agent_id)
+            for attempt in range(3):
+                try:
+                    ack = await self._client.report_task_result(result)
+                    log.info(
+                        "materialize_task_reported",
+                        task_id=task.task_id,
+                        state=ack.state,
+                        accepted=ack.ok,
+                    )
+                    return
+                except Exception as exc:
+                    if attempt == 2:
+                        log.error(
+                            "materialize_result_report_failed",
+                            task_id=task.task_id,
+                            error=str(exc),
+                        )
+                        return
+                    await asyncio.sleep(0.5 * (attempt + 1))
+        finally:
+            delivery = (task.task_id, task.attempt, task.claim_token)
+            if len(self._completed_materialize_deliveries) >= 1024:
+                self._completed_materialize_deliveries.pop()
+            self._completed_materialize_deliveries.add(delivery)
+            self._materialize_tasks.pop(task.task_id, None)
+
+    async def _handle_command(self, cmd) -> None:
         if cmd.kind == "drain":
             log.info("agent_drain_requested", agent_id=self.agent_id)
             if self._on_drain is not None:
@@ -174,5 +219,27 @@ class AgentLink:
                     self._on_drain()
                 except Exception:
                     log.exception("agent_drain_handler_error")
+            for task in self._materialize_tasks.values():
+                task.cancel()
+        elif cmd.kind == "materialize" and cmd.materialize is not None:
+            task_id = cmd.materialize.task_id
+            if not task_id:
+                log.warning("materialize_command_missing_task_id")
+                return
+            if task_id in self._materialize_tasks:
+                log.info("materialize_command_duplicate", task_id=task_id)
+                return
+            delivery = (
+                task_id,
+                cmd.materialize.attempt,
+                cmd.materialize.claim_token,
+            )
+            if delivery in self._completed_materialize_deliveries:
+                log.info("materialize_command_already_completed", task_id=task_id)
+                return
+            self._materialize_tasks[task_id] = asyncio.create_task(
+                self._run_materialize(cmd.materialize),
+                name=f"materialize-{task_id[:12]}",
+            )
         else:
             log.debug("agent_command_ignored", agent_id=self.agent_id, kind=cmd.kind)

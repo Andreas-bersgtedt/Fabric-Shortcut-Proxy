@@ -30,6 +30,9 @@ from enterprise.control.auth import ManagerAuthMiddleware, manager_auth_active
 from security.authorization_middleware import AuthorizationMiddleware
 from enterprise.control.registry import Registry
 from enterprise.control.server import ControlService
+from enterprise.control.snapshot_provider import DurableSnapshotProvider
+from enterprise.control.task_scheduler import TaskScheduler
+from enterprise.control.work_queue import DurableWorkQueue
 from enterprise.control.supervisor import AgentSupervisor
 from enterprise.control.transport import create_control_router
 from observability.logging import configure_logging, get_logger
@@ -124,7 +127,20 @@ def create_manager_app() -> FastAPI:
             item.strip() for item in config.AGENT_HOST_ALLOWLIST.split(",") if item.strip()
         ),
     )
-    service = ControlService(registry, tables=[t.name for t in config.TABLES])
+    from runtime.artifact_store import get_default_store
+
+    queue = DurableWorkQueue(get_default_store())
+    snapshot_provider = DurableSnapshotProvider(queue)
+    service = ControlService(
+        registry,
+        tables=[t.name for t in config.TABLES],
+        snapshot_provider=snapshot_provider,
+        work_queue=queue,
+    )
+    from enterprise.control import materialize_service
+
+    if config.MATERIALIZATION_WORK_QUEUE:
+        materialize_service.configure(queue)
     supervisors = _build_supervisors(monitor_token)
     gateway = None
     if config.ENABLE_GATEWAY:
@@ -140,6 +156,36 @@ def create_manager_app() -> FastAPI:
         from runtime.artifact_store import build_store
         store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
         lease = LeaderLease(store, ttl_ms=config.LEADER_LEASE_TTL_MS)
+    manager_owner = lease.owner_id if lease is not None else f"manager:{os.getpid()}"
+    scheduler: TaskScheduler | None = None
+
+    async def _start_scheduler(manager_fence: int) -> None:
+        nonlocal scheduler
+        await asyncio.to_thread(queue.recover)
+        await asyncio.to_thread(
+            queue.fence_claims, manager_owner, manager_fence
+        )
+        await asyncio.to_thread(
+            queue.prune_terminal,
+            retention_seconds=config.WORK_QUEUE_RETENTION_SECONDS,
+        )
+        if not config.MATERIALIZATION_WORK_QUEUE:
+            return
+        scheduler = TaskScheduler(
+            queue,
+            registry,
+            manager_owner=manager_owner,
+            manager_fence=manager_fence,
+        )
+        app.state.work_scheduler = scheduler
+        scheduler.start()
+
+    async def _stop_scheduler() -> None:
+        nonlocal scheduler
+        if scheduler is not None:
+            await scheduler.stop()
+            scheduler = None
+            app.state.work_scheduler = None
 
     async def _start_all():
         for s in supervisors:
@@ -165,15 +211,18 @@ def create_manager_app() -> FastAPI:
                 app.state.is_leader = leader
                 if leader and not supervising:
                     log.info("ha_became_primary", owner_id=lease.owner_id)
+                    await _start_scheduler(lease.fence)
                     await _start_all()
                     supervising = True
                 elif not leader and supervising:
                     log.warning("ha_stepped_down_to_standby", owner_id=lease.owner_id)
+                    await _stop_scheduler()
                     await _stop_all()
                     supervising = False
                 await asyncio.sleep(renew_s)
         except asyncio.CancelledError:
             if supervising:
+                await _stop_scheduler()
                 await _stop_all()
             raise
 
@@ -205,6 +254,7 @@ def create_manager_app() -> FastAPI:
             ha_task = asyncio.create_task(_leadership_loop(), name="ha-leadership")
         else:
             app.state.is_leader = True
+            await _start_scheduler(1)
             if supervisors:
                 await _start_all()
         # Open Mirroring publish loop (opt-in): push source tables into the Fabric
@@ -229,6 +279,7 @@ def create_manager_app() -> FastAPI:
             if lease is not None:
                 lease.release()
         else:
+            await _stop_scheduler()
             if supervisors:
                 await _stop_all()
         if gateway is not None:
@@ -238,6 +289,8 @@ def create_manager_app() -> FastAPI:
     app.state.registry = registry
     app.state.supervisors = supervisors
     app.state.lease = lease
+    app.state.work_queue = queue
+    app.state.work_scheduler = scheduler
     app.state.is_leader = not config.MANAGER_HA
     # Standalone HTTP Basic gate over the operator surface. Health probes remain
     # open; authenticated Agent credentials are sent for internal control calls.
@@ -252,6 +305,16 @@ def create_manager_app() -> FastAPI:
                 "manager_ha": config.MANAGER_HA,
                 "agents_supervised": len(supervisors), "agents_registered": registry.count()}
 
+    @app.get("/metrics")
+    async def manager_metrics():
+        from fastapi.responses import PlainTextResponse
+        from observability.metrics import render_prometheus
+
+        return PlainTextResponse(
+            render_prometheus(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+
     @app.get("/readyz")
     async def readyz():
         from fastapi.responses import JSONResponse
@@ -264,7 +327,15 @@ def create_manager_app() -> FastAPI:
             if config.MANAGER_SUPERVISION_MODE == "external"
             else len(alive) >= 1 and not looped
         )
-        ready = (not leader) or managed_agents_ready
+        queue_status = None
+        queue_ready = True
+        if config.MATERIALIZATION_WORK_QUEUE:
+            try:
+                queue_status = await asyncio.to_thread(queue.status)
+            except Exception:
+                queue_ready = False
+                log.exception("work_queue_readiness_failed")
+        ready = ((not leader) or managed_agents_ready) and queue_ready
         return JSONResponse(
             status_code=200 if ready else 503,
             content={
@@ -273,6 +344,7 @@ def create_manager_app() -> FastAPI:
                 "agents_alive": len(alive),
                 "agents_total": len(supervisors),
                 "agents_registered": registry.count(),
+                "work_queue": queue_status,
                 "supervision_mode": config.MANAGER_SUPERVISION_MODE,
                 "crash_looped": looped,
                 "restarts": {s.name: s.restart_count for s in supervisors},
@@ -303,6 +375,13 @@ def create_manager_app() -> FastAPI:
         if config.MATERIALIZE_MODE != "lazy":
             return JSONResponse(status_code=409,
                                 content={"ok": False, "error": "materialize_mode is not lazy"})
+        if config.MATERIALIZATION_WORK_QUEUE and not getattr(
+            app.state, "is_leader", True
+        ):
+            return JSONResponse(
+                status_code=409,
+                content={"ok": False, "error": "Manager is not primary"},
+            )
         try:
             body = await request.json()
         except Exception:
@@ -313,10 +392,97 @@ def create_manager_app() -> FastAPI:
         from enterprise.control import materialize_service
         try:
             result = await materialize_service.materialize_for_key(key)
-        except Exception as exc:  # noqa: BLE001 - report, never crash the control plane
+        except TimeoutError:
+            log.warning("control_materialize_timeout", key=key)
+            return JSONResponse(
+                status_code=504,
+                content={"ok": False, "error": "materialization timed out"},
+            )
+        except Exception:  # noqa: BLE001 - report, never crash the control plane
             log.exception("control_materialize_failed", key=key)
-            return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
-        return JSONResponse(status_code=200 if result.get("ok") else 404, content=result)
+            return JSONResponse(
+                status_code=500,
+                content={"ok": False, "error": "materialization failed"},
+            )
+        reason = str(result.get("reason", ""))
+        status = (
+            200
+            if result.get("ok")
+            else 404
+            if reason == "unknown_key"
+            else 503
+            if reason == "generation_unavailable"
+            else 409
+            if reason in {"cancelled", "generation_fenced"}
+            else 502
+        )
+        return JSONResponse(status_code=status, content=result)
+
+    @app.get("/control/work-queue")
+    async def control_work_queue_status():
+        status = await asyncio.to_thread(queue.status)
+        active_scheduler = getattr(app.state, "work_scheduler", None)
+        status["scheduler"] = (
+            active_scheduler.status() if active_scheduler is not None else None
+        )
+        status["role"] = (
+            "primary" if getattr(app.state, "is_leader", True) else "standby"
+        )
+        return status
+
+    @app.post("/control/work-queue/requests/{request_id}/cancel")
+    async def cancel_work_request(request_id: str, request: Request):
+        from fastapi.responses import JSONResponse
+        from observability.audit import record_queue_operation
+
+        changed = await asyncio.to_thread(
+            queue.cancel_request, request_id, "operator_cancelled"
+        )
+        user = getattr(request.state, "user", None)
+        record_queue_operation(
+            request_id=request.headers.get("x-request-id", "")[:128]
+            or secrets.token_hex(16),
+            identity=getattr(user, "user_id", "") or "manager-operator",
+            operation="cancel",
+            target_id=request_id,
+            status=200 if changed else 404,
+            outcome="changed" if changed else "not_found",
+        )
+        log.info(
+            "work_queue_operator_cancel",
+            request_id=request_id,
+            changed=changed,
+        )
+        return JSONResponse(
+            status_code=200 if changed else 404,
+            content={"ok": changed, "request_id": request_id},
+        )
+
+    @app.post("/control/work-queue/tasks/{task_id}/retry")
+    async def retry_work_task(task_id: str, request: Request):
+        from fastapi.responses import JSONResponse
+        from observability.audit import record_queue_operation
+
+        changed = await asyncio.to_thread(queue.retry_task, task_id)
+        user = getattr(request.state, "user", None)
+        record_queue_operation(
+            request_id=request.headers.get("x-request-id", "")[:128]
+            or secrets.token_hex(16),
+            identity=getattr(user, "user_id", "") or "manager-operator",
+            operation="retry",
+            target_id=task_id,
+            status=200 if changed else 409,
+            outcome="changed" if changed else "rejected",
+        )
+        log.info(
+            "work_queue_operator_retry",
+            task_id=task_id,
+            changed=changed,
+        )
+        return JSONResponse(
+            status_code=200 if changed else 409,
+            content={"ok": changed, "task_id": task_id},
+        )
 
     # Phase 5.1: live fleet scaling — grow/shrink the supervised Agent fleet at
     # runtime and persist agent_count. Mutates `supervisors` IN PLACE so the

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 
 from enterprise.control.contract import (
     RegisterRequest, HeartbeatRequest, AgentHealth, TaskResult,
-    ControlCommand, Drain,
+    ControlCommand, Drain, MaterializeTask,
 )
 from enterprise.control.registry import Registry, LeaseError
 from enterprise.control.server import ControlService
@@ -36,6 +36,28 @@ def test_register_and_heartbeat():
     assert cmds == []
     rec = reg.get("a1")
     assert rec.serving_tables == ["sales"] and rec.epochs == {"sales": 1}
+
+
+def test_register_accepts_version_one_and_records_capabilities():
+    reg = Registry()
+    request = _reg_req("old-agent")
+    request.contract_version = "1.0"
+    request.capabilities = ["serving", "serving"]
+
+    response = reg.register(request)
+    public = reg.get("old-agent").to_public()
+
+    assert response.contract_version == "1.1"
+    assert public["capabilities"] == ["serving"]
+
+
+def test_register_rejects_incompatible_contract_major():
+    reg = Registry()
+    request = _reg_req()
+    request.contract_version = "2.0"
+
+    with pytest.raises(ValueError, match="incompatible control contract"):
+        reg.register(request)
 
 
 def test_stale_lease_raises():
@@ -133,7 +155,62 @@ async def test_agent_link_registers_and_handles_drain():
     await link.start()
     try:
         assert reg.get("a1") is not None          # registered
+        assert reg.get("a1").capabilities == ["materializer"]
         reg.queue_command("a1", ControlCommand(kind="drain", drain=Drain()))
         await asyncio.wait_for(drained.wait(), timeout=2.0)
+    finally:
+        await link.stop()
+
+
+async def test_agent_link_executes_materialize_command(monkeypatch):
+    from enterprise.agent_link import AgentLink
+    import enterprise.materialize_worker as worker
+
+    reg = Registry(heartbeat_ms=20)
+    client = _make(reg, tables=["sales"])
+    executed = asyncio.Event()
+    execution_count = 0
+
+    async def execute(task, agent_id):
+        nonlocal execution_count
+        execution_count += 1
+        executed.set()
+        return TaskResult(
+            agent_id=agent_id,
+            table=task.table,
+            epoch=task.epoch,
+            split_index=task.split_index,
+            ok=False,
+            task_id=task.task_id,
+            request_id=task.request_id,
+            claim_token=task.claim_token,
+            attempt=task.attempt,
+            error_code="test",
+        )
+
+    monkeypatch.setattr(worker, "execute_task", execute)
+    link = AgentLink(client=client, agent_id="a1", heartbeat_ms=20)
+    await link.start()
+    try:
+        command = ControlCommand(
+            kind="materialize",
+            materialize=MaterializeTask(
+                table="sales",
+                epoch=1,
+                split_index=0,
+                source_table="sales",
+                output_key="sales/0.parquet",
+                task_id="task-1",
+                request_id="request-1",
+                claim_token="claim-1",
+                attempt=1,
+            ),
+        )
+        reg.queue_command("a1", command)
+        await asyncio.wait_for(executed.wait(), timeout=2.0)
+        await asyncio.sleep(0.05)
+        reg.queue_command("a1", command)
+        await asyncio.sleep(0.05)
+        assert execution_count == 1
     finally:
         await link.stop()

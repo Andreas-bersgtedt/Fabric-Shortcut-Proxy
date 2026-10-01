@@ -175,6 +175,13 @@ server-streaming for task dispatch and heartbeats. (A REST/JSON fallback can mir
 it for debugging.) The `.proto` is the **frozen contract** the future C++ Agent
 implements.
 
+The authoritative contract is
+[`enterprise/control/proto/control.proto`](../enterprise/control/proto/control.proto).
+Contract version 1.1 adds Agent capabilities, task and claim identity, generation fencing,
+plan digests, publication identity, and result acknowledgement fields. Version 1.0 Agents
+remain compatible during the migration window. See
+[CONTROL_WORK_QUEUE.md](CONTROL_WORK_QUEUE.md).
+
 ```proto
 syntax = "proto3";
 package s3proxy.control.v1;

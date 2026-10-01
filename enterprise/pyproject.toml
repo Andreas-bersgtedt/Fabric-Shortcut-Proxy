@@ -20,8 +20,8 @@ dependencies = [
 # package `enterprise` to `.` (this folder), so `control` becomes enterprise.control
 # and manager.py/agent_link.py/retention.py become enterprise.manager/agent_link/retention.
 [tool.setuptools]
-packages = ["enterprise", "enterprise.control"]
+packages = ["enterprise", "enterprise.control", "enterprise.control.proto"]
 package-dir = { "enterprise" = "." }
 
 [tool.setuptools.package-data]
-"enterprise.control" = ["proto/*.proto"]
+"enterprise.control.proto" = ["*.proto"]

@@ -630,6 +630,9 @@ Create one Fabric shortcut per table.
 | `AGENT_HOST_ALLOWLIST` | `127.0.0.1,0.0.0.0,::1,::,localhost` | Hosts or CIDRs accepted in Manager agent registration |
 | `GENERATION_SOURCE_CONSISTENCY` | `best_effort` | Source-read contract for one table generation. SQL Server and PostgreSQL support fail-closed per-table `snapshot` |
 | `SNAPSHOT_MAX_LIFETIME_SECONDS` | `3600` | Maximum lifetime of a transaction-bound table read point |
+| `MATERIALIZATION_WORK_QUEUE` | `1` | Dispatch lazy materialization to Python Agents through the durable Manager queue. Set to `0` only for compatibility rollback |
+| `WORK_QUEUE_RETENTION_SECONDS` | `604800` | Retain terminal queue records for seven days. Published manifests and artifacts are not removed |
+| `WORK_QUEUE_REQUEST_TIMEOUT_SECONDS` | `600` | End-to-end deadline for one queued table materialization request |
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |

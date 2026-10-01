@@ -15,6 +15,7 @@ from enterprise.control.contract import (
     Assignment, SnapshotManifest, TaskResult, Ack,
 )
 from enterprise.control.registry import Registry
+from enterprise.control.work_queue import DurableWorkQueue
 from observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -33,10 +34,12 @@ class ControlService:
         *,
         tables: list[str] | None = None,
         snapshot_provider: SnapshotProvider | None = None,
+        work_queue: DurableWorkQueue | None = None,
     ) -> None:
         self._registry = registry
         self._tables = list(tables or [])
         self._snapshot_provider = snapshot_provider
+        self._work_queue = work_queue
 
     # -- Agent lifecycle -----------------------------------------------------
 
@@ -48,7 +51,14 @@ class ControlService:
 
     def heartbeat(self, req: HeartbeatRequest) -> list[ControlCommand]:
         # May raise LeaseError -> the transport maps it to HTTP 409.
-        return self._registry.heartbeat(req)
+        commands = self._registry.heartbeat(req)
+        if self._work_queue is not None:
+            self._work_queue.renew_agent_claims(
+                req.agent_id,
+                req.lease_id,
+                task_ids=req.active_task_ids,
+            )
+        return commands
 
     def get_assignment(self, agent_id: str) -> Assignment:
         # Phase 1: a single Agent serves every configured table.
@@ -60,7 +70,17 @@ class ControlService:
         return self._snapshot_provider(table, epoch)
 
     def report_task_result(self, res: TaskResult) -> Ack:
-        # Phase 3 (materialization work‑queue) consumes these; accept + log for now.
+        if self._work_queue is not None:
+            agent = self._registry.get(res.agent_id)
+            if agent is None:
+                return Ack(
+                    ok=False,
+                    terminal=True,
+                    reason_code="wrong_owner",
+                )
+            return self._work_queue.accept_result(
+                res, agent_lease_id=agent.lease_id
+            )
         log.info("task_result", agent_id=res.agent_id, table=res.table,
                  epoch=res.epoch, split_index=res.split_index, ok=res.ok,
                  error=res.error or None)

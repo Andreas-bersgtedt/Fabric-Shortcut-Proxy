@@ -63,6 +63,8 @@ from system_config import (
     AGENT_DRAIN_GRACE_SECONDS,
     # HA
     MANAGER_HA, LEADER_LEASE_TTL_MS, LEADER_LEASE_RENEW_MS,
+    MATERIALIZATION_WORK_QUEUE, WORK_QUEUE_RETENTION_SECONDS,
+    WORK_QUEUE_REQUEST_TIMEOUT_SECONDS,
     RETENTION_GC, RETENTION_GC_INTERVAL_SECONDS, ROLLING_RESTART_HEALTH_TIMEOUT,
     # Admin
     ENABLE_ADMIN_UI, ENABLE_REIDENTIFICATION, REIDENTIFICATION_REQUESTS_PER_MINUTE,
@@ -734,6 +736,16 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
         problems.append(f"LEADER_LEASE_TTL_MS must be > 0 (got {LEADER_LEASE_TTL_MS}).")
     if not (0 < LEADER_LEASE_RENEW_MS < LEADER_LEASE_TTL_MS):
         problems.append(f"LEADER_LEASE_RENEW_MS must be in 1..TTL-1 (got {LEADER_LEASE_RENEW_MS}/{LEADER_LEASE_TTL_MS}).")
+    if WORK_QUEUE_RETENTION_SECONDS < 0:
+        problems.append(
+            "WORK_QUEUE_RETENTION_SECONDS must be >= 0 "
+            f"(got {WORK_QUEUE_RETENTION_SECONDS})."
+        )
+    if WORK_QUEUE_REQUEST_TIMEOUT_SECONDS <= 0:
+        problems.append(
+            "WORK_QUEUE_REQUEST_TIMEOUT_SECONDS must be > 0 "
+            f"(got {WORK_QUEUE_REQUEST_TIMEOUT_SECONDS})."
+        )
     if RETENTION_GC_INTERVAL_SECONDS <= 0:
         problems.append(f"RETENTION_GC_INTERVAL_SECONDS must be > 0 (got {RETENTION_GC_INTERVAL_SECONDS}).")
     if ROLLING_RESTART_HEALTH_TIMEOUT <= 0:

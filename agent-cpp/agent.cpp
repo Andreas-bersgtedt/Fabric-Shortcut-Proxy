@@ -477,6 +477,14 @@ static bool json_i64_value(const std::string& text, const std::string& name, lon
 
 static bool activate_current_generation() {
     fs::path store_root = canonical_store_root();
+    if (CFG.materialize_mode == "lazy" && !CFG.require_generation) {
+        rebuild_object_index();
+        std::lock_guard<std::mutex> lock(g_object_index_mu);
+        g_active_root = store_root;
+        g_active_generation.clear();
+        g_generation_ready = true;
+        return true;
+    }
     std::string current;
     if (!read_file_text(store_root / "CURRENT", current)) {
         if (CFG.require_generation) return false;
@@ -1301,7 +1309,7 @@ static void control_loop() {
 #endif
           << "\",\"version\":\"" << APP_VERSION
           << "\",\"capacity_hint\":0,\"advertise_host\":\"" << CFG.advertise_host
-          << "\",\"contract_version\":\"1.0\"}";
+          << "\",\"contract_version\":\"1.0\",\"capabilities\":[\"serving\"]}";
 
         std::string rb;
         int st = http_post(host, port, "/control/register", j.str(), rb);

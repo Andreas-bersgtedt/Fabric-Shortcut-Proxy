@@ -64,6 +64,7 @@ spec:
       labels:
         app.kubernetes.io/name: fsp-nginx
         app.kubernetes.io/component: proxy
+        fabric-shortcut-proxy.io/data-plane-client: "true"
         {{- include "fsp.commonLabels" . | nindent 8 }}
     spec:
       {{- include "fsp.imagePullSecrets" . | nindent 6 }}

@@ -16,6 +16,15 @@ AGENT = ROOT / "agent-cpp" / "agent"
 BUCKET = "test-bucket"
 
 
+class CppAgentImageTests(unittest.TestCase):
+    def test_docker_build_copies_agent_auth_header(self):
+        dockerfile = (ROOT / "agent-cpp" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "COPY agent-cpp/agent_auth.hpp ./agent_auth.hpp",
+            dockerfile,
+        )
+
+
 def read_hwm_kib(pid):
     status = pathlib.Path(f"/proc/{pid}/status")
     for line in status.read_text().splitlines():

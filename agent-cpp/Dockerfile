@@ -6,6 +6,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY agent-cpp/agent.cpp ./agent.cpp
+COPY agent-cpp/agent_auth.hpp ./agent_auth.hpp
 COPY agent-cpp/tier1 ./tier1
 RUN g++ -O2 -std=c++17 -Wall -Wextra -pthread agent.cpp -o /fsp-cpp-agent
 

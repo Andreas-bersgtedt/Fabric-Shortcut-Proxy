@@ -142,6 +142,18 @@ def test_validate_config_passes_with_defaults():
     config.validate_config()  # should not raise
 
 
+def test_agent_non_loopback_startup_does_not_require_manager_basic(monkeypatch):
+    from main import _validate_agent_startup_config
+
+    monkeypatch.setattr(config, "HOST", "0.0.0.0")
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "")
+    monkeypatch.setattr(config, "MANAGER_URL", "https://fsp-manager:9443")
+    monkeypatch.setattr(config, "AGENT_TOKEN", "a" * 64)
+
+    _validate_agent_startup_config()
+
+
 def test_agent_auth_rejects_unknown_mode_without_echoing_value(monkeypatch):
     invalid_mode = "invalid-secret-looking-mode"
     monkeypatch.setattr(config, "AGENT_AUTH_MODE", invalid_mode)

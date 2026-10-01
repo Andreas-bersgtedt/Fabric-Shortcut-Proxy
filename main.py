@@ -38,6 +38,11 @@ log = get_logger(__name__)
 _uvicorn_server = None
 
 
+def _validate_agent_startup_config() -> None:
+    """Validate Agent settings without requiring Manager operator credentials."""
+    config.validate_config()
+
+
 def _set_uvicorn_server(server) -> None:
     global _uvicorn_server
     _uvicorn_server = server
@@ -99,7 +104,7 @@ def _source_connect_hint(exc: Exception) -> str:
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
-    config.validate_config(operator_bind_host=config.HOST)
+    _validate_agent_startup_config()
 
     log.info(
         "startup",

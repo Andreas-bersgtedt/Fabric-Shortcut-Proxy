@@ -262,10 +262,25 @@ setx /M ADMIN_TOKEN $tok
 setx /M MANAGER_AUTH_ENABLED 1
 setx /M MANAGER_AUTH_USERNAME operator
 setx /M MANAGER_AUTH_PASSWORD "REPLACE_WITH_A_STRONG_PASSWORD"
+
+# Active credential used by Manager and all Python/C++ Agent control clients:
+$bytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$agentToken = ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
+setx /M AGENT_AUTH_MODE required
+setx /M AGENT_TOKEN $agentToken
+$agentToken = $null; $bytes = $null
 ```
 
 > `setx /M` writes to the machine registry; restrict the host to trusted admins. Restart
 > the service (or the shell) so new machine variables are picked up.
+
+Agent services receive only `AGENT_TOKEN`. Keep Manager Basic, Entra,
+`AGENT_TOKEN_PREVIOUS`, and `AGENT_TOKEN_PREVIOUS_VALID_UNTIL` on Manager.
+During an upgrade from Basic-authenticated Agents, use
+`AGENT_AUTH_MODE=compatibility`, roll Agents with the active token, verify the
+Agent-auth source, then set Manager to `required`. Compatibility remains
+available for one release.
 
 ---
 

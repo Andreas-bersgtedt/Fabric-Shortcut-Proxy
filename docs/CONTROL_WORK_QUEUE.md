@@ -31,6 +31,64 @@ Compatibility rules:
 - a future minor version above the Manager version is rejected until reviewed;
 - existing register and heartbeat fields keep their tags and meanings.
 
+Agent authentication is a REST transport concern and does not change the control
+contract or protobuf messages. During the migration release,
+`AGENT_AUTH_MODE=compatibility` is the runtime default so existing Agents can continue
+using Manager Basic credentials while deployments are upgraded. The installer and
+deployment migration phase will set `AGENT_AUTH_MODE=required` for new installations.
+
+Agent requests use `X-FSP-Agent-Token` and `X-FSP-Agent-ID`. The active token comes from
+`AGENT_TOKEN`. A different `AGENT_TOKEN_PREVIOUS` is accepted only until the positive
+Unix UTC deadline in `AGENT_TOKEN_PREVIOUS_VALID_UNTIL`. Token values are secrets: they
+must come from the environment or a supported secret store and are not fields in
+`config.system.json`.
+
+The Agent route set is:
+
+- `POST /control/register`;
+- `POST /control/heartbeat`;
+- `GET /control/assignment/{agent_id}`;
+- `GET /control/snapshot/{table}`;
+- `POST /control/task-result`;
+- `POST /control/materialize`.
+
+The operator work-queue routes remain separate:
+
+- `GET /control/work-queue`;
+- `POST /control/work-queue/requests/{request_id}/cancel`;
+- `POST /control/work-queue/tasks/{task_id}/retry`.
+
+Authentication failures return only `agent authentication required` (401), or
+`agent authentication unavailable` (503) when required authentication is not
+configured. Responses never identify whether a token was missing, invalid, or expired.
+
+The Manager binds `X-FSP-Agent-ID` to the registration, heartbeat, assignment, and
+task-result identity before invoking the control service. Token-authenticated snapshot
+and lazy materialization calls also require a non-empty identity. Legacy Basic clients
+may omit the header only while `compatibility` mode is enabled. Failed
+authentication therefore cannot register an Agent, renew a lease or claim, publish a
+result, or start materialization.
+
+`compatibility` is limited to the migration release. It accepts valid Manager Basic
+credentials on Agent routes for old clients, but does not accept operator sessions or
+Entra bearer credentials. `required` accepts only Agent tokens. Agent tokens never grant
+access to work-queue or other operator routes.
+
+At startup, Agent tokens resolve in this order:
+
+1. an explicit environment variable;
+2. Azure Key Vault (`agent-token` and `agent-token-previous`);
+3. the encrypted last-known-good credential cache.
+
+Python Agents read `AGENT_TOKEN` before each request, so an environment refresh applies
+immediately. C++ Agents read it at process startup and must be rolled during the overlap.
+To rotate, move the old active value to `AGENT_TOKEN_PREVIOUS`, set its absolute Unix UTC
+deadline, install a new active value, roll Agents, verify the new value, wait for the
+deadline, and then clear the previous value. The deadline is never extended implicitly.
+
+Agent-authentication audit records contain only the bounded Agent identity, request ID,
+method, route, status, outcome, and safe reason code. They never contain either token.
+
 Python materializer Agents advertise:
 
 ```json

@@ -68,6 +68,11 @@ spec:
             - secretRef:
                 name: {{ .Values.sourceSecret.name }}
           env:
+            - name: AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentAuth.secretName }}
+                  key: {{ .Values.agentAuth.activeTokenKey }}
             - name: HOST
               value: 0.0.0.0
             - name: PORT

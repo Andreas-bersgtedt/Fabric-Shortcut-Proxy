@@ -60,6 +60,13 @@ def _read_json_file(path: pathlib.Path) -> bytes:
         raise BackupError(f"{path.name} is not valid JSON") from exc
     if not isinstance(parsed, dict):
         raise BackupError(f"{path.name} must contain a JSON object")
+    system = parsed.get("system", parsed) if path.name == "config.system.json" else {}
+    if isinstance(system, dict) and any(
+        key in system for key in ("agent_token", "agent_token_previous")
+    ):
+        raise BackupError(
+            "config.system.json contains Agent token fields; move them to a secret store"
+        )
     return raw
 
 
@@ -193,6 +200,13 @@ def _validated_files(payload: dict) -> tuple[dict[str, bytes], dict[str, bytes]]
             raise BackupError(f"backup contains invalid JSON in {name}") from exc
         if not isinstance(parsed, dict):
             raise BackupError(f"backup config {name} must contain an object")
+        system = parsed.get("system", parsed) if name == "config.system.json" else {}
+        if isinstance(system, dict) and any(
+            key in system for key in ("agent_token", "agent_token_previous")
+        ):
+            raise BackupError(
+                "backup config.system.json contains forbidden Agent token fields"
+            )
         configs[name] = raw
 
     state_files: dict[str, bytes] = {}

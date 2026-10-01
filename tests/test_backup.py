@@ -56,6 +56,10 @@ def test_backup_restores_config_credentials_and_mirror_state(tmp_path):
     source_store = CredentialStore(str(source_root / "credentials.json"), cipher=_SourceCipher())
     source_store.set_url("warehouse", "postgresql://user:password@host/db")
     source_store.set_secret("mount/blob", {"account_key": "secret"})
+    agent_token = "agent-current-" + ("a" * 52)
+    previous_token = "agent-previous-" + ("b" * 51)
+    source_store.set_secret("env:agent_token", {"value": agent_token})
+    source_store.set_secret("env:agent_token_previous", {"value": previous_token})
     source_store.set_access_key("FSPTEST", {"secret_key": "key-secret", "buckets": ["data"]})
 
     archive, created = create_backup(
@@ -68,7 +72,7 @@ def test_backup_restores_config_credentials_and_mirror_state(tmp_path):
         "created_at": created["created_at"],
         "config_files": 3,
         "connections": 1,
-        "secrets": 1,
+        "secrets": 3,
         "access_keys": 1,
         "mirror_state_files": 1,
     }
@@ -98,11 +102,28 @@ def test_backup_restores_config_credentials_and_mirror_state(tmp_path):
     assert destination_store.list_ids() == ["warehouse"]
     assert destination_store.get_url("warehouse") == "postgresql://user:password@host/db"
     assert destination_store.get_secret("mount/blob") == {"account_key": "secret"}
+    assert destination_store.get_secret("env:agent_token") == {"value": agent_token}
+    assert destination_store.get_secret("env:agent_token_previous") == {
+        "value": previous_token
+    }
     assert destination_store.get_access_key("FSPTEST") == {
         "secret_key": "key-secret",
         "buckets": ["data"],
     }
     assert (destination_root / ".open_mirror_state" / "orders.json").read_text() == '{"cursor":42}'
+    assert agent_token.encode() not in archive
+    assert previous_token.encode() not in archive
+
+
+def test_backup_rejects_plaintext_agent_tokens_in_system_config(tmp_path):
+    (tmp_path / "config.system.json").write_text(
+        json.dumps({"system": {"agent_token": "a" * 64}}),
+        encoding="utf-8",
+    )
+    store = CredentialStore(str(tmp_path / "credentials.json"), cipher=_SourceCipher())
+
+    with pytest.raises(BackupError, match="Agent token fields"):
+        create_backup("correct horse battery staple", root=tmp_path, store=store)
 
 
 @pytest.mark.parametrize("mode", ["wrong-password", "tampered"])

@@ -56,7 +56,8 @@ from system_config import (
     MANAGER_SUPERVISION_MODE, GENERATION_SOURCE_CONSISTENCY,
     SNAPSHOT_MAX_LIFETIME_SECONDS,
     # Control Plane
-    MANAGER_URL, AGENT_ID, CONTROL_HOST, CONTROL_PORT, AGENT_HOST_ALLOWLIST,
+    MANAGER_URL, AGENT_ID, AGENT_AUTH_MODE, AGENT_TOKEN, AGENT_TOKEN_PREVIOUS,
+    AGENT_TOKEN_PREVIOUS_VALID_UNTIL, CONTROL_HOST, CONTROL_PORT, AGENT_HOST_ALLOWLIST,
     MOUNT_TEST_HOST_ALLOWLIST, MOUNT_TEST_REQUESTS_PER_MINUTE, MOUNT_TEST_MAX_CONCURRENCY,
     AGENT_ADVERTISE_HOST,
     HEARTBEAT_MS, HEARTBEAT_MISS_LIMIT, AGENT_RESTART_BACKOFF_SECONDS, AGENT_MAX_RAPID_RESTARTS,
@@ -218,6 +219,13 @@ _register("REIDENTIFICATION_REQUESTS_PER_DAY", "reidentification_requests_per_da
 _register("MANAGER_AUTH_ENABLED", "manager_auth_enabled", "bool", MANAGER_AUTH_ENABLED)
 _register("MANAGER_AUTH_USERNAME", "manager_auth_username", "str", MANAGER_AUTH_USERNAME)
 _register("MANAGER_AUTH_PASSWORD", "manager_auth_password", "str", MANAGER_AUTH_PASSWORD)
+_register("AGENT_AUTH_MODE", "agent_auth_mode", "str", AGENT_AUTH_MODE)
+_register(
+    "AGENT_TOKEN_PREVIOUS_VALID_UNTIL",
+    "agent_token_previous_valid_until",
+    "int",
+    AGENT_TOKEN_PREVIOUS_VALID_UNTIL,
+)
 _register("CORS_ALLOWED_ORIGINS", "cors_allowed_origins", "str", CORS_ALLOWED_ORIGINS)
 _register("FSP_OIDC_ISSUER", "oidc_issuer", "str", OIDC_ISSUER)
 _register("FSP_OIDC_AUDIENCE", "oidc_audience", "str", OIDC_AUDIENCE)
@@ -649,6 +657,40 @@ def _loopback_bind(host: str) -> bool:
 def validate_config(*, operator_bind_host: str | None = None) -> None:
     """Validate required configuration at startup; raise ``ValueError`` on error."""
     problems: list[str] = []
+
+    if AGENT_AUTH_MODE not in ("required", "compatibility"):
+        problems.append("AGENT_AUTH_MODE must be 'required' or 'compatibility'.")
+
+    def _valid_agent_token(token: str) -> bool:
+        if not token:
+            return True
+        try:
+            token_bytes = token.encode("ascii")
+        except UnicodeEncodeError:
+            return False
+        return len(token_bytes) >= 32 and all(0x21 <= byte <= 0x7E for byte in token_bytes)
+
+    if not _valid_agent_token(AGENT_TOKEN):
+        problems.append("AGENT_TOKEN must contain at least 32 bytes.")
+    if not _valid_agent_token(AGENT_TOKEN_PREVIOUS):
+        problems.append("AGENT_TOKEN_PREVIOUS must contain at least 32 bytes.")
+    if AGENT_TOKEN and AGENT_TOKEN_PREVIOUS and AGENT_TOKEN == AGENT_TOKEN_PREVIOUS:
+        problems.append("AGENT_TOKEN and AGENT_TOKEN_PREVIOUS must differ.")
+    if AGENT_TOKEN_PREVIOUS and AGENT_TOKEN_PREVIOUS_VALID_UNTIL <= 0:
+        problems.append(
+            "AGENT_TOKEN_PREVIOUS_VALID_UNTIL must be positive when "
+            "AGENT_TOKEN_PREVIOUS is configured."
+        )
+    if (
+        operator_bind_host is not None
+        and not _loopback_bind(operator_bind_host)
+        and AGENT_AUTH_MODE == "required"
+        and not AGENT_TOKEN
+    ):
+        problems.append(
+            "AGENT_TOKEN must be set when required Agent authentication binds to "
+            "a non-loopback host."
+        )
 
     if operator_bind_host is not None and not _loopback_bind(operator_bind_host):
         if not MANAGER_AUTH_ENABLED:
@@ -1111,6 +1153,8 @@ SETTINGS_META: dict[str, dict] = {
     "manager_auth_enabled": {"cat": "Cluster (scale)", "help": "Manager: require HTTP Basic auth on the whole control-plane surface (/_manager, /_config, /_monitor, /agents). /control + health probes stay open. Needs a password set. Restart to apply."},
     "manager_auth_username": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic username (default 'admin'). Restart to apply."},
     "manager_auth_password": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic password. Blank = auth off even when enabled. Restart to apply.", "secret": True},
+    "agent_auth_mode": {"cat": "Cluster (scale)", "help": "Agent control authentication mode: 'required' accepts only Agent tokens; 'compatibility' temporarily also permits Manager Basic credentials. Restart to apply.", "choices": ["required", "compatibility"]},
+    "agent_token_previous_valid_until": {"cat": "Cluster (scale)", "help": "Unix UTC seconds after which AGENT_TOKEN_PREVIOUS is rejected. Configure the token itself through a secret source. Restart to apply."},
     # External operator identity
     "oidc_issuer": {"cat": "Operator identity", "help": "OIDC token issuer. For Entra ID use https://login.microsoftonline.com/<tenant-id>/v2.0. Restart to apply."},
     "oidc_audience": {"cat": "Operator identity", "help": "Expected access-token audience for the FSP API, normally its Entra application client ID or Application ID URI. Restart to apply."},
@@ -1348,6 +1392,8 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "manager_auth_enabled": "config.system.json",
     "manager_auth_username": "config.system.json",
     "manager_auth_password": "config.system.json",
+    "agent_auth_mode": "config.system.json",
+    "agent_token_previous_valid_until": "config.system.json",
     "oidc_issuer": "config.system.json",
     "oidc_audience": "config.system.json",
     "oidc_user_claim": "config.system.json",

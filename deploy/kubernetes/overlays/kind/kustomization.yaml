@@ -5,6 +5,8 @@ resources:
   - artifact-pv.yaml
   - postgres.yaml
   - source-secret.yaml
+  - agent-auth.yaml
+  - manager-auth.yaml
   - smoke-client.yaml
 patches:
   - path: artifact-pvc-patch.yaml

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "agent_auth.hpp"
 #include "tier1/dialects.hpp"
 #include "tier1/split_planner.hpp"
 #include "tier1/shard_weight.hpp"
@@ -427,6 +428,40 @@ static void test_stats() {
     check("dec.i64max", fsp::to_hex(fsp::encode_decimal("9223372036854775807")), "7fffffffffffffff");
 }
 
+static void test_agent_auth_headers() {
+    const std::string token(64, 'a');
+    const std::string headers = fsp::agent_auth_headers(token, "cpp-agent-1");
+    check("agent_auth.token",
+          headers.find("X-FSP-Agent-Token: " + token + "\r\n") != std::string::npos ? "yes" : "no",
+          "yes");
+    check("agent_auth.identity",
+          headers.find("X-FSP-Agent-ID: cpp-agent-1\r\n") != std::string::npos ? "yes" : "no",
+          "yes");
+    check("agent_auth.no_basic",
+          headers.find("Authorization: Basic") == std::string::npos ? "yes" : "no",
+          "yes");
+
+    const std::string missing = fsp::agent_auth_headers("", "cpp-agent-1");
+    check("agent_auth.missing_token_omitted",
+          missing.find("X-FSP-Agent-Token:") == std::string::npos ? "yes" : "no",
+          "yes");
+
+    const std::string malformed = fsp::agent_auth_headers("bad\r\nInjected: true", "cpp-agent-1");
+    check("agent_auth.malformed_token_omitted",
+          malformed.find("X-FSP-Agent-Token:") == std::string::npos ? "yes" : "no",
+          "yes");
+    check("agent_auth.malformed_identity_omitted",
+          fsp::agent_auth_headers(token, "agent\r\nInjected: true").find("X-FSP-Agent-ID:")
+              == std::string::npos ? "yes" : "no",
+          "yes");
+
+    const std::string incorrect = fsp::agent_auth_headers(std::string(64, 'b'), "cpp-agent-1");
+    check("agent_auth.incorrect_token_forwarded",
+          incorrect.find("X-FSP-Agent-Token: " + std::string(64, 'b') + "\r\n")
+              != std::string::npos ? "yes" : "no",
+          "yes");
+}
+
 int main() {
     test_dialects();
     test_split_math();
@@ -435,6 +470,7 @@ int main() {
     test_cache();
     test_iceberg();
     test_stats();
+    test_agent_auth_headers();
     std::printf("\ntier1: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

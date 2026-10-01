@@ -22,6 +22,10 @@ workloadIdentity:
   enabled: true
   clientId: 00000000-0000-0000-0000-000000000002
 
+agentAuth:
+  mode: required
+  secretName: fsp-agent-auth
+
 nodeSelector:
   agentpool: app
 
@@ -38,6 +42,7 @@ storage:
       volumeHandle: fsp-demo-example-manager-config
 
 manager:
+  operatorSecretName: fsp-manager-auth
   configBuilderEnabled: "1"
   adminUiEnabled: "1"
   credentialStorePath: /config/secrets/credentials.json

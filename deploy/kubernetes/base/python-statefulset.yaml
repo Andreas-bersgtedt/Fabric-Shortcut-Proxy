@@ -59,6 +59,11 @@ spec:
             - secretRef:
                 name: fsp-source
           env:
+            - name: AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fsp-agent-auth
+                  key: AGENT_TOKEN
             - name: HOST
               value: 0.0.0.0
             - name: PORT

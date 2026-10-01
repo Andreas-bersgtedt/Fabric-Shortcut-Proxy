@@ -31,15 +31,22 @@ Push both images to a registry for a remote cluster, then replace the two `image
 ## Configure the source
 
 Copy `examples/source-secret.example.yaml` outside the repository, replace the
-connection string, and apply it. Do not commit the populated Secret. When using
-Manager integration, set `MANAGER_AUTH_USERNAME` and `MANAGER_AUTH_PASSWORD` in
-this Secret, configure the Manager with the same values, and set `MANAGER_URL` on
-each Agent workload.
+connection string, and apply it. Do not commit the populated Secret.
+
+Create a second protected env file containing a 64-character hexadecimal
+`AGENT_TOKEN`, then create `fsp-agent-auth` without placing the token on the
+command line. Manager, Python, and C++ read the active key. Only Manager has env
+references for the optional previous token and deadline.
 
 ```powershell
 kubectl apply -f deploy/kubernetes/base/namespace.yaml
 kubectl apply -f path/to/source-secret.yaml
+kubectl -n fabric-shortcut-proxy create secret generic fsp-agent-auth `
+  --from-env-file=path/to/agent-auth.env
 ```
+
+Keep Manager Basic or Entra values in a separate `fsp-manager-auth` Secret.
+Agent workloads do not reference that Secret.
 
 The three workers must read one shared source database. An in-memory SQLite URL creates three unrelated databases and is not a distributed-materialization test.
 
@@ -91,6 +98,17 @@ kubectl -n fabric-shortcut-proxy get pods -w
 ```
 
 The checked-in kind Secret contains only a disposable local password. Do not copy it into a shared or remote cluster.
+
+Create `fsp-agent-auth` before applying either Kind overlay. New manifests set
+`AGENT_AUTH_MODE=required`. For a pre-token upgrade, patch Manager to
+`compatibility`, create the shared active token, roll Python and C++ Agents, and
+confirm active-source audit events before returning Manager to `required`.
+
+Rotate by updating Manager with new active, old previous, and an absolute UTC
+deadline. Roll Agents with the new active token only. After the deadline,
+confirm the old token returns `401`, then remove the previous key and deadline.
+For rollback during the one-release window, restore `compatibility` on Manager
+without removing the active token or changing operator credentials.
 
 ## Verify
 

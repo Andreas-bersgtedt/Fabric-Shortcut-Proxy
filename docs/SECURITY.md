@@ -304,6 +304,21 @@ This protects `/_admin`, `/_manager`, `/_config`, `/_monitor`, `/agents`, and Ma
 control routes. S3 data routes use SigV4 independently. Health and readiness probes
 remain unauthenticated.
 
+### Agent and operator trust boundaries
+
+Agent control routes use `AGENT_TOKEN`; operator routes use Basic, local-session,
+or OIDC credentials. In `required` mode, an operator credential cannot call an
+Agent route and an Agent token cannot call an operator route. Direct Python and
+C++ control clients use the same Agent-token header and send
+`X-FSP-Agent-ID`. Agent tokens never belong in URLs, request bodies, logs,
+metrics labels, monitor payloads, or process arguments.
+
+`compatibility` mode accepts valid Manager Basic credentials on Agent routes for
+one release while an existing fleet is upgraded. It does not accept operator
+sessions or Entra ****** Set `AGENT_AUTH_MODE=required` after all Agents
+use the active token. New installer, Helm, and Kubernetes deployments start in
+required mode.
+
 Browser requests from another origin are blocked unless that origin is listed in
 `CORS_ALLOWED_ORIGINS` as a comma-separated list, for example
 `https://admin.example.com`. CORS does not replace Basic authentication. Direct
@@ -353,6 +368,25 @@ terminate TLS before accepting bearer credentials.
   **denials are audited too**.
 - Events go to the structured logger, an optional append-only file
   (`AUDIT_LOG_FILE`), and an in-memory ring surfaced at `GET /_config/api/audit`.
+- Agent-auth events contain request ID, bounded Agent identity, route, method,
+  status, outcome, safe reason code, and source (`active`, `previous`, or
+  `compatibility`). They exclude token values, fragments, hashes,
+  `Authorization`, request bodies, lease IDs, claim tokens, and source URLs.
+
+### Agent credential incident response
+
+If the active Agent token is exposed, generate a new 32-byte token. Configure
+Manager with the new token as active and the exposed token as previous only when
+service continuity requires a short overlap. Set an absolute UTC deadline,
+restart or refresh Manager, then roll Python and C++ Agents with the new active
+token. Confirm active-source authentication and fleet heartbeats. Remove the
+previous token immediately when the fleet is healthy; do not wait for the
+deadline after a confirmed compromise.
+
+Search the Agent-auth audit stream for failed outcomes, unexpected Agent IDs,
+and `compatibility` sources. Token values are never valid audit search terms.
+Restrict Manager ingress while rotating and revoke any copied deployment Secret
+or Key Vault access that enabled the disclosure.
 
 ### Settings summary
 

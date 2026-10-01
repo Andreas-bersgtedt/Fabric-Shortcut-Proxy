@@ -142,6 +142,87 @@ def test_validate_config_passes_with_defaults():
     config.validate_config()  # should not raise
 
 
+def test_agent_non_loopback_startup_does_not_require_manager_basic(monkeypatch):
+    from main import _validate_agent_startup_config
+
+    monkeypatch.setattr(config, "HOST", "0.0.0.0")
+    monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False)
+    monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "")
+    monkeypatch.setattr(config, "MANAGER_URL", "https://fsp-manager:9443")
+    monkeypatch.setattr(config, "AGENT_TOKEN", "a" * 64)
+
+    _validate_agent_startup_config()
+
+
+def test_agent_auth_rejects_unknown_mode_without_echoing_value(monkeypatch):
+    invalid_mode = "invalid-secret-looking-mode"
+    monkeypatch.setattr(config, "AGENT_AUTH_MODE", invalid_mode)
+
+    with pytest.raises(ValueError) as exc_info:
+        config.validate_config()
+
+    assert "AGENT_AUTH_MODE" in str(exc_info.value)
+    assert invalid_mode not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("setting", ["AGENT_TOKEN", "AGENT_TOKEN_PREVIOUS"])
+def test_agent_auth_rejects_weak_tokens_without_echoing_value(monkeypatch, setting):
+    weak_token = "weak-secret"
+    monkeypatch.setattr(config, setting, weak_token)
+
+    with pytest.raises(ValueError) as exc_info:
+        config.validate_config()
+
+    assert setting in str(exc_info.value)
+    assert weak_token not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("token", ["é" * 32, ("a" * 31) + " "])
+def test_agent_auth_rejects_tokens_that_cannot_be_sent_safely(monkeypatch, token):
+    monkeypatch.setattr(config, "AGENT_TOKEN", token)
+
+    with pytest.raises(ValueError) as exc_info:
+        config.validate_config()
+
+    assert token not in str(exc_info.value)
+
+
+def test_agent_auth_rejects_equal_rotation_tokens_without_echoing_value(monkeypatch):
+    token = "a" * 32
+    monkeypatch.setattr(config, "AGENT_TOKEN", token)
+    monkeypatch.setattr(config, "AGENT_TOKEN_PREVIOUS", token)
+    monkeypatch.setattr(config, "AGENT_TOKEN_PREVIOUS_VALID_UNTIL", 1)
+
+    with pytest.raises(ValueError) as exc_info:
+        config.validate_config()
+
+    assert "must differ" in str(exc_info.value)
+    assert token not in str(exc_info.value)
+
+
+def test_agent_auth_requires_positive_previous_token_deadline(monkeypatch):
+    monkeypatch.setattr(config, "AGENT_TOKEN_PREVIOUS", "b" * 32)
+    monkeypatch.setattr(config, "AGENT_TOKEN_PREVIOUS_VALID_UNTIL", 0)
+
+    with pytest.raises(ValueError, match="AGENT_TOKEN_PREVIOUS_VALID_UNTIL must be positive"):
+        config.validate_config()
+
+
+def test_required_agent_auth_on_non_loopback_requires_active_token(monkeypatch):
+    monkeypatch.setattr(config, "AGENT_AUTH_MODE", "required")
+    monkeypatch.setattr(config, "AGENT_TOKEN", "")
+
+    with pytest.raises(ValueError, match="AGENT_TOKEN must be set"):
+        config.validate_config(operator_bind_host="0.0.0.0")
+
+
+def test_required_agent_auth_on_loopback_allows_missing_active_token(monkeypatch):
+    monkeypatch.setattr(config, "AGENT_AUTH_MODE", "required")
+    monkeypatch.setattr(config, "AGENT_TOKEN", "")
+
+    config.validate_config(operator_bind_host="127.0.0.1")
+
+
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "10.20.30.40", "proxy.internal"])
 def test_non_loopback_operator_bind_requires_complete_auth(monkeypatch, host):
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True)

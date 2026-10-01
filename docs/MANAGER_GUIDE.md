@@ -124,15 +124,42 @@ that all expected Agents register and serve the correct tables.
 ## 7. Operational checks
 
 1. Confirm `/_manager` reports every expected Agent as alive and registered.
-2. Confirm `/healthz` returns `200`; use `/readyz` to confirm the source and
+2. Confirm Agent-auth audit records report `active`, not `compatibility`, and
+   investigate `missing`, `malformed`, `invalid`, `expired`, or
+   `misconfigured` reason codes.
+3. Confirm `/healthz` returns `200`; use `/readyz` to confirm the source and
    table snapshots are ready.
-3. Confirm `/control/work-queue` reports `scheduler_running=true` on the primary
+4. Confirm `/control/work-queue` reports `scheduler_running=true` on the primary
    Manager when queued materialization is enabled.
-3. Review Monitor for quarantined tables, restart counts, and memory alerts.
-4. Before a rolling restart, confirm a second Agent or a maintenance window is
+5. Review Monitor for quarantined tables, restart counts, and memory alerts.
+6. Before a rolling restart, confirm a second Agent or a maintenance window is
    available for every table.
-5. After a source or mirror change, use Config Builder **Check health** before
+7. After a source or mirror change, use Config Builder **Check health** before
    publishing and inspect the resulting background job.
+
+## 8. Upgrade and rotate Agent credentials
+
+For an existing Basic-authenticated fleet, upgrade in this order:
+
+1. Start the upgraded Manager with `AGENT_AUTH_MODE=compatibility` and a new
+   active `AGENT_TOKEN`.
+2. Add that active token to Python and C++ Agent secret sources. Remove
+   `MANAGER_AUTH_USERNAME` and `MANAGER_AUTH_PASSWORD` from Agent workloads.
+3. Roll Agents and verify registration, heartbeats, claims, and task results.
+4. Confirm Agent-auth audit records use the `active` source.
+5. Set `AGENT_AUTH_MODE=required`, restart Manager, and retain operator Basic or
+   Entra settings on Manager only.
+
+Compatibility mode exists for one release. For rollback during that window, set
+the Manager back to `compatibility`; keep the active token configured and do not
+change operator credentials.
+
+For routine rotation, set the new token as `AGENT_TOKEN`, the old token as
+`AGENT_TOKEN_PREVIOUS`, and an absolute Unix UTC deadline in
+`AGENT_TOKEN_PREVIOUS_VALID_UNTIL`. Restart or refresh Manager, then roll Agents
+with only the new token. Verify every Agent uses the active source. After the
+deadline, confirm the old token returns `401`, then remove the previous token and
+deadline. A Manager restart does not extend the deadline.
 
 For deployment topology and service setup, see [Chapter 8: Operations](manual/08-operations.md)
 and [Enterprise_Deployment_guide.md](Enterprise_Deployment_guide.md).

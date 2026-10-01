@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added active Agent-token wiring to the installer, Helm chart, and Kubernetes
+  manifests. New deployments use required mode; rotation keeps the previous token
+  and deadline on Manager only.
+- Added upgrade, rotation, rollback, and Agent-token incident procedures for the
+  one-release compatibility window.
 - Added the durable Manager materialization queue for issue #90. Requests, tasks,
   claim ownership, results, and published snapshots persist in the shared artifact store.
 - Added materializer capability scheduling, Agent-side split execution, claim renewal,

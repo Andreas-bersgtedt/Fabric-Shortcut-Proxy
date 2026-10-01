@@ -329,7 +329,11 @@ credentials, and access keys — encrypted at rest.
   actions (start/stop/restart/drain/scale). Generate with `openssl rand -hex 24`.
 
 Both are independent layers. Health and readiness endpoints stay open for probes.
-Agent control calls authenticate with the configured Manager credentials. Browser
+Agent control calls authenticate with `AGENT_TOKEN`. New deployments use
+`AGENT_AUTH_MODE=required`; `compatibility` temporarily accepts Manager Basic on
+Agent routes for one release while an existing fleet is upgraded. Python and C++
+Agents receive the active token, never the Manager operator password or the
+previous rotation token. Browser
 calls from another origin also require that origin in `CORS_ALLOWED_ORIGINS`.
 See [docs/SECURITY.md](docs/SECURITY.md).
 

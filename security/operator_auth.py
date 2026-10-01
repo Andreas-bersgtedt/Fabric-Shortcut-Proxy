@@ -74,7 +74,8 @@ def _misconfigured() -> Response:
     return JSONResponse({"detail": "manager authentication is not configured"}, status_code=503)
 
 
-def _credentials_ok(header: str) -> bool:
+def manager_basic_credentials_ok(header: str) -> bool:
+    """Verify configured Manager Basic credentials without creating an identity."""
     scheme, _, encoded = header.partition(" ")
     if scheme.lower() != "basic" or not encoded:
         return False
@@ -157,9 +158,13 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
         self._operator_prefixes = operator_prefixes
 
     async def dispatch(self, request: Request, call_next):
+        from security.agent_auth import is_agent_route
+
         if request.url.path.startswith(_EXEMPT_PREFIXES):
             return await call_next(request)
         if internal_monitor_ok(request):
+            return await call_next(request)
+        if is_agent_route(request.method, request.url.path):
             return await call_next(request)
         if self._operator_only and not is_operator_route(request.url.path, self._operator_prefixes):
             return await call_next(request)
@@ -173,7 +178,7 @@ class ManagerAuthMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             _audit_operator_auth(request, response.status_code, "bootstrap", "identity bootstrap")
             return response
-        basic_ok = _credentials_ok(request.headers.get("authorization", ""))
+        basic_ok = manager_basic_credentials_ok(request.headers.get("authorization", ""))
         if basic_ok:
             from security.authorization import User
             request.state.user = User("manager-basic", roles=("system_administrator",))

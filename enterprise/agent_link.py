@@ -87,7 +87,7 @@ class AgentLink:
     ) -> None:
         self.agent_id = agent_id or _default_agent_id()
         self.heartbeat_ms = heartbeat_ms or config.HEARTBEAT_MS
-        self._client = client or RestControlClient(config.MANAGER_URL)
+        self._client = client or RestControlClient(config.MANAGER_URL, agent_id=self.agent_id)
         self._on_drain = on_drain
         self._lease_id: str | None = None
         self._running = False

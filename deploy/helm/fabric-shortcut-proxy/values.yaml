@@ -43,6 +43,13 @@ fsp:
 sourceSecret:
   name: fsp-source
 
+agentAuth:
+  mode: required
+  secretName: fsp-agent-auth
+  activeTokenKey: AGENT_TOKEN
+  previousTokenKey: AGENT_TOKEN_PREVIOUS
+  previousValidUntilKey: AGENT_TOKEN_PREVIOUS_VALID_UNTIL
+
 workloadIdentity:
   enabled: false
   serviceAccountName: fsp-workload
@@ -83,6 +90,7 @@ manager:
   userDirectoryFile: /config/users.json
   credentialStorePath: /config/credentials.json
   agentHostAllowlist: "127.0.0.1,0.0.0.0,::1,::,localhost"
+  operatorSecretName: fsp-manager-auth
   resources:
     requests:
       cpu: 100m

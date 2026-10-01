@@ -164,6 +164,41 @@ def record_operator_auth(
                 _log.warning("audit_file_write_failed", error=str(exc))
 
 
+def record_agent_auth(
+    *, request_id: str, identity: str, path: str, method: str,
+    status: int, outcome: str, reason: str,
+) -> None:
+    """Record an Agent authentication decision without credential material."""
+    import config
+
+    if not getattr(config, "ENABLE_AUDIT_LOG", True):
+        return
+    event = {
+        "ts": time.time(),
+        "request_id": request_id,
+        "identity": _scrub(identity or "unknown"),
+        "method": method,
+        "action": "agent_auth",
+        "path": path,
+        "status": int(status),
+        "outcome": outcome,
+        "reason": reason,
+    }
+    with _lock:
+        _buf.append(event)
+    _log.info("audit", **event)
+    with _fh_lock:
+        fh = _file_handle()
+        if fh is not None:
+            try:
+                import json
+
+                fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+                fh.flush()
+            except OSError as exc:  # noqa: BLE001
+                _log.warning("audit_file_write_failed", error=str(exc))
+
+
 def record_queue_operation(
     *,
     request_id: str,

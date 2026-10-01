@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 
 # Patterns for detecting sensitive data in text
 _SENSITIVE_PATTERNS = [
+    (r'(?i)(agent_token(?:_previous)?)\s*[:=]\s*([^\s,};"\]]+)', 'AGENT_TOKEN'),
     (r'(?i)(password|passwd|pwd)\s*[:=]\s*([^\s,};"\]]+)', 'PASSWORD'),
     (r'(?i)(api[_-]?key|apikey|token)\s*[:=]\s*([^\s,};"\]]+)', 'API_KEY'),
     (r'(?i)(secret|secret[_-]?key)\s*[:=]\s*([^\s,};"\]]+)', 'SECRET'),

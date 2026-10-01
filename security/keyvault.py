@@ -25,6 +25,8 @@ DEFAULT_SECRET_NAMES = {
     "s3_secret_access_key": "s3-secret-access-key",
     "admin_token": "admin-token",
     "manager_auth_password": "manager-auth-password",
+    "agent_token": "agent-token",
+    "agent_token_previous": "agent-token-previous",
 }
 
 _INSTALL_HINT = (
@@ -343,6 +345,8 @@ _ENV_SECRETS = {
     "s3_secret_access_key": "S3_SECRET_ACCESS_KEY",
     "admin_token": "ADMIN_TOKEN",
     "manager_auth_password": "MANAGER_AUTH_PASSWORD",
+    "agent_token": "AGENT_TOKEN",
+    "agent_token_previous": "AGENT_TOKEN_PREVIOUS",
 }
 
 
@@ -389,6 +393,9 @@ def _hydrate_env_secret(source, store, local_key, env_var, hydrated, *, require)
                 raise
             print(f"[keyvault] {local_key} unavailable and no local cache: {exc}", file=sys.stderr)
             return
+    if not val:
+        cached = store.get_secret(cache_id) if store is not None else None
+        val = cached.get("value") if isinstance(cached, dict) else None
     if val:
         if store is not None and store.available:
             try:
@@ -408,21 +415,31 @@ def hydrate_from_keyvault(store=None, *, source=None) -> list[str]:
     store's cache-first read-through so mount credentials resolve lazily on demand.
     Returns the hydrated environment-variable names.
     """
+    import os
     import sys
     import system_config as sc
+    if store is None:
+        from security.credential_store import CredentialStore
+        store = CredentialStore()
     if source is None:
         cfg = config_from_settings(sc)
         if not cfg.enabled:
-            return []
+            hydrated: list[str] = []
+            for local_key in ("agent_token", "agent_token_previous"):
+                env_var = _ENV_SECRETS[local_key]
+                if not os.environ.get(env_var):
+                    cached = store.get_secret(f"env:{local_key}") if store is not None else None
+                    value = cached.get("value") if isinstance(cached, dict) else None
+                    if value:
+                        os.environ[env_var] = value
+                        hydrated.append(env_var)
+            return hydrated
         source = KeyVaultSecretSource(cfg)
     else:
         cfg = source.config
         if not cfg.enabled:
             return []
     require = bool(getattr(sc, "REQUIRE_KEYVAULT", False))
-    if store is None:
-        from security.credential_store import CredentialStore
-        store = CredentialStore()
     hydrated: list[str] = []
     try:
         _hydrate_db_url(source, store, hydrated, require=require)

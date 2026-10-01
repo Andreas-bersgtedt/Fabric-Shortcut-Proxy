@@ -16,6 +16,15 @@ AGENT = ROOT / "agent-cpp" / "agent"
 BUCKET = "test-bucket"
 
 
+class CppAgentImageTests(unittest.TestCase):
+    def test_docker_build_copies_agent_auth_header(self):
+        dockerfile = (ROOT / "agent-cpp" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "COPY agent-cpp/agent_auth.hpp ./agent_auth.hpp",
+            dockerfile,
+        )
+
+
 def read_hwm_kib(pid):
     status = pathlib.Path(f"/proc/{pid}/status")
     for line in status.read_text().splitlines():
@@ -177,18 +186,33 @@ class CppAgentHardeningTests(unittest.TestCase):
             process.terminate()
             process.wait(timeout=5)
 
-    def test_control_registration_uses_manager_basic_auth(self):
-        received = {}
+    def test_control_requests_use_agent_auth_without_manager_basic(self):
+        token = "a" * 64
+        received = []
         registered = threading.Event()
+        heartbeat = threading.Event()
+        materialized = threading.Event()
 
         class ControlHandler(BaseHTTPRequestHandler):
             def do_POST(self):
-                received["authorization"] = self.headers.get("Authorization")
+                received.append({
+                    "path": self.path,
+                    "token": self.headers.get("X-FSP-Agent-Token"),
+                    "agent_id": self.headers.get("X-FSP-Agent-ID"),
+                    "authorization": self.headers.get("Authorization"),
+                })
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"lease_id":"test-lease","heartbeat_ms":600000}')
-                registered.set()
+                if self.path == "/control/register":
+                    self.wfile.write(b'{"lease_id":"test-lease","heartbeat_ms":200}')
+                    registered.set()
+                elif self.path == "/control/heartbeat":
+                    self.wfile.write(b'{}')
+                    heartbeat.set()
+                elif self.path == "/control/materialize":
+                    self.wfile.write(b'{"ok":true}')
+                    materialized.set()
 
             def log_message(self, format, *args):
                 pass
@@ -203,6 +227,10 @@ class CppAgentHardeningTests(unittest.TestCase):
             "STORE_DIR": str(self.store),
             "S3_BUCKET": BUCKET,
             "MANAGER_URL": f"http://127.0.0.1:{server.server_port}",
+            "AGENT_ID": "cpp-auth-test",
+            "AGENT_TOKEN": token,
+            "HEARTBEAT_MS": "200",
+            "MATERIALIZE_MODE": "lazy",
             "MANAGER_AUTH_USERNAME": "agent-user",
             "MANAGER_AUTH_PASSWORD": "agent-password",
         })
@@ -211,7 +239,21 @@ class CppAgentHardeningTests(unittest.TestCase):
         )
         try:
             self.assertTrue(registered.wait(timeout=5), "agent did not register")
-            self.assertEqual(received["authorization"], "Basic YWdlbnQtdXNlcjphZ2VudC1wYXNzd29yZA==")
+            self.assertTrue(heartbeat.wait(timeout=5), "agent did not heartbeat")
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("GET", f"/{BUCKET}/missing.txt")
+            response = connection.getresponse()
+            response.read()
+            connection.close()
+            self.assertTrue(materialized.wait(timeout=5), "agent did not request materialization")
+            self.assertEqual(
+                {request["path"] for request in received},
+                {"/control/register", "/control/heartbeat", "/control/materialize"},
+            )
+            for request in received:
+                self.assertEqual(request["token"], token)
+                self.assertEqual(request["agent_id"], "cpp-auth-test")
+                self.assertIsNone(request["authorization"])
         finally:
             process.terminate()
             process.wait(timeout=5)

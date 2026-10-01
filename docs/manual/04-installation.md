@@ -118,6 +118,13 @@ local SQLite demo so you can validate the S3 path before wiring a real source.
 
 ## 4.6 Install and run: enterprise cluster
 
+New enterprise installs require an Agent control credential. Generate at least
+32 random bytes, set `AGENT_AUTH_MODE=required`, and provide the same
+`AGENT_TOKEN` to Manager, Python Agents, and C++ Agents. Keep Manager Basic and
+Entra credentials on Manager only. Existing fleets may use
+`AGENT_AUTH_MODE=compatibility` for one release while Agents are rolled to the
+token.
+
 The launchers create the virtual environment, install both packages, and start the Manager
 plus one or more agents.
 

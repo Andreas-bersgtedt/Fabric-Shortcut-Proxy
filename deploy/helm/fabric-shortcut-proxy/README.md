@@ -9,12 +9,17 @@ baseline used for the enterprise demo migration.
 
 - Kubernetes 1.25 or later
 - Helm 3.18.6 or later
-- An existing `fsp-source` Secret containing the source and Manager credentials
+- Existing `fsp-source`, `fsp-agent-auth`, and optional `fsp-manager-auth` Secrets
 - cert-manager and ingress-nginx when `tls.enabled` is true
 - Azure Files CSI support when `storage.azureFiles.enabled` is true
 
-The chart never creates credential-bearing Secrets. Create `fsp-source` and any
-configured image pull Secret outside Helm before installing the release.
+The chart never creates credential-bearing Secrets. Create source, Agent-auth,
+Manager operator, and configured image pull Secrets outside Helm before
+installing the release. `fsp-agent-auth` must contain `AGENT_TOKEN`. During
+rotation it may also contain `AGENT_TOKEN_PREVIOUS` and
+`AGENT_TOKEN_PREVIOUS_VALID_UNTIL`; templates expose those two keys to Manager
+only. Keep Basic or Entra credentials in `fsp-manager-auth`, which Agents do not
+reference.
 The Namespace, persistent volumes, and persistent claims carry Helm's `keep`
 policy so uninstalling the release does not remove retained state.
 
@@ -61,6 +66,8 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   Helm publishes it as `S3_BUCKET`, which overrides the Config UI's persisted `bucket` value.
   Keep both values identical. Credentials do not belong here.
 - `workloadIdentity`: Azure workload identity service account configuration.
+- `agentAuth`: required or one-release compatibility mode plus Secret key
+  references. The default is `required`; values never contain token material.
 - `storage`: dynamic storage defaults or static Azure Files NFS volumes.
 - `manager`, `materializer`, `cppAgent`: workload sizing and feature settings.
 - `nginx`: private and public application proxy configuration.
@@ -69,6 +76,17 @@ schema, remote Helm ownership support, and the existing source Secret before mut
 The default values render the cluster-private base deployment. The enterprise
 example enables Azure Files, workload identity, nginx, Entra authentication,
 and public TLS ingress.
+
+For an existing fleet, first upgrade Manager with
+`agentAuth.mode=compatibility` and create the active token Secret. Roll Python
+and C++ Agents, verify active-source Agent-auth audit events, then set the mode
+to `required`. Roll back by restoring `compatibility` on Manager while leaving
+the active token and operator credentials unchanged.
+
+To rotate, update `fsp-agent-auth` with a new active token, the old token as
+previous, and an absolute Unix UTC deadline. Restart Manager, roll Agents, and
+verify the fleet. Remove the previous key and deadline after the deadline. A
+Manager restart does not extend the overlap.
 
 `nginx.enabled` and `tls.enabled` must be enabled or disabled together because nginx always
 mounts the certificate Secret. The values schema also validates image digests, replica counts,

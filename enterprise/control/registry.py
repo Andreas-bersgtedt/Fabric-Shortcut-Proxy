@@ -18,7 +18,13 @@ import ipaddress
 from dataclasses import dataclass, field
 
 from enterprise.control.contract import (
-    RegisterRequest, RegisterResponse, HeartbeatRequest, AgentHealth, ControlCommand,
+    CONTRACT_VERSION,
+    RegisterRequest,
+    RegisterResponse,
+    HeartbeatRequest,
+    AgentHealth,
+    ControlCommand,
+    contract_compatible,
 )
 
 
@@ -41,7 +47,10 @@ class AgentRecord:
     health: AgentHealth = field(default_factory=AgentHealth)
     serving_tables: list[str] = field(default_factory=list)
     epochs: dict[str, int] = field(default_factory=dict)
+    capabilities: list[str] = field(default_factory=list)
+    shard_index: int = -1
     commands: list[ControlCommand] = field(default_factory=list)
+    draining: bool = False
 
     def to_public(self) -> dict:
         """A JSON‑able view for admin/observability (no internal lease).
@@ -58,10 +67,13 @@ class AgentRecord:
             "version": self.version,
             "serving_tables": list(self.serving_tables),
             "epochs": dict(self.epochs),
+            "capabilities": list(self.capabilities),
+            "shard_index": self.shard_index,
             "health": self.health.to_dict(),
             "age_seconds": round(_now() - self.registered_at, 1),
             "seconds_since_heartbeat": round(_now() - self.last_seen, 1),
             "pending_commands": len(self.commands),
+            "draining": self.draining,
         }
 
 
@@ -108,6 +120,13 @@ class Registry:
         advertised = req.advertise_host or req.host
         if not (1 <= req.port <= 65535):
             raise ValueError("agent port must be in 1..65535")
+        if req.shard_index < -1:
+            raise ValueError("agent shard_index must be >= -1")
+        if not contract_compatible(req.contract_version):
+            raise ValueError(
+                f"incompatible control contract {req.contract_version!r}; "
+                f"Manager uses {CONTRACT_VERSION}"
+            )
         if not self._host_allowed(req.host) or not self._host_allowed(advertised):
             raise ValueError("agent host is not allowed by AGENT_HOST_ALLOWLIST")
         lease = uuid.uuid4().hex
@@ -117,9 +136,15 @@ class Registry:
                 agent_id=req.agent_id, lease_id=lease, host=req.host, port=req.port,
                 os=req.os, version=req.version, capacity_hint=req.capacity_hint,
                 advertise_host=req.advertise_host,
+                capabilities=sorted(set(req.capabilities)),
+                shard_index=req.shard_index,
                 registered_at=now, last_seen=now,
             )
-        return RegisterResponse(lease_id=lease, heartbeat_ms=self.heartbeat_ms)
+        return RegisterResponse(
+            lease_id=lease,
+            heartbeat_ms=self.heartbeat_ms,
+            contract_version=CONTRACT_VERSION,
+        )
 
     # -- heartbeat -----------------------------------------------------------
 
@@ -150,6 +175,8 @@ class Registry:
             if rec is None:
                 return False
             rec.commands.append(cmd)
+            if cmd.kind == "drain":
+                rec.draining = True
             return True
 
     def broadcast(self, cmd: ControlCommand) -> int:
@@ -157,6 +184,8 @@ class Registry:
         with self._lock:
             for rec in self._agents.values():
                 rec.commands.append(cmd)
+                if cmd.kind == "drain":
+                    rec.draining = True
             return len(self._agents)
 
     # -- liveness / introspection -------------------------------------------

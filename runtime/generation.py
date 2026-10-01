@@ -118,6 +118,12 @@ def _context(record: dict) -> GenerationContext:
         raise GenerationError(f"invalid generation context: {exc}") from exc
 
 
+def current_generation(store) -> GenerationContext | None:
+    """Return the current generation coordinator record, if one exists."""
+    record = _read_json(store, COORDINATOR_KEY)
+    return _context(record) if record is not None else None
+
+
 def acquire_generation(
     store,
     shard_count: int,

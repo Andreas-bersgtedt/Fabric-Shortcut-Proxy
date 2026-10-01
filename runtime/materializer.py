@@ -117,9 +117,9 @@ def _apply_arrow_fallback(rows: list[dict], split) -> list[dict]:
     return tokenize_batch(batch, columns).to_pylist()
 
 
-async def _materialize_split_once(split) -> int:
+async def _materialize_split_once(split, *, enforce_ownership: bool = True) -> int:
     key = split.object_key
-    if not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
+    if enforce_ownership and not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
         completion = await _wait_for_completion(split)
         if completion is None:
             raise TimeoutError(
@@ -221,6 +221,11 @@ async def _materialize_split(split) -> int:
             shard_index=config.AGENT_SHARD_INDEX,
         )
         return await _materialize_split_once(split)
+
+
+async def materialize_queued_split(split) -> int:
+    """Materialize a Manager-claimed split on the selected Agent."""
+    return await _materialize_split_once(split, enforce_ownership=False)
 
 
 async def ensure_snapshot_materialized(snap: SnapshotState) -> None:

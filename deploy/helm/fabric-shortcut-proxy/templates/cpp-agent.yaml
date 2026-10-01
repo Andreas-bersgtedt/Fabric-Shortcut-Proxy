@@ -53,7 +53,7 @@ spec:
             - name: INDEX_FILE
               value: /var/lib/fsp/objects.index
             - name: REQUIRE_GENERATION
-              value: "1"
+              value: {{ ternary "0" "1" (eq .Values.fsp.materializeMode "lazy") | quote }}
             - name: INDEX_REFRESH_SECONDS
               value: "5"
             - name: AGENT_DRAIN_GRACE_SECONDS
@@ -63,6 +63,18 @@ spec:
                 configMapKeyRef:
                   name: fsp-common
                   key: S3_BUCKET
+            - name: MANAGER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: fsp-common
+                  key: MANAGER_URL
+            - name: MATERIALIZE_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: fsp-common
+                  key: MATERIALIZE_MODE
+            - name: MATERIALIZE_TIMEOUT_MS
+              value: {{ .Values.cppAgent.materializeTimeoutMs | quote }}
             - name: AGENT_ID
               valueFrom:
                 fieldRef:

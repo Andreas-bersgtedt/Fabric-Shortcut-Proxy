@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import abc
 import base64
+import asyncio
 from typing import Protocol, runtime_checkable
 
 from fastapi import APIRouter, Request, Response
@@ -91,7 +92,9 @@ def create_control_router(server: ControlServer):
     async def heartbeat(request: Request):
         body = await request.json()
         try:
-            cmds = server.heartbeat(HeartbeatRequest.from_dict(body))
+            cmds = await asyncio.to_thread(
+                server.heartbeat, HeartbeatRequest.from_dict(body)
+            )
         except LeaseError as e:
             return JSONResponse(status_code=409, content={"error": "stale_lease", "detail": str(e)})
         return {"commands": [c.to_dict() for c in cmds]}
@@ -102,7 +105,7 @@ def create_control_router(server: ControlServer):
 
     @router.get("/snapshot/{table}")
     async def get_snapshot(table: str, epoch: int = 0):
-        snap = server.get_snapshot(table, epoch)
+        snap = await asyncio.to_thread(server.get_snapshot, table, epoch)
         if snap is None:
             return Response(status_code=404)
         return snap.to_dict()
@@ -110,7 +113,10 @@ def create_control_router(server: ControlServer):
     @router.post("/task-result")
     async def task_result(request: Request):
         body = await request.json()
-        return server.report_task_result(TaskResult.from_dict(body)).to_dict()
+        result = await asyncio.to_thread(
+            server.report_task_result, TaskResult.from_dict(body)
+        )
+        return result.to_dict()
 
     return router
 

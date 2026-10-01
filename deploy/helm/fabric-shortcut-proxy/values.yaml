@@ -114,6 +114,7 @@ materializer:
       memory: 4Gi
 
 cppAgent:
+  materializeTimeoutMs: "600000"
   replicas: 2
   resources:
     requests:

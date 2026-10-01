@@ -12,15 +12,19 @@ equivalent forms:
     dict/JSON codec, usable immediately (Phase 1) regardless of whether the
     transport is gRPC or REST.
   - ``control/proto/control.proto`` — the gRPC/protobuf form of the same
-    contract, frozen for the future C++ Agent.
-
-No Manager process exists yet; this package only defines the shared shapes so
-later phases can build against a stable contract.
+    contract shared by the Manager, Python Agents, and C++ serving Agents.
 """
 from __future__ import annotations
 
 from enterprise.control.contract import (
     CONTRACT_VERSION,
+    MIN_COMPATIBLE_CONTRACT_VERSION,
+    TASK_STATES,
+    TASK_TERMINAL_STATES,
+    TASK_TRANSITIONS,
+    RESULT_CODES,
+    contract_compatible,
+    valid_task_transition,
     KeyRange,
     Column,
     SplitRef,
@@ -41,6 +45,13 @@ from enterprise.control.contract import (
 
 __all__ = [
     "CONTRACT_VERSION",
+    "MIN_COMPATIBLE_CONTRACT_VERSION",
+    "TASK_STATES",
+    "TASK_TERMINAL_STATES",
+    "TASK_TRANSITIONS",
+    "RESULT_CODES",
+    "contract_compatible",
+    "valid_task_transition",
     "KeyRange",
     "Column",
     "SplitRef",

@@ -59,6 +59,7 @@ class LeaderLease:
         self.ttl_ms = max(1, ttl_ms)
         self._key = key
         self._is_leader = False
+        self.fence = 0
 
     @property
     def is_leader(self) -> bool:
@@ -77,8 +78,13 @@ class LeaderLease:
         except Exception:
             return None
 
-    def _write(self, now_ms: int) -> None:
-        rec = {"owner_id": self.owner_id, "renew_ms": now_ms, "ttl_ms": self.ttl_ms}
+    def _write(self, now_ms: int, fence: int) -> None:
+        rec = {
+            "owner_id": self.owner_id,
+            "renew_ms": now_ms,
+            "ttl_ms": self.ttl_ms,
+            "fence": fence,
+        }
         self._store.put(self._key, json.dumps(rec).encode("utf-8"))
 
     def _expired(self, rec: dict, now_ms: int) -> bool:
@@ -90,6 +96,7 @@ class LeaderLease:
         rec = self._read()
         can_take = (
             rec is None
+            or not rec.get("owner_id")
             or rec.get("owner_id") == self.owner_id
             or self._expired(rec, now_ms)
         )
@@ -101,13 +108,19 @@ class LeaderLease:
                             holder=rec.get("owner_id") if rec else None)
             return False
         try:
-            self._write(now_ms)
+            fence = (
+                int(rec.get("fence", 0))
+                if rec and rec.get("owner_id") == self.owner_id
+                else int((rec or {}).get("fence", 0)) + 1
+            )
+            self._write(now_ms, fence)
         except Exception as exc:  # noqa: BLE001
             log.warning("leader_lease_write_error", error=str(exc))
             self._is_leader = False
             return False
         back = self._read()
         won = bool(back and back.get("owner_id") == self.owner_id)
+        self.fence = int(back.get("fence", 0)) if won and back else 0
         if won and not self._is_leader:
             log.info("leader_lease_acquired", owner_id=self.owner_id)
         self._is_leader = won
@@ -118,12 +131,23 @@ class LeaderLease:
         rec = self._read()
         if rec and rec.get("owner_id") == self.owner_id:
             try:
-                self._store.delete(self._key)
+                self._store.put(
+                    self._key,
+                    json.dumps(
+                        {
+                            "owner_id": "",
+                            "renew_ms": 0,
+                            "ttl_ms": self.ttl_ms,
+                            "fence": int(rec.get("fence", self.fence)),
+                        }
+                    ).encode("utf-8"),
+                )
                 log.info("leader_lease_released", owner_id=self.owner_id)
             except Exception as exc:  # noqa: BLE001
                 log.warning("leader_lease_release_error", error=str(exc))
         self._is_leader = False
+        self.fence = 0
 
     def current_owner(self) -> str | None:
         rec = self._read()
-        return rec.get("owner_id") if rec else None
+        return (rec.get("owner_id") or None) if rec else None

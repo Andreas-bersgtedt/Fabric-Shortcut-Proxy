@@ -31,6 +31,7 @@ def test_lease_standby_blocked_then_takeover():
     assert not b.is_leader
     # A stops renewing; lease expires (now - renew > ttl) -> B takes over
     assert b.acquire_or_renew(now_ms=1500) is True and b.is_leader
+    assert b.fence == 2
     # A discovers it lost leadership
     assert a.acquire_or_renew(now_ms=1600) is False and not a.is_leader
 
@@ -43,6 +44,7 @@ def test_lease_release_frees_it():
     assert not a.is_leader
     b = LeaderLease(store, "B", ttl_ms=1000)
     assert b.acquire_or_renew(now_ms=10) is True          # free immediately after release
+    assert b.fence == 2
 
 
 def test_lease_current_owner():

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fsp-agent-auth
+  namespace: fabric-shortcut-proxy
+type: Opaque
+stringData:
+  AGENT_TOKEN: fsp-kind-disposable-agent-token-000000000000000000000000000000

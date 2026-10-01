@@ -100,3 +100,39 @@ def test_kind_manager_basic_secret_is_manager_only(overlay: str) -> None:
     assert "name: fsp-manager-auth" in manager
     assert "fsp-manager-auth" not in materializer
     assert "fsp-manager-auth" not in cpp_agent
+
+
+@pytest.mark.skipif(KUBECTL is None, reason="kubectl is not installed")
+@pytest.mark.parametrize("overlay", ["kind", "kind-tls"])
+def test_kind_agent_auth_secret_satisfies_every_control_workload(overlay: str) -> None:
+    assert KUBECTL is not None
+    result = subprocess.run(
+        [KUBECTL, "kustomize", str(ROOT / "deploy" / "kubernetes" / "overlays" / overlay)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    documents = result.stdout.split("\n---\n")
+
+    agent_secret = next(
+        document
+        for document in documents
+        if "kind: Secret" in document and "\n  name: fsp-agent-auth\n" in document
+    )
+    workloads = [
+        document
+        for document in documents
+        if (
+            "kind: Deployment" in document or "kind: StatefulSet" in document
+        )
+        and any(
+            f"\n  name: {name}\n" in document
+            for name in ("fsp-manager", "fsp-materializer", "fsp-cpp-agent")
+        )
+    ]
+
+    assert "AGENT_TOKEN:" in agent_secret
+    assert len(workloads) == 3
+    assert all("name: fsp-agent-auth" in workload for workload in workloads)

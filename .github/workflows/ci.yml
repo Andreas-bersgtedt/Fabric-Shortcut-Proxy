@@ -310,9 +310,11 @@ jobs:
           kubectl -n fabric-shortcut-proxy run fsp-manager-proof-client --image=curlimages/curl:8.10.1 --restart=Never --labels=fabric-shortcut-proxy.io/manager-client=true --command -- sleep 300
           kubectl -n fabric-shortcut-proxy wait --for=condition=ready pod/fsp-manager-proof-client --timeout=120s
           manager_ip=$(kubectl -n fabric-shortcut-proxy get service fsp-manager -o jsonpath='{.spec.clusterIP}')
+          manager_username=$(kubectl -n fabric-shortcut-proxy get secret fsp-manager-auth -o jsonpath='{.data.MANAGER_AUTH_USERNAME}' | base64 --decode)
+          manager_password=$(kubectl -n fabric-shortcut-proxy get secret fsp-manager-auth -o jsonpath='{.data.MANAGER_AUTH_PASSWORD}' | base64 --decode)
           get_agents() {
             kubectl -n fabric-shortcut-proxy exec fsp-manager-proof-client -- \
-              curl -kfsS --retry 5 --retry-all-errors -u agent:fsp-proof-manager-password "https://$manager_ip:9443/agents"
+              curl -kfsS --retry 5 --retry-all-errors -u "$manager_username:$manager_password" "https://$manager_ip:9443/agents"
           }
           for i in $(seq 1 60); do
             before=$(get_agents || true)

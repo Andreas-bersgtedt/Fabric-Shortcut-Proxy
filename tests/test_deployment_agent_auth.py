@@ -57,6 +57,16 @@ def test_secret_examples_do_not_contain_agent_token_values() -> None:
     assert "MANAGER_AUTH_PASSWORD" not in source
 
 
+def test_kind_proof_reads_manager_credentials_from_dedicated_secret() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "get secret fsp-manager-auth" in workflow
+    assert "jsonpath='{.data.MANAGER_AUTH_USERNAME}'" in workflow
+    assert "jsonpath='{.data.MANAGER_AUTH_PASSWORD}'" in workflow
+    assert '-u "$manager_username:$manager_password"' in workflow
+    assert "-u agent:fsp-proof-manager-password" not in workflow
+
+
 @pytest.mark.skipif(KUBECTL is None, reason="kubectl is not installed")
 @pytest.mark.parametrize("overlay", ["kind", "kind-tls"])
 def test_kind_manager_basic_secret_is_manager_only(overlay: str) -> None:

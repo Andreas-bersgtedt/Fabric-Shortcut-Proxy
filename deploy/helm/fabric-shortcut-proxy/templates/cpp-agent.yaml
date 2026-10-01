@@ -79,18 +79,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: MANAGER_AUTH_USERNAME
+            - name: AGENT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.sourceSecret.name }}
-                  key: MANAGER_AUTH_USERNAME
-                  optional: true
-            - name: MANAGER_AUTH_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.sourceSecret.name }}
-                  key: MANAGER_AUTH_PASSWORD
-                  optional: true
+                  name: {{ .Values.agentAuth.secretName }}
+                  key: {{ .Values.agentAuth.activeTokenKey }}
           ports:
             - name: http
               containerPort: 9400

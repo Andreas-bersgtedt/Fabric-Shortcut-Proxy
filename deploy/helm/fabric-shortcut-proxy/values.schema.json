@@ -7,6 +7,7 @@
     "images",
     "fsp",
     "sourceSecret",
+    "agentAuth",
     "workloadIdentity",
     "storage",
     "manager",
@@ -71,6 +72,24 @@
         "name": { "type": "string", "minLength": 1 }
       }
     },
+    "agentAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "secretName",
+        "activeTokenKey",
+        "previousTokenKey",
+        "previousValidUntilKey"
+      ],
+      "properties": {
+        "mode": { "enum": ["required", "compatibility"] },
+        "secretName": { "type": "string", "minLength": 1 },
+        "activeTokenKey": { "type": "string", "minLength": 1 },
+        "previousTokenKey": { "type": "string", "minLength": 1 },
+        "previousValidUntilKey": { "type": "string", "minLength": 1 }
+      }
+    },
     "workloadIdentity": {
       "type": "object",
       "required": ["enabled", "serviceAccountName", "clientId"],
@@ -125,7 +144,18 @@
         }
       }
     },
-    "manager": { "$ref": "#/definitions/workload" },
+    "manager": {
+      "allOf": [
+        { "$ref": "#/definitions/workload" },
+        {
+          "type": "object",
+          "required": ["operatorSecretName"],
+          "properties": {
+            "operatorSecretName": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
     "materializer": { "$ref": "#/definitions/workload" },
     "cppAgent": {
       "allOf": [

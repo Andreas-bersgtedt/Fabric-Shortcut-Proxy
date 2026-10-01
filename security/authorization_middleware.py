@@ -200,12 +200,16 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         )
 
     async def dispatch(self, request: Request, call_next):
+        from security.agent_auth import is_agent_route
+
         mount_operation = request.url.path in _MOUNT_OPERATIONS
         if request.headers.get("x-fsp-authz-bypass") == "1":
             if mount_operation:
                 self._audit_mount(request, 401, "denied", "invalid authorization request")
             return JSONResponse({"ok": False, "error": "invalid authorization request"}, status_code=401)
         if request.url.path.startswith(_EXEMPT_PREFIXES):
+            return await call_next(request)
+        if is_agent_route(request.method, request.url.path):
             return await call_next(request)
         from security.operator_auth import internal_monitor_ok
         if internal_monitor_ok(request):

@@ -36,6 +36,7 @@ from enterprise.control.work_queue import DurableWorkQueue
 from enterprise.control.supervisor import AgentSupervisor
 from enterprise.control.transport import create_control_router
 from observability.logging import configure_logging, get_logger
+from security.agent_auth import AgentAuthMiddleware
 
 log = get_logger(__name__)
 
@@ -68,6 +69,7 @@ def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int,
     return {
         "MANAGER_URL": manager_url,
         "AGENT_ID": agent_id,
+        "AGENT_TOKEN": os.environ.get("AGENT_TOKEN", ""),
         # Each Agent serves the S3 data plane on its own port (PORT + i).
         "PORT": str(port),
         # Phase 2: supervised Agents serve materialized Parquet from the shared
@@ -116,6 +118,11 @@ def _make_supervisor(i: int, count: int, monitor_token: str = "") -> AgentSuperv
 
 
 def create_manager_app() -> FastAPI:
+    if config.AGENT_AUTH_MODE == "compatibility":
+        log.warning(
+            "agent_auth_compatibility_enabled",
+            detail="Manager Basic remains accepted on Agent routes during migration",
+        )
     # Locally-supervised Agents get this token freshly via _agent_env(); externally
     # deployed Agents (MANAGER_SUPERVISION_MODE=external) have no such channel, so a
     # random value here would never match theirs — let a shared secret override it.
@@ -296,6 +303,7 @@ def create_manager_app() -> FastAPI:
     # open; authenticated Agent credentials are sent for internal control calls.
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(ManagerAuthMiddleware)
+    app.add_middleware(AgentAuthMiddleware)
     app.include_router(create_control_router(service))
 
     @app.get("/healthz")

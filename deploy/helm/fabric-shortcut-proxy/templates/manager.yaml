@@ -47,7 +47,29 @@ spec:
                 name: fsp-common
             - secretRef:
                 name: {{ .Values.sourceSecret.name }}
+            - secretRef:
+                name: {{ .Values.manager.operatorSecretName }}
+                optional: true
           env:
+            - name: AGENT_AUTH_MODE
+              value: {{ .Values.agentAuth.mode | quote }}
+            - name: AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentAuth.secretName }}
+                  key: {{ .Values.agentAuth.activeTokenKey }}
+            - name: AGENT_TOKEN_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentAuth.secretName }}
+                  key: {{ .Values.agentAuth.previousTokenKey }}
+                  optional: true
+            - name: AGENT_TOKEN_PREVIOUS_VALID_UNTIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentAuth.secretName }}
+                  key: {{ .Values.agentAuth.previousValidUntilKey }}
+                  optional: true
             - name: CONTROL_HOST
               value: 0.0.0.0
             - name: CONTROL_PORT

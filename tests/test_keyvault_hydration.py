@@ -16,7 +16,14 @@ import system_config
 from security import keyvault
 from security.credential_store import CredentialStore
 
-_ENV_VARS = ["DB_URL", "S3_SECRET_ACCESS_KEY", "ADMIN_TOKEN", "MANAGER_AUTH_PASSWORD"]
+_ENV_VARS = [
+    "DB_URL",
+    "S3_SECRET_ACCESS_KEY",
+    "ADMIN_TOKEN",
+    "MANAGER_AUTH_PASSWORD",
+    "AGENT_TOKEN",
+    "AGENT_TOKEN_PREVIOUS",
+]
 
 
 class ResourceNotFoundError(Exception):
@@ -79,6 +86,8 @@ def test_hydrate_populates_env_and_cache(tmp_path):
         "s3-secret-access-key": "S3SEC",
         "admin-token": "ADM",
         "manager-auth-password": "MPW",
+        "agent-token": "a" * 64,
+        "agent-token-previous": "b" * 64,
     })
     store = _store(tmp_path)
     hydrated = keyvault.hydrate_from_keyvault(store, source=src)
@@ -88,6 +97,8 @@ def test_hydrate_populates_env_and_cache(tmp_path):
     assert os.environ["S3_SECRET_ACCESS_KEY"] == "S3SEC"
     assert os.environ["ADMIN_TOKEN"] == "ADM"
     assert os.environ["MANAGER_AUTH_PASSWORD"] == "MPW"
+    assert os.environ["AGENT_TOKEN"] == "a" * 64
+    assert os.environ["AGENT_TOKEN_PREVIOUS"] == "b" * 64
     # Written through to the encrypted cache + on-demand read-through attached.
     assert "default" in store.list_ids()
     assert store.get_secret("env:admin_token") == {"value": "ADM"}
@@ -133,12 +144,31 @@ def test_disabled_keyvault_is_noop():
 
 
 def test_refresh_once_updates_cache_and_env(tmp_path):
-    src = _source({"db-url": "postgresql://rotated/db", "admin-token": "NEWADM"})
+    src = _source({
+        "db-url": "postgresql://rotated/db",
+        "admin-token": "NEWADM",
+        "agent-token": "c" * 64,
+        "agent-token-previous": "d" * 64,
+    })
     store = _store(tmp_path)
     names = keyvault.refresh_secrets_once(src, store)
     assert "DB_URL" in names and "ADMIN_TOKEN" in names
     assert os.environ["DB_URL"] == "postgresql://rotated/db"
     assert store.get_secret("env:admin_token") == {"value": "NEWADM"}
+    assert os.environ["AGENT_TOKEN"] == "c" * 64
+    assert os.environ["AGENT_TOKEN_PREVIOUS"] == "d" * 64
+
+
+def test_disabled_keyvault_hydrates_agent_tokens_from_encrypted_cache(tmp_path):
+    store = _store(tmp_path)
+    store.set_secret("env:agent_token", {"value": "e" * 64})
+    store.set_secret("env:agent_token_previous", {"value": "f" * 64})
+
+    hydrated = keyvault.hydrate_from_keyvault(store)
+
+    assert set(hydrated) == {"AGENT_TOKEN", "AGENT_TOKEN_PREVIOUS"}
+    assert os.environ["AGENT_TOKEN"] == "e" * 64
+    assert os.environ["AGENT_TOKEN_PREVIOUS"] == "f" * 64
 
 
 def test_refresh_never_raises_on_outage(tmp_path):

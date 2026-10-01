@@ -5,6 +5,7 @@ resources:
   - artifact-pv.yaml
   - postgres.yaml
   - source-secret.yaml
+  - manager-auth.yaml
   - smoke-client.yaml
   - stunnel-configmap.yaml
   - manager-control-network-policy.yaml

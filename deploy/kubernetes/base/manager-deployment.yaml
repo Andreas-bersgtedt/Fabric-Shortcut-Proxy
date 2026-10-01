@@ -38,7 +38,29 @@ spec:
                 name: fsp-common
             - secretRef:
                 name: fsp-source
+            - secretRef:
+                name: fsp-manager-auth
+                optional: true
           env:
+            - name: AGENT_AUTH_MODE
+              value: required
+            - name: AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fsp-agent-auth
+                  key: AGENT_TOKEN
+            - name: AGENT_TOKEN_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: fsp-agent-auth
+                  key: AGENT_TOKEN_PREVIOUS
+                  optional: true
+            - name: AGENT_TOKEN_PREVIOUS_VALID_UNTIL
+              valueFrom:
+                secretKeyRef:
+                  name: fsp-agent-auth
+                  key: AGENT_TOKEN_PREVIOUS_VALID_UNTIL
+                  optional: true
             - name: CONTROL_HOST
               value: 0.0.0.0
             - name: CONTROL_PORT

@@ -43,7 +43,15 @@ def _load_config_file() -> dict:
             print(f"[system_config] {section_path}: top-level JSON must be an object; ignoring.", file=sys.stderr)
             return {}
         # Extract 'system' section if present
-        return data.get("system", data) if "system" in data else data
+        system = data.get("system", data) if "system" in data else data
+        if isinstance(system, dict) and any(
+            key in system for key in ("agent_token", "agent_token_previous")
+        ):
+            raise ValueError(
+                "config.system.json must not contain Agent token values; "
+                "use an environment variable or secret store."
+            )
+        return system
     except FileNotFoundError:
         print(f"[system_config] {section_path}: file not found; using defaults only.", file=sys.stderr)
         return {}
@@ -346,6 +354,19 @@ MANAGER_URL: str = _get_str("MANAGER_URL", "manager_url", "").strip()
 
 # Agent: stable id (blank = auto from host:port)
 AGENT_ID: str = _get_str("AGENT_ID", "agent_id", "").strip()
+
+# Agent-to-Manager authentication. Token values are intentionally environment-only:
+# they must not be loaded from or serialized to config.system.json.
+AGENT_AUTH_MODE: str = _get_str(
+    "AGENT_AUTH_MODE", "agent_auth_mode", "compatibility"
+).strip().lower()
+AGENT_TOKEN: str = os.environ.get("AGENT_TOKEN", "")
+AGENT_TOKEN_PREVIOUS: str = os.environ.get("AGENT_TOKEN_PREVIOUS", "")
+AGENT_TOKEN_PREVIOUS_VALID_UNTIL: int = _get_int(
+    "AGENT_TOKEN_PREVIOUS_VALID_UNTIL",
+    "agent_token_previous_valid_until",
+    0,
+)
 
 # Agent: routable host/IP or DNS advertised to the Manager so the LB/gateway can
 # dial this agent. Blank advertises the bind HOST (reachable same-box only when

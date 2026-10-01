@@ -34,6 +34,13 @@ supplied, the frontend rejects missing files, duplicate keys, unknown keys, and 
 lines before starting the shell installer. Secret values remain references such as
 `env:NAME` or `file:/absolute/path`; the frontend never reads or prints their contents.
 
+New Manager installs generate an active 64-character hexadecimal `AGENT_TOKEN`,
+set `AGENT_AUTH_MODE=required`, and store the token in the protected environment
+file or Key Vault. Manager and its Python/C++ Agents use the same active token.
+Optional rotation answers accept references for the previous token plus an
+absolute Unix UTC deadline. The previous token and deadline are Manager-only,
+are not checkpointed, and are never displayed.
+
 The interactive menu exposes the same common actions: start the C++ setup wizard,
 resume setup, preview the setup with a dry run, run read-only checks, or open the
 line-based installer fallback. It also provides **Reset Manager admin password**.

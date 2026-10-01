@@ -18,8 +18,8 @@ which is fine for drain/reload/publish.
 from __future__ import annotations
 
 import abc
-import base64
 import asyncio
+import os
 from typing import Protocol, runtime_checkable
 
 from fastapi import APIRouter, Request, Response
@@ -30,6 +30,7 @@ from enterprise.control.contract import (
     Assignment, SnapshotManifest, TaskResult, Ack,
 )
 from enterprise.control.registry import LeaseError
+from security.agent_auth import AGENT_ID_HEADER, AGENT_TOKEN_HEADER, agent_authentication_required
 
 # Path prefix for the REST control plane.
 CONTROL_PREFIX = "/control"
@@ -83,7 +84,11 @@ def create_control_router(server: ControlServer):
     async def register(request: Request):
         body = await request.json()
         try:
-            resp = server.register(RegisterRequest.from_dict(body))
+            parsed = RegisterRequest.from_dict(body)
+            if parsed.agent_id != getattr(request.state, "agent_id", parsed.agent_id):
+                request.state.agent_auth_failure_reason = "identity_mismatch"
+                return agent_authentication_required()
+            resp = server.register(parsed)
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"error": "invalid_registration", "detail": str(exc)})
         return resp.to_dict()
@@ -92,15 +97,22 @@ def create_control_router(server: ControlServer):
     async def heartbeat(request: Request):
         body = await request.json()
         try:
+            parsed = HeartbeatRequest.from_dict(body)
+            if parsed.agent_id != getattr(request.state, "agent_id", parsed.agent_id):
+                request.state.agent_auth_failure_reason = "identity_mismatch"
+                return agent_authentication_required()
             cmds = await asyncio.to_thread(
-                server.heartbeat, HeartbeatRequest.from_dict(body)
+                server.heartbeat, parsed
             )
         except LeaseError as e:
             return JSONResponse(status_code=409, content={"error": "stale_lease", "detail": str(e)})
         return {"commands": [c.to_dict() for c in cmds]}
 
     @router.get("/assignment/{agent_id}")
-    async def get_assignment(agent_id: str):
+    async def get_assignment(agent_id: str, request: Request):
+        if agent_id != getattr(request.state, "agent_id", agent_id):
+            request.state.agent_auth_failure_reason = "identity_mismatch"
+            return agent_authentication_required()
         return server.get_assignment(agent_id).to_dict()
 
     @router.get("/snapshot/{table}")
@@ -113,8 +125,12 @@ def create_control_router(server: ControlServer):
     @router.post("/task-result")
     async def task_result(request: Request):
         body = await request.json()
+        parsed = TaskResult.from_dict(body)
+        if parsed.agent_id != getattr(request.state, "agent_id", parsed.agent_id):
+            request.state.agent_auth_failure_reason = "identity_mismatch"
+            return agent_authentication_required()
         result = await asyncio.to_thread(
-            server.report_task_result, TaskResult.from_dict(body)
+            server.report_task_result, parsed
         )
         return result.to_dict()
 
@@ -132,21 +148,30 @@ class RestControlClient(ControlClient):
     An optional ``transport`` lets tests bind to an in‑process ASGI app.
     """
 
-    def __init__(self, manager_url: str, *, timeout: float = 10.0, transport=None) -> None:
+    def __init__(
+        self,
+        manager_url: str,
+        *,
+        agent_id: str = "",
+        timeout: float = 10.0,
+        transport=None,
+    ) -> None:
         import httpx
+        self._agent_id = agent_id
         self._client = httpx.AsyncClient(
             base_url=manager_url.rstrip("/"), timeout=timeout, transport=transport,
         )
 
     async def register(self, req: RegisterRequest) -> RegisterResponse:
+        self._agent_id = req.agent_id
         r = await self._client.post(f"{CONTROL_PREFIX}/register", json=req.to_dict(),
-                                    headers=self._auth_headers())
+                                    headers=self._auth_headers(req.agent_id))
         r.raise_for_status()
         return RegisterResponse.from_dict(r.json())
 
     async def heartbeat(self, req: HeartbeatRequest) -> list[ControlCommand]:
         r = await self._client.post(f"{CONTROL_PREFIX}/heartbeat", json=req.to_dict(),
-                                    headers=self._auth_headers())
+                                    headers=self._auth_headers(req.agent_id))
         if r.status_code == 409:
             raise StaleLeaseError(r.json().get("detail", "stale lease"))
         r.raise_for_status()
@@ -154,7 +179,7 @@ class RestControlClient(ControlClient):
 
     async def get_assignment(self, agent_id: str) -> Assignment:
         r = await self._client.get(f"{CONTROL_PREFIX}/assignment/{agent_id}",
-                                   headers=self._auth_headers())
+                                   headers=self._auth_headers(agent_id))
         r.raise_for_status()
         return Assignment.from_dict(r.json())
 
@@ -168,22 +193,17 @@ class RestControlClient(ControlClient):
 
     async def report_task_result(self, res: TaskResult) -> Ack:
         r = await self._client.post(f"{CONTROL_PREFIX}/task-result", json=res.to_dict(),
-                                    headers=self._auth_headers())
+                                    headers=self._auth_headers(res.agent_id))
         r.raise_for_status()
         return Ack.from_dict(r.json())
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    @staticmethod
-    def _auth_headers() -> dict[str, str]:
-        try:
-            import config
-            username = str(config.MANAGER_AUTH_USERNAME or "")
-            password = str(config.MANAGER_AUTH_PASSWORD or "")
-        except (ImportError, AttributeError):
-            return {}
-        if not username or not password:
-            return {}
-        token = base64.b64encode(f"{username}:{password}".encode()).decode()
-        return {"Authorization": f"Basic {token}"}
+    def _auth_headers(self, agent_id: str = "") -> dict[str, str]:
+        identity = agent_id or self._agent_id
+        headers = {AGENT_ID_HEADER: identity} if identity else {}
+        token = os.environ.get("AGENT_TOKEN", "")
+        if token:
+            headers[AGENT_TOKEN_HEADER] = token
+        return headers

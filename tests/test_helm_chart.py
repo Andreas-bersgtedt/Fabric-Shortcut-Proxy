@@ -56,7 +56,8 @@ def test_chart_lints_with_enterprise_example() -> None:
 
 
 def test_base_render_contains_core_fleet_only() -> None:
-    counts = _kind_counts(_render())
+    rendered = _render()
+    counts = _kind_counts(rendered)
 
     assert sum(counts.values()) == 12
     assert counts["Deployment"] == 2
@@ -64,6 +65,21 @@ def test_base_render_contains_core_fleet_only() -> None:
     assert counts["Service"] == 3
     assert "Ingress" not in counts
     assert "PersistentVolume" not in counts
+    assert "name: AGENT_AUTH_MODE" in rendered
+    assert 'value: "required"' in rendered
+    assert len(re.findall(r"^\s+- name: AGENT_TOKEN$", rendered, re.MULTILINE)) == 3
+    assert len(
+        re.findall(r"^\s+- name: AGENT_TOKEN_PREVIOUS$", rendered, re.MULTILINE)
+    ) == 1
+    assert len(
+        re.findall(
+            r"^\s+- name: AGENT_TOKEN_PREVIOUS_VALID_UNTIL$", rendered, re.MULTILINE
+        )
+    ) == 1
+    assert "key: AGENT_TOKEN" in rendered
+    assert "MANAGER_AUTH_USERNAME" not in rendered
+    assert "MANAGER_AUTH_PASSWORD" not in rendered
+    assert "replace-with-at-least-32-random-bytes" not in rendered
 
 
 def test_enterprise_render_contains_complete_demo() -> None:

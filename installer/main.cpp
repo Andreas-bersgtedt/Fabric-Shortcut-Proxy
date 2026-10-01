@@ -109,6 +109,8 @@ bool valid_answer_key(const std::string& key) {
         "identity_mode", "tenant_id", "client_id", "client_secret_reference",
         "keyvault_mode", "keyvault_uri", "secret_backend", "manager_auth_username",
         "generate_admin_credentials", "generate_s3_credentials", "generate_agent_token",
+        "agent_token_reference", "agent_token_previous_reference",
+        "agent_token_previous_valid_until",
         "tls_mode", "tls_hostname", "tls_cert_file", "tls_key_file", "start_service",
     };
     return keys.find(key) != keys.end();
@@ -280,7 +282,19 @@ std::filesystem::path write_cpp_answers() {
     std::string generate_s3 = choice(
         "Generate S3 access credentials (yes/no)", "yes", {"no", "yes"});
     std::string generate_agent = choice(
-        "Generate unused AGENT_TOKEN placeholder (yes/no)", "no", {"no", "yes"});
+        "Generate active Agent credential (yes/no)", "yes", {"no", "yes"});
+    std::string agent_token_reference;
+    if (generate_agent == "no") {
+        agent_token_reference = prompt(
+            "Active Agent token reference (env:NAME or file:/path)");
+    }
+    std::string agent_token_previous_reference = prompt(
+        "Previous Agent token reference (optional, env:NAME or file:/path)");
+    std::string agent_token_previous_valid_until;
+    if (!agent_token_previous_reference.empty()) {
+        agent_token_previous_valid_until = prompt(
+            "Previous Agent token expiry (Unix UTC seconds)");
+    }
     std::string tls_mode = choice(
         "TLS mode (disabled, nginx, direct)", "disabled", {"disabled", "direct", "nginx"});
     std::string tls_hostname;
@@ -329,7 +343,17 @@ std::filesystem::path write_cpp_answers() {
             << "manager_auth_username=" << manager_auth_username << '\n'
             << "generate_admin_credentials=" << generate_admin << '\n'
             << "generate_s3_credentials=" << generate_s3 << '\n'
-            << "generate_agent_token=" << generate_agent << '\n'
+            << "generate_agent_token=" << generate_agent << '\n';
+    if (!agent_token_reference.empty()) {
+        answers << "agent_token_reference=" << agent_token_reference << '\n';
+    }
+    if (!agent_token_previous_reference.empty()) {
+        answers << "agent_token_previous_reference="
+                << agent_token_previous_reference << '\n'
+                << "agent_token_previous_valid_until="
+                << agent_token_previous_valid_until << '\n';
+    }
+    answers
             << "tls_mode=" << tls_mode << '\n';
     if (!tls_hostname.empty()) {
         answers << "tls_hostname=" << tls_hostname << '\n'

@@ -264,9 +264,9 @@ rendering, and read-only health checks. Encrypted credential-store provisioning 
 outside the installer because that store manages database connection URLs, not the
 Manager's generated credentials. `ADMIN_TOKEN`, `MANAGER_AUTH_PASSWORD`, and S3 credentials
 are generated only after `APPLY`; generated values are written to the selected protected
-backend and never to installer state. The current application has no separate
-`AGENT_TOKEN` setting, so the wizard labels that optional value as unused rather than
-pretending it authenticates Manager-to-Agent traffic.
+backend and never to installer state. Issue #91 later activated `AGENT_TOKEN`
+for Manager-to-Agent control traffic; the installer now generates and consumes
+that credential by default.
 
 ## Implementation layout
 

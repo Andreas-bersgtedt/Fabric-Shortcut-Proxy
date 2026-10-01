@@ -296,6 +296,21 @@ EOF
 read -rs PW; printf 'MANAGER_AUTH_PASSWORD=%s\n' "$PW" | sudo tee -a /etc/fabric-shortcut-proxy.env >/dev/null; unset PW
 ```
 
+Create a separate Agent control credential for Manager and every Agent:
+
+```bash
+printf 'AGENT_AUTH_MODE=required\nAGENT_TOKEN=%s\n' "$(openssl rand -hex 32)" |
+  sudo tee -a /etc/fabric-shortcut-proxy.env >/dev/null
+sudo chmod 600 /etc/fabric-shortcut-proxy.env
+```
+
+For separate Agent services or containers, copy only `AGENT_TOKEN`. Keep
+`MANAGER_AUTH_USERNAME`, `MANAGER_AUTH_PASSWORD`,
+`AGENT_TOKEN_PREVIOUS`, and `AGENT_TOKEN_PREVIOUS_VALID_UNTIL` on Manager.
+Existing fleets first use `AGENT_AUTH_MODE=compatibility`; roll every Agent with
+the active token, verify active-source audit events, then change Manager to
+`required`. Compatibility is available for one release.
+
 > Basic auth sends credentials on every request — only expose `9200` on a trusted network
 > or behind TLS. In Pattern B it runs behind nginx TLS (section 11).
 

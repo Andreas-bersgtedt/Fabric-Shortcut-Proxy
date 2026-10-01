@@ -14,11 +14,13 @@ from fastapi import FastAPI
 
 import config
 from enterprise.control.auth import ManagerAuthMiddleware, manager_auth_active
+from security.agent_auth import AgentAuthMiddleware
 
 
 def _app() -> FastAPI:
     app = FastAPI()
     app.add_middleware(ManagerAuthMiddleware)
+    app.add_middleware(AgentAuthMiddleware)
 
     @app.get("/_config")
     async def config_builder():
@@ -285,4 +287,7 @@ async def test_health_exempt_control_protected(_enable_auth):
         assert (await c.get("/healthz")).status_code == 200
         assert (await c.post("/control/register")).status_code == 401
         assert (await c.post("/control/register",
-                             headers=_basic("operator", "s3cret"))).status_code == 200
+                             headers={
+                                 **_basic("operator", "s3cret"),
+                                 "X-FSP-Agent-ID": "legacy-agent",
+                             })).status_code == 200

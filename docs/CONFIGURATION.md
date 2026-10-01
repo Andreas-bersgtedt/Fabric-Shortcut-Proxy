@@ -628,6 +628,10 @@ Create one Fabric shortcut per table.
 | `REQUIRE_SIGV4` | `1` | Enforce AWS SigV4 (keys must match `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, or any stored access key) |
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
 | `AGENT_HOST_ALLOWLIST` | `127.0.0.1,0.0.0.0,::1,::,localhost` | Hosts or CIDRs accepted in Manager agent registration |
+| `AGENT_AUTH_MODE` | `compatibility` at runtime; installers use `required` | `required` accepts Agent tokens only. `compatibility` temporarily also accepts Manager Basic on Agent routes |
+| `AGENT_TOKEN` | *(empty)* | Active fleet credential. Use a protected environment, encrypted cache, or Key Vault secret named `agent-token` |
+| `AGENT_TOKEN_PREVIOUS` | *(empty)* | Prior fleet credential accepted only before the configured deadline. Manager only |
+| `AGENT_TOKEN_PREVIOUS_VALID_UNTIL` | `0` | Positive Unix UTC expiry for the previous token. Manager only |
 | `GENERATION_SOURCE_CONSISTENCY` | `best_effort` | Source-read contract for one table generation. SQL Server and PostgreSQL support fail-closed per-table `snapshot` |
 | `SNAPSHOT_MAX_LIFETIME_SECONDS` | `3600` | Maximum lifetime of a transaction-bound table read point |
 | `MATERIALIZATION_WORK_QUEUE` | `1` | Dispatch lazy materialization to Python Agents through the durable Manager queue. Set to `0` only for compatibility rollback |
@@ -667,6 +671,24 @@ interval, or use eager mode to materialize and release the transaction immediate
 Changing a running multi-shard deployment between `best_effort` and `snapshot` requires a
 coordinated materializer restart. See the manual operations chapter for the scale-to-zero
 procedure. Image updates that retain the same consistency mode can roll normally.
+
+### 8.2 Agent control authentication
+
+Manager, Python materializers, and C++ Agents must receive the same active
+`AGENT_TOKEN`. Tokens must contain at least 32 bytes; the installer emits 64
+hexadecimal characters. Python and C++ send the token through the control request
+header, not through a query string, JSON body, or command-line argument.
+
+An explicit environment value takes precedence. Key Vault hydration maps
+`agent-token` to `AGENT_TOKEN` and `agent-token-previous` to
+`AGENT_TOKEN_PREVIOUS`. The encrypted credential cache supplies the last known
+value during a vault outage. With required Key Vault mode, a cold start fails
+when neither Key Vault nor the cache supplies the active token.
+
+Only Manager receives `AGENT_TOKEN_PREVIOUS` and
+`AGENT_TOKEN_PREVIOUS_VALID_UNTIL`. Agents receive the active token only.
+Manager Basic and Entra settings belong on the Manager workload and must not be
+present in Agent secrets.
 
 This guarantee does not cover multiple tables or databases in one transaction. See
 [chapter 8 of the manual](manual/08-operations.md#source-read-consistency-contract) for

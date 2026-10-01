@@ -8,7 +8,7 @@
 set -eu
 
 NO_COLOR=0
-INSTALLER_VERSION=2026.08.20
+INSTALLER_VERSION=2026.10.01
 DRY_RUN=0
 CHECK_ONLY=0
 RESUME=0
@@ -40,10 +40,14 @@ ENV_FILE=${FSP_ENV_FILE:-/etc/fabric-shortcut-proxy.env}
 START_SERVICE=no
 HEALTH_URL=${FSP_HEALTH_URL:-http://127.0.0.1:9200/healthz}
 MANAGER_AUTH_USERNAME=operator
-GENERATE_AGENT_TOKEN=no
+GENERATE_AGENT_TOKEN=yes
 GENERATE_S3_CREDENTIALS=yes
 GENERATE_ADMIN_CREDENTIALS=yes
+AGENT_TOKEN_REF=
+AGENT_TOKEN_PREVIOUS_REF=
+AGENT_TOKEN_PREVIOUS_VALID_UNTIL=
 AGENT_TOKEN_VALUE=
+AGENT_TOKEN_PREVIOUS_VALUE=
 ADMIN_TOKEN_VALUE=
 MANAGER_AUTH_PASSWORD_VALUE=
 S3_ACCESS_KEY_VALUE=
@@ -158,6 +162,23 @@ read_secret_reference() {
     esac
 }
 
+read_optional_secret_reference() {
+    prompt=$1
+    key=$2
+    if [ -n "$ANSWERS_FILE" ]; then
+        answer=$(answer_value "$key")
+    elif [ "$DRY_RUN" -eq 1 ]; then
+        answer=
+    else
+        printf '%s' "$prompt" >&2
+        IFS= read -r answer < "$TTY" || true
+    fi
+    case "$answer" in
+        env:*|file:*|'') printf '%s' "$answer" ;;
+        *) die 'secret values must use env:NAME or file:/path references' ;;
+    esac
+}
+
 answer_value() {
     key=$1
     [ -f "$ANSWERS_FILE" ] || die "answers file not found: $ANSWERS_FILE"
@@ -196,6 +217,8 @@ validate_answers() {
               key != "keyvault_mode" && key != "keyvault_uri" && key != "secret_backend" &&
               key != "manager_auth_username" && key != "generate_admin_credentials" &&
               key != "generate_s3_credentials" && key != "generate_agent_token" &&
+              key != "agent_token_reference" && key != "agent_token_previous_reference" &&
+              key != "agent_token_previous_valid_until" &&
               key != "tls_mode" && key != "tls_hostname" && key != "tls_cert_file" &&
               key != "tls_key_file" && key != "start_service") {
               print "unknown key: " key; exit 1
@@ -457,13 +480,29 @@ credentials_step() {
     case "$GENERATE_ADMIN_CREDENTIALS" in yes) ;; no) ;; *) die 'answer yes or no' ;; esac
     GENERATE_S3_CREDENTIALS=$(read_answer 'Generate S3 access credentials (yes/no)' 'yes' "$GENERATE_S3_CREDENTIALS" generate_s3_credentials)
     case "$GENERATE_S3_CREDENTIALS" in yes) ;; no) ;; *) die 'answer yes or no' ;; esac
-    GENERATE_AGENT_TOKEN=$(read_answer 'Generate an unused AGENT_TOKEN placeholder (yes/no)' 'no' "$GENERATE_AGENT_TOKEN" generate_agent_token)
+    GENERATE_AGENT_TOKEN=$(read_answer 'Generate the active Agent credential (yes/no)' 'yes' "$GENERATE_AGENT_TOKEN" generate_agent_token)
     case "$GENERATE_AGENT_TOKEN" in yes) ;; no) ;; *) die 'answer yes or no' ;; esac
+    if [ "$GENERATE_AGENT_TOKEN" = no ]; then
+        AGENT_TOKEN_REF=$(read_secret_reference '  Active Agent token reference: ' agent_token_reference)
+    fi
+    AGENT_TOKEN_PREVIOUS_REF=$(read_optional_secret_reference \
+        'Previous Agent token reference (optional, env:NAME or file:/path): ' \
+        agent_token_previous_reference)
+    if [ -n "$AGENT_TOKEN_PREVIOUS_REF" ]; then
+        AGENT_TOKEN_PREVIOUS_VALID_UNTIL=$(read_answer \
+            'Previous Agent token expiry (Unix UTC seconds)' '' \
+            "$AGENT_TOKEN_PREVIOUS_VALID_UNTIL" agent_token_previous_valid_until)
+        case "$AGENT_TOKEN_PREVIOUS_VALID_UNTIL" in
+            ''|*[!0-9]*|0) die 'previous Agent token expiry must be positive Unix UTC seconds' ;;
+        esac
+    else
+        AGENT_TOKEN_PREVIOUS_VALID_UNTIL=
+    fi
     if [ "$GENERATE_ADMIN_CREDENTIALS" = yes ] || [ "$GENERATE_S3_CREDENTIALS" = yes ] || [ "$GENERATE_AGENT_TOKEN" = yes ]; then
         command -v openssl >/dev/null 2>&1 || die 'openssl is required to generate credentials'
     fi
     printf '%s\n' '  Credentials are separate: Agent token, admin password, and admin token.'
-    [ "$GENERATE_AGENT_TOKEN" = yes ] && printf '%s\n' '  AGENT_TOKEN is not consumed by the current Manager/Agent runtime.'
+    printf '%s\n' '  The active Agent credential is used by Manager and Agent control traffic.'
     STEP=5
     save_state
 }
@@ -598,6 +637,42 @@ apply_setup() {
     if [ "$GENERATE_AGENT_TOKEN" = yes ]; then
         AGENT_TOKEN_VALUE=$(openssl rand -hex 32)
     fi
+    resolve_secret_reference() {
+        secret_ref=$1
+        resolved=
+        case "$secret_ref" in
+            env:*)
+                secret_env_name=${secret_ref#env:}
+                case "$secret_env_name" in
+                    ''|*[!A-Za-z0-9_]*) die 'secret environment reference must contain only letters, numbers, and underscores' ;;
+                esac
+                resolved=$(printenv "$secret_env_name" 2>/dev/null || true)
+                ;;
+            file:*)
+                secret_file=${secret_ref#file:}
+                [ -r "$secret_file" ] || die "secret file is not readable: $secret_file"
+                IFS= read -r resolved < "$secret_file" || true
+                ;;
+            '') ;;
+            *) die 'invalid secret reference' ;;
+        esac
+        [ -z "$secret_ref" ] || [ -n "$resolved" ] || die 'secret reference resolved to an empty value'
+        printf '%s' "$resolved"
+    }
+    if [ "$GENERATE_AGENT_TOKEN" = no ]; then
+        AGENT_TOKEN_VALUE=$(resolve_secret_reference "$AGENT_TOKEN_REF")
+    fi
+    if [ -n "$AGENT_TOKEN_PREVIOUS_REF" ]; then
+        AGENT_TOKEN_PREVIOUS_VALUE=$(resolve_secret_reference "$AGENT_TOKEN_PREVIOUS_REF")
+    fi
+    [ -n "$AGENT_TOKEN_VALUE" ] || die 'active Agent token is required'
+    [ "${#AGENT_TOKEN_VALUE}" -ge 32 ] || die 'active Agent token must contain at least 32 bytes'
+    if [ -n "$AGENT_TOKEN_PREVIOUS_VALUE" ]; then
+        [ "${#AGENT_TOKEN_PREVIOUS_VALUE}" -ge 32 ] ||
+            die 'previous Agent token must contain at least 32 bytes'
+        [ "$AGENT_TOKEN_VALUE" != "$AGENT_TOKEN_PREVIOUS_VALUE" ] ||
+            die 'active and previous Agent tokens must differ'
+    fi
     if [ -n "$CLIENT_SECRET_REF" ]; then
         case "$CLIENT_SECRET_REF" in
             env:*)
@@ -646,6 +721,9 @@ apply_setup() {
         [ -n "$CLIENT_SECRET_VALUE" ] && printf '%s\n' "AZURE_CLIENT_SECRET=$CLIENT_SECRET_VALUE"
         [ -n "$KEYVAULT_URI" ] && printf '%s\n' "FSP_KEYVAULT_URI=$KEYVAULT_URI"
         [ "$KEYVAULT_MODE" = required ] && printf '%s\n' 'FSP_REQUIRE_KEYVAULT=1'
+        printf '%s\n' 'AGENT_AUTH_MODE=required'
+        [ -n "$AGENT_TOKEN_PREVIOUS_VALID_UNTIL" ] &&
+            printf '%s\n' "AGENT_TOKEN_PREVIOUS_VALID_UNTIL=$AGENT_TOKEN_PREVIOUS_VALID_UNTIL"
         [ -n "$TLS_CERT_FILE" ] && printf '%s\n' "TLS_CERT_FILE=$TLS_CERT_FILE"
         [ -n "$TLS_KEY_FILE" ] && printf '%s\n' "TLS_KEY_FILE=$TLS_KEY_FILE"
         if [ "$SECRET_BACKEND" = env-file ]; then
@@ -656,6 +734,8 @@ apply_setup() {
             [ -n "$S3_ACCESS_KEY_VALUE" ] && printf '%s\n' "S3_ACCESS_KEY_ID=$S3_ACCESS_KEY_VALUE"
             [ -n "$S3_SECRET_KEY_VALUE" ] && printf '%s\n' "S3_SECRET_ACCESS_KEY=$S3_SECRET_KEY_VALUE"
             [ -n "$AGENT_TOKEN_VALUE" ] && printf '%s\n' "AGENT_TOKEN=$AGENT_TOKEN_VALUE"
+            [ -n "$AGENT_TOKEN_PREVIOUS_VALUE" ] &&
+                printf '%s\n' "AGENT_TOKEN_PREVIOUS=$AGENT_TOKEN_PREVIOUS_VALUE"
         fi
     } > "$env_tmp"
     chmod 600 "$env_tmp"
@@ -684,6 +764,8 @@ apply_setup() {
         [ -n "$MANAGER_AUTH_PASSWORD_VALUE" ] && set_keyvault_secret manager-auth-password "$MANAGER_AUTH_PASSWORD_VALUE"
         [ -n "$S3_SECRET_KEY_VALUE" ] && set_keyvault_secret s3-secret-access-key "$S3_SECRET_KEY_VALUE"
         [ -n "$AGENT_TOKEN_VALUE" ] && set_keyvault_secret agent-token "$AGENT_TOKEN_VALUE"
+        [ -n "$AGENT_TOKEN_PREVIOUS_VALUE" ] &&
+            set_keyvault_secret agent-token-previous "$AGENT_TOKEN_PREVIOUS_VALUE"
     fi
 
     unit_tmp="/etc/systemd/system/$UNIT_NAME.tmp.$$"
@@ -698,7 +780,7 @@ apply_setup() {
         printf '%s\n' "User=$SERVICE_USER"
         printf '%s\n' "Group=$SERVICE_GROUP"
         printf '%s\n' "WorkingDirectory=$INSTALL_DIR"
-        [ "$SECRET_BACKEND" = env-file ] && printf '%s\n' "EnvironmentFile=$ENV_FILE"
+        printf '%s\n' "EnvironmentFile=$ENV_FILE"
         printf '%s\n' "ExecStart=/bin/bash $INSTALL_DIR/Manager.sh --admin-ui --config-ui --auto-stash"
         printf '%s\n' 'Restart=on-failure'
         printf '%s\n' 'RestartSec=5'

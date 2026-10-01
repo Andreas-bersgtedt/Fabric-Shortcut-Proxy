@@ -76,6 +76,8 @@ def test_secret_name_convention_defaults():
     assert keyvault.secret_name_for("db_url") == "db-url"
     assert keyvault.secret_name_for("s3_secret_access_key") == "s3-secret-access-key"
     assert keyvault.secret_name_for("admin_token") == "admin-token"
+    assert keyvault.secret_name_for("agent_token") == "agent-token"
+    assert keyvault.secret_name_for("agent_token_previous") == "agent-token-previous"
     # Unknown key -> slugified.
     assert keyvault.secret_name_for("Some_Mount_ID") == "some-mount-id"
 

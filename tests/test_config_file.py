@@ -10,6 +10,7 @@ import json
 
 import config
 import pytest
+import system_config
 
 
 # ---------------------------------------------------------------------------
@@ -261,3 +262,15 @@ def test_effective_settings_reports_s3_bucket_environment_override(tmp_path, mon
     assert bucket["env"] == "S3_BUCKET"
     assert bucket["value"] == "deployment-bucket"
     assert bucket["source"] == "env"
+
+
+@pytest.mark.parametrize("key", ["agent_token", "agent_token_previous"])
+def test_system_config_rejects_plaintext_agent_token_fields(tmp_path, monkeypatch, key):
+    (tmp_path / "config.system.json").write_text(
+        json.dumps({"system": {key: "x" * 64}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FSP_CONFIG_DIR", str(tmp_path))
+
+    with pytest.raises(ValueError, match="must not contain Agent token values"):
+        system_config._load_config_file()

@@ -61,8 +61,9 @@ not a universal production latency or throughput guarantee.
 ## Stable-release checklist
 
 - [ ] Merge #92's implementation and release-gate changes after CI passes.
-- [ ] Review shared auth conformance and single-key scope against #92.
-- [ ] Review Linux benchmark evidence and workload-specific performance limits.
+- [x] Review shared auth conformance and single-key scope against #92.
+- [x] Record Linux benchmark evidence with shared-host and client-cost caveats.
+- [ ] Review workload-specific production performance limits.
 - [ ] Test the candidate image in an isolated AKS pod with `sigv4`, without
       changing the gateway-backed production service.
 - [ ] Run sustained load and termination/restart checks against the candidate
@@ -93,3 +94,6 @@ ID identifies the local image configuration, not a registry manifest digest;
 record the immutable registry digest when pushing it for AKS deployment.
 The workflow refuses stable publication until the live checklist has been
 reviewed and an explicit stable-promotion workflow is implemented.
+Release tests and benchmarks run against the binary extracted from the
+candidate container; the binary archive and container archive therefore
+contain the same verified serving executable.

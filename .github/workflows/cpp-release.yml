@@ -27,8 +27,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash agent-cpp/build.sh
           bash agent-cpp/build_tier1.sh
+          version="cpp-${GITHUB_REF_NAME#cpp-v}"
+          docker build -f agent-cpp/Dockerfile -t "fsp-cpp-agent:${version#cpp-}" .
+          test "$(docker run --rm "fsp-cpp-agent:${version#cpp-}" --version)" = "$version"
+          container="$(docker create "fsp-cpp-agent:${version#cpp-}" --version)"
+          trap 'docker rm -f "$container" >/dev/null' EXIT
+          docker cp "$container:/usr/local/bin/fsp-cpp-agent" agent-cpp/agent
+          docker rm "$container"
+          trap - EXIT
           test "$(./agent-cpp/agent --version)" = "cpp-${GITHUB_REF_NAME#cpp-v}"
       - name: Verify direct authentication and socket hardening
         run: >-
@@ -47,8 +54,6 @@ jobs:
           mkdir -p dist
           tar -czf "dist/${version}-linux-x64.tar.gz" \
             agent-cpp/agent agent-cpp/README.md agent-cpp/BENCHMARK.md
-          docker build -f agent-cpp/Dockerfile -t "fsp-cpp-agent:${version#cpp-}" .
-          test "$(docker run --rm "fsp-cpp-agent:${version#cpp-}" --version)" = "$version"
           docker image inspect "fsp-cpp-agent:${version#cpp-}" \
             --format '{{.Id}}' > dist/container-image-id.txt
           docker save "fsp-cpp-agent:${version#cpp-}" | gzip > "dist/${version}-image.tar.gz"

@@ -77,8 +77,10 @@ records, not this document.
 ## Candidate artifacts
 
 The main CI workflow uploads a checksummed Linux x64 serving binary and the
-benchmark JSON for each verified commit. After merging and reviewing the gates,
-tag that exact commit `cpp-v1.0.0-rc.1`. The C++ release workflow rebuilds and
+benchmark JSON for each verified commit. After reviewing the candidate gates,
+tag that exact commit `cpp-v1.0.0-rc.1`. A candidate can be published from the
+issue branch while its integration PR is open; merge approval remains a
+separate stable-release gate. The C++ release workflow rebuilds and
 tests the tagged source, checks that the binary version matches the tag, and
 publishes a GitHub prerelease with:
 

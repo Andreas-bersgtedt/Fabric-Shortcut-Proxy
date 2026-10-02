@@ -69,14 +69,14 @@ network, storage, TLS, proxy, deployment, or production load. Results vary by ho
 thermal state, process scheduling, and other work. The benchmark intentionally makes
 no target threshold or production-capacity claim.
 
-## Linux Docker run
+## Linux Docker runs
 
-The parent workflow ran the same 15-second, four-worker workload in Docker on WSL2.
-The two modes ran sequentially, with `trusted-upstream` first. The Docker benchmark
-driver and host were shared and potentially noisy; request rates and latencies can
-reflect scheduling, resource contention, and run order. In particular, this single
-measurement does not establish that enabling signature verification improves
-performance. Do not compare these Linux figures directly with the Windows run above.
+The parent ran both Linux samples in Docker on WSL2, with `trusted-upstream` before
+`sigv4`. The Docker benchmark driver and host were shared and potentially noisy;
+request rates and latencies can reflect scheduling, resource contention, and run
+order. These figures are client-inclusive estimates, not capacity or SLO evidence.
+They do not establish that signature verification improves performance. Do not
+compare Linux and Windows figures directly.
 
 | Setting | Value |
 | --- | --- |
@@ -85,7 +85,7 @@ performance. Do not compare these Linux figures directly with the Windows run ab
 | OS / architecture | Linux 5.15.167.4-microsoft-standard-WSL2, x86_64, glibc 2.41 |
 | Python | 3.12.14 |
 | Compiler command | `g++ -O2 -std=c++17 -Wall -Wextra -pthread` |
-| Compiler version | Not recorded; parent may append the exact version |
+| Compiler version | Debian 12.2.0-14+deb12u1, g++ 12.2.0 |
 | Concurrency / object size | 4 / 65,536 bytes (default object size) |
 | Measurement duration | 15 seconds per auth mode |
 
@@ -96,5 +96,27 @@ performance. Do not compare these Linux figures directly with the Windows run ab
 
 Both modes passed restart/readiness and response status and SHA-256 verification.
 The parent recorded the result at `/evidence/cpp-auth-benchmark-linux.json`. These
-figures are one shared-host run, not a controlled comparison, production-capacity
-estimate, or evidence that SigV4 verification increases throughput.
+figures are one short sample on a shared host.
+
+### 60-second sample
+
+| Setting | Value |
+| --- | --- |
+| Benchmark command | `python agent-cpp/benchmark_auth.py --duration 60 --concurrency 4 --output cpp-auth-benchmark-linux-60s.json` |
+| Binary version reported | `cpp-1.0.0-rc.1` |
+| OS / architecture | Linux 5.15.167.4-microsoft-standard-WSL2, x86_64, glibc 2.41 |
+| Python | 3.12.14 |
+| Compiler | Debian 12.2.0-14+deb12u1, g++ 12.2.0 |
+| Concurrency / object size | 4 / 65,536 bytes (default object size) |
+| Measurement duration | 60 seconds per auth mode |
+
+| Authentication mode | Throughput (req/s) | p50 (ms) | p95 (ms) | Requests |
+| --- | ---: | ---: | ---: | ---: |
+| trusted-upstream | 2,100.14 | 1.813 | 2.829 | 126,012 |
+| sigv4 | 1,884.55 | 1.980 | 3.120 | 113,076 |
+
+All status, body/hash, and restart checks passed. The parent saved the JSON in session
+files as `cpp-auth-benchmark-linux-60s.json`. In this sample, SigV4 throughput was
+about 10.3% lower than trusted-upstream. The shared-host and sequential-run caveats
+above apply; the difference is not a controlled performance comparison or a
+production-capacity/SLO claim.

@@ -127,6 +127,10 @@ def test_validate_flags_missing_fields():
     assert azure_auth.validate_azure_auth(azure_auth.parse_azure_auth({"mode": "aad_client_secret"}))
     assert not azure_auth.validate_azure_auth(azure_auth.parse_azure_auth(
         {"mode": "aad_client_secret", "tenant_id": "t", "client_id": "c", "client_secret": "s"}))
+    assert azure_auth.validate_azure_auth(
+        azure_auth.parse_azure_auth({"mode": "workload_identity"}))
+    assert not azure_auth.validate_azure_auth(azure_auth.parse_azure_auth(
+        {"mode": "workload_identity", "tenant_id": "t", "client_id": "c", "token_file": "/token"}))
     assert not azure_auth.validate_azure_auth(azure_auth.parse_azure_auth({"mode": "default"}))
     assert not azure_auth.validate_azure_auth(azure_auth.parse_azure_auth({"mode": "anonymous"}))
     assert azure_auth.validate_azure_auth(azure_auth.parse_azure_auth({"mode": "bogus"}))
@@ -134,7 +138,8 @@ def test_validate_flags_missing_fields():
 
 def test_all_coverage_modes_recognized():
     for mode in ("connection_string", "account_key", "sas",
-                 "aad_client_secret", "managed_identity", "default", "anonymous"):
+                 "aad_client_secret", "managed_identity", "workload_identity",
+                 "default", "anonymous"):
         assert mode in azure_auth.SUPPORTED_MODES
 
 
@@ -308,6 +313,48 @@ async def test_azure_credential_rejects_invalid(cb_app, tmp_path):
         r = await c.post("/_config/api/azure-credentials", json={
             "credential_id": "bad", "auth": {"mode": "aad_client_secret"}})   # missing tenant/client/secret
         assert r.status_code == 400 and r.json()["ok"] is False
+
+
+async def test_azure_workload_identity_credential_stays_in_encrypted_store(
+    cb_app, tmp_path, monkeypatch,
+):
+    from security.credential_store import CredentialStore
+    if not CredentialStore(str(tmp_path / "credentials.json")).available:
+        pytest.skip("no encryption backend available on this host")
+    monkeypatch.setenv("MOUNTS_CONFIG_FILE", str(tmp_path / "config.mounts.json"))
+    async with _client(cb_app) as c:
+        response = await c.post("/_config/api/azure-credentials", json={
+            "credential_id": "federated-reader",
+            "auth": {
+                "mode": "workload_identity", "tenant_id": "tenant-id",
+                "client_id": "client-id", "token_file": "/var/run/federated-token",
+            },
+        })
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert "tenant-id" not in response.text
+        assert "client-id" not in response.text
+        assert "/var/run/federated-token" not in response.text
+
+        store = CredentialStore(str(tmp_path / "credentials.json"))
+        auth = azure_auth.resolve_azure_auth(
+            Mount("federated-reader", "azure", root="up", account="a",
+                  credential="federated-reader"),
+            store=store,
+        )
+        assert auth.mode == "workload_identity"
+        assert auth.token_file == "/var/run/federated-token"
+
+        saved = await c.post("/_config/api/mounts", json={"mounts": [{
+            "bucket": "federated-reader", "backend": "azure", "root": "up",
+            "account": "storageacct", "credential": "federated-reader",
+        }]})
+        assert saved.json()["ok"] is True
+        config_text = (tmp_path / "config.mounts.json").read_text(encoding="utf-8")
+        assert "federated-reader" in config_text
+        assert "tenant-id" not in config_text
+        assert "client-id" not in config_text
+        assert "/var/run/federated-token" not in config_text
 
 
 async def test_azure_mount_save_persists_knobs_and_validates(cb_app, tmp_path, monkeypatch):

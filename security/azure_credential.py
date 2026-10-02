@@ -14,7 +14,8 @@ from __future__ import annotations
 # ``aad_client_secret`` (the mount config's name) and ``service_principal`` (the
 # issue #16 wording) select a client-secret service principal.
 IDENTITY_MODES = frozenset({
-    "aad_client_secret", "service_principal", "managed_identity", "default",
+    "aad_client_secret", "service_principal", "managed_identity",
+    "workload_identity", "default",
 })
 
 _INSTALL_HINT = (
@@ -36,11 +37,13 @@ def get_credential(
     tenant_id: str = "",
     client_id: str = "",
     client_secret: str = "",
+    token_file: str = "",
 ):
     """Build an ``azure.identity`` credential for an identity-based auth mode.
 
-    Supports ``managed_identity``, ``default``, and service-principal
-    (``aad_client_secret`` / ``service_principal``). Raises :class:`ValueError`
+    Supports ``managed_identity``, ``workload_identity``, ``default``, and
+    service-principal (``aad_client_secret`` / ``service_principal``).
+    Raises :class:`ValueError`
     for any mode that does not map to an ``azure.identity`` credential (e.g. the
     non-identity ``account_key`` / ``sas`` / ``anonymous`` modes handled by the
     caller), and :class:`RuntimeError` with an install hint when azure-identity is
@@ -55,6 +58,14 @@ def get_credential(
         _require_identity()
         from azure.identity import ManagedIdentityCredential
         return ManagedIdentityCredential(client_id=client_id or None)
+    if m == "workload_identity":
+        _require_identity()
+        from azure.identity import WorkloadIdentityCredential
+        return WorkloadIdentityCredential(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            token_file_path=token_file,
+        )
     if m == "default":
         _require_identity()
         from azure.identity import DefaultAzureCredential

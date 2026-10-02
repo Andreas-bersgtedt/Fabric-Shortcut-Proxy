@@ -69,6 +69,7 @@ class Mount:
     key_column: str = ""         # ordering/key column; may not carry a transform
     columns: tuple = ()          # tuple[config.ColumnDef]; output schema + column policy
     output_format: str = ""      # ""/"delta" = Delta out | "iceberg" = Iceberg out | "auto" = mirror source
+    snapshot_id: int | None = None  # optional source Iceberg snapshot pin
 
 
 def _norm_prefix(p: str) -> str:
@@ -109,6 +110,22 @@ def _parse_columns(raw) -> tuple:
     return tuple(out)
 
 
+def _parse_snapshot_id(value) -> int | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        raise ValueError("snapshot_id must be a positive integer")  # noqa: TRY004
+    if isinstance(value, int):
+        snapshot_id = value
+    elif isinstance(value, str) and value.isdigit():
+        snapshot_id = int(value)
+    else:
+        raise ValueError("snapshot_id must be a positive integer")
+    if snapshot_id <= 0:
+        raise ValueError("snapshot_id must be a positive integer")
+    return snapshot_id
+
+
 def _mount_from_json(d: dict) -> Mount:
     return Mount(
         bucket=str(d.get("bucket") or "").strip(),
@@ -131,6 +148,7 @@ def _mount_from_json(d: dict) -> Mount:
         key_column=str(d.get("key_column") or "").strip(),
         columns=_parse_columns(d.get("columns")),
         output_format=str(d.get("output_format") or "").strip().lower(),
+        snapshot_id=_parse_snapshot_id(d.get("snapshot_id")),
     )
 
 
@@ -202,6 +220,15 @@ def _build_mounts() -> dict[str, Mount]:
                 print(f"[mounts] tokenizing mount {m.bucket!r} needs a 'columns' policy; skipped.",
                       file=sys.stderr)
                 continue
+        if m.snapshot_id is not None and (
+            m.snapshot_id <= 0 or m.format != "iceberg"
+        ):
+            print(
+                f"[mounts] mount {m.bucket!r}: snapshot_id must be positive and only "
+                "applies to Iceberg mounts; skipped.",
+                file=sys.stderr,
+            )
+            continue
         if m.bucket in out:
             print(f"[mounts] duplicate mount bucket {m.bucket!r}; last wins.", file=sys.stderr)
         out[m.bucket] = m
@@ -234,9 +261,12 @@ def tokenizing_mounts() -> list[dict]:
     if not _enabled():
         return []
     return [
-        {"bucket": m.bucket, "format": m.format, "backend": m.backend,
-         "columns": len(m.columns),
-         "transforms": sum(1 for c in m.columns if c.transform)}
+        {
+            "bucket": m.bucket, "format": m.format, "backend": m.backend,
+            "columns": len(m.columns),
+            "transforms": sum(1 for c in m.columns if c.transform),
+            **({"snapshot_id": m.snapshot_id} if m.snapshot_id is not None else {}),
+        }
         for m in MOUNTS.values() if getattr(m, "format", "")
     ]
 
@@ -277,6 +307,12 @@ def validate_mounts() -> list[str]:
                 problems.append(f"mount {bucket!r}: local backend needs 'root'")
             elif not os.path.isdir(m.root):
                 problems.append(f"mount {bucket!r}: root {m.root!r} is not a directory (mount it first)")
+        if m.snapshot_id is not None and (
+            m.snapshot_id <= 0 or m.format != "iceberg"
+        ):
+            problems.append(
+                f"mount {bucket!r}: snapshot_id must be positive and only applies to Iceberg mounts"
+            )
         elif m.backend == "s3":
             if not m.root:
                 problems.append(f"mount {bucket!r}: s3 backend needs 'root' (the upstream bucket)")

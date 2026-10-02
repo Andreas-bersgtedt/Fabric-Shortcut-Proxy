@@ -9,7 +9,7 @@ with an ``s3`` mount. No boto3 or live backend is required — the client is a s
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
@@ -18,13 +18,11 @@ import pytest
 from fastapi import FastAPI
 
 import config
-import storage.mounts as mounts
-from storage.mounts import Mount
 from runtime.artifact_store import ObjectNotFound
-from storage.s3_store import S3Store
-from storage import s3_auth
 from s3.router import router as s3_router
-
+from storage import mounts, s3_auth
+from storage.mounts import Mount
+from storage.s3_store import S3Store
 
 # ---------------------------------------------------------------------------
 # Fake boto3 S3 client
@@ -52,7 +50,7 @@ class FakeS3Client:
 
     def __init__(self, objects: dict[str, bytes], *, page_size: int = 1000):
         self._objs = dict(objects)
-        self._mtime = datetime(2026, 7, 30, tzinfo=timezone.utc)
+        self._mtime = datetime(2026, 7, 30, tzinfo=UTC)
         self._page_size = page_size
 
     def head_object(self, *, Bucket, Key):
@@ -152,6 +150,42 @@ def test_legacy_process_auth_is_disabled_before_client_construction(monkeypatch)
     with pytest.raises(ValueError, match="process auth is disabled"):
         s3_auth.build_s3_client(auth, s3_auth.S3ClientOptions())
     assert require_boto3_called is False
+
+
+def test_assume_role_credentials_refresh_on_existing_client(monkeypatch):
+    from botocore import credentials
+
+    calls = []
+
+    class RefreshFetcher:
+        def __init__(self, **kwargs):
+            pass
+
+        def fetch_credentials(self):
+            calls.append(len(calls) + 1)
+            return {
+                "access_key": f"access-{len(calls)}",
+                "secret_key": "temporary-secret",
+                "token": "temporary-session",
+                "expiry_time": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            }
+
+    monkeypatch.setattr(credentials, "AssumeRoleCredentialFetcher", RefreshFetcher)
+    auth = s3_auth.parse_s3_auth({
+        "mode": "assume_role", "role_arn": "arn:aws:iam::123:role/reader",
+    })
+    client = s3_auth._assume_role_client(auth, s3_auth.S3ClientOptions(), {})
+    refreshable = client._request_signer._credentials
+    assert isinstance(refreshable, credentials.DeferredRefreshableCredentials)
+
+    first = refreshable.get_frozen_credentials()
+    assert first.access_key == "access-1"
+    assert len(calls) == 1
+
+    refreshable._expiry_time = datetime.now(UTC) - timedelta(seconds=1)
+    second = refreshable.get_frozen_credentials()
+    assert second.access_key == "access-2"
+    assert len(calls) == 2
 
 
 def test_options_defaults_path_style_for_custom_endpoint():
@@ -288,6 +322,7 @@ async def test_s3_mount_advertised_in_listbuckets(s3_proxy_app):
 @pytest.fixture
 def cb_app(tmp_path, monkeypatch):
     from fastapi import FastAPI as _FastAPI
+
     from configbuilder.router import router as cb_router
     monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True, raising=False)
     monkeypatch.setattr(config, "CREDENTIAL_STORE_PATH", str(tmp_path / "credentials.json"), raising=False)

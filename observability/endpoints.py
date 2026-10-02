@@ -20,8 +20,7 @@ import config
 from db.capabilities import capabilities_for_db_url
 from db.executor import ping as db_ping
 from iceberg.state_store import get_all_snapshots
-from observability import metrics
-from observability import trace
+from observability import metrics, trace
 from observability.logging import get_logger
 from runtime.drain import is_draining
 
@@ -75,9 +74,17 @@ async def readyz() -> JSONResponse:
         tok_mounts = tokenizing_mounts()
         if tok_mounts:
             from storage.objectstore_capabilities import capabilities_summary
+            from storage.objectstore_reader import (
+                reader_auth_support,
+                reader_backend_available,
+                reader_backend_support,
+            )
             content["object_store_tokenizer"] = {
                 "mounts": tok_mounts,
                 "formats": capabilities_summary(),
+                "reader_backends": reader_backend_support(),
+                "reader_backend_available": reader_backend_available(),
+                "reader_auth": reader_auth_support(),
             }
     except Exception:  # noqa: BLE001 - observability must never break readiness
         pass

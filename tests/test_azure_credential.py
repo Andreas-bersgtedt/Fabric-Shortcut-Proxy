@@ -31,9 +31,14 @@ def _install_fake_identity(monkeypatch):
         def __init__(self):
             self.kind = "default"
 
+    class WorkloadIdentityCredential:
+        def __init__(self, tenant_id, client_id, token_file_path):
+            self.args = (tenant_id, client_id, token_file_path)
+
     identity.ClientSecretCredential = ClientSecretCredential
     identity.ManagedIdentityCredential = ManagedIdentityCredential
     identity.DefaultAzureCredential = DefaultAzureCredential
+    identity.WorkloadIdentityCredential = WorkloadIdentityCredential
 
     azure_pkg = sys.modules.get("azure") or types.ModuleType("azure")
     monkeypatch.setitem(sys.modules, "azure", azure_pkg)
@@ -59,6 +64,15 @@ def test_managed_identity_passes_client_id(monkeypatch):
 def test_default_credential(monkeypatch):
     _install_fake_identity(monkeypatch)
     assert azure_credential.get_credential("default").kind == "default"
+
+
+def test_workload_identity_uses_federated_token_file(monkeypatch):
+    _install_fake_identity(monkeypatch)
+    credential = azure_credential.get_credential(
+        "workload_identity", tenant_id="tenant", client_id="client",
+        token_file="/var/run/token",
+    )
+    assert credential.args == ("tenant", "client", "/var/run/token")
 
 
 def test_case_insensitive_and_whitespace(monkeypatch):
@@ -91,6 +105,9 @@ def test_azure_auth_delegates_identity_modes(monkeypatch):
     assert azure_auth._credential_for(azure_auth.AzureAuthConfig(
         mode="managed_identity", client_id="mi")).client_id == "mi"
     assert azure_auth._credential_for(azure_auth.AzureAuthConfig(mode="default")).kind == "default"
+    wi = azure_auth._credential_for(azure_auth.AzureAuthConfig(
+        mode="workload_identity", tenant_id="t", client_id="c", token_file="/token"))
+    assert wi.args == ("t", "c", "/token")
 
 
 def test_azure_auth_non_identity_modes_unchanged():

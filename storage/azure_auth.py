@@ -32,7 +32,7 @@ from typing import Any, Mapping
 
 SUPPORTED_MODES = frozenset({
     "connection_string", "account_key", "sas",
-    "aad_client_secret", "managed_identity", "default", "anonymous",
+    "aad_client_secret", "managed_identity", "workload_identity", "default", "anonymous",
 })
 
 _DEFAULT_BLOB_SUFFIX = "blob.core.windows.net"
@@ -48,6 +48,7 @@ class AzureAuthConfig:
     tenant_id: str = ""
     client_id: str = ""
     client_secret: str = ""
+    token_file: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,8 @@ def parse_azure_auth(d: Mapping[str, Any]) -> AzureAuthConfig:
             mode = "sas"
         elif d.get("client_secret"):
             mode = "aad_client_secret"
+        elif d.get("token_file") or d.get("token_file_path"):
+            mode = "workload_identity"
         else:
             mode = ""
     return AzureAuthConfig(
@@ -83,6 +86,7 @@ def parse_azure_auth(d: Mapping[str, Any]) -> AzureAuthConfig:
         tenant_id=str(d.get("tenant_id") or "").strip(),
         client_id=str(d.get("client_id") or "").strip(),
         client_secret=str(d.get("client_secret") or ""),
+        token_file=str(d.get("token_file") or d.get("token_file_path") or "").strip(),
     )
 
 
@@ -106,6 +110,13 @@ def validate_azure_auth(auth: AzureAuthConfig) -> list[str]:
             problems.append("aad_client_secret auth needs 'client_id'")
         if not auth.client_secret:
             problems.append("aad_client_secret auth needs 'client_secret'")
+    elif auth.mode == "workload_identity":
+        if not auth.tenant_id:
+            problems.append("workload_identity auth needs 'tenant_id'")
+        if not auth.client_id:
+            problems.append("workload_identity auth needs 'client_id'")
+        if not auth.token_file:
+            problems.append("workload_identity auth needs 'token_file'")
     # managed_identity / default / anonymous need nothing here.
     return problems
 
@@ -172,6 +183,9 @@ def _require_blob():
 
 def build_container_client(auth: AzureAuthConfig, opts: AzureClientOptions, container: str):
     """Build an authenticated Azure ``ContainerClient`` for the given auth + options."""
+    problems = validate_azure_auth(auth)
+    if problems:
+        raise ValueError("; ".join(problems))
     _require_blob()
     from azure.storage.blob import BlobServiceClient
 
@@ -195,12 +209,13 @@ def _credential_for(auth: AzureAuthConfig):
         return auth.sas_token
     if auth.mode == "anonymous":
         return None
-    if auth.mode in ("aad_client_secret", "managed_identity", "default"):
+    if auth.mode in ("aad_client_secret", "managed_identity", "workload_identity", "default"):
         from security.azure_credential import get_credential
         return get_credential(
             auth.mode,
             tenant_id=auth.tenant_id,
             client_id=auth.client_id,
             client_secret=auth.client_secret,
+            token_file=auth.token_file,
         )
     raise ValueError(f"unsupported azure auth mode: {auth.mode!r}")

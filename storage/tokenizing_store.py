@@ -68,8 +68,11 @@ def _policy_document(mount: "Mount") -> dict:
                 "normalization": transform.normalization,
             },
         })
-    return {"format": mount.format, "key_column": mount.key_column,
-            "output_format": _resolve_output_format(mount), "columns": columns}
+    policy = {"format": mount.format, "key_column": mount.key_column,
+              "output_format": _resolve_output_format(mount), "columns": columns}
+    if mount.snapshot_id is not None:
+        policy["snapshot_id"] = mount.snapshot_id
+    return policy
 
 
 def _key_fingerprints(mount: "Mount") -> dict:

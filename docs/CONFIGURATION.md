@@ -931,7 +931,7 @@ Install the SDK for native backends: `pip install '.[s3proxy]'` (S3),
 |---|---|---|---|
 | `local` | a filesystem path (NFS/SMB mount) | — | n/a |
 | `s3` | the upstream S3 bucket | `.[s3proxy]` | static, session, assume_role, web_identity, profile, sso, instance, anonymous |
-| `azure` | the container | `.[azureblob]` | connection_string, account_key, sas, aad_client_secret, managed_identity, default, anonymous |
+| `azure` | the container | `.[azureblob]` | connection_string, account_key, sas, aad_client_secret, managed_identity, workload_identity, default, anonymous |
 
 Upstream secrets live encrypted in the credential store and are set in the config
 builder (**Sources → mount editor**) or via `/_config/api/{s3,azure}-credentials`.
@@ -939,7 +939,77 @@ S3 `process` credentials are rejected as of 2.9.1 because an HTTP-configured com
 could execute with the proxy's operating-system privileges. Replace stored process
 credentials with `web_identity`, `assume_role`, `instance`, or `static` credentials.
 
-### 14.3 Access keys & authorization
+### 14.3 Tokenized Delta and Iceberg sources
+
+The Config Builder can inspect and tokenize existing local, S3, or Azure Delta and
+Iceberg tables. Install the reader and the relevant cloud backend extra:
+
+```powershell
+pip install -e ".[objectstore,s3proxy,azureblob]"
+```
+
+An Iceberg mount uses the same backend, `root`, `prefix`, and credential settings
+as passthrough mounts. The reader resolves the current metadata file from
+`metadata/version-hint.text`, or from the newest numeric metadata version when
+there is no usable hint. To make reads reproducible, add a positive snapshot ID:
+
+```jsonc
+{
+  "bucket": "customers",
+  "backend": "s3",
+  "root": "warehouse",
+  "prefix": "curated/customers",
+  "credential": "warehouse-reader",
+  "format": "iceberg",
+  "snapshot_id": 731245670123456789,
+  "key_column": "customer_id",
+  "columns": [
+    { "field_id": 1, "name": "customer_id", "type": "long", "nullable": false },
+    { "field_id": 2, "name": "email_token", "source": "email", "type": "string",
+      "transform": { "kind": "deterministic_hash", "key_ref": "customer-email-v1" } }
+  ]
+}
+```
+
+Omit `snapshot_id` to read the current snapshot. A configured pin applies to both
+schema inspection and tokenization. Changing or removing a snapshot pin selects
+a separate tokenized cache, rather than serving the previously pinned snapshot.
+PyIceberg handles Iceberg schemas, field IDs,
+partition specifications, manifests, and delete files supported by that installed
+version. Unsupported metadata or scan features fail with the reader error rather
+than being interpreted as plain files.
+
+Every Iceberg metadata, manifest, data, and delete-file location is checked against
+the configured bucket/container and mount prefix before it is read. Local file
+locations are also resolved through symlinks and checked against the configured
+mount root. Remote URIs, traversal, or references outside that scope are rejected.
+The reader is read-only.
+
+S3 `assume_role`, `web_identity`, and `sso` credentials use the SDK's refreshable
+provider. Refresh behavior for `profile` and `instance` depends on the selected
+AWS credential provider; static and session keys do not refresh. Azure service
+principal, managed identity, workload identity, and `default` identity providers
+refresh access tokens through Azure Identity. Connection strings, account keys,
+and SAS tokens are fixed credentials and must be rotated before they expire.
+Credential material remains in the encrypted credential store; mount config and
+API responses contain only credential IDs and non-secret connection settings.
+
+The Config Builder disables reader choices when the format/backend combination is
+unsupported or its SDK dependency is unavailable. Readiness reports reader
+backends, installed backend dependencies, and the auth modes and refresh behavior
+the application supports.
+
+The opt-in real-service integration test is
+`tests/test_objectstore_remote_integration.py`. It creates and removes unique
+test buckets/containers and refuses non-loopback endpoints. Set the
+`ISSUE93_MINIO_ENDPOINT`, `ISSUE93_MINIO_ACCESS_KEY`, and
+`ISSUE93_MINIO_SECRET_KEY` variables for MinIO, and/or
+`ISSUE93_AZURITE_ACCOUNT_URL`, `ISSUE93_AZURITE_ACCOUNT`, and
+`ISSUE93_AZURITE_KEY` for Azurite, then run
+`python -m pytest tests/test_objectstore_remote_integration.py -q`. Without
+those variables, the corresponding service test is skipped.
+
+### 14.4 Access keys & authorization
 
 When a mount exists, issue scoped **access keys** so each client reaches only its
 allowed buckets/prefixes:

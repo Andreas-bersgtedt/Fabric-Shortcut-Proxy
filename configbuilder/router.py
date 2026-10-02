@@ -209,6 +209,25 @@ def _connection_form_fields(connection_id: str, db_url: str) -> dict:
 def _clean_error(exc: Exception) -> str:
     """Redact any embedded credential and trim driver noise from an error."""
     msg = config.redact_db_url(str(exc))
+    msg = re.sub(
+        r"(?i)([?&](?:sig|signature|awsaccesskeyid|x-amz-credential|"
+        r"x-amz-signature|x-amz-security-token|se|sp|sv|skoid|sktid|skt|"
+        r"ske|sks|skv|token|access_token|refresh_token)=)[^&#\s\"']+",
+        r"\1[REDACTED]",
+        msg,
+    )
+    msg = re.sub(
+        r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+",
+        r"\1[REDACTED]",
+        msg,
+    )
+    msg = re.sub(
+        r"(?i)((?:authorization|x-amz-security-token|aws_secret_access_key|"
+        r"secret_access_key|client_secret|account_key|sas_token|"
+        r"sharedaccesssignature)\s*[:=]\s*)[^,;\s\"']+",
+        r"\1[REDACTED]",
+        msg,
+    )
     low = msg.lower()
     if "can't load plugin: sqlalchemy.dialects:databricks" in low:
         hint = (
@@ -2334,6 +2353,10 @@ def _azure_auth_blob(auth) -> dict:
     elif auth.mode == "managed_identity":
         if auth.client_id:
             blob["client_id"] = auth.client_id
+    elif auth.mode == "workload_identity":
+        blob["tenant_id"] = auth.tenant_id
+        blob["client_id"] = auth.client_id
+        blob["token_file"] = auth.token_file
     return blob
 
 
@@ -2561,10 +2584,14 @@ def _object_store_capabilities() -> dict:
     """Format capability matrix + reader backend support + extra availability."""
     import importlib.util
     from storage.objectstore_capabilities import capabilities_summary
-    from storage.objectstore_reader import reader_backend_support
+    from storage.objectstore_reader import (
+        reader_auth_support, reader_backend_available, reader_backend_support,
+    )
     return {
         "formats": capabilities_summary(),
         "reader_backends": reader_backend_support(),
+        "reader_backend_available": reader_backend_available(),
+        "reader_auth": reader_auth_support(),
         "output_formats": ["auto", "delta", "iceberg"],
         "reader_available": {
             "delta": importlib.util.find_spec("deltalake") is not None,
@@ -2629,6 +2656,12 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
         if backend not in sm._SUPPORTED_BACKENDS:
             errors.append(f"mounts[{i}]: backend {backend!r} not supported (use one of {list(sm._SUPPORTED_BACKENDS)})")
             continue
+        try:
+            from storage.objectstore_reader import _safe_relative_path
+            _safe_relative_path(prefix, description="mount prefix")
+        except ValueError as exc:
+            errors.append(f"mounts[{i}]: {exc}")
+            continue
         entry = {"bucket": bucket, "backend": backend, "root": root,
                  "prefix": prefix, "read_only": True}
         if backend == "local":
@@ -2644,6 +2677,12 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
             if not credential and not auth:
                 errors.append(f"mounts[{i}]: s3 backend needs a 'credential' id or an explicit 'auth' "
                               "mode ('anonymous' or 'instance')")
+                continue
+            if not credential and auth not in ("anonymous", "instance"):
+                errors.append(
+                    f"mounts[{i}]: inline s3 auth must be 'anonymous' or 'instance'; "
+                    "store other credentials in the encrypted credential store"
+                )
                 continue
             entry.update({
                 "credential": credential,
@@ -2666,6 +2705,13 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
                 errors.append(f"mounts[{i}]: azure backend needs a 'credential' id or an explicit 'auth' "
                               "mode ('default', 'managed_identity', or 'anonymous')")
                 continue
+            if not credential and auth not in ("default", "managed_identity", "anonymous"):
+                errors.append(
+                    f"mounts[{i}]: inline azure auth must be 'default', "
+                    "'managed_identity', or 'anonymous'; store other credentials "
+                    "in the encrypted credential store"
+                )
+                continue
             account = str(e.get("account") or "").strip()
             endpoint = str(e.get("endpoint") or "").strip()
             conn_string_cred = credential and auth == ""
@@ -2682,6 +2728,17 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
                 "endpoint_suffix": str(e.get("endpoint_suffix") or "").strip(),
             })
         fmt = str(e.get("format") or "").strip().lower()
+        raw_snapshot_id = e.get("snapshot_id")
+        if raw_snapshot_id not in (None, ""):
+            try:
+                snapshot_id = sm._parse_snapshot_id(raw_snapshot_id)
+            except ValueError:
+                errors.append(f"mounts[{i}]: snapshot_id must be a positive integer")
+                continue
+            if fmt != "iceberg":
+                errors.append(f"mounts[{i}]: snapshot_id is only valid for Iceberg mounts")
+                continue
+            entry["snapshot_id"] = snapshot_id
         if fmt:
             from storage.objectstore_capabilities import (
                 SUPPORTED_FORMATS, validate_object_store_policy,
@@ -2740,6 +2797,8 @@ async def list_mounts() -> JSONResponse:
             entry["format"] = m.format
             entry["key_column"] = m.key_column
             entry["columns"] = _serialize_object_store_columns(m.columns)
+            if m.snapshot_id is not None:
+                entry["snapshot_id"] = m.snapshot_id
             if getattr(m, "output_format", ""):
                 entry["output_format"] = m.output_format
         mounts.append(entry)

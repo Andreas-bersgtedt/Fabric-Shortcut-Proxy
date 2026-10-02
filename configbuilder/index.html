@@ -525,6 +525,7 @@
           <option value="connection_string">connection_string — full connection string</option>
           <option value="aad_client_secret">aad_client_secret — service principal</option>
           <option value="managed_identity">managed_identity — user-assigned client id</option>
+          <option value="workload_identity">workload_identity — federated token file</option>
         </select>
         <div class="azf" data-modes="account_key"><label>Account key</label><input id="azAccountKey" type="password" placeholder="base64 shared key" /></div>
         <div class="azf" data-modes="sas"><label>SAS token</label><input id="azSasToken" type="password" placeholder="sv=2022-…&sig=…" /></div>
@@ -533,6 +534,9 @@
         <div class="azf" data-modes="aad_client_secret"><label>Client id</label><input id="azClientId" placeholder="app (client) id" /></div>
         <div class="azf" data-modes="aad_client_secret"><label>Client secret</label><input id="azClientSecret" type="password" placeholder="client secret value" /></div>
         <div class="azf" data-modes="managed_identity"><label>Client id <span class="hint">(optional — user-assigned MI)</span></label><input id="azMiClientId" placeholder="leave blank for system-assigned" /></div>
+        <div class="azf" data-modes="workload_identity"><label>Tenant id</label><input id="azWorkloadTenantId" placeholder="00000000-0000-0000-0000-000000000000" /></div>
+        <div class="azf" data-modes="workload_identity"><label>Client id</label><input id="azWorkloadClientId" placeholder="app (client) id" /></div>
+        <div class="azf" data-modes="workload_identity"><label>Federated token file</label><input id="azWorkloadTokenFile" placeholder="/var/run/secrets/azure/tokens/azure-identity-token" /></div>
         <div class="actions" style="display:none;"><button class="btn ghost" id="btnSaveAzCred">Save Azure credential</button></div>
         <div class="status" id="azCredStatus"></div>
       </div>
@@ -545,6 +549,10 @@
         <div class="hint" style="margin-bottom:8px;">The proxy reads the source table, applies per-column token policies in memory, and serves a tokenized copy. Source plaintext enters the proxy to be masked; it is never written to <code>config.mounts.json</code>.</div>
         <label>Source table format</label>
         <select id="mountTokFormat"></select>
+        <div id="icebergSnapshotBox" style="display:none;">
+          <label>Iceberg snapshot id <span class="hint">(optional — pin reads to this snapshot)</span></label>
+          <input id="mountSnapshotId" inputmode="numeric" placeholder="Current snapshot" />
+        </div>
         <div class="hint" id="mountTokFormatHint" style="margin:4px 0 8px;"></div>
         <label>Served output format</label>
         <select id="mountTokOutput">
@@ -3217,7 +3225,7 @@ function renderMounts(){
     const authBadge = (m.backend === "s3" || m.backend === "azure")
       ? ` <span class="badge">${m.credential ? ("cred:"+m.credential) : (m.auth || "auth?")}</span>` : "";
     left.innerHTML = `<div class="cid">${m.bucket} <span class="badge">${m.backend}</span> <span class="badge ok">read-only</span>${authBadge}</div>`
-      + `<div class="meta">${where}${m.prefix?(" · /"+m.prefix):""}</div>`;
+      + `<div class="meta">${where}${m.prefix?(" · /"+m.prefix):""}${m.snapshot_id?(" · Iceberg snapshot "+m.snapshot_id):""}</div>`;
     const acts = document.createElement("div"); acts.className = "connacts";
     const ed = document.createElement("button"); ed.className = "iconbtn"; ed.textContent = "Edit";
     ed.onclick = () => editMount(m.bucket);
@@ -3302,6 +3310,7 @@ function editMount(bucket){
   $("mountTokOn").checked = tokOn;
   $("tokBody").style.display = tokOn ? "" : "none";
   $("mountTokFormat").value = m.format || "";
+  $("mountSnapshotId").value = m.snapshot_id != null ? String(m.snapshot_id) : "";
   $("mountTokOutput").value = m.output_format || "";
   updateTokFormatHint();
   tokState.columns = tokOn ? reflectedPolicyColumns(m.columns||[]) : [];
@@ -3344,6 +3353,8 @@ function readMountForm(){
   }
   if($("mountTokOn").checked && $("mountTokFormat").value){
     m.format = $("mountTokFormat").value;
+    const snapshotId = $("mountSnapshotId").value.trim();
+    if(m.format === "iceberg" && snapshotId) m.snapshot_id = snapshotId;
     m.key_column = $("mountTokKey").value || "";
     m.columns = mountColumnsFromPolicy(tokState.columns);
     m.output_format = $("mountTokOutput").value || "";
@@ -3363,6 +3374,10 @@ function readAzAuthForm(){
     a.client_secret = $("azClientSecret").value;
   }else if(mode === "managed_identity"){
     a.client_id = $("azMiClientId").value.trim();
+  }else if(mode === "workload_identity"){
+    a.tenant_id = $("azWorkloadTenantId").value.trim();
+    a.client_id = $("azWorkloadClientId").value.trim();
+    a.token_file = $("azWorkloadTokenFile").value.trim();
   }
   return a;
 }
@@ -3407,12 +3422,13 @@ function populateTokFormats(){
   for(const fmt of Object.keys(os.formats||{})){
     const backends = (os.reader_backends||{})[fmt] || [];
     const wired = backends.includes(backend);
-    const available = (os.reader_available||{})[fmt] !== false;
+    const available = (os.reader_available||{})[fmt] !== false
+      && (os.reader_backend_available||{})[backend] !== false;
     const o = document.createElement("option"); o.value = fmt;
     let label = fmt.charAt(0).toUpperCase()+fmt.slice(1);
     if(!wired) label += " — not wired for "+backend+" yet";
-    else if(!available) label += " — install objectstore extra";
-    o.textContent = label; o.disabled = !wired;
+    else if(!available) label += " — reader dependency unavailable";
+    o.textContent = label;     o.disabled = !wired || !available;
     sel.appendChild(o);
   }
   if(cur) sel.value = cur;
@@ -3421,13 +3437,20 @@ function populateTokFormats(){
 
 function updateTokFormatHint(){
   const fmt = $("mountTokFormat").value;
+  const backend = $("mountBackend").value;
   const os = mountState.object_store || {};
   const hint = $("mountTokFormatHint");
+  $("icebergSnapshotBox").style.display = fmt === "iceberg" ? "" : "none";
   if(!fmt){ hint.textContent = ""; return; }
-  const available = (os.reader_available||{})[fmt];
+  const available = (os.reader_available||{})[fmt] !== false
+    && (os.reader_backend_available||{})[backend] !== false;
+  const auth = ((os.reader_auth||{})[backend]||{}).supported || [];
+  const authHint = (backend === "local" || !auth.length)
+    ? ""
+    : " Supported "+backend+" Iceberg auth: "+auth.join(", ")+".";
   hint.textContent = (available===false)
-    ? "The reader library for "+fmt+" isn't installed on the Manager — install the 'objectstore' extra to inspect and serve."
-    : "The proxy will read this "+fmt+" table and serve a tokenized Delta copy.";
+    ? "A reader dependency for "+fmt+" on "+backend+" isn't installed on the Manager."
+    : "The proxy will read this "+fmt+" table and serve a tokenized Delta copy."+authHint;
 }
 
 function tokEntry(){
@@ -3525,10 +3548,12 @@ $("btnApplyMount").onclick = async () => {
     if(m.credential === "" && $("mountAzAuthSource").value === "credential"){
       s.className = "status err"; s.textContent = "Enter a credential id and secret, or pick default/managed_identity/anonymous."; return; }
   }
+  if(m.snapshot_id != null && (!/^[1-9]\d*$/.test(String(m.snapshot_id)) || !Number.isSafeInteger(Number(m.snapshot_id)))){
+    s.className = "status err"; s.textContent = "Iceberg snapshot id must be a positive integer."; return; }
   $("btnApplyMount").disabled=true;
   const s3CredentialEntered=m.backend==="s3" && ["s3AccessKey","s3SecretKey","s3SessionToken","s3RoleArn","s3ExternalId","s3TokenFile","s3Profile"]
     .some(id=>($(id).value||"").trim());
-  const azureCredentialEntered=m.backend==="azure" && ["azAccountKey","azSasToken","azConnString","azTenantId","azClientId","azClientSecret","azMiClientId"]
+  const azureCredentialEntered=m.backend==="azure" && ["azAccountKey","azSasToken","azConnString","azTenantId","azClientId","azClientSecret","azMiClientId","azWorkloadTenantId","azWorkloadClientId","azWorkloadTokenFile"]
     .some(id=>($(id).value||"").trim());
   if(s3CredentialEntered){
     const credential=await api("/_config/api/s3-credentials",{credential_id:m.credential,auth:readS3AuthForm()});

@@ -13,6 +13,7 @@ import pyarrow as pa
 import pytest
 
 from configbuilder.router import (
+    _clean_error,
     _object_store_capabilities,
     _validate_mounts_payload,
 )
@@ -89,15 +90,87 @@ def test_plain_mount_still_validates_without_format():
     assert errors == [] and "format" not in clean[0]
 
 
+def test_validate_persists_iceberg_snapshot_pin():
+    clean, errors = _validate_mounts_payload([
+        _delta_mount_payload(format="iceberg", snapshot_id="123")
+    ])
+    assert errors == []
+    assert clean[0]["snapshot_id"] == 123
+
+
+@pytest.mark.parametrize("snapshot_id", ["0", "-1", "one", 1.5])
+def test_validate_rejects_invalid_iceberg_snapshot_pin(snapshot_id):
+    _, errors = _validate_mounts_payload([
+        _delta_mount_payload(format="iceberg", snapshot_id=snapshot_id)
+    ])
+    assert any("snapshot_id must be a positive integer" in error for error in errors)
+
+
+def test_validate_rejects_snapshot_pin_for_non_iceberg_mount():
+    _, errors = _validate_mounts_payload([
+        _delta_mount_payload(format="delta", snapshot_id=123)
+    ])
+    assert any("snapshot_id is only valid for Iceberg mounts" in error for error in errors)
+
+
+def test_validate_rejects_snapshot_pin_without_table_format():
+    _, errors = _validate_mounts_payload([{
+        "bucket": "plain-source", "backend": "local", "root": "/mnt/share",
+        "snapshot_id": 5,
+    }])
+    assert any("snapshot_id is only valid for Iceberg mounts" in error for error in errors)
+
+
+def test_validate_rejects_unstored_cloud_secrets_and_traversal_prefixes():
+    _, s3_errors = _validate_mounts_payload([{
+        "bucket": "s3-source", "backend": "s3", "root": "upstream",
+        "auth": "static",
+    }])
+    assert any("store other credentials" in error for error in s3_errors)
+
+    _, azure_errors = _validate_mounts_payload([{
+        "bucket": "azure-source", "backend": "azure", "root": "container",
+        "account": "account", "auth": "workload_identity",
+    }])
+    assert any("store other credentials" in error for error in azure_errors)
+
+    _, path_errors = _validate_mounts_payload([{
+        "bucket": "path-source", "backend": "s3", "root": "upstream",
+        "auth": "anonymous", "prefix": "safe/%2e%2e/outside",
+    }])
+    assert any("confined relative path" in error for error in path_errors)
+
+
+def test_clean_error_redacts_cloud_tokens_and_shared_keys():
+    message = _clean_error(Exception(
+        "request failed https://account.blob.core.windows.net/c?sv=2026&sig=azure-secret "
+        "X-Amz-Security-Token=aws-session-secret client_secret=app-secret "
+        "Authorization: Bearer bearer-secret"
+    ))
+    for secret in (
+        "azure-secret", "aws-session-secret", "app-secret", "bearer-secret",
+    ):
+        assert secret not in message
+    assert "[REDACTED]" in message
+
+
 # --- capability block --------------------------------------------------------
 
 def test_object_store_capabilities_shape():
     caps = _object_store_capabilities()
     assert set(caps["formats"]) == {"delta", "iceberg"}
     assert caps["reader_backends"]["delta"] == ["local", "s3", "azure"]
-    assert caps["reader_backends"]["iceberg"] == ["local"]
+    assert caps["reader_backends"]["iceberg"] == ["local", "s3", "azure"]
     assert caps["output_formats"] == ["auto", "delta", "iceberg"]
     assert set(caps["reader_available"]) == {"delta", "iceberg"}
+    assert set(caps["reader_backend_available"]) == {"local", "s3", "azure"}
+    assert caps["reader_auth"]["s3"]["refreshing"] == [
+        "assume_role", "web_identity", "sso",
+    ]
+    assert caps["reader_auth"]["s3"]["provider_dependent_refresh"] == [
+        "profile", "instance",
+    ]
+    assert "workload_identity" in caps["reader_auth"]["azure"]["refreshing"]
 
 
 # --- schema inspect endpoint -------------------------------------------------

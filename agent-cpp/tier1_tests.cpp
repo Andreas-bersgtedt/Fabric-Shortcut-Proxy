@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "agent_auth.hpp"
+#include "sigv4.hpp"
 #include "tier1/dialects.hpp"
 #include "tier1/split_planner.hpp"
 #include "tier1/shard_weight.hpp"
@@ -462,6 +463,59 @@ static void test_agent_auth_headers() {
           "yes");
 }
 
+static void test_sigv4() {
+    std::map<std::string, std::string> headers = {
+        {"host", "s3.local"},
+        {"range", "bytes=0-3"},
+        {"x-amz-date", "20261002T000000Z"},
+        {"x-amz-content-sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+        {"authorization",
+         "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261002/us-east-1/s3/aws4_request, "
+         "SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, "
+         "Signature=f7d07e838cea8c4ea5023ebd76851e46e76e1b04e83e79585ac1d24c35492663"},
+    };
+    const std::string path = "/test-bucket/allowed/safe.txt";
+    const auto accepted = fsp::sigv4::verify(
+        "GET", path, "x=1&delimiter=/", headers, "AKIDEXAMPLE", "secret-example", 1790899200);
+    check("sigv4.valid", accepted.ok ? "yes" : accepted.error.code, "yes");
+    check("sigv4.identity", accepted.access_key_id, "AKIDEXAMPLE");
+
+    auto tampered = headers;
+    tampered["range"] = "bytes=1-4";
+    const auto rejected = fsp::sigv4::verify(
+        "GET", path, "x=1&delimiter=/", tampered,
+        "AKIDEXAMPLE", "secret-example", 1790899200);
+    check("sigv4.tampered_header", rejected.error.code, "SignatureDoesNotMatch");
+
+    const auto stale = fsp::sigv4::verify(
+        "GET", path, "x=1&delimiter=/", headers,
+        "AKIDEXAMPLE", "secret-example", 1790900101);
+    check("sigv4.clock_skew", stale.error.code, "RequestTimeTooSkewed");
+    const auto boundary = fsp::sigv4::verify(
+        "GET", path, "x=1&delimiter=/", headers,
+        "AKIDEXAMPLE", "secret-example", 1790900100);
+    check("sigv4.clock_skew_boundary", boundary.ok ? "yes" : boundary.error.code, "yes");
+
+    const std::vector<std::pair<std::string, std::string>> encoded_paths = {
+        {"/b/a%20b", "d029f11fcafccf9ff1a31ce88d3f95ab310f979d4808567a6d0a62108c755317"},
+        {"/b/a%2Fb", "3d0a56ef19dd9690e824470566a2a0159df2add4babb78319700f6f659de883a"},
+        {"/b/%252F", "1cf77fd29bebb1c7bfed80ed02c996d7e260e82f24d01233bcbbbdf712337f60"},
+    };
+    for (const auto& vector : encoded_paths) {
+        auto encoded_headers = headers;
+        encoded_headers.erase("range");
+        encoded_headers["authorization"] =
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261002/us-east-1/s3/aws4_request, "
+            "SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=" + vector.second;
+        const auto encoded = fsp::sigv4::verify(
+            "GET", vector.first, "", encoded_headers,
+            "AKIDEXAMPLE", "secret-example", 1790899200);
+        check("sigv4.encoded_path", encoded.ok ? "yes" : encoded.error.code, "yes");
+    }
+    check("sigv4.invalid_percent_path_canonicalization",
+          fsp::sigv4::detail::canonical_uri("/b/a%2g"), "/b/a%252g");
+}
+
 int main() {
     test_dialects();
     test_split_math();
@@ -471,6 +525,7 @@ int main() {
     test_iceberg();
     test_stats();
     test_agent_auth_headers();
+    test_sigv4();
     std::printf("\ntier1: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

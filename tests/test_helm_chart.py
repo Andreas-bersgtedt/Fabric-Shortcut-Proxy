@@ -77,6 +77,10 @@ def test_base_render_contains_core_fleet_only() -> None:
         )
     ) == 1
     assert "key: AGENT_TOKEN" in rendered
+    assert "name: S3_AUTH_MODE" in rendered
+    assert 'value: "trusted-upstream"' in rendered
+    assert "name: S3_ACCESS_KEY_ID" in rendered
+    assert "name: S3_SECRET_ACCESS_KEY" in rendered
     assert "MANAGER_AUTH_USERNAME" not in rendered
     assert "MANAGER_AUTH_PASSWORD" not in rendered
     assert "replace-with-at-least-32-random-bytes" not in rendered
@@ -96,6 +100,20 @@ def test_enterprise_render_contains_complete_demo() -> None:
     assert 'S3_BUCKET: "fsp-demo"' in rendered
     assert 'S3_BUCKET: "fabric-iceberg-poc"' not in rendered
     assert "TOKENIZATION_POLICY_FILE: /config/config.tokenization.json" in rendered
+
+
+def test_cpp_sigv4_mode_renders_secret_references_and_prefixes() -> None:
+    rendered = _render(
+        "--set",
+        "cppAgent.s3AuthMode=sigv4",
+        "--set-string",
+        "cppAgent.s3AllowedPrefixes=tenant/;shared/",
+    )
+    assert 'value: "sigv4"' in rendered
+    assert "name: fsp-cpp-s3-auth" in rendered
+    assert "key: S3_ACCESS_KEY_ID" in rendered
+    assert "key: S3_SECRET_ACCESS_KEY" in rendered
+    assert 'value: "tenant/;shared/"' in rendered
 
 
 @pytest.mark.parametrize(

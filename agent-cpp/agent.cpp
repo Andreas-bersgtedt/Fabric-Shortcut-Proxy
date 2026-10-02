@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <mutex>
 #include <queue>
 #include <sstream>
@@ -34,6 +35,7 @@
 #include <vector>
 
 #include "agent_auth.hpp"
+#include "sigv4.hpp"
 #include "tier1/sha256.hpp"
 
 #ifdef _WIN32
@@ -58,7 +60,7 @@ static const SocketHandle kInvalidSocket = -1;
 
 namespace fs = std::filesystem;
 
-static const char* APP_VERSION = "cpp-0.3.0";
+static const char* APP_VERSION = "cpp-1.0.0-rc.1";
 
 // ---------------------------------------------------------------------------
 // platform shim
@@ -254,6 +256,10 @@ struct Config {
     std::string advertise_host = getenv_str("AGENT_ADVERTISE_HOST", "");
     std::string manager_url = getenv_str("MANAGER_URL", "");
     std::string agent_token = getenv_str("AGENT_TOKEN", "");
+    std::string s3_auth_mode = getenv_str("S3_AUTH_MODE", "");
+    std::string s3_access_key_id = getenv_str("S3_ACCESS_KEY_ID", "");
+    std::string s3_secret_access_key = getenv_str("S3_SECRET_ACCESS_KEY", "");
+    std::string s3_allowed_prefixes = getenv_str("S3_ALLOWED_PREFIXES", "");
     int heartbeat_ms = parse_int_or(getenv_str("HEARTBEAT_MS", "2000"), 2000, 200, 600000);
     int socket_timeout_ms = parse_int_or(getenv_str("SOCKET_TIMEOUT_MS", "10000"), 10000, 1000, 60000);
     int max_inflight = parse_int_or(getenv_str("MAX_INFLIGHT", "256"), 256, 1, 100000);
@@ -676,9 +682,48 @@ static void send_fixed_response(SocketHandle s,
 struct Request {
     std::string method;
     std::string path;
+    std::string encoded_path;
     std::string query;
     std::string range;
+    std::map<std::string, std::string> headers;
 };
+
+static std::string trim_http_value(const std::string& value);
+
+static const std::vector<std::string>& configured_prefixes() {
+    static const std::vector<std::string> prefixes = []() {
+        std::vector<std::string> parsed;
+        size_t begin = 0;
+        while (begin < CFG.s3_allowed_prefixes.size()) {
+            const size_t end = CFG.s3_allowed_prefixes.find(';', begin);
+            std::string prefix = CFG.s3_allowed_prefixes.substr(
+                begin, end == std::string::npos ? std::string::npos : end - begin);
+            prefix = trim_http_value(prefix);
+            std::replace(prefix.begin(), prefix.end(), '\\', '/');
+            while (!prefix.empty() && prefix.front() == '/') prefix.erase(prefix.begin());
+            while (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
+            if (!prefix.empty()) parsed.push_back(prefix);
+            if (end == std::string::npos) break;
+            begin = end + 1;
+        }
+        return parsed;
+    }();
+    return prefixes;
+}
+
+static bool prefix_is_allowed(const std::string& candidate,
+                              const std::vector<std::string>& allowed_prefixes) {
+    if (allowed_prefixes.empty()) return true;
+    for (const auto& prefix : allowed_prefixes) {
+        if (candidate == prefix ||
+            (candidate.size() > prefix.size()
+             && candidate.compare(0, prefix.size(), prefix) == 0
+             && candidate[prefix.size()] == '/')) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static std::string content_type_for(const std::string& key) {
     if (key.size() >= 5 && key.compare(key.size() - 5, 5, ".json") == 0) return "application/json";
@@ -958,11 +1003,79 @@ static void handle_get(SocketHandle s, const std::string& key, const std::string
 }
 
 static bool parse_request_line(const std::string& line, std::string& method, std::string& target) {
+    for (unsigned char c : line) {
+        if (c < 0x20 || c == 0x7f) return false;
+    }
     std::istringstream ls(line);
     std::string version;
+    std::string trailing;
     ls >> method >> target >> version;
-    if (method.empty() || target.empty() || version.empty()) return false;
+    return !method.empty() && !target.empty()
+        && (version == "HTTP/1.0" || version == "HTTP/1.1")
+        && !(ls >> trailing);
+}
+
+static bool valid_header_name(const std::string& name) {
+    if (name.empty()) return false;
+    for (unsigned char c : name) {
+        if (!(std::isalnum(c) || c == '!' || c == '#' || c == '$' || c == '%'
+              || c == '&' || c == '\'' || c == '*' || c == '+' || c == '-'
+              || c == '.' || c == '^' || c == '_' || c == '`' || c == '|'
+              || c == '~')) {
+            return false;
+        }
+    }
     return true;
+}
+
+static bool valid_percent_encoding(const std::string& value) {
+    const auto is_hex = [](unsigned char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+            || (c >= 'A' && c <= 'F');
+    };
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] != '%') continue;
+        if (i + 2 >= value.size()
+            || !is_hex(static_cast<unsigned char>(value[i + 1]))
+            || !is_hex(static_cast<unsigned char>(value[i + 2]))) {
+            return false;
+        }
+        i += 2;
+    }
+    return true;
+}
+
+static std::string trim_http_value(const std::string& value) {
+    size_t first = value.find_first_not_of(" \t");
+    if (first == std::string::npos) return "";
+    size_t last = value.find_last_not_of(" \t");
+    return value.substr(first, last - first + 1);
+}
+
+static bool parse_request_headers(const std::string& buf, Request& req) {
+    size_t line_end = buf.find("\r\n");
+    if (line_end == std::string::npos) return false;
+    size_t pos = line_end + 2;
+    while (pos < buf.size()) {
+        size_t end = buf.find("\r\n", pos);
+        if (end == std::string::npos) return false;
+        if (end == pos) return true;
+        const std::string line = buf.substr(pos, end - pos);
+        if (line.front() == ' ' || line.front() == '\t') return false;
+        size_t colon = line.find(':');
+        if (colon == std::string::npos) return false;
+        std::string name = line.substr(0, colon);
+        if (!valid_header_name(name)) return false;
+        name = to_lower_ascii(name);
+        std::string value = line.substr(colon + 1);
+        for (unsigned char c : value) {
+            if ((c < 0x20 && c != '\t') || c == 0x7f) return false;
+        }
+        value = trim_http_value(value);
+        if (!req.headers.emplace(name, value).second) return false;
+        pos = end + 2;
+    }
+    return false;
 }
 
 static void handle_connection(SocketHandle client) {
@@ -1000,25 +1113,47 @@ static void handle_connection(SocketHandle client) {
         close_socket(client);
         return;
     }
-
-    {
-        std::string lower = to_lower_ascii(buf);
-        size_t rp = lower.find("\r\nrange:");
-        if (rp != std::string::npos) {
-            size_t vs = rp + 8;
-            size_t ve = buf.find("\r\n", vs);
-            if (ve != std::string::npos && ve > vs) {
-                std::string v = buf.substr(vs, ve - vs);
-                size_t a = v.find_first_not_of(" ");
-                req.range = a == std::string::npos ? "" : v.substr(a);
-            }
-        }
+    if (!parse_request_headers(buf, req)) {
+        send_fixed_response(client, 400, "Bad Request", "application/xml",
+                            s3_error_xml("InvalidRequest", "malformed request headers", "/"),
+                            true);
+        close_socket(client);
+        return;
     }
 
     size_t qpos = target.find('?');
     std::string raw_path = qpos == std::string::npos ? target : target.substr(0, qpos);
+    if (raw_path.empty() || raw_path.front() != '/' || target.find('#') != std::string::npos
+        || !valid_percent_encoding(raw_path)) {
+        send_fixed_response(client, 400, "Bad Request", "application/xml",
+                            s3_error_xml("InvalidRequest", "invalid request target", "/"),
+                            true);
+        close_socket(client);
+        return;
+    }
+    req.encoded_path = raw_path;
     req.query = qpos == std::string::npos ? "" : target.substr(qpos + 1);
     req.path = url_decode(raw_path);
+    const auto range_header = req.headers.find("range");
+    if (range_header != req.headers.end()) req.range = range_header->second;
+    if (req.headers.find("transfer-encoding") != req.headers.end()) {
+        send_fixed_response(client, 400, "Bad Request", "application/xml",
+                            s3_error_xml("InvalidRequest", "request bodies are not supported", req.path),
+                            true);
+        close_socket(client);
+        return;
+    }
+    const auto content_length = req.headers.find("content-length");
+    if (content_length != req.headers.end()) {
+        long long body_length = 0;
+        if (!parse_i64(content_length->second, body_length) || body_length != 0) {
+            send_fixed_response(client, 400, "Bad Request", "application/xml",
+                                s3_error_xml("InvalidRequest", "request bodies are not supported", req.path),
+                                true);
+            close_socket(client);
+            return;
+        }
+    }
 
     bool head_only = (req.method == "HEAD");
 
@@ -1048,6 +1183,41 @@ static void handle_connection(SocketHandle client) {
         return;
     }
 
+    std::string p = req.path;
+    if (!p.empty() && p[0] == '/') p = p.substr(1);
+    size_t slash = p.find('/');
+    std::string bucket = slash == std::string::npos ? p : p.substr(0, slash);
+    std::string key = slash == std::string::npos ? "" : p.substr(slash + 1);
+
+    if (CFG.s3_auth_mode == "sigv4") {
+        const auto verified = fsp::sigv4::verify(
+            req.method, req.encoded_path, req.query, req.headers,
+            CFG.s3_access_key_id, CFG.s3_secret_access_key);
+        if (!verified.ok) {
+            log_line("sigv4 rejected code=" + verified.error.code);
+            const std::string body = s3_error_xml(
+                verified.error.code, verified.error.message, req.path);
+            send_fixed_response(client, 403, "Forbidden", "application/xml", body, head_only);
+            close_socket(client);
+            return;
+        }
+
+        if (bucket == CFG.bucket) {
+            const auto& prefixes = configured_prefixes();
+            const std::string requested = key.empty()
+                ? query_param(req.query, "prefix") : key;
+            if (!prefix_is_allowed(requested, prefixes)) {
+                log_line("sigv4 rejected code=AccessDenied");
+                const std::string body = s3_error_xml(
+                    "AccessDenied", "The access key is not authorized for this prefix.", req.path);
+                send_fixed_response(client, 403, "Forbidden", "application/xml", body, head_only);
+                close_socket(client);
+                return;
+            }
+        }
+
+    }
+
     if (req.method != "GET" && req.method != "HEAD") {
         send_fixed_response(client, 405, "Method Not Allowed", "application/xml",
                             s3_error_xml("MethodNotAllowed", "only GET/HEAD", req.path),
@@ -1056,11 +1226,6 @@ static void handle_connection(SocketHandle client) {
         return;
     }
 
-    std::string p = req.path;
-    if (!p.empty() && p[0] == '/') p = p.substr(1);
-    size_t slash = p.find('/');
-    std::string bucket = slash == std::string::npos ? p : p.substr(0, slash);
-    std::string key = slash == std::string::npos ? "" : p.substr(slash + 1);
     if (bucket != CFG.bucket) {
         send_fixed_response(client, 404, "Not Found", "application/xml",
                             s3_error_xml("NoSuchBucket", "The specified bucket does not exist.", "/" + bucket),
@@ -1358,6 +1523,10 @@ static void print_usage(const char* prog) {
         "  INDEX_FILE ()                  Per-Pod legacy object index path.\n"
         "  REQUIRE_GENERATION (0)         Stay unready until CURRENT is valid.\n"
         "  S3_BUCKET (fabric-iceberg-poc) Advertised bucket name.\n"
+        "  S3_AUTH_MODE (required)        sigv4 | trusted-upstream. Direct exposure requires sigv4.\n"
+        "  S3_ACCESS_KEY_ID ()            Legacy SigV4 access key ID.\n"
+        "  S3_SECRET_ACCESS_KEY ()         Legacy SigV4 secret key; provide through a Secret.\n"
+        "  S3_ALLOWED_PREFIXES ()          Optional semicolon-separated object-key prefixes.\n"
         "  AGENT_ID (cpp-agent-1)         Identity used for Manager registration.\n"
         "  AGENT_ADVERTISE_HOST ()        Routable host advertised to the Manager/gateway.\n"
         "  MANAGER_URL ()                 Manager control plane URL; empty = standalone (no\n"
@@ -1374,13 +1543,14 @@ static void print_usage(const char* prog) {
         "Endpoints: GET/HEAD /{bucket}/{key} (range-aware), GET /{bucket}?list-type=2,\n"
         "           GET /healthz, GET /readyz (503 while draining).\n\n"
         "Effective configuration (from the current environment):\n"
-        "  host=%s port=%d store_dir=%s bucket=%s require_generation=%s\n"
+        "  host=%s port=%d store_dir=%s bucket=%s require_generation=%s s3_auth_mode=%s\n"
         "  agent_id=%s manager_url=%s\n"
         "  materialize_mode=%s materialize_timeout_ms=%d\n"
         "  heartbeat_ms=%d socket_timeout_ms=%d max_inflight=%d index_refresh_seconds=%d drain_grace_ms=%d\n",
         APP_VERSION, prog,
         CFG.host.c_str(), CFG.port, CFG.store_dir.c_str(), CFG.bucket.c_str(),
         CFG.require_generation ? "true" : "false",
+        CFG.s3_auth_mode.empty() ? "(unset)" : CFG.s3_auth_mode.c_str(),
         CFG.agent_id.c_str(), CFG.manager_url.empty() ? "(standalone)" : CFG.manager_url.c_str(),
         CFG.materialize_mode.c_str(), CFG.materialize_timeout_ms,
         CFG.heartbeat_ms, CFG.socket_timeout_ms, CFG.max_inflight, CFG.index_refresh_seconds, CFG.drain_grace_ms);
@@ -1392,6 +1562,20 @@ int main(int argc, char** argv) {
         if (a == "--help" || a == "-h") { print_usage(argv[0]); return 0; }
         if (a == "--version" || a == "-V") { std::printf("%s\n", APP_VERSION); return 0; }
         std::fprintf(stderr, "unknown argument: %s (try --help)\n", a.c_str());
+        return 2;
+    }
+
+    if (CFG.s3_auth_mode != "sigv4" && CFG.s3_auth_mode != "trusted-upstream") {
+        log_line("S3_AUTH_MODE must be set to 'sigv4' or 'trusted-upstream'");
+        return 2;
+    }
+    if (CFG.s3_auth_mode == "sigv4"
+        && (CFG.s3_access_key_id.empty() || CFG.s3_secret_access_key.empty())) {
+        log_line("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required in sigv4 mode");
+        return 2;
+    }
+    if (!CFG.s3_allowed_prefixes.empty() && configured_prefixes().empty()) {
+        log_line("S3_ALLOWED_PREFIXES must contain at least one non-empty prefix");
         return 2;
     }
 
@@ -1435,7 +1619,7 @@ int main(int argc, char** argv) {
     }
 
     log_line("serving S3 from '" + CFG.store_dir + "' on " + CFG.host + ":" + std::to_string(CFG.port) +
-             " (bucket=" + CFG.bucket + ")");
+             " (bucket=" + CFG.bucket + ", s3_auth_mode=" + CFG.s3_auth_mode + ")");
 
     std::thread ctl;
     if (!CFG.manager_url.empty()) {

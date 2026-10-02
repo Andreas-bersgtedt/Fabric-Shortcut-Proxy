@@ -97,6 +97,20 @@ def test_valid_signature_encoded_slash_query_accepted():
     )
 
 
+@pytest.mark.parametrize("path", [
+    "/auth-bucket/a%20b",
+    "/auth-bucket/a%2Fb",
+    "/auth-bucket/%252F",
+])
+def test_valid_signature_encoded_object_path_accepted(path):
+    headers = _sign("GET", path)
+    verify_signature(
+        "GET", path, "", headers,
+        access_key_id=config.ACCESS_KEY_ID,
+        secret_access_key=config.SECRET_ACCESS_KEY,
+    )
+
+
 def test_tampered_signature_rejected():
     path = "/auth-bucket/warehouse/db/sales/metadata/v1.metadata.json"
     headers = _sign("GET", path)
@@ -315,3 +329,10 @@ async def test_middleware_accepts_signed(auth_client):
     r = await auth_client.get(path, headers=headers)
     assert r.status_code == 200
     assert r.json()["format-version"] == 2
+
+
+async def test_middleware_verifies_raw_encoded_path(auth_client):
+    path = "/auth-bucket/warehouse/db/sales/unknown%2Fpart"
+    headers = _sign("GET", path)
+    response = await auth_client.get(path, headers=headers)
+    assert response.status_code != 403

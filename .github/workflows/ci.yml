@@ -165,6 +165,53 @@ jobs:
         if: always()
         run: kill "$(cat server.pid)" || true
 
+  cpp-sigv4:
+    name: C++ serving Agent SigV4 release gates
+    runs-on: ubuntu-latest
+    env:
+      FSP_REQUIRE_CPP_TESTS: "1"
+      REQUIRE_SIGV4: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install package + dev extras
+        run: pip install -e ".[dev]"
+      - name: Build serving Agent and Tier 1 tests
+        run: |
+          bash agent-cpp/build.sh
+          bash agent-cpp/build_tier1.sh
+      - name: Run direct-auth, parity and hardening tests
+        run: >-
+          python -m pytest tests/test_cpp_agent_sigv4.py
+          tests/test_sigv4_conformance.py tests/test_auth.py
+          tests/test_cpp_agent_hardening.py -v
+      - name: Run concurrent auth benchmark and restart checks
+        run: >-
+          python agent-cpp/benchmark_auth.py --duration 15 --concurrency 4
+          --output cpp-auth-benchmark.json
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-auth-benchmark
+          path: cpp-auth-benchmark.json
+          if-no-files-found: error
+      - name: Package Linux serving binary
+        run: |
+          version="$(./agent-cpp/agent --version)"
+          mkdir -p dist
+          tar -czf "dist/${version}-linux-x64.tar.gz" \
+            agent-cpp/agent agent-cpp/README.md agent-cpp/BENCHMARK.md
+          sha256sum "dist/${version}-linux-x64.tar.gz" > dist/SHA256SUMS
+      - name: Upload candidate binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-serving-linux-x64
+          path: dist/*
+          if-no-files-found: error
+
   cpp-linux-conformance:
     name: C++ agent linux conformance parity
     runs-on: ubuntu-latest
@@ -224,6 +271,7 @@ jobs:
         env:
           PORT: "9012"
           STORE_DIR: ".artifacts_cpp_ci"
+          S3_AUTH_MODE: trusted-upstream
         run: |
           ./agent-cpp/agent > cpp-agent.log 2>&1 &
           echo $! > cpp-agent.pid

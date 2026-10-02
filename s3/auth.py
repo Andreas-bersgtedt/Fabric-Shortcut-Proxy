@@ -76,6 +76,25 @@ def _canonical_query(query_string: str) -> str:
     return "&".join(f"{k}={v}" for k, v in pairs)
 
 
+def _canonical_uri(path: str) -> str:
+    """Encode a request-target path while preserving existing percent escapes."""
+    result: list[str] = []
+    index = 0
+    while index < len(path):
+        char = path[index]
+        if (
+            char == "%"
+            and index + 2 < len(path)
+            and all(c in "0123456789abcdefABCDEF" for c in path[index + 1:index + 3])
+        ):
+            result.append(path[index:index + 3])
+            index += 3
+            continue
+        result.append(quote(char, safe="/-_.~"))
+        index += 1
+    return "".join(result)
+
+
 def _trim(value: str) -> str:
     # AWS canonicalization: collapse internal whitespace runs, strip ends.
     return " ".join(value.split())
@@ -198,7 +217,7 @@ def verify_signature(
             raise SigV4Error("SignatureDoesNotMatch", f"Signed header {name!r} not present.")
         canonical_headers += f"{name}:{_trim(lower[name])}\n"
 
-    canonical_uri = quote(path, safe="/-_.~")
+    canonical_uri = _canonical_uri(path)
     canonical_query = _canonical_query(query_string)
     signed_headers_str = ";".join(signed_headers)
 

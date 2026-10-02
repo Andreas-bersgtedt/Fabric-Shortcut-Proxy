@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Prepared the independent C++ serving Agent `1.0.0-rc.1` candidate with
+  mandatory built-binary Linux SigV4/parity tests, concurrent authentication
+  benchmark evidence, and a scoped stable-release checklist.
+- Added inbound SigV4 verification to the C++ serving Agent, explicit
+  `trusted-upstream` mode for gateway deployments, and optional object-prefix
+  restrictions.
 - Added active Agent-token wiring to the installer, Helm chart, and Kubernetes
   manifests. New deployments use required mode; rotation keeps the previous token
   and deadline on Manager only.
@@ -39,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Python SigV4 verification now uses the raw encoded request path, preserving
+  encoded object-key characters such as `%2F` during signature checks.
 - Manager `get_snapshot` now reads verified durable publications. Task results are accepted
   only after size, SHA-256, and Parquet row-count checks.
 - Python Agents advertise `materializer`; C++ Agents advertise `serving`. The scheduler

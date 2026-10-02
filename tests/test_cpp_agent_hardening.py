@@ -2,6 +2,7 @@ import http.client
 import os
 import pathlib
 import shutil
+import socket
 import signal
 import subprocess
 import tempfile
@@ -23,6 +24,7 @@ class CppAgentImageTests(unittest.TestCase):
             "COPY agent-cpp/agent_auth.hpp ./agent_auth.hpp",
             dockerfile,
         )
+        self.assertIn("COPY agent-cpp/sigv4.hpp ./sigv4.hpp", dockerfile)
 
 
 def read_hwm_kib(pid):
@@ -52,7 +54,14 @@ class CppAgentHardeningTests(unittest.TestCase):
 
         cls.port = 19400 + (os.getpid() % 500)
         env = os.environ.copy()
-        env.update({"PORT": str(cls.port), "STORE_DIR": str(cls.store), "S3_BUCKET": BUCKET})
+        env.update(
+            {
+                "PORT": str(cls.port),
+                "STORE_DIR": str(cls.store),
+                "S3_BUCKET": BUCKET,
+                "S3_AUTH_MODE": "trusted-upstream",
+            }
+        )
         cls.process = subprocess.Popen(
             [str(AGENT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
         )
@@ -83,6 +92,63 @@ class CppAgentHardeningTests(unittest.TestCase):
         body = response.read()
         connection.close()
         return response.status, body
+
+    def raw_request(self, raw):
+        with socket.create_connection(("127.0.0.1", self.port), timeout=5) as connection:
+            connection.sendall(raw)
+            response = bytearray()
+            while True:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+        return bytes(response)
+
+    def test_duplicate_and_folded_headers_are_rejected(self):
+        for headers in (
+            b"Range: bytes=0-1\r\nRange: bytes=1-2\r\n",
+            b"X-Test: one\r\n two\r\n",
+        ):
+            with self.subTest(headers=headers):
+                response = self.raw_request(
+                    b"GET /" + BUCKET.encode() + b"/safe.txt HTTP/1.1\r\n"
+                    b"Host: localhost\r\n" + headers + b"\r\n"
+                )
+                self.assertIn(b"400 Bad Request", response)
+
+    def test_malformed_percent_encoding_and_request_body_are_rejected(self):
+        for request in (
+            b"GET /" + BUCKET.encode() + b"/bad%2.txt HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            b"GET /" + BUCKET.encode() + b"/safe.txt HTTP/1.1\r\n"
+            b"Host: localhost\r\nContent-Length: 1\r\n\r\nx",
+        ):
+            with self.subTest(request=request):
+                self.assertIn(b"400 Bad Request", self.raw_request(request))
+
+    def test_sigv4_startup_requires_credentials(self):
+        env = os.environ.copy()
+        env["S3_AUTH_MODE"] = "sigv4"
+        env.pop("S3_ACCESS_KEY_ID", None)
+        env.pop("S3_SECRET_ACCESS_KEY", None)
+        result = subprocess.run(
+            [str(AGENT), "--version"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
+
+        result = subprocess.run(
+            [str(AGENT)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("S3_ACCESS_KEY_ID", result.stderr)
 
     def test_bucket_mismatch_is_rejected(self):
         status, body = self.request("/wrong-bucket/safe.txt")
@@ -165,6 +231,7 @@ class CppAgentHardeningTests(unittest.TestCase):
             "PORT": str(port),
             "STORE_DIR": str(self.store),
             "S3_BUCKET": BUCKET,
+            "S3_AUTH_MODE": "trusted-upstream",
             "REQUIRE_GENERATION": "1",
         })
         process = subprocess.Popen(
@@ -226,6 +293,7 @@ class CppAgentHardeningTests(unittest.TestCase):
             "PORT": str(port),
             "STORE_DIR": str(self.store),
             "S3_BUCKET": BUCKET,
+            "S3_AUTH_MODE": "trusted-upstream",
             "MANAGER_URL": f"http://127.0.0.1:{server.server_port}",
             "AGENT_ID": "cpp-auth-test",
             "AGENT_TOKEN": token,

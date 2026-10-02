@@ -58,6 +58,22 @@ spec:
               value: "5"
             - name: AGENT_DRAIN_GRACE_SECONDS
               value: "15"
+            - name: S3_AUTH_MODE
+              value: {{ .Values.cppAgent.s3AuthMode | quote }}
+            - name: S3_ALLOWED_PREFIXES
+              value: {{ .Values.cppAgent.s3AllowedPrefixes | quote }}
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cppAgent.s3AuthSecretName }}
+                  key: {{ .Values.cppAgent.s3AccessKeyIdKey }}
+                  optional: true
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cppAgent.s3AuthSecretName }}
+                  key: {{ .Values.cppAgent.s3SecretAccessKeyKey }}
+                  optional: true
             - name: S3_BUCKET
               valueFrom:
                 configMapKeyRef:

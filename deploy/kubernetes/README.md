@@ -104,6 +104,23 @@ Create `fsp-agent-auth` before applying either Kind overlay. New manifests set
 `compatibility`, create the shared active token, roll Python and C++ Agents, and
 confirm active-source audit events before returning Manager to `required`.
 
+The C++ serving Agent defaults to `S3_AUTH_MODE=trusted-upstream`, matching the
+gateway-terminated deployment. This mode does not verify S3 requests itself;
+keep the service behind the authenticated gateway. To expose the C++ service
+directly, set `S3_AUTH_MODE=sigv4` and create `fsp-cpp-s3-auth` with
+`S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. The Agent refuses to start in
+`sigv4` mode if either key is unavailable. Set `S3_ALLOWED_PREFIXES` to
+semicolon-separated object-key prefixes to restrict reads and listings; an
+empty value permits access to the full configured bucket.
+
+Store the pair in a local environment file outside the repository, then create
+the Secret:
+
+```powershell
+kubectl -n fabric-shortcut-proxy create secret generic fsp-cpp-s3-auth `
+  --from-env-file=path\to\cpp-s3-auth.env
+```
+
 Rotate by updating Manager with new active, old previous, and an absolute UTC
 deadline. Roll Agents with the new active token only. After the deadline,
 confirm the old token returns `401`, then remove the previous key and deadline.

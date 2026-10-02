@@ -512,6 +512,8 @@ static void test_sigv4() {
             "AKIDEXAMPLE", "secret-example", 1790899200);
         check("sigv4.encoded_path", encoded.ok ? "yes" : encoded.error.code, "yes");
     }
+    check("sigv4.invalid_percent_path_canonicalization",
+          fsp::sigv4::detail::canonical_uri("/b/a%2g"), "/b/a%252g");
 }
 
 int main() {

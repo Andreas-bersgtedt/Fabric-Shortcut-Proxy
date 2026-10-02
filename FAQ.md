@@ -522,9 +522,13 @@ trends; Open Mirroring publishing; Oracle & Databricks (limited); TLS at the pro
 LB; `MANAGER_AUTH` gate. See [docs/archive/PLANNING.md](docs/archive/PLANNING.md),
 [docs/archive/Roadmap.md](docs/archive/Roadmap.md), and [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
+The [C++ serving Agent](agent-cpp/README.md) is implemented; its independent
+`1.0.0-rc.1` release is scoped to read-only serving, not native materializer
+parity. Stable promotion requires the documented authentication, performance,
+and live verification gates for #92.
+
 **In progress / planned:** split‑planner enhancements (row‑target sizing, richer range/date/auto
-cascades); a zero‑dependency **C++ serving agent** (`agent-cpp/`); further control‑plane
-hardening and Manager HA.
+cascades); further control‑plane hardening and Manager HA.
 
 **Known limitations:**
 

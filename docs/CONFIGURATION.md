@@ -712,6 +712,13 @@ ListObjectsV2. It allows the same valid request to be retried within the
 or request bodies. `/healthz`, `/readyz`, and `/favicon.ico` do not require
 SigV4.
 
+The C++ `1.0.0-rc.1` candidate uses a single environment-backed key; the Python
+encrypted multi-key store and temporary-session credentials are not part of
+its serving contract. Rotate the key pair by restarting the Agent, or use
+gateway-backed authentication for multi-key policies. TLS terminates externally.
+See the [serving Agent release scope](../agent-cpp/README.md) and stable-release
+checklist before promoting a candidate.
+
 This guarantee does not cover multiple tables or databases in one transaction. See
 [chapter 8 of the manual](manual/08-operations.md#source-read-consistency-contract) for
 prerequisites, source costs, and failure behavior.

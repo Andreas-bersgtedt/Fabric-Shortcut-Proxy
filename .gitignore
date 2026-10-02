@@ -63,6 +63,9 @@ config.py.backup
 # Local development plans / notes - DO NOT commit
 devplan/
 
+# Local Azure deployment plans and workflow state contain environment identifiers
+.azure/
+
 # FSP enterprise demo local Helm values
 deploy/helm/fabric-shortcut-proxy/values-*.local.yaml
 

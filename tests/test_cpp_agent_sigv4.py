@@ -1,25 +1,47 @@
 import http.client
 import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
 import tempfile
 import time
+from urllib.parse import quote
 
 import pytest
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 AGENT = ROOT / "agent-cpp" / ("agent.exe" if os.name == "nt" else "agent")
-BUCKET = "sigv4-test"
-ACCESS_KEY = "FSPTESTACCESSKEY0001"
-SECRET_KEY = "sigv4-test-secret"
+REQUIRE_CPP_TESTS = os.environ.get("FSP_REQUIRE_CPP_TESTS") == "1"
 
-botocore = pytest.importorskip("botocore")
-from botocore.auth import S3SigV4Auth
-from botocore.awsrequest import AWSRequest
-from botocore.credentials import Credentials
+try:
+    from botocore.auth import S3SigV4Auth
+    from botocore.awsrequest import AWSRequest
+    from botocore.credentials import Credentials
+except ImportError as exc:
+    if REQUIRE_CPP_TESTS:
+        raise RuntimeError(
+            "FSP_REQUIRE_CPP_TESTS=1 requires botocore; install the project dev dependencies."
+        ) from exc
+    pytest.skip("botocore is required for C++ Agent SigV4 tests", allow_module_level=True)
+
+from sigv4_conformance_vectors import (
+    ACCESS_KEY,
+    BUCKET,
+    INVALID_REQUESTS,
+    REGION,
+    SECRET_KEY,
+    VALID_REQUESTS,
+    mutate_request,
+)
+
+if not AGENT.exists():
+    if REQUIRE_CPP_TESTS:
+        raise RuntimeError(
+            f"FSP_REQUIRE_CPP_TESTS=1 requires a built C++ Agent at {AGENT}"
+        )
+    pytest.skip("build the C++ Agent first", allow_module_level=True)
 
 
 def _free_port() -> int:
@@ -42,25 +64,24 @@ def _sign(
     if range_value is not None:
         headers["range"] = range_value
     request = AWSRequest(method=method, url=url, headers=headers)
-    S3SigV4Auth(
-        Credentials(access_key, secret_key), "s3", "us-east-1"
-    ).add_auth(request)
+    S3SigV4Auth(Credentials(access_key, secret_key), "s3", REGION).add_auth(request)
     return dict(request.headers)
 
 
 class TestCppAgentSigV4:
     @classmethod
     def setup_class(cls):
-        if not AGENT.exists():
-            pytest.skip("build the C++ Agent first")
         cls.store = pathlib.Path(tempfile.mkdtemp(prefix="cpp-agent-sigv4-"))
         (cls.store / "allowed").mkdir()
         (cls.store / "allowed" / "safe.txt").write_text("safe", encoding="utf-8")
         (cls.store / "allowed" / "space name.txt").write_text("space", encoding="utf-8")
         (cls.store / "allowed" / "nested").mkdir()
         (cls.store / "allowed" / "nested" / "item.txt").write_text("nested", encoding="utf-8")
+        (cls.store / "allowed" / "%2F.txt").write_text("percent", encoding="utf-8")
         (cls.store / "private").mkdir()
         (cls.store / "private" / "secret.txt").write_text("private", encoding="utf-8")
+        (cls.store / "allowedish").mkdir()
+        (cls.store / "allowedish" / "hidden.txt").write_text("outside", encoding="utf-8")
         cls.port = _free_port()
         env = os.environ.copy()
         env.update(
@@ -161,6 +182,13 @@ class TestCppAgentSigV4:
         assert status == 403
         assert b"AccessDenied" in body
 
+        boundary_path = f"/{BUCKET}/allowedish/hidden.txt"
+        status, body = self.request(
+            boundary_path, _sign(self.port, "GET", boundary_path)
+        )
+        assert status == 403
+        assert b"AccessDenied" in body
+
         path = f"/{BUCKET}/allowed/safe.txt"
         headers = _sign(self.port, "GET", path)
         assert self.request(path, headers)[0] == 200
@@ -190,16 +218,70 @@ class TestCppAgentSigV4:
         assert status == 403
         assert b"AccessDenied" in body
 
-    def test_encoded_path_and_repeated_valid_request(self):
-        for path, expected in (
-            (f"/{BUCKET}/allowed/space%20name.txt", b"space"),
-            (f"/{BUCKET}/allowed%2Fnested%2Fitem.txt", b"nested"),
-        ):
+    @pytest.mark.parametrize("vector", VALID_REQUESTS, ids=lambda vector: vector["name"])
+    def test_shared_conformance_vectors(self, vector):
+        target = vector["path"]
+        if vector["query"]:
+            target += "?" + vector["query"]
+        headers = _sign(
+            self.port,
+            vector["method"],
+            target,
+            range_value=vector["headers"].get("range"),
+        )
+        response = self.request(target, headers, method=vector["method"])
+        assert response[0] == vector["status"]
+        if "body" in vector:
+            assert response[1] == vector["body"]
+        if "body_contains" in vector:
+            assert vector["body_contains"] in response[1]
+        assert self.request(target, headers, method=vector["method"]) == response
+
+    @pytest.mark.parametrize("vector", INVALID_REQUESTS, ids=lambda vector: vector["name"])
+    def test_shared_conformance_mutations_are_rejected(self, vector):
+        base = next(case for case in VALID_REQUESTS if case["name"] == vector["base"])
+        target = base["path"]
+        if base["query"]:
+            target += "?" + base["query"]
+        headers = _sign(
+            self.port,
+            base["method"],
+            target,
+            range_value=base["headers"].get("range"),
+        )
+        headers, path, query = mutate_request(
+            vector["mutation"], headers, base["path"], base["query"]
+        )
+        target = path + (f"?{query}" if query else "")
+        status, body = self.request(target, headers, method=base["method"])
+        assert status == 403
+        assert f"<Code>{vector['error']}</Code>".encode() in body
+
+    def test_list_pagination_is_signed_and_repeatable(self):
+        prefix = "allowed/"
+        query = f"list-type=2&max-keys=1&prefix={quote(prefix, safe='')}"
+        page_token = ""
+        seen = []
+        while True:
+            page_query = query
+            if page_token:
+                page_query += "&continuation-token=" + quote(page_token, safe="")
+            path = f"/{BUCKET}/?{page_query}"
             headers = _sign(self.port, "GET", path)
-            status, body = self.request(path, headers)
-            assert status == 200
-            assert body == expected
-            assert self.request(path, headers) == (200, expected)
+            response = self.request(path, headers)
+            assert response[0] == 200
+            assert self.request(path, headers) == response
+            body = response[1].decode("utf-8")
+            seen.extend(re.findall(r"<Key>(.*?)</Key>", body))
+            match = re.search(r"<NextContinuationToken>(.*?)</NextContinuationToken>", body)
+            if "<IsTruncated>true</IsTruncated>" not in body:
+                break
+            assert match is not None
+            page_token = match.group(1)
+        assert "allowed/safe.txt" in seen
+        assert "allowed/space name.txt" in seen
+        assert "allowed/nested/item.txt" in seen
+        assert "allowed/%2F.txt" in seen
 
     def test_parser_rejects_duplicate_folded_and_body_headers(self):
         for headers in (
@@ -219,11 +301,13 @@ class TestCppAgentSigV4:
             )
             assert b"400 Bad Request" in response
 
-    def test_sigv4_mode_fails_closed_without_credentials(self):
+    @pytest.mark.parametrize("missing", ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"])
+    def test_sigv4_mode_fails_closed_without_credentials(self, missing):
         env = os.environ.copy()
         env["S3_AUTH_MODE"] = "sigv4"
-        env.pop("S3_ACCESS_KEY_ID", None)
-        env.pop("S3_SECRET_ACCESS_KEY", None)
+        env["S3_ACCESS_KEY_ID"] = ACCESS_KEY
+        env["S3_SECRET_ACCESS_KEY"] = SECRET_KEY
+        env.pop(missing)
         result = subprocess.run(
             [str(AGENT)], env=env, capture_output=True, text=True, timeout=5, check=False
         )

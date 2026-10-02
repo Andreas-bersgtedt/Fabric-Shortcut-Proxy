@@ -99,11 +99,29 @@ inline std::string uri_encode(const std::string& text, bool preserve_slashes = f
     return result;
 }
 
-// Botocore S3SigV4Auth does not normalize or re-encode the URL path.
+// Keep valid client escapes byte-for-byte, matching the Python verifier.
 // Unit cases: /b/a%20b, /b/a%2Fb, /b/%252F, /b/a%2fb, and /b//./../
-// must remain byte-for-byte unchanged; an empty path canonicalizes to "/".
+// remain unchanged; malformed percent signs are escaped as literal '%' bytes.
+// An empty path canonicalizes to "/".
 inline std::string canonical_uri(const std::string& encoded_path) {
-    return encoded_path.empty() ? "/" : encoded_path;
+    if (encoded_path.empty()) return "/";
+    std::string result;
+    result.reserve(encoded_path.size());
+    for (std::size_t i = 0; i < encoded_path.size(); ++i) {
+        if (encoded_path[i] != '%') {
+            result += encoded_path[i];
+            continue;
+        }
+        if (encoded_path.size() - i >= 3 &&
+            hex_value(static_cast<unsigned char>(encoded_path[i + 1])) >= 0 &&
+            hex_value(static_cast<unsigned char>(encoded_path[i + 2])) >= 0) {
+            result.append(encoded_path, i, 3);
+            i += 2;
+        } else {
+            result += "%25";
+        }
+    }
+    return result;
 }
 
 // urllib.parse.unquote uses UTF-8 with replacement for invalid sequences.
@@ -263,8 +281,8 @@ inline bool parse_date(const std::string& date, std::int64_t& seconds) {
 } // namespace detail
 
 // encoded_path must be the raw HTTP path component, already client-encoded,
-// without query/fragment, decoding, or normalization. Unlike Python's current
-// quote(path) behavior, S3SigV4Auth signs existing percent escapes unchanged.
+// without query/fragment, decoding, or normalization. Existing valid percent
+// escapes are preserved; malformed ones are rejected by the HTTP parser.
 // No body is accepted: the payload hash header is signed as supplied, as in
 // Python's no-body mode.
 inline VerificationResult verify(

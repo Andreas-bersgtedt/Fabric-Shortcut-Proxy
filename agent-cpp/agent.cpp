@@ -60,7 +60,7 @@ static const SocketHandle kInvalidSocket = -1;
 
 namespace fs = std::filesystem;
 
-static const char* APP_VERSION = "cpp-0.3.0";
+static const char* APP_VERSION = "cpp-1.0.0-rc.1";
 
 // ---------------------------------------------------------------------------
 // platform shim

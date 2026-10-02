@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Prepared the independent C++ serving Agent `1.0.0-rc.1` candidate with
+  mandatory built-binary Linux SigV4/parity tests, concurrent authentication
+  benchmark evidence, and a scoped stable-release checklist.
 - Added inbound SigV4 verification to the C++ serving Agent, explicit
   `trusted-upstream` mode for gateway deployments, and optional object-prefix
   restrictions.

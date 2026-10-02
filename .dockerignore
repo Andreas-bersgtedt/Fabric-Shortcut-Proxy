@@ -1,5 +1,10 @@
 .git
 .github
+.azure
+devplan
+**/*.local.json
+**/values-*.local.yaml
+**/*-values.local.yaml
 .venv
 __pycache__
 .pytest_cache

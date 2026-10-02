@@ -165,6 +165,22 @@ POC path. Grounded in [security/access_keys.py](../security/access_keys.py),
   is never served anonymously.
 - Not supported inbound: presigned-URL/query-string auth, STS session tokens, SigV2.
 
+The C++ serving Agent has a separate trust setting. `S3_AUTH_MODE=sigv4`
+verifies signed S3 requests with `S3_ACCESS_KEY_ID` and
+`S3_SECRET_ACCESS_KEY`. `S3_ALLOWED_PREFIXES` can restrict that key to
+semicolon-separated object-key prefixes within `S3_BUCKET`. The C++ Agent does
+not use the Python encrypted multi-key store. Kubernetes and Helm set
+`S3_AUTH_MODE=trusted-upstream` because their supported topology puts the Agent
+behind an authenticated gateway. That mode skips local S3 authentication, so
+network policy must prevent direct access to the Agent service.
+
+Both data planes enforce a 15-minute request clock-skew limit. The C++ Agent
+accepts repeated valid GET and HEAD requests within that window so standard
+client retries continue to work. Its health endpoints remain unauthenticated.
+The C++ listener does not terminate TLS. Terminate HTTPS at the trusted gateway
+or load balancer and protect the hop from the client to that endpoint; SigV4
+does not encrypt object data or the Authorization header.
+
 ### Per-key authorization (ACL)
 
 Each access key carries an authorization scope, stored **encrypted**:

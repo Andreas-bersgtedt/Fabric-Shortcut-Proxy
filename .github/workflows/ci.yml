@@ -224,6 +224,7 @@ jobs:
         env:
           PORT: "9012"
           STORE_DIR: ".artifacts_cpp_ci"
+          S3_AUTH_MODE: trusted-upstream
         run: |
           ./agent-cpp/agent > cpp-agent.log 2>&1 &
           echo $! > cpp-agent.pid

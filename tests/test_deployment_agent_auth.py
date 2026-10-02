@@ -44,6 +44,14 @@ def test_agent_workloads_do_not_receive_manager_basic_credentials() -> None:
     assert "replace-with-at-least-32-random-bytes" not in agents
 
 
+def test_cpp_agent_auth_mode_is_explicit_and_secret_backed() -> None:
+    cpp = _read("cpp-deployment.yaml")
+    assert "name: S3_AUTH_MODE\n              value: trusted-upstream" in cpp
+    assert "name: S3_ACCESS_KEY_ID" in cpp
+    assert "name: S3_SECRET_ACCESS_KEY" in cpp
+    assert "optional: true" in cpp
+
+
 def test_secret_examples_do_not_contain_agent_token_values() -> None:
     examples = ROOT / "deploy" / "kubernetes" / "examples"
     agent_auth = (examples / "agent-auth-secret.example.yaml").read_text(

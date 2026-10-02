@@ -52,6 +52,22 @@ spec:
               value: "5"
             - name: AGENT_DRAIN_GRACE_SECONDS
               value: "15"
+            - name: S3_AUTH_MODE
+              value: trusted-upstream
+            - name: S3_ALLOWED_PREFIXES
+              value: ""
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: fsp-cpp-s3-auth
+                  key: S3_ACCESS_KEY_ID
+                  optional: true
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fsp-cpp-s3-auth
+                  key: S3_SECRET_ACCESS_KEY
+                  optional: true
             - name: S3_BUCKET
               valueFrom:
                 configMapKeyRef:

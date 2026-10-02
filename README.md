@@ -337,6 +337,8 @@ Run C++ Agent from that store:
 Windows:
 
 ```powershell
+$env:HOST = "127.0.0.1"
+$env:S3_AUTH_MODE = "trusted-upstream"
 $env:STORE_DIR = ".artifacts_cpp"
 $env:PORT = "9012"
 .\agent-cpp\agent.exe
@@ -345,8 +347,13 @@ $env:PORT = "9012"
 Linux:
 
 ```bash
-STORE_DIR=.artifacts_cpp PORT=9012 ./agent-cpp/agent
+HOST=127.0.0.1 S3_AUTH_MODE=trusted-upstream STORE_DIR=.artifacts_cpp PORT=9012 ./agent-cpp/agent
 ```
+
+`trusted-upstream` is for this loopback-only smoke test. Do not use it for a
+service reachable by other machines. Direct deployments must set
+`S3_AUTH_MODE=sigv4` and provide `S3_ACCESS_KEY_ID` and
+`S3_SECRET_ACCESS_KEY` through a protected secret source.
 
 Quick conformance smoke:
 

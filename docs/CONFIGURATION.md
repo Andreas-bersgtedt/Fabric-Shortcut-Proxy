@@ -690,6 +690,28 @@ Only Manager receives `AGENT_TOKEN_PREVIOUS` and
 Manager Basic and Entra settings belong on the Manager workload and must not be
 present in Agent secrets.
 
+### 8.3 C++ Agent S3 authentication
+
+The C++ serving Agent requires `S3_AUTH_MODE` at process startup:
+
+| Value | Behavior |
+|---|---|
+| `sigv4` | Verify SigV4 on S3 data requests. Requires `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. |
+| `trusted-upstream` | Skip local S3 authentication because a trusted gateway already authenticated the request. |
+
+Helm and Kubernetes manifests set `trusted-upstream` for their gateway-backed
+topology. Do not expose that Agent service directly. For direct access, select
+`sigv4` and provide the key pair from a Secret or another protected environment
+source. The configured key can read only `S3_BUCKET`. Set
+`S3_ALLOWED_PREFIXES` to a semicolon-separated list to limit reads and listings
+to those object-key prefixes. An empty value permits the whole bucket.
+
+The Agent accepts signed GET and HEAD requests, including range reads and
+ListObjectsV2. It allows the same valid request to be retried within the
+15-minute clock-skew window. It does not support presigned query authentication
+or request bodies. `/healthz`, `/readyz`, and `/favicon.ico` do not require
+SigV4.
+
 This guarantee does not cover multiple tables or databases in one transaction. See
 [chapter 8 of the manual](manual/08-operations.md#source-read-consistency-contract) for
 prerequisites, source costs, and failure behavior.

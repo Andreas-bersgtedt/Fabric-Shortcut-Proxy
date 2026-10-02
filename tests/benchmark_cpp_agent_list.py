@@ -66,7 +66,14 @@ def create_store(count):
 
 def start_agent(store, port):
     env = os.environ.copy()
-    env.update({"PORT": str(port), "STORE_DIR": str(store), "S3_BUCKET": BUCKET})
+    env.update(
+        {
+            "PORT": str(port),
+            "STORE_DIR": str(store),
+            "S3_BUCKET": BUCKET,
+            "S3_AUTH_MODE": "trusted-upstream",
+        }
+    )
     process = subprocess.Popen(
         [str(AGENT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
     )

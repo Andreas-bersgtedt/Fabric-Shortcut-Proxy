@@ -840,9 +840,17 @@ async def sigv4_auth_middleware(request, call_next):
     require = config.REQUIRE_SIGV4 or (mounted and config.ENFORCE_MOUNT_AUTH)
     if require:
         try:
+            raw_path = request.scope.get("raw_path")
+            if isinstance(raw_path, bytes):
+                canonical_path = "".join(
+                    chr(byte) if byte < 0x80 else f"%{byte:02X}"
+                    for byte in raw_path
+                )
+            else:
+                canonical_path = request.url.path
             identity = verify_signature(
                 request.method,
-                request.url.path,
+                canonical_path,
                 request.url.query,
                 request.headers,
                 secret_resolver=access_keys.resolve_secret,

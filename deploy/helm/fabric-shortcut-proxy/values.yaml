@@ -123,6 +123,11 @@ materializer:
 
 cppAgent:
   materializeTimeoutMs: "600000"
+  s3AuthMode: trusted-upstream
+  s3AuthSecretName: fsp-cpp-s3-auth
+  s3AccessKeyIdKey: S3_ACCESS_KEY_ID
+  s3SecretAccessKeyKey: S3_SECRET_ACCESS_KEY
+  s3AllowedPrefixes: ""
   replicas: 2
   resources:
     requests:

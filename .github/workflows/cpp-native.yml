@@ -123,6 +123,7 @@ jobs:
           PORT: "9401"
           STORE_DIR: ".store_native"
           S3_BUCKET: "fabric-iceberg-poc"
+          S3_AUTH_MODE: trusted-upstream
         run: |
           ./agent-cpp/agent > cpp-agent.log 2>&1 &
           echo $! > cpp-agent.pid

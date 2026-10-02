@@ -70,12 +70,27 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   references. The default is `required`; values never contain token material.
 - `storage`: dynamic storage defaults or static Azure Files NFS volumes.
 - `manager`, `materializer`, `cppAgent`: workload sizing and feature settings.
+- `cppAgent.s3AuthMode`: `trusted-upstream` for the default gateway-terminated
+  topology, or `sigv4` when the C++ Agent authenticates data-plane requests.
+  In `sigv4` mode, create the Secret named by `cppAgent.s3AuthSecretName` with
+  the keys named by `s3AccessKeyIdKey` and `s3SecretAccessKeyKey`. Values never
+  contain credential material. Set `cppAgent.s3AllowedPrefixes` to a
+  semicolon-separated list to confine reads and listings to object-key prefixes;
+  an empty value allows the whole configured bucket.
 - `nginx`: private and public application proxy configuration.
 - `tls`: cert-manager issuer and ingress hostname configuration.
 
 The default values render the cluster-private base deployment. The enterprise
 example enables Azure Files, workload identity, nginx, Entra authentication,
 and public TLS ingress.
+
+The C++ Agent defaults to `trusted-upstream` because the chart's supported
+topology places it behind the authenticated gateway. This mode trusts that
+gateway to authenticate requests. Do not expose the Agent service directly in
+this mode. For direct exposure, set `cppAgent.s3AuthMode=sigv4` and create the
+referenced credential Secret before deploying. The Agent refuses to start in
+`sigv4` mode when either credential is missing. Restrict the key with
+`cppAgent.s3AllowedPrefixes` when it should not read the whole bucket.
 
 For an existing fleet, first upgrade Manager with
 `agentAuth.mode=compatibility` and create the active token Secret. Roll Python

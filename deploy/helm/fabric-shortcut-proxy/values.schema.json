@@ -162,12 +162,26 @@
         { "$ref": "#/definitions/workload" },
         {
           "type": "object",
-          "required": ["autoscaling", "disruptionBudget", "materializeTimeoutMs"],
+          "required": [
+            "autoscaling",
+            "disruptionBudget",
+            "materializeTimeoutMs",
+            "s3AuthMode",
+            "s3AuthSecretName",
+            "s3AccessKeyIdKey",
+            "s3SecretAccessKeyKey",
+            "s3AllowedPrefixes"
+          ],
           "properties": {
             "materializeTimeoutMs": {
               "type": "string",
               "pattern": "^[1-9][0-9]*$"
-            }
+            },
+            "s3AuthMode": { "enum": ["sigv4", "trusted-upstream"] },
+            "s3AuthSecretName": { "type": "string", "minLength": 1 },
+            "s3AccessKeyIdKey": { "type": "string", "minLength": 1 },
+            "s3SecretAccessKeyKey": { "type": "string", "minLength": 1 },
+            "s3AllowedPrefixes": { "type": "string" }
           }
         }
       ]

@@ -271,14 +271,11 @@ def test_local_s3_and_azure_iceberg_reads_are_equivalent(tmp_path, monkeypatch):
         DataFile,
         DataFileContent,
         FileFormat,
-        ManifestEntry,
-        ManifestEntryStatus,
     )
     from pyiceberg.partitioning import PartitionField, PartitionSpec
     from pyiceberg.schema import Schema
     from pyiceberg.table import DataScan, FileScanTask
     from pyiceberg.transforms import IdentityTransform
-    from pyiceberg.typedef import Record
     from pyiceberg.types import LongType, NestedField, StringType
 
     from storage.objectstore_reader import reader_for_mount
@@ -590,23 +587,12 @@ def test_local_s3_and_azure_iceberg_reads_are_equivalent(tmp_path, monkeypatch):
             )
             assert [row["customer_id"] for row in read_rows(reader)] == [2]
 
-    equality_file = DataFile.from_args(
-        content=DataFileContent.EQUALITY_DELETES,
-        file_path="s3://source/curated/customers/equality-delete.parquet",
-        file_format=FileFormat.PARQUET,
-        partition=Record(),
-        record_count=1,
-        file_size_in_bytes=1,
-    )
-    equality_entry = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        snapshot_id=1,
-        sequence_number=1,
-        file_sequence_number=1,
-        data_file=equality_file,
-    )
+    # Reclassify real manifest records without depending on planner internals.
     with monkeypatch.context() as patch:
-        patch.setattr(DataScan, "scan_plan_helper", lambda _scan: [[equality_entry]])
+        patch.setattr(
+            DataFile, "content",
+            property(lambda _file: DataFileContent.EQUALITY_DELETES),
+        )
         with pytest.raises(ValueError, match="equality deletes"):
             list(remote_readers[0].read_batches(batch_rows=16))
 

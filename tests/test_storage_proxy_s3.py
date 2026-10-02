@@ -4,7 +4,8 @@ Phase 2 storage-proxy tests — native S3 mount backend.
 Covers the outbound-auth parser/validation, the ``S3Store`` mapped onto a fake
 boto3 S3 client (head / ranged get_stream / list / one-level list_dir / pagination
 / ``..`` confinement / read-only), and end-to-end passthrough through ``s3.router``
-with an ``s3`` mount. No boto3 or live backend is required — the client is a stub.
+with an ``s3`` mount. Only the credential-refresh test requires boto3; no live
+backend is required.
 """
 from __future__ import annotations
 
@@ -153,6 +154,7 @@ def test_legacy_process_auth_is_disabled_before_client_construction(monkeypatch)
 
 
 def test_assume_role_credentials_refresh_on_existing_client(monkeypatch):
+    pytest.importorskip("boto3", reason="credential refresh needs the s3proxy extra")
     from botocore import credentials
 
     calls = []

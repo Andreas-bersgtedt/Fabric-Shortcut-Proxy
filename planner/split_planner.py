@@ -34,6 +34,7 @@ _TEMPORAL_TYPES = {"date", "timestamp", "timestamptz"}
 def _pk_column(table: TableDef) -> str:
     """Return the split key column: the explicit key_column, else the first
     non-nullable integer column, else the first column."""
+    _require_explicit_split_key(table)
     if table.key_column:
         return table.key_column
     for col in table.schema:
@@ -43,9 +44,32 @@ def _pk_column(table: TableDef) -> str:
     return table.schema[0].name
 
 
+def _require_explicit_split_key(table: TableDef) -> str | None:
+    """Reject implicit split-key inference for sources requiring operator choice."""
+    caps = capabilities_for_db_url(config.effective_db_url(table.connection_id))
+    if not getattr(caps, "requires_explicit_split_key", False):
+        return None
+    key = (table.key_column or "").strip()
+    if not key:
+        raise ValueError(
+            f"Dialect {caps.flavor!r} requires an explicit key_column; "
+            "primary-key reflection is unavailable."
+        )
+    columns = table.schema or []
+    if columns and not any(key in {column.name, column.source_name} for column in columns):
+        raise ValueError(
+            f"Explicit key_column {key!r} is not present in the reflected source columns."
+        )
+    return key
+
+
 def _column_type(table: TableDef, column_name: str) -> str | None:
+    normalized_name = column_name.casefold()
     for col in table.schema:
-        if col.name == column_name:
+        if normalized_name in {
+            col.name.casefold(),
+            col.source_name.casefold(),
+        }:
             return col.iceberg_type
     return None
 
@@ -66,6 +90,9 @@ def _choose_strategy_key(table: TableDef, strategy: str) -> str:
       3) temporal key for date/auto
       4) fallback to legacy pk-column selection
     """
+    explicit_key = _require_explicit_split_key(table)
+    if explicit_key:
+        return explicit_key
     if table.key_column:
         return table.key_column
     if strategy in ("range", "auto"):
@@ -135,10 +162,11 @@ def _to_tick(value, kind: str) -> int:
     return int(dt.timestamp() * 1_000_000)
 
 
-def _from_tick(tick: int, kind: str):
+def _from_tick(tick: int, kind: str, *, timezone_aware: bool = True):
     if kind == "date":
         return date.fromordinal(tick)
-    return datetime.fromtimestamp(tick / 1_000_000, tz=timezone.utc)
+    value = datetime.fromtimestamp(tick / 1_000_000, tz=timezone.utc)
+    return value if timezone_aware else value.replace(tzinfo=None)
 
 
 def compute_temporal_ranges(lo, hi, n: int, kind: str) -> list[tuple[object, object]]:
@@ -147,7 +175,18 @@ def compute_temporal_ranges(lo, hi, n: int, kind: str) -> list[tuple[object, obj
     lo_t = _to_tick(lo_v, kind)
     hi_t = _to_tick(hi_v, kind)
     int_ranges = compute_key_ranges(lo_t, hi_t, n)
-    return [(_from_tick(a, kind), _from_tick(b, kind)) for a, b in int_ranges]
+    timezone_aware = (
+        kind == "date"
+        or lo_v.tzinfo is not None
+        or hi_v.tzinfo is not None
+    )
+    return [
+        (
+            _from_tick(a, kind, timezone_aware=timezone_aware),
+            _from_tick(b, kind, timezone_aware=timezone_aware),
+        )
+        for a, b in int_ranges
+    ]
 
 
 def _range_upper(hi, key_type: str):
@@ -156,7 +195,11 @@ def _range_upper(hi, key_type: str):
         return int(hi) + 1
     kind = "date" if key_type == "date" else "timestamp"
     v = _coerce_temporal(hi, kind)
-    return _from_tick(_to_tick(v, kind) + 1, kind)
+    return _from_tick(
+        _to_tick(v, kind) + 1,
+        kind,
+        timezone_aware=kind == "date" or v.tzinfo is not None,
+    )
 
 
 def _coerce_key(value, key_type: str):
@@ -347,7 +390,20 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
     """
     table: TableDef = split.table
     dialect = get_dialect(config.effective_db_url(table.connection_id))
+    _require_explicit_split_key(table)
     key_name = split.split_key_column or _pk_column(table)
+    caps = capabilities_for_db_url(config.effective_db_url(table.connection_id))
+    if caps.requires_explicit_split_key and key_name != table.key_column:
+        raise ValueError(
+            f"Dialect {caps.flavor!r} requires split_key_column to match the "
+            "explicit table key_column."
+        )
+    if caps.requires_explicit_split_key and table.schema and not any(
+        key_name in {column.name, column.source_name} for column in table.schema
+    ):
+        raise ValueError(
+            f"Explicit split key {key_name!r} is not present in the reflected source columns."
+        )
     key_type = _column_type(table, key_name)
     pk = dialect.quote(key_name)
     if any(
@@ -371,6 +427,13 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
     max_rows = table.effective_max_rows
 
     if split.key_lo is not None and split.key_hi is not None:
+        range_key_type = key_type
+        if (
+            key_type == "timestamptz"
+            and isinstance(split.key_lo, datetime)
+            and split.key_lo.tzinfo is None
+        ):
+            range_key_type = "timestamp"
         sql = dialect.build_select_range(
             projected=projected,
             source=source,
@@ -378,11 +441,12 @@ def build_split_query(split: SplitDescriptor) -> tuple[str, dict]:
             key_lo_param="key_lo",
             key_hi_param="key_hi",
             max_rows_param="max_rows",
+            key_type=range_key_type,
         )
         params = {
             **projection_params,
-            "key_lo": split.key_lo,
-            "key_hi": split.key_hi,
+            "key_lo": dialect.serialize_range_bound(split.key_lo, range_key_type),
+            "key_hi": dialect.serialize_range_bound(split.key_hi, range_key_type),
             "max_rows": max_rows,
         }
         return sql, params

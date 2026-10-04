@@ -35,12 +35,20 @@ At startup the proxy:
 1. Reads `DB_URL` and auto-selects the SQL **dialect** from its scheme.
 2. For every table, **reflects the source columns** and maps them to Iceberg
    types (or uses your explicit schema, if you provided one).
-3. Resolves the **split key column** (explicit `KEY_COLUMN`, else the primary key).
+3. Resolves the **split key column** (explicit `KEY_COLUMN`, else the primary key
+   where supported). Databricks and Impala require an explicit `key_column`
+   because PK reflection is unavailable; the planner rejects inferred keys.
 4. Materializes split Parquet files and serves them under canonical paths
   `db/<server>/<database>/<schema>/<object>/…`.
 
 > A **single table** needs only environment variables. **Multiple tables** are
 > cleanest via `config.tables.json` plus `config.connection.json` (no Python editing at all).
+
+See the [SQL source capability matrix](SOURCE_CAPABILITIES.md) for per-dialect
+status, missing-feature reasons/fallbacks/costs, the lack of bounded-memory
+streaming for synchronous sources, and opt-in live integration gates.
+Databricks, Redshift and Teradata are beta; Impala remains preview. Running a
+gate does not promote a source to supported status.
 
 ### 1.1 Using split config files (recommended for multi-table)
 
@@ -160,8 +168,8 @@ Auditor authorization, audit requirements, quotas, and rollback procedure.
 | **SQL Server** | `aioodbc` **+** OS *ODBC Driver 18 for SQL Server* | Python driver included; install the ODBC driver from Microsoft | ⚠️ OS driver required |
 | **PostgreSQL** | `asyncpg` | Manager bootstrap or `pip install -e '.[postgres]'` | ✅ Manager |
 | **Oracle** | `oracledb` | Manager bootstrap or `pip install -e '.[oracle]'` | ✅ Manager |
-| **Amazon Redshift** (preview) | `sqlalchemy-redshift` + `redshift-connector` | Manager bootstrap or `pip install -e '.[redshift]'` | ✅ Manager |
-| **Teradata** (preview) | `teradatasqlalchemy` | Manager bootstrap or `pip install -e '.[teradata]'` | ✅ Manager |
+| **Amazon Redshift** (beta) | `sqlalchemy-redshift` + `redshift-connector` | Manager bootstrap or `pip install -e '.[redshift]'` | ✅ Manager |
+| **Teradata** (beta) | `teradatasqlalchemy` | Manager bootstrap or `pip install -e '.[teradata]'` | ✅ Manager |
 | **Apache Impala** (preview) | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | ✅ Manager |
 
 ```powershell

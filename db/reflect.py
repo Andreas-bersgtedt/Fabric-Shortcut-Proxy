@@ -217,6 +217,20 @@ def build_url(
             query=q,
         )
 
+    if drivername.startswith("oracle"):
+        if "sid" in q and "service_name" in q:
+            raise ValueError("Oracle connection cannot specify both sid and service_name.")
+        if database and "sid" not in q:
+            q.setdefault("service_name", database)
+        return URL.create(
+            drivername,
+            username=username or None,
+            password=password or None,
+            host=host or None,
+            port=(port or _DEFAULT_PORTS.get(key)) if host else None,
+            query=q,
+        )
+
     return URL.create(
         drivername,
         username=username or None,

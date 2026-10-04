@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 
 from observability import querystats, trace
+from observability import tokenization as tokenization_metrics
 from monitor.router import router as monitor_router
 
 
@@ -21,9 +22,11 @@ from monitor.router import router as monitor_router
 def _isolate():
     querystats.reset()
     trace.reset()
+    tokenization_metrics.reset()
     yield
     querystats.reset()
     trace.reset()
+    tokenization_metrics.reset()
 
 
 @pytest.fixture
@@ -90,6 +93,22 @@ async def test_summary_shape(client):
     assert d["recent_queries"][0]["table"] == "Product"
     assert d["recent_queries"][0]["sql_ms"] == 30.0
     assert "auto_refresh" in d["refresh"]
+    assert d["totals"]["arrow_tokenization_fallbacks"] == 0
+
+
+async def test_summary_reports_arrow_fallbacks(client):
+    tokenization_metrics.record_arrow_fallback(
+        table="Events", column="email", flavor="impala", kind="deterministic_hash"
+    )
+    response = await client.get("/_monitor/api/summary")
+    summary = response.json()
+    assert summary["totals"]["arrow_tokenization_fallbacks"] == 1
+    assert tokenization_metrics.snapshot()["Events"] == {
+        "count": 1,
+        "columns": ["email"],
+        "flavors": ["impala"],
+        "kinds": ["deterministic_hash"],
+    }
 
 
 async def test_reset_clears(client):
@@ -168,4 +187,3 @@ def test_self_poll_suppressed_through_real_logging_handler():
     assert any("real work" in ln for ln in lines)                 # sanity: buffering works
     assert not any("/_monitor/api/logs" in ln for ln in lines)    # self-poll suppressed
     buf.clear()
-

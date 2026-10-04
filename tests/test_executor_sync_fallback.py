@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import time
 
 import pytest
 from sqlalchemy import text
@@ -43,3 +44,35 @@ async def test_execute_split_query_sync_fallback(sync_sqlite):
     sql = "SELECT id, v FROM t_sync WHERE id >= :lo ORDER BY id"
     rows = await executor.execute_split_query(sql, {"lo": 1}, split_index=0, max_retries=0)
     assert [r["id"] for r in rows] == [1, 2]
+
+
+async def test_sync_query_timeout_is_reported(sync_sqlite, monkeypatch):
+    class _Result:
+        def keys(self):
+            return ["value"]
+
+        def fetchall(self):
+            return [(1,)]
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args):
+            time.sleep(0.05)
+            return _Result()
+
+    class _Engine:
+        def connect(self):
+            return _Connection()
+
+    monkeypatch.setattr(config, "QUERY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(executor, "_sync_engine_for", lambda _connection: _Engine())
+
+    with pytest.raises(executor.SourceUnavailable, match="TimeoutError"):
+        await executor.execute_split_query(
+            "SELECT 1", {}, split_index=0, max_retries=0
+        )

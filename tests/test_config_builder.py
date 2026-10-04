@@ -272,7 +272,30 @@ def test_build_url_oracle_defaults_port():
                     username="u", password="p")
     s = url.render_as_string(hide_password=False)
     assert s.startswith("oracle+oracledb://u:")
-    assert "@orcl-host:1521/ORCLPDB1" in s
+    assert "@orcl-host:1521?service_name=ORCLPDB1" in s
+    assert url.query["service_name"] == "ORCLPDB1"
+    assert url.database is None
+
+
+def test_build_url_oracle_explicit_sid_is_preserved():
+    url = build_url(
+        dialect="oracle",
+        host="orcl-host",
+        database="ORCL",
+        query={"sid": "ORCL"},
+    )
+    assert url.database is None
+    assert url.query["sid"] == "ORCL"
+    assert "service_name" not in url.query
+
+
+def test_build_url_oracle_rejects_sid_and_service_name_together():
+    with pytest.raises(ValueError, match="both sid and service_name"):
+        build_url(
+            dialect="oracle",
+            host="orcl-host",
+            query={"sid": "ORCL", "service_name": "ORCLPDB1"},
+        )
 
 
 def test_build_url_databricks_with_http_path():
@@ -642,6 +665,31 @@ async def test_inspect_reflects_and_detects_key(app, db_path):
     assert "gadget_id" in t["integer_keys"]
     assert {c["name"] for c in t["columns"]} == {"gadget_id", "label", "price"}
     assert t["approx_rows"] == 3
+
+
+@pytest.mark.parametrize(
+    "db_url",
+    ["databricks://dbc.example", "impala://host:21050/analytics"],
+)
+async def test_key_metadata_does_not_infer_keys_without_pk_reflection(db_url):
+    from configbuilder.router import _split_key_metadata
+
+    class ReflectionMustNotRun:
+        async def primary_key(self, _source_table):
+            raise AssertionError("unavailable PK reflection must not be called")
+
+    columns = [
+        {"name": "id", "type": "long", "nullable": False},
+        {"name": "label", "type": "string", "nullable": True},
+    ]
+    result = await _split_key_metadata(
+        ReflectionMustNotRun(), db_url, "events", columns
+    )
+    assert result["primary_key"] == []
+    assert result["detected_key"] is None
+    assert result["integer_keys"] == ["id"]
+    assert result["requires_explicit_split_key"] is True
+    assert "primary-key reflection is unavailable" in result["split_key_guidance"]
 
 
 async def test_source_catalog_namespaces_database_and_storage(app, db_path, monkeypatch):

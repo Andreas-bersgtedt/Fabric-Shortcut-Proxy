@@ -110,8 +110,9 @@ Non-async dialects use a sync threadpool fallback. Databricks needs an explicit 
 because primary-key reflection is unavailable, and an `http_path` to a SQL warehouse. SQL
 Server accepts a SQL login, Windows (Integrated Security), or an Entra ID service principal —
 choose the method in the Config Builder or set it in the `DB_URL` (see
-[CONFIGURATION.md](../CONFIGURATION.md) §6). Redshift, Teradata, and Impala are preview
-sources; use pass-through columns or explicitly opt into Arrow fallback for tokenization.
+[CONFIGURATION.md](../CONFIGURATION.md) §6). Databricks, Redshift and Teradata are beta;
+Impala is preview. Use pass-through columns or explicitly opt into Arrow fallback where
+native tokenization is unavailable.
 
 ## 9.4 Path formats
 

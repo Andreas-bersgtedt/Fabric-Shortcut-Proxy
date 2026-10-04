@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added source capability reasons, fallbacks, costs, explicit Databricks/Impala
+  split-key selection, opt-in five-source live gates, and Arrow fallback
+  structured logging/monitoring for issue #94.
+- Classified Databricks, Redshift and Teradata as beta and added an executable
+  beta release gate that locks their conservative capability claims. Impala
+  remains preview; beta status does not claim live-source certification.
+- Recorded Oracle Free Lite 26ai (3 passing gates) and Apache Impala 4.5.0
+  (4 passing checks) local fixture evidence, the Oracle non-system tablespace
+  prerequisite, and pending cloud, fault-recovery, timeout, and scale checks.
+  Issue #94 remains open; no beta dialect was promoted to supported.
 - Prepared the independent C++ serving Agent `1.0.0-rc.1` candidate with
   mandatory built-binary Linux SigV4/parity tests, concurrent authentication
   benchmark evidence, and a scoped stable-release checklist.

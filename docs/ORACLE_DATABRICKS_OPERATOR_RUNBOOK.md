@@ -21,8 +21,13 @@ Current behavior is driven by the capability matrix in db/capabilities.py.
 - Databricks SQL Warehouse:
   - Execution mode: sync-threadpool fallback
   - Reflection: table/view listing supported
-  - PK reflection: may be unavailable depending on connector/catalog metadata
+  - PK reflection: unavailable; select `key_column` explicitly
   - Required connection field: http_path
+
+Neither source provides bounded-memory result streaming in the current sync
+driver path. Enabling streaming Parquet only batches encoding after the source
+result has been fetched. See [SOURCE_CAPABILITIES.md](SOURCE_CAPABILITIES.md)
+for the full five-dialect matrix and comprehensive opt-in live gates.
 
 ## 3. Prerequisites
 
@@ -46,7 +51,7 @@ Recommended environment variables:
 ```powershell
 $env:ORACLE_HOST = "oracle-host.company.net"
 $env:ORACLE_PORT = "1521"
-$env:ORACLE_DATABASE = "ORCLPDB1"
+$env:ORACLE_DATABASE = "ORCLPDB1" # Oracle service name (not SID)
 $env:ORACLE_USERNAME = "proxy_reader"
 $env:ORACLE_PASSWORD = "<secret>"
 ```
@@ -73,7 +78,7 @@ $env:DATABRICKS_SCHEMA = "default"
 ### 4.1 Oracle source DB_URL
 
 ```powershell
-$env:DB_URL = "oracle+oracledb://proxy_reader:<password>@oracle-host.company.net:1521/ORCLPDB1"
+$env:DB_URL = "oracle+oracledb://proxy_reader:<password>@oracle-host.company.net:1521/?service_name=ORCLPDB1"
 ```
 
 ### 4.2 Databricks source DB_URL
@@ -103,20 +108,26 @@ curl http://127.0.0.1:9000/readyz
 
 ## 6. Real-Environment Integration Smoke Tests
 
-Test file: tests/test_integration_oracle_databricks.py
+Minimal smoke file: `tests/test_integration_oracle_databricks.py`.
+Capability gate: `tests/test_integration_source_capabilities.py`.
 
 Behavior:
 - Tests are skipped unless required env vars are set.
 - Oracle test validates reflection + SELECT 1 FROM dual query path.
 - Databricks test validates reflection + SELECT 1 query path.
+- The capability gate additionally requires a dedicated table/view fixture and
+  explicit `FSP_RUN_SOURCE_CAPABILITY_GATES=1`; it covers Oracle, Databricks,
+  Redshift, Teradata, and Impala. Only Oracle/Databricks have the extra native
+  tokenization null/Unicode gate. See [SOURCE_CAPABILITIES.md](SOURCE_CAPABILITIES.md)
+  for every variable and the exact read/query costs.
 
 Run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_integration_oracle_databricks.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_integration_oracle_databricks.py tests/test_integration_source_capabilities.py -q
 ```
 
-Optional smoke table inspection:
+Optional minimal smoke table inspection:
 
 ```powershell
 $env:INTEGRATION_SMOKE_TABLE = "schema.table_name"
@@ -131,7 +142,9 @@ Tune cautiously:
 - Monitor SQL latency and timeouts under load.
 
 ### 7.2 Split key policy
-For environments where PK reflection is weak/inconsistent (especially Databricks catalogs), set `key_column` explicitly in table definitions.
+Set `key_column` explicitly for Databricks. The builder and runtime planner
+reject a missing or schema-unknown split key; they never substitute the first
+integer column.
 
 ### 7.3 Safe fallback expectations
 - Range planning falls back to modulo if key-bound capabilities are unavailable.

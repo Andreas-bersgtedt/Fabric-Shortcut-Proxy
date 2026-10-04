@@ -62,6 +62,13 @@ keys, and `modulo` for predictable full scans. `auto` selects an eligible strate
 Use `count` balance for skewed keys when the source supports the required planning
 query. A disabled table remains in configuration but is not resolved or published.
 
+Databricks and Impala do not use primary-key reflection to choose a split key.
+Their key selector remains blank after inspection; explicitly select a reflected
+column before applying the table. The server validates that the selection exists
+in the reflected source schema and refuses to plan from an inferred key.
+See the [source capability matrix](SOURCE_CAPABILITIES.md) for the affected
+dialects, fallback costs, and live-test requirements.
+
 Select **Apply table changes** after edits. A source, table, split, output-format,
 or schema change generally requires a Manager restart before every process uses
 the new configuration.

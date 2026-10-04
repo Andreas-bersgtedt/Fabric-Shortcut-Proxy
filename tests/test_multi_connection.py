@@ -276,6 +276,41 @@ def test_validate_rejects_table_on_undefined_connection_in_same_apply():
     assert errors and any("SyntheticData" in e and "not defined" in e for e in errors)
 
 
+@pytest.mark.parametrize(
+    "db_url",
+    ["databricks://dbc.example", "impala://h:21050/analytics"],
+)
+def test_table_updates_require_explicit_reflected_split_key(monkeypatch, db_url):
+    monkeypatch.setattr(config, "DB_URL", "sqlite+aiosqlite:///:memory:")
+    table = {
+        "name": "events",
+        "source_table": "events",
+        "schema": [
+            {"field_id": 1, "name": "id", "type": "long", "nullable": False}
+        ],
+    }
+    _, errors = config.validate_setting_updates({
+        "db_url": db_url,
+        "tables": [table],
+    })
+    assert any("requires an explicit key_column" in error for error in errors)
+
+    table["key_column"] = "missing"
+    _, errors = config.validate_setting_updates({
+        "db_url": db_url,
+        "tables": [table],
+    })
+    assert any("not present in the configured source schema" in error for error in errors)
+
+    table["key_column"] = "id"
+    clean, errors = config.validate_setting_updates({
+        "db_url": db_url,
+        "tables": [table],
+    })
+    assert not errors
+    assert clean["tables"][0]["key_column"] == "id"
+
+
 def test_validate_open_mirror_targets():
     clean, errors = config.validate_setting_updates({
         "open_mirror_targets": [{
@@ -399,4 +434,3 @@ def test_inline_db_creds_gate_optin(monkeypatch):
     # ...but a secret under a sensitive KEY name is still rejected even opted-in.
     with pytest.raises(ValueError):
         connection_config._gate_connection_dict({"password": "hunter2"})
-

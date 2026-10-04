@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0]: 2026-10-04
+
 ### Added
 
 - Added durable fixed or elastic generation membership for issue #96. Elastic
@@ -70,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Updated Lite, Enterprise, Manager, Agent, Helm chart, and default image
+  versions to 2.10.0.
 - Python SigV4 verification now uses the raw encoded request path, preserving
   encoded object-key characters such as `%2F` during signature checks.
 - Manager `get_snapshot` now reads verified durable publications. Task results are accepted
@@ -710,7 +714,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.6...HEAD
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.10.0...HEAD
+[2.10.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.6...2.10.0
 [2.9.6]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.5...2.9.6
 [2.9.5]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.4...2.9.5
 [2.9.4]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.3...2.9.4

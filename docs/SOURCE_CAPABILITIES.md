@@ -33,7 +33,7 @@ following checks pass:
 `tests/test_capabilities.py::test_issue_94_beta_release_gate_is_conservative`
 locks the status and safety constraints. Passing this gate permits a beta
 release. It does not satisfy the live evidence required to promote a dialect
-from `beta` to `supported`. no |
+from `beta` to `supported`.
 
 ## Important limits and fallbacks
 

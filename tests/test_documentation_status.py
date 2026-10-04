@@ -37,6 +37,26 @@ def test_unreleased_changelog_starts_at_package_release():
     ).read_text(encoding="utf-8")
     assert f"version: {version}" in chart
     assert f'appVersion: "{version}"' in chart
+    enterprise = tomllib.loads(
+        (ROOT / "enterprise" / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert enterprise["project"]["version"] == version
+    assert f"fabric-shortcut-proxy=={version}" in enterprise["project"][
+        "dependencies"
+    ]
+    enterprise_readme = (
+        ROOT / "enterprise" / "README.md"
+    ).read_text(encoding="utf-8")
+    assert f"Enterprise {version} requires" in enterprise_readme
+    expected_runtime_versions = {
+        "main.py": f'version="{version}"',
+        "enterprise/agent_link.py": f'_APP_VERSION = "{version}"',
+        "enterprise/control/admin.py": f'return "{version}"',
+        "enterprise/control/manager_app.py": f'version="{version}"',
+        "configbuilder/router.py": f'return "{version}"',
+    }
+    for relative, expected in expected_runtime_versions.items():
+        assert expected in (ROOT / relative).read_text(encoding="utf-8")
 
 
 def test_current_diagrams_do_not_hard_code_fsp_release_version():

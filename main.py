@@ -765,7 +765,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Fabric Shortcut Proxy (POC)",
     description="Virtual Iceberg-over-S3 proxy that serves SQL pushdown as Parquet",
-    version="2.9.6",
+    version="2.10.0",
     lifespan=lifespan,
 )
 

@@ -183,20 +183,34 @@ def _summarize(results: list[TargetResult]) -> dict:
     }
 
 
-async def run_cycle(*, dry_run: bool = False) -> list[TargetResult]:
+async def run_cycle(
+    *,
+    dry_run: bool = False,
+    leadership_check=None,
+) -> list[TargetResult]:
     from open_mirror.config import load_targets
 
-    results = await publish_targets_with_preflight(load_targets(), dry_run=dry_run)
+    results = await publish_targets_with_preflight(
+        load_targets(),
+        dry_run=dry_run,
+        leadership_check=leadership_check,
+    )
     log.info("open_mirror_cycle", dry_run=dry_run, **_summarize(results))
     return results
 
 
 async def publish_targets_with_preflight(
-    targets: list[OpenMirrorTarget], *, dry_run: bool = False, mode: str | None = None
+    targets: list[OpenMirrorTarget],
+    *,
+    dry_run: bool = False,
+    mode: str | None = None,
+    leadership_check=None,
 ) -> list[TargetResult]:
     """Preflight and publish targets once; shared by scheduler and publish-now."""
     results: list[TargetResult] = []
     for target in targets:
+        if leadership_check is not None:
+            leadership_check()
         preflight = await ensure_replication_running(target)
         if not preflight.ready:
             result = TargetResult(
@@ -205,7 +219,12 @@ async def publish_targets_with_preflight(
                 replication_action="replication_unavailable",
             )
         else:
-            result = await publish_target(target, dry_run=dry_run, mode=mode)
+            result = await publish_target(
+                target,
+                dry_run=dry_run,
+                mode=mode,
+                leadership_check=leadership_check,
+            )
             result.replication_status = preflight.status
             result.replication_action = preflight.action
         results.append(result)
@@ -213,12 +232,18 @@ async def publish_targets_with_preflight(
 
 
 class OpenMirrorScheduler:
-    def __init__(self, interval_seconds: int | None = None) -> None:
+    def __init__(
+        self,
+        interval_seconds: int | None = None,
+        *,
+        leadership_check=None,
+    ) -> None:
         self.interval = int(
             interval_seconds if interval_seconds is not None
             else getattr(config, "OPEN_MIRROR_INTERVAL_SECONDS", 300)
         )
         self._task: asyncio.Task | None = None
+        self._leadership_check = leadership_check
 
     async def _loop(self) -> None:
         log.info(
@@ -231,7 +256,9 @@ class OpenMirrorScheduler:
         try:
             while True:
                 try:
-                    await run_cycle()
+                    if self._leadership_check is not None:
+                        self._leadership_check()
+                    await run_cycle(leadership_check=self._leadership_check)
                 except asyncio.CancelledError:
                     raise
                 except Exception:

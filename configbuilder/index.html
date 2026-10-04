@@ -5002,7 +5002,7 @@ async function restoreEncryptedBackup(){
     const detail=await response.json().catch(()=>({}));
     if(!response.ok) throw new Error(detail.error||`Restore failed (${response.status})`);
     $('restorePassword').value=''; $('restoreFile').value=''; $('restoreConfirm').checked=false;
-    liveFlash($('restoreStatus'),`Restore complete: ${detail.config_files} config files, ${detail.connections} connections, ${detail.secrets} secrets, ${detail.access_keys} access keys, and ${detail.mirror_state_files} mirror state files. Restart the Manager to apply it.`,true);
+    liveFlash($('restoreStatus'),`Restore complete: ${detail.config_files} config files, ${detail.connections} connections, ${detail.secrets} secrets, ${detail.access_keys} access keys, ${detail.mirror_state_files} mirror state files, and ${detail.manager_ha_state_files||0} Manager HA state files. Restart the Manager to apply it.`,true);
   }catch(error){ liveFlash($('restoreStatus'),error.message||String(error)); }
   finally{ button.disabled=false; }
 }

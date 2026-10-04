@@ -22,6 +22,7 @@ import pathlib
 import secrets
 import shlex
 import sys
+import time
 
 from fastapi import FastAPI, Request
 
@@ -136,13 +137,30 @@ def create_manager_app() -> FastAPI:
     )
     from runtime.artifact_store import get_default_store
 
-    queue = DurableWorkQueue(get_default_store())
+    store = get_default_store()
+    lease = None
+    if config.MANAGER_HA:
+        from enterprise.control.lease import LeaderLease
+        lease = LeaderLease(store, ttl_ms=config.LEADER_LEASE_TTL_MS)
+
+    def _require_active_leader() -> None:
+        if lease is not None:
+            lease.validate()
+            if not getattr(app.state, "primary_ready", False):
+                from enterprise.control.lease import StaleLeaderError
+                raise StaleLeaderError("Manager primary activation is not complete")
+
+    queue = DurableWorkQueue(
+        store,
+        leadership_check=lease.validate if lease is not None else None,
+    )
     snapshot_provider = DurableSnapshotProvider(queue)
     service = ControlService(
         registry,
         tables=[t.name for t in config.TABLES],
         snapshot_provider=snapshot_provider,
         work_queue=queue,
+        leadership_check=_require_active_leader,
     )
     from enterprise.control import materialize_service
 
@@ -155,16 +173,48 @@ def create_manager_app() -> FastAPI:
         gateway = Gateway(registry)
 
     # Phase 5 HA: a leader lease over the shared artifact store. Only the primary
-    # supervises Agents (+ serves the gateway, which naturally 503s on a standby
-    # because no Agents register to it). Default off => always primary.
-    lease = None
-    if config.MANAGER_HA:
-        from enterprise.control.lease import LeaderLease
-        from runtime.artifact_store import build_store
-        store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
-        lease = LeaderLease(store, ttl_ms=config.LEADER_LEASE_TTL_MS)
+    # supervises Agents and mutates durable control-plane state.
     manager_owner = lease.owner_id if lease is not None else f"manager:{os.getpid()}"
     scheduler: TaskScheduler | None = None
+    om_scheduler = None
+
+    def _record_rolling_event(event: str, agent: str, healthy: bool) -> None:
+        if lease is None:
+            return
+        current = lease.read_state("rolling_restart") or {}
+        completed = list(current.get("completed_agents") or [])
+        if event == "restarted" and agent and agent not in completed:
+            completed.append(agent)
+        lease.mutate_state(
+            "rolling_restart",
+            {
+                "status": event,
+                "agent": agent,
+                "healthy": bool(healthy),
+                "completed_agents": completed,
+                "manager_owner": lease.owner_id,
+                "manager_fence": lease.fence,
+                "updated_at_ms": int(time.time() * 1000),
+            },
+        )
+
+    def _recover_rolling_state() -> None:
+        if lease is None:
+            return
+        current = lease.read_state("rolling_restart")
+        if isinstance(current, dict) and current.get("status") in {
+            "restarting",
+            "restarted",
+        }:
+            recovered = dict(current)
+            recovered.update({
+                "status": "failed",
+                "reason": "leadership_changed",
+                "manager_owner": lease.owner_id,
+                "manager_fence": lease.fence,
+                "updated_at_ms": int(time.time() * 1000),
+            })
+            lease.mutate_state("rolling_restart", recovered)
 
     async def _start_scheduler(manager_fence: int) -> None:
         nonlocal scheduler
@@ -203,6 +253,27 @@ def create_manager_app() -> FastAPI:
         for s in supervisors:
             await s.stop()
 
+    async def _start_open_mirror() -> None:
+        nonlocal om_scheduler
+        if not config.OPEN_MIRROR_PUBLISH or om_scheduler is not None:
+            return
+        from open_mirror.scheduler import OpenMirrorScheduler
+        om_scheduler = OpenMirrorScheduler(leadership_check=_require_active_leader)
+        om_scheduler.start()
+        app.state.open_mirror_scheduler = om_scheduler
+        log.info(
+            "open_mirror_publish_enabled",
+            interval_seconds=config.OPEN_MIRROR_INTERVAL_SECONDS,
+            mode=config.OPEN_MIRROR_MODE,
+        )
+
+    async def _stop_open_mirror() -> None:
+        nonlocal om_scheduler
+        if om_scheduler is not None:
+            await om_scheduler.stop()
+            om_scheduler = None
+            app.state.open_mirror_scheduler = None
+
     async def _leadership_loop():
         """Acquire/renew the lease; supervise only while primary (Phase 5 HA)."""
         supervising = False
@@ -215,22 +286,57 @@ def create_manager_app() -> FastAPI:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("ha_lease_error", error=str(exc))
                     leader = False
-                app.state.is_leader = leader
+                try:
+                    await asyncio.to_thread(
+                        lease.publish_presence,
+                        "primary" if leader else "standby",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ha_presence_write_error", error=str(exc))
                 if leader and not supervising:
+                    app.state.is_leader = False
+                    app.state.primary_ready = False
                     log.info("ha_became_primary", owner_id=lease.owner_id)
-                    await _start_scheduler(lease.fence)
-                    await _start_all()
-                    supervising = True
+                    try:
+                        await asyncio.to_thread(
+                            registry.attach_durable_state,
+                            lease,
+                        )
+                        await asyncio.to_thread(_recover_rolling_state)
+                        await _start_scheduler(lease.fence)
+                        await _start_all()
+                        supervising = True
+                        app.state.primary_ready = True
+                        app.state.is_leader = True
+                        await _start_open_mirror()
+                    except Exception:
+                        log.exception("ha_primary_activation_failed")
+                        await _stop_open_mirror()
+                        registry.detach_durable_state()
+                        lease.release()
+                        app.state.is_leader = False
+                        app.state.primary_ready = False
                 elif not leader and supervising:
+                    app.state.is_leader = False
+                    app.state.primary_ready = False
                     log.warning("ha_stepped_down_to_standby", owner_id=lease.owner_id)
+                    await _stop_open_mirror()
                     await _stop_scheduler()
                     await _stop_all()
+                    registry.detach_durable_state()
                     supervising = False
+                elif not leader:
+                    app.state.is_leader = False
+                    app.state.primary_ready = False
                 await asyncio.sleep(renew_s)
         except asyncio.CancelledError:
             if supervising:
+                app.state.is_leader = False
+                app.state.primary_ready = False
+                await _stop_open_mirror()
                 await _stop_scheduler()
                 await _stop_all()
+                registry.detach_durable_state()
             raise
 
     @contextlib.asynccontextmanager
@@ -257,35 +363,28 @@ def create_manager_app() -> FastAPI:
         ha_task = None
         if lease is not None:
             app.state.is_leader = False
+            app.state.primary_ready = False
             log.info("ha_standby_started", ttl_ms=config.LEADER_LEASE_TTL_MS)
             ha_task = asyncio.create_task(_leadership_loop(), name="ha-leadership")
         else:
             app.state.is_leader = True
+            app.state.primary_ready = True
             await _start_scheduler(1)
             if supervisors:
                 await _start_all()
-        # Open Mirroring publish loop (opt-in): push source tables into the Fabric
-        # landing zone on a schedule. Fails soft per target/table.
-        om_scheduler = None
-        if config.OPEN_MIRROR_PUBLISH:
-            from open_mirror.scheduler import OpenMirrorScheduler
-            om_scheduler = OpenMirrorScheduler()
-            om_scheduler.start()
-            log.info("open_mirror_publish_enabled",
-                     interval_seconds=config.OPEN_MIRROR_INTERVAL_SECONDS,
-                     mode=config.OPEN_MIRROR_MODE)
+            await _start_open_mirror()
         app.state.open_mirror_scheduler = om_scheduler
         yield
         log.info("manager_shutdown")
-        if om_scheduler is not None:
-            await om_scheduler.stop()
         if ha_task is not None:
             ha_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ha_task
             if lease is not None:
                 lease.release()
+                lease.remove_presence()
         else:
+            await _stop_open_mirror()
             await _stop_scheduler()
             if supervisors:
                 await _stop_all()
@@ -299,6 +398,8 @@ def create_manager_app() -> FastAPI:
     app.state.work_queue = queue
     app.state.work_scheduler = scheduler
     app.state.is_leader = not config.MANAGER_HA
+    app.state.primary_ready = not config.MANAGER_HA
+    app.state.open_mirror_scheduler = None
     # Standalone HTTP Basic gate over the operator surface. Health probes remain
     # open; authenticated Agent credentials are sent for internal control calls.
     app.add_middleware(AuthorizationMiddleware)
@@ -308,9 +409,12 @@ def create_manager_app() -> FastAPI:
 
     @app.get("/healthz")
     async def healthz():
-        return {"status": "ok", "role": "manager",
+        ha_status = await asyncio.to_thread(lease.status) if lease is not None else None
+        return {"status": "degraded" if ha_status and ha_status["degraded"] else "ok",
+                "role": "manager",
                 "is_leader": getattr(app.state, "is_leader", True),
                 "manager_ha": config.MANAGER_HA,
+                "ha": ha_status,
                 "agents_supervised": len(supervisors), "agents_registered": registry.count()}
 
     @app.get("/metrics")
@@ -337,13 +441,17 @@ def create_manager_app() -> FastAPI:
         )
         queue_status = None
         queue_ready = True
+        ha_status = await asyncio.to_thread(lease.status) if lease is not None else None
+        ha_ready = not ha_status or (
+            ha_status["available"] and not ha_status["expired"]
+        )
         if config.MATERIALIZATION_WORK_QUEUE:
             try:
                 queue_status = await asyncio.to_thread(queue.status)
             except Exception:
                 queue_ready = False
                 log.exception("work_queue_readiness_failed")
-        ready = ((not leader) or managed_agents_ready) and queue_ready
+        ready = ((not leader) or managed_agents_ready) and queue_ready and ha_ready
         return JSONResponse(
             status_code=200 if ready else 503,
             content={
@@ -353,6 +461,7 @@ def create_manager_app() -> FastAPI:
                 "agents_total": len(supervisors),
                 "agents_registered": registry.count(),
                 "work_queue": queue_status,
+                "ha": ha_status,
                 "supervision_mode": config.MANAGER_SUPERVISION_MODE,
                 "crash_looped": looped,
                 "restarts": {s.name: s.restart_count for s in supervisors},
@@ -389,6 +498,14 @@ def create_manager_app() -> FastAPI:
             return JSONResponse(
                 status_code=409,
                 content={"ok": False, "error": "Manager is not primary"},
+            )
+        try:
+            _require_active_leader()
+        except Exception as exc:
+            return JSONResponse(
+                status_code=503,
+                headers={"Retry-After": "1"},
+                content={"ok": False, "error": "Manager is not primary", "detail": str(exc)},
             )
         try:
             body = await request.json()
@@ -443,9 +560,17 @@ def create_manager_app() -> FastAPI:
         from fastapi.responses import JSONResponse
         from observability.audit import record_queue_operation
 
-        changed = await asyncio.to_thread(
-            queue.cancel_request, request_id, "operator_cancelled"
-        )
+        try:
+            await asyncio.to_thread(_require_active_leader)
+            changed = await asyncio.to_thread(
+                queue.cancel_request, request_id, "operator_cancelled"
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=503,
+                headers={"Retry-After": "1"},
+                content={"ok": False, "error": "Manager is not primary", "detail": str(exc)},
+            )
         user = getattr(request.state, "user", None)
         record_queue_operation(
             request_id=request.headers.get("x-request-id", "")[:128]
@@ -471,7 +596,15 @@ def create_manager_app() -> FastAPI:
         from fastapi.responses import JSONResponse
         from observability.audit import record_queue_operation
 
-        changed = await asyncio.to_thread(queue.retry_task, task_id)
+        try:
+            await asyncio.to_thread(_require_active_leader)
+            changed = await asyncio.to_thread(queue.retry_task, task_id)
+        except Exception as exc:
+            return JSONResponse(
+                status_code=503,
+                headers={"Retry-After": "1"},
+                content={"ok": False, "error": "Manager is not primary", "detail": str(exc)},
+            )
         user = getattr(request.state, "user", None)
         record_queue_operation(
             request_id=request.headers.get("x-request-id", "")[:128]
@@ -501,6 +634,7 @@ def create_manager_app() -> FastAPI:
         target = int(target)
         if target < 1:
             raise ValueError("count must be >= 1")
+        _require_active_leader()
         leader = getattr(app.state, "is_leader", True)
         async with _scale_lock:
             cur = len(supervisors)
@@ -558,6 +692,8 @@ def create_manager_app() -> FastAPI:
         app.include_router(create_admin_router(
             registry, supervisors, gateway=gateway, token=config.ADMIN_TOKEN,
             scale=_scale_fleet, shutdown=_shutdown_manager,
+            leadership_check=_require_active_leader,
+            rolling_event=_record_rolling_event,
         ))
 
     # Phase 5.1: config builder (read current config + push changes) on the Manager,

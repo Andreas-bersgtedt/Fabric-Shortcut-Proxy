@@ -302,10 +302,12 @@ mode in the config builder (Global Settings) or `config.performance.json`.
 
 ## 8.9 High availability
 
-Enable Manager HA with `-Ha` (leader lease over the shared artifact store). Only the primary
-Manager supervises agents; a standby is a warm spare and reports as ready. The gateway on a
-standby naturally returns 503 because no agents register to it. Roll agents with health-gated
-restarts (`rolling_restart_health_timeout`).
+Enable Manager HA with `-Ha` to use fenced active/passive failover over the
+shared artifact store. Only a fully recovered primary supervises agents and
+accepts mutations. A standby reports its presence and returns retryable `503`
+responses until takeover. Health reports the owner, fence, lease age, remaining
+TTL and healthy standby count. Roll agents with health-gated restarts
+(`rolling_restart_health_timeout`).
 
 ### Durable materialization queue
 

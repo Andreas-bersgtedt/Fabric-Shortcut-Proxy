@@ -33,8 +33,11 @@ Design notes:
 from __future__ import annotations
 
 import abc
+import contextlib
+import json
 import os
 import threading
+import time
 from dataclasses import dataclass
 
 
@@ -116,6 +119,40 @@ class ArtifactStore(abc.ABC):
     def delete(self, key: str) -> bool:
         """Delete ``key``. Returns True if it existed, False otherwise."""
 
+    def compare_and_swap(
+        self,
+        key: str,
+        expected: bytes | None,
+        data: bytes,
+    ) -> bool:
+        """Atomically replace ``key`` when its complete value matches ``expected``.
+
+        ``expected=None`` means the key must not exist. Writable shared stores
+        used for Manager HA must override this method.
+        """
+        raise NotImplementedError("artifact store does not support compare-and-swap")
+
+    def fenced_put(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        key: str,
+        data: bytes,
+    ) -> bool:
+        """Write only while ``fence_key`` names the live owner and fence."""
+        raise NotImplementedError("artifact store does not support fenced writes")
+
+    def fenced_delete(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        key: str,
+    ) -> bool | None:
+        """Delete only while ``fence_key`` names the live owner and fence."""
+        raise NotImplementedError("artifact store does not support fenced deletes")
+
     def get_stream(self, key: str, *, offset: int = 0, length: int | None = None,
                    chunk_size: int = _STREAM_CHUNK):
         """Yield the object's bytes in chunks (optionally a ``[offset, +length)`` slice).
@@ -196,6 +233,64 @@ class MemoryStore(ArtifactStore):
         with self._lock:
             return self._data.pop(k, None) is not None
 
+    def compare_and_swap(
+        self,
+        key: str,
+        expected: bytes | None,
+        data: bytes,
+    ) -> bool:
+        k = _normalize_key(key)
+        value = bytes(data)
+        with self._lock:
+            current = self._data.get(k)
+            if current != expected:
+                return False
+            self._data[k] = value
+            return True
+
+    def _fence_matches(self, fence_key: str, owner_id: str, fence: int) -> bool:
+        raw = self._data.get(_normalize_key(fence_key))
+        if raw is None:
+            return False
+        try:
+            record = json.loads(raw.decode("utf-8"))
+            renew_ms = int(record.get("renew_ms", 0))
+            ttl_ms = int(record.get("ttl_ms", 0))
+            return (
+                record.get("owner_id") == owner_id
+                and int(record.get("fence", -1)) == int(fence)
+                and renew_ms > 0
+                and int(time.time() * 1000) - renew_ms <= ttl_ms
+            )
+        except (UnicodeDecodeError, ValueError, TypeError):
+            return False
+
+    def fenced_put(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        key: str,
+        data: bytes,
+    ) -> bool:
+        with self._lock:
+            if not self._fence_matches(fence_key, owner_id, fence):
+                return False
+            self._data[_normalize_key(key)] = bytes(data)
+            return True
+
+    def fenced_delete(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        key: str,
+    ) -> bool | None:
+        with self._lock:
+            if not self._fence_matches(fence_key, owner_id, fence):
+                return None
+            return self._data.pop(_normalize_key(key), None) is not None
+
 
 class LocalDirStore(ArtifactStore):
     """Filesystem‑backed store rooted at ``root`` (a dir, NFS/SMB mount, etc.).
@@ -230,6 +325,108 @@ class LocalDirStore(ArtifactStore):
         os.replace(tmp, path)  # atomic on Windows + POSIX
         return ObjectStat(_normalize_key(key), len(data))
 
+    @contextlib.contextmanager
+    def _cas_lock(self):
+        os.makedirs(self.root, exist_ok=True)
+        lock_path = os.path.join(self.root, ".fsp-cas.lock")
+        handle = open(lock_path, "a+b")
+        if os.path.getsize(lock_path) == 0:
+            handle.write(b"\0")
+            handle.flush()
+        deadline = time.monotonic() + 5.0
+        locked = False
+        try:
+            while not locked:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                except (BlockingIOError, OSError):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("timed out acquiring artifact store lock")
+                    time.sleep(0.01)
+            yield
+        finally:
+            if locked:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
+    def compare_and_swap(
+        self,
+        key: str,
+        expected: bytes | None,
+        data: bytes,
+    ) -> bool:
+        path = self._path(key)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with self._cas_lock():
+            try:
+                with open(path, "rb") as fh:
+                    current = fh.read()
+            except FileNotFoundError:
+                current = None
+            if current != expected:
+                return False
+            self.put(key, data)
+            return True
+
+    def _fence_matches(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+    ) -> bool:
+        try:
+            with open(self._path(fence_key), "rb") as handle:
+                record = json.loads(handle.read().decode("utf-8"))
+            renew_ms = int(record.get("renew_ms", 0))
+            ttl_ms = int(record.get("ttl_ms", 0))
+            return (
+                record.get("owner_id") == owner_id
+                and int(record.get("fence", -1)) == int(fence)
+                and renew_ms > 0
+                and int(time.time() * 1000) - renew_ms <= ttl_ms
+            )
+        except (FileNotFoundError, UnicodeDecodeError, ValueError, TypeError):
+            return False
+
+    def fenced_put(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        key: str,
+        data: bytes,
+    ) -> bool:
+        with self._cas_lock():
+            if not self._fence_matches(fence_key, owner_id, fence):
+                return False
+            self.put(key, data)
+            return True
+
+    def fenced_delete(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        key: str,
+    ) -> bool | None:
+        with self._cas_lock():
+            if not self._fence_matches(fence_key, owner_id, fence):
+                return None
+            return self.delete(key)
+
     def get(self, key: str, *, offset: int = 0, length: int | None = None) -> bytes:
         if offset < 0:
             raise ValueError("offset must be >= 0 (use head() to derive suffix ranges)")
@@ -260,7 +457,7 @@ class LocalDirStore(ArtifactStore):
             return out
         for dirpath, _dirs, files in os.walk(self.root):
             for name in files:
-                if name.endswith(".tmp"):
+                if name.endswith(".tmp") or name == ".fsp-cas.lock":
                     continue  # in-flight write
                 full = os.path.join(dirpath, name)
                 rel = os.path.relpath(full, self.root).replace(os.sep, "/")
@@ -289,7 +486,7 @@ class LocalDirStore(ArtifactStore):
                         if e.is_dir():
                             dirs.append((e.name, True, 0, None))
                         elif e.is_file():
-                            if e.name.endswith(".tmp"):
+                            if e.name.endswith(".tmp") or e.name == ".fsp-cas.lock":
                                 continue
                             st = e.stat()
                             files.append((e.name, False, st.st_size, int(st.st_mtime * 1000)))

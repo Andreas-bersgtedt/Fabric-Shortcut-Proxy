@@ -163,6 +163,8 @@ def create_admin_router(
     token: str = "",
     scale=None,
     shutdown=None,
+    leadership_check=None,
+    rolling_event=None,
 ) -> APIRouter:
     """Build the ``/_manager`` console + admin‑API router."""
     router = APIRouter()
@@ -181,6 +183,18 @@ def create_admin_router(
         supplied = request.headers.get("x-admin-token") or request.query_params.get("token") or ""
         if supplied != token:
             raise HTTPException(status_code=401, detail="admin token required")
+
+    def _check_leader() -> None:
+        if leadership_check is None:
+            return
+        try:
+            leadership_check()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Manager is not primary: {exc}",
+                headers={"Retry-After": "1"},
+            ) from exc
 
     async def _respawn(sup: AgentSupervisor) -> None:
         await sup.stop()
@@ -263,6 +277,7 @@ def create_admin_router(
     @router.post("/_manager/api/agents/{name}/{action}")
     async def agent_action(name: str, action: str, request: Request) -> dict:
         _check_token(request)
+        _check_leader()
         action = action.lower()
         if action not in _ACTIONS:
             raise HTTPException(status_code=400, detail=f"unknown action {action!r}; expected one of {_ACTIONS}")
@@ -303,6 +318,7 @@ def create_admin_router(
     async def forget_agent(name: str, request: Request) -> dict:
         """Remove a dead external Agent record from the Manager registry."""
         _check_token(request)
+        _check_leader()
         rec = registry.get(name)
         if rec is None:
             raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
@@ -315,6 +331,7 @@ def create_admin_router(
     @router.post("/_manager/api/rolling-restart")
     async def rolling_restart_action(request: Request) -> dict:
         _check_token(request)
+        _check_leader()
         if config.MANAGER_SUPERVISION_MODE == "external":
             raise HTTPException(
                 status_code=409,
@@ -328,6 +345,7 @@ def create_admin_router(
             is_healthy=registry.is_alive,
             health_timeout=config.ROLLING_RESTART_HEALTH_TIMEOUT,
             before_stop=registry.remove,
+            on_event=rolling_event,
         ))
         log.info("admin_rolling_restart_started", agents=len(supervisors))
         return {"ok": True, "action": "rolling-restart", "agents": len(supervisors),
@@ -337,6 +355,7 @@ def create_admin_router(
         @router.post("/_manager/api/scale")
         async def scale_action(request: Request) -> dict:
             _check_token(request)
+            _check_leader()
             if config.MANAGER_SUPERVISION_MODE == "external":
                 raise HTTPException(
                     status_code=409,
@@ -360,6 +379,7 @@ def create_admin_router(
         @router.post("/_manager/api/shutdown")
         async def shutdown_action(request: Request) -> dict:
             _check_token(request)
+            _check_leader()
             log.info("admin_shutdown_requested")
             return await shutdown()
 

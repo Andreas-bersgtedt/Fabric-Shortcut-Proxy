@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added fenced active/passive Manager HA for issue #95. Lease and Manager-state
+  writes use shared-store compare-and-swap; Agent leases, pending commands,
+  drain state and rolling-restart progress survive takeover.
+- Added Manager presence and degraded HA reporting, retryable standby control
+  responses, Manager fence fields on durable queue records, cross-process
+  election tests, and encrypted backup/restore for Manager HA state.
 - Added source capability reasons, fallbacks, costs, explicit Databricks/Impala
   split-key selection, opt-in five-source live gates, and Arrow fallback
   structured logging/monitoring for issue #94.

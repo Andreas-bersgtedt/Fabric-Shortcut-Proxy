@@ -198,8 +198,9 @@ flowchart TB
 - **Supervisor** spawns agents, watches their health and memory, and restarts on crash.
 - **Gateway** round-robins ready agents behind a single Fabric-facing endpoint; agents
   are interchangeable because they serve from the shared artifact store.
-- **Leader lease** provides optional HA: only the primary Manager supervises agents; a
-  standby is a warm spare.
+- **Leader lease** provides fenced active/passive HA over an atomic shared
+  directory. Only a fully recovered primary accepts mutations; standbys report
+  presence and return retryable responses until takeover.
 - **Retention GC** prunes orphaned Parquet splits on a timer.
 
 For production you can also front the agents with an external L7 load balancer instead of

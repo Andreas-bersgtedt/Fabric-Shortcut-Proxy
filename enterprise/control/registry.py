@@ -16,6 +16,7 @@ import time
 import uuid
 import ipaddress
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from enterprise.control.contract import (
     CONTRACT_VERSION,
@@ -26,6 +27,9 @@ from enterprise.control.contract import (
     ControlCommand,
     contract_compatible,
 )
+
+if TYPE_CHECKING:
+    from enterprise.control.lease import LeaderLease
 
 
 def _now() -> float:
@@ -93,6 +97,104 @@ class Registry:
         self._agents: dict[str, AgentRecord] = {}
         self._lock = threading.Lock()
         self._allowed_hosts = tuple(x.strip().lower() for x in (allowed_hosts or ()) if x.strip())
+        self._durable_lease: LeaderLease | None = None
+
+    def _snapshot_locked(self) -> dict:
+        now = _now()
+        agents = []
+        for record in sorted(self._agents.values(), key=lambda item: item.agent_id):
+            agents.append({
+                "agent_id": record.agent_id,
+                "lease_id": record.lease_id,
+                "host": record.host,
+                "port": record.port,
+                "os": record.os,
+                "version": record.version,
+                "capacity_hint": record.capacity_hint,
+                "registered_age_ms": max(0, int((now - record.registered_at) * 1000)),
+                "last_seen_age_ms": max(0, int((now - record.last_seen) * 1000)),
+                "advertise_host": record.advertise_host,
+                "health": record.health.to_dict(),
+                "serving_tables": list(record.serving_tables),
+                "epochs": dict(record.epochs),
+                "capabilities": list(record.capabilities),
+                "shard_index": record.shard_index,
+                "commands": [command.to_dict() for command in record.commands],
+                "draining": record.draining,
+            })
+        return {"version": 1, "agents": agents}
+
+    def _restore_locked(self, snapshot: dict) -> None:
+        if not isinstance(snapshot, dict) or snapshot.get("version") != 1:
+            raise ValueError("unsupported durable registry snapshot")
+        records = snapshot.get("agents")
+        if not isinstance(records, list):
+            raise ValueError("durable registry snapshot agents must be a list")
+        now = _now()
+        restored: dict[str, AgentRecord] = {}
+        for value in records:
+            if not isinstance(value, dict):
+                raise ValueError("durable registry agent record must be an object")
+            agent_id = str(value["agent_id"])
+            restored[agent_id] = AgentRecord(
+                agent_id=agent_id,
+                lease_id=str(value["lease_id"]),
+                host=str(value["host"]),
+                port=int(value["port"]),
+                os=str(value.get("os", "")),
+                version=str(value.get("version", "")),
+                capacity_hint=int(value.get("capacity_hint", 0)),
+                registered_at=now - max(0, int(value.get("registered_age_ms", 0))) / 1000,
+                last_seen=now - max(0, int(value.get("last_seen_age_ms", 0))) / 1000,
+                advertise_host=str(value.get("advertise_host", "")),
+                health=AgentHealth.from_dict(value.get("health") or {}),
+                serving_tables=[str(item) for item in value.get("serving_tables", [])],
+                epochs={
+                    str(key): int(epoch)
+                    for key, epoch in (value.get("epochs") or {}).items()
+                },
+                capabilities=sorted(
+                    {str(item) for item in value.get("capabilities", [])}
+                ),
+                shard_index=int(value.get("shard_index", -1)),
+                commands=[
+                    ControlCommand.from_dict(item)
+                    for item in value.get("commands", [])
+                ],
+                draining=bool(value.get("draining", False)),
+            )
+        self._agents = restored
+
+    def _persist_locked(self, before: dict) -> None:
+        if self._durable_lease is None:
+            return
+        try:
+            self._durable_lease.mutate_state(
+                "registry",
+                self._snapshot_locked(),
+            )
+        except Exception:
+            self._restore_locked(before)
+            raise
+
+    def attach_durable_state(
+        self,
+        lease: LeaderLease,
+        *,
+        restore: bool = True,
+    ) -> int:
+        """Attach the active term and restore the last durable fleet snapshot."""
+        with self._lock:
+            self._durable_lease = lease
+            if restore:
+                snapshot = lease.read_state("registry")
+                if snapshot is not None:
+                    self._restore_locked(snapshot)
+            return lease.mutate_state("registry", self._snapshot_locked())
+
+    def detach_durable_state(self) -> None:
+        with self._lock:
+            self._durable_lease = None
 
     def _host_allowed(self, host: str) -> bool:
         if not self._allowed_hosts:
@@ -132,6 +234,7 @@ class Registry:
         lease = uuid.uuid4().hex
         now = _now()
         with self._lock:
+            before = self._snapshot_locked()
             self._agents[req.agent_id] = AgentRecord(
                 agent_id=req.agent_id, lease_id=lease, host=req.host, port=req.port,
                 os=req.os, version=req.version, capacity_hint=req.capacity_hint,
@@ -140,6 +243,7 @@ class Registry:
                 shard_index=req.shard_index,
                 registered_at=now, last_seen=now,
             )
+            self._persist_locked(before)
         return RegisterResponse(
             lease_id=lease,
             heartbeat_ms=self.heartbeat_ms,
@@ -156,6 +260,7 @@ class Registry:
         Agent should re‑register on that error.
         """
         with self._lock:
+            before = self._snapshot_locked()
             rec = self._agents.get(req.agent_id)
             if rec is None or rec.lease_id != req.lease_id:
                 raise LeaseError(f"unknown or stale lease for agent {req.agent_id!r}")
@@ -164,6 +269,7 @@ class Registry:
             rec.serving_tables = list(req.serving_tables)
             rec.epochs = dict(req.epochs)
             pending, rec.commands = rec.commands, []
+            self._persist_locked(before)
             return pending
 
     # -- commands ------------------------------------------------------------
@@ -171,21 +277,25 @@ class Registry:
     def queue_command(self, agent_id: str, cmd: ControlCommand) -> bool:
         """Queue a Manager→Agent command; delivered on the next heartbeat."""
         with self._lock:
+            before = self._snapshot_locked()
             rec = self._agents.get(agent_id)
             if rec is None:
                 return False
             rec.commands.append(cmd)
             if cmd.kind == "drain":
                 rec.draining = True
+            self._persist_locked(before)
             return True
 
     def broadcast(self, cmd: ControlCommand) -> int:
         """Queue a command to every registered Agent. Returns the count."""
         with self._lock:
+            before = self._snapshot_locked()
             for rec in self._agents.values():
                 rec.commands.append(cmd)
                 if cmd.kind == "drain":
                     rec.draining = True
+            self._persist_locked(before)
             return len(self._agents)
 
     # -- liveness / introspection -------------------------------------------
@@ -211,7 +321,11 @@ class Registry:
 
     def remove(self, agent_id: str) -> bool:
         with self._lock:
-            return self._agents.pop(agent_id, None) is not None
+            before = self._snapshot_locked()
+            removed = self._agents.pop(agent_id, None) is not None
+            if removed:
+                self._persist_locked(before)
+            return removed
 
     def list_public(self) -> list[dict]:
         with self._lock:

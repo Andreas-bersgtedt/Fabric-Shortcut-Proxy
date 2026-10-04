@@ -2150,6 +2150,10 @@ async def download_backup(request: Request) -> Response:
             root=pathlib.Path.cwd(),
             store=_store(),
             mirror_state_dir=getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state"),
+            manager_ha_state_dir=(
+                pathlib.Path(getattr(config, "ARTIFACT_STORE_DIR", "./.artifacts"))
+                / "_control"
+            ),
         )
     except (BackupError, OSError, RuntimeError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
@@ -2177,6 +2181,10 @@ async def upload_restore(
             root=pathlib.Path.cwd(),
             store=_store(),
             mirror_state_dir=getattr(config, "OPEN_MIRROR_STATE_DIR", "./.open_mirror_state"),
+            manager_ha_state_dir=(
+                pathlib.Path(getattr(config, "ARTIFACT_STORE_DIR", "./.artifacts"))
+                / "_control"
+            ),
         )
     except (BackupError, OSError, RuntimeError, ValueError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)

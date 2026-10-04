@@ -35,21 +35,29 @@ class ControlService:
         tables: list[str] | None = None,
         snapshot_provider: SnapshotProvider | None = None,
         work_queue: DurableWorkQueue | None = None,
+        leadership_check: Callable[[], None] | None = None,
     ) -> None:
         self._registry = registry
         self._tables = list(tables or [])
         self._snapshot_provider = snapshot_provider
         self._work_queue = work_queue
+        self._leadership_check = leadership_check
+
+    def _require_leader(self) -> None:
+        if self._leadership_check is not None:
+            self._leadership_check()
 
     # -- Agent lifecycle -----------------------------------------------------
 
     def register(self, req: RegisterRequest) -> RegisterResponse:
+        self._require_leader()
         resp = self._registry.register(req)
         log.info("agent_registered", agent_id=req.agent_id, host=req.host,
                  port=req.port, os=req.os, version=req.version)
         return resp
 
     def heartbeat(self, req: HeartbeatRequest) -> list[ControlCommand]:
+        self._require_leader()
         # May raise LeaseError -> the transport maps it to HTTP 409.
         commands = self._registry.heartbeat(req)
         if self._work_queue is not None:
@@ -70,6 +78,7 @@ class ControlService:
         return self._snapshot_provider(table, epoch)
 
     def report_task_result(self, res: TaskResult) -> Ack:
+        self._require_leader()
         if self._work_queue is not None:
             agent = self._registry.get(res.agent_id)
             if agent is None:

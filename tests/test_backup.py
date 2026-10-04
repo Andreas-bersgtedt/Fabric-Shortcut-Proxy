@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 
 import httpx
 import pytest
@@ -75,6 +76,7 @@ def test_backup_restores_config_credentials_and_mirror_state(tmp_path):
         "secrets": 3,
         "access_keys": 1,
         "mirror_state_files": 1,
+        "manager_ha_state_files": 0,
     }
 
     destination_root = tmp_path / "destination"
@@ -113,6 +115,140 @@ def test_backup_restores_config_credentials_and_mirror_state(tmp_path):
     assert (destination_root / ".open_mirror_state" / "orders.json").read_text() == '{"cursor":42}'
     assert agent_token.encode() not in archive
     assert previous_token.encode() not in archive
+
+
+def test_backup_restores_manager_ha_state_without_ephemeral_leader(tmp_path):
+    source = tmp_path / "source"
+    control = source / ".artifacts" / "_control"
+    queue = control / "work-queue" / "v1" / "requests"
+    queue.mkdir(parents=True)
+    (control / "leader.json").write_text(
+        json.dumps({
+            "owner_id": "manager-a",
+            "renew_ms": 12345,
+            "ttl_ms": 10000,
+            "fence": 9,
+            "state": {
+                "registry": {
+                    "version": 1,
+                    "agents": [{"agent_id": "agent-1"}],
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+    (queue / "request-1.json").write_text(
+        '{"request_id":"request-1","state":"QUEUED"}',
+        encoding="utf-8",
+    )
+    source_store = CredentialStore(
+        str(source / "credentials.json"),
+        cipher=_SourceCipher(),
+    )
+
+    archive, created = create_backup(
+        "correct horse battery staple",
+        root=source,
+        store=source_store,
+        include_mirror_state=False,
+    )
+    assert created["manager_ha_state_files"] == 2
+
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    destination_store = CredentialStore(
+        str(destination / "credentials.json"),
+        cipher=_DestinationCipher(),
+    )
+    restored = restore_backup(
+        archive,
+        "correct horse battery staple",
+        root=destination,
+        store=destination_store,
+        mirror_state_dir=destination / ".open_mirror_state",
+    )
+
+    leader = json.loads(
+        (destination / ".artifacts" / "_control" / "leader.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert leader["owner_id"] == ""
+    assert leader["renew_ms"] == 0
+    assert leader["fence"] == 0
+    assert leader["state"]["registry"]["agents"][0]["agent_id"] == "agent-1"
+    assert (
+        destination
+        / ".artifacts"
+        / "_control"
+        / "work-queue"
+        / "v1"
+        / "requests"
+        / "request-1.json"
+    ).is_file()
+    assert restored["manager_ha_state_files"] == 2
+
+
+def test_manager_ha_backup_and_restore_require_inactive_lease(tmp_path):
+    source = tmp_path / "source"
+    control = source / ".artifacts" / "_control"
+    control.mkdir(parents=True)
+    active_record = {
+        "owner_id": "manager-live",
+        "renew_ms": int(time.time() * 1000),
+        "ttl_ms": 60_000,
+        "fence": 4,
+        "state": {},
+    }
+    (control / "leader.json").write_text(
+        json.dumps(active_record),
+        encoding="utf-8",
+    )
+    source_store = CredentialStore(
+        str(source / "credentials.json"),
+        cipher=_SourceCipher(),
+    )
+    with pytest.raises(BackupError, match="stop all Managers"):
+        create_backup(
+            "correct horse battery staple",
+            root=source,
+            store=source_store,
+            include_mirror_state=False,
+        )
+
+    active_record["renew_ms"] = 0
+    active_record["owner_id"] = ""
+    (control / "leader.json").write_text(
+        json.dumps(active_record),
+        encoding="utf-8",
+    )
+    archive, _summary = create_backup(
+        "correct horse battery staple",
+        root=source,
+        store=source_store,
+        include_mirror_state=False,
+    )
+    destination = tmp_path / "destination"
+    destination_control = destination / ".artifacts" / "_control"
+    destination_control.mkdir(parents=True)
+    active_record["owner_id"] = "destination-live"
+    active_record["renew_ms"] = int(time.time() * 1000)
+    (destination_control / "leader.json").write_text(
+        json.dumps(active_record),
+        encoding="utf-8",
+    )
+    destination_store = CredentialStore(
+        str(destination / "credentials.json"),
+        cipher=_DestinationCipher(),
+    )
+    with pytest.raises(BackupError, match="stop all Managers"):
+        restore_backup(
+            archive,
+            "correct horse battery staple",
+            root=destination,
+            store=destination_store,
+            mirror_state_dir=destination / ".open_mirror_state",
+        )
 
 
 def test_backup_rejects_plaintext_agent_tokens_in_system_config(tmp_path):

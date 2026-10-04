@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 import pytest
@@ -12,8 +13,10 @@ from enterprise.control.contract import (
     ControlCommand, Drain, MaterializeTask,
 )
 from enterprise.control.registry import Registry, LeaseError
+from enterprise.control.lease import LeaderLease
 from enterprise.control.server import ControlService
 from enterprise.control.transport import create_control_router, RestControlClient, StaleLeaseError
+from runtime.artifact_store import MemoryStore
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +116,36 @@ async def test_rest_register_heartbeat_roundtrip():
         assert [c.kind for c in cmds] == ["drain"]
     finally:
         await client.aclose()
+
+
+async def test_standby_rejects_agent_mutation_with_retryable_response():
+    store = MemoryStore()
+    started = int(time.time() * 1000)
+    stale = LeaderLease(store, "manager-a", ttl_ms=1000)
+    assert stale.acquire_or_renew(now_ms=started)
+    active = LeaderLease(store, "manager-b", ttl_ms=1000)
+    assert active.acquire_or_renew(now_ms=started + 1500)
+    app = FastAPI()
+    app.include_router(
+        create_control_router(
+            ControlService(
+                Registry(),
+                leadership_check=stale.validate,
+            )
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://manager",
+    ) as client:
+        response = await client.post(
+            "/control/register",
+            json=_reg_req().to_dict(),
+        )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["error"] == "not_primary"
 
 
 async def test_rest_stale_lease_maps_to_error():

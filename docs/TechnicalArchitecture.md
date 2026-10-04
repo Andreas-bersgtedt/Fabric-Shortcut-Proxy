@@ -535,7 +535,7 @@ flowchart TB
   subgraph Releases[Helm releases in private AKS]
     CM[cert-manager]
     INGRESS[ingress-nginx]
-    FSP[fsp 2.9.3<br/>Manager + materializers + C++ + nginx]
+    FSP[FSP release<br/>Manager + materializers + C++ + nginx]
   end
 
   PARAMS --> AZ --> ARM --> Platform

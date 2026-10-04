@@ -46,6 +46,7 @@ TASKS_PREFIX = f"{PREFIX}/tasks"
 RESULTS_PREFIX = f"{PREFIX}/results"
 SNAPSHOTS_PREFIX = f"{PREFIX}/snapshots"
 IDEMPOTENCY_PREFIX = f"{PREFIX}/idempotency"
+MEMBERSHIP_PREFIX = f"{PREFIX}/memberships"
 
 
 class WorkQueueError(RuntimeError):
@@ -90,6 +91,10 @@ def _snapshot_key(table: str, epoch: int) -> str:
 
 def _idempotency_key(value: str) -> str:
     return f"{IDEMPOTENCY_PREFIX}/{_hash(value)}.json"
+
+
+def _membership_key(generation_id: str) -> str:
+    return f"{MEMBERSHIP_PREFIX}/{_hash(generation_id)}.json"
 
 
 class DurableWorkQueue:
@@ -162,6 +167,48 @@ class DurableWorkQueue:
             raise StaleLeaderError("Manager leadership changed before queue delete")
         return deleted
 
+    def _guarded_write_batch(
+        self,
+        guard_key: str,
+        expected_guard: bytes,
+        values: dict[str, dict],
+    ) -> None:
+        prepared = {key: dict(value) for key, value in values.items()}
+        if self._leadership_check is not None:
+            term = self._leadership_check()
+            for value in prepared.values():
+                value["manager_owner"] = str(term["owner_id"])
+                value["manager_fence"] = int(term["fence"])
+            committed = self.store.fenced_guarded_put_batch(
+                LEASE_KEY,
+                str(term["owner_id"]),
+                int(term["fence"]),
+                guard_key,
+                expected_guard,
+                {
+                    key: _json_bytes(value)
+                    for key, value in prepared.items()
+                },
+            )
+        else:
+            committed = self.store.guarded_put_batch(
+                guard_key,
+                expected_guard,
+                {
+                    key: _json_bytes(value)
+                    for key, value in prepared.items()
+                },
+            )
+        if not committed:
+            raise WorkQueueConflict(
+                "guard changed before durable publication commit"
+            )
+        for key, value in prepared.items():
+            if self._read(key) != value:
+                raise WorkQueueError(
+                    f"queue batch verification failed: {key}"
+                )
+
     def get_request(self, request_id: str) -> dict | None:
         return self._read(_request_key(request_id))
 
@@ -175,6 +222,222 @@ class DurableWorkQueue:
             if value is not None:
                 records.append(value)
         return sorted(records, key=lambda value: value["task_id"])
+
+    def get_membership(self, generation_id: str) -> dict | None:
+        return self._read(_membership_key(generation_id))
+
+    def list_memberships(self) -> list[dict]:
+        records = []
+        for item in self.store.list(f"{MEMBERSHIP_PREFIX}/"):
+            value = self._read(item.key)
+            if value is not None:
+                records.append(value)
+        return sorted(
+            records,
+            key=lambda value: (
+                int(value.get("updated_at_ms", 0)),
+                str(value.get("generation_id", "")),
+            ),
+        )
+
+    def reconcile_membership(
+        self,
+        generation_id: str,
+        generation_fence: int,
+        workers: list[dict],
+        *,
+        policy: str,
+        now_ms: int | None = None,
+    ) -> dict:
+        now_ms = _now_ms() if now_ms is None else int(now_ms)
+        policy = str(policy).strip().lower()
+        if policy not in {"fixed", "elastic"}:
+            raise ValueError("membership policy must be 'fixed' or 'elastic'")
+        current_workers = {
+            str(worker["agent_id"]): {
+                "agent_id": str(worker["agent_id"]),
+                "lease_hash": _hash(str(worker["lease_id"])),
+                "capacity": max(1, int(worker.get("capacity", 1) or 1)),
+            }
+            for worker in workers
+        }
+        key = _membership_key(generation_id)
+        with self._lock:
+            membership = self._read(key)
+            if membership is None:
+                if not current_workers:
+                    return {
+                        "version": 1,
+                        "generation_id": generation_id,
+                        "generation_fence": int(generation_fence),
+                        "membership_version": 0,
+                        "policy": policy,
+                        "workers": {},
+                        "reassignment_count": 0,
+                        "last_change_reason": "waiting_for_workers",
+                        "created_at_ms": now_ms,
+                        "updated_at_ms": now_ms,
+                    }
+                membership = {
+                    "version": 1,
+                    "generation_id": generation_id,
+                    "generation_fence": int(generation_fence),
+                    "membership_version": 1,
+                    "policy": policy,
+                    "workers": {
+                        agent_id: {
+                            **worker,
+                            "state": "active",
+                            "worker_fence": 1,
+                            "joined_at_ms": now_ms,
+                            "last_seen_ms": now_ms,
+                        }
+                        for agent_id, worker in current_workers.items()
+                    },
+                    "reassignment_count": 0,
+                    "last_change_reason": "initialized",
+                    "created_at_ms": now_ms,
+                    "updated_at_ms": now_ms,
+                }
+                self._write(key, membership)
+                return membership
+            if (
+                str(membership.get("generation_id")) != generation_id
+                or int(membership.get("generation_fence", -1))
+                != int(generation_fence)
+            ):
+                raise WorkQueueConflict("membership belongs to another generation")
+            if str(membership.get("policy")) != policy:
+                raise WorkQueueConflict(
+                    "membership policy cannot change during an active generation"
+                )
+            existing = {
+                str(agent_id): dict(worker)
+                for agent_id, worker in (membership.get("workers") or {}).items()
+            }
+            changed = False
+            reasons = []
+            allowed = (
+                set(existing) | set(current_workers)
+                if policy == "elastic"
+                else set(existing)
+            )
+            for agent_id in sorted(allowed):
+                observed = current_workers.get(agent_id)
+                prior = existing.get(agent_id)
+                if prior is None and observed is not None:
+                    existing[agent_id] = {
+                        **observed,
+                        "state": "active",
+                        "worker_fence": 1,
+                        "joined_at_ms": now_ms,
+                        "last_seen_ms": now_ms,
+                    }
+                    changed = True
+                    reasons.append("worker_joined")
+                    continue
+                if prior is None:
+                    continue
+                if observed is None:
+                    if prior.get("state") == "active":
+                        prior["state"] = "departed"
+                        prior["worker_fence"] = int(
+                            prior.get("worker_fence", 0)
+                        ) + 1
+                        prior["last_seen_ms"] = now_ms
+                        changed = True
+                        reasons.append("worker_departed")
+                    continue
+                lease_changed = not hmac.compare_digest(
+                    str(prior.get("lease_hash", "")),
+                    observed["lease_hash"],
+                )
+                if lease_changed or prior.get("state") != "active":
+                    prior["worker_fence"] = int(
+                        prior.get("worker_fence", 0)
+                    ) + 1
+                    prior["joined_at_ms"] = now_ms
+                    prior["state"] = "active"
+                    changed = True
+                    reasons.append("worker_rejoined")
+                if int(prior.get("capacity", 1)) != observed["capacity"]:
+                    prior["capacity"] = observed["capacity"]
+                    changed = True
+                    reasons.append("capacity_changed")
+                prior["lease_hash"] = observed["lease_hash"]
+                prior["last_seen_ms"] = now_ms
+            membership["workers"] = existing
+            membership["updated_at_ms"] = now_ms
+            if changed:
+                membership["membership_version"] = int(
+                    membership.get("membership_version", 0)
+                ) + 1
+                membership["last_change_reason"] = ",".join(sorted(set(reasons)))
+            self._write(key, membership)
+            if changed:
+                metrics.inc_counter(
+                    "generation_membership_changes_total",
+                    policy=policy,
+                    reason=membership["last_change_reason"],
+                )
+            return membership
+
+    def reassign_fenced_claims(
+        self,
+        generation_id: str,
+        membership: dict,
+        *,
+        now_ms: int | None = None,
+    ) -> int:
+        now_ms = _now_ms() if now_ms is None else int(now_ms)
+        workers = membership.get("workers") or {}
+        reassigned = 0
+        with self._lock:
+            for task in self.list_tasks():
+                payload = task.get("task") or {}
+                if (
+                    task.get("state") != TASK_CLAIMED
+                    or str(payload.get("generation_id", "")) != generation_id
+                ):
+                    continue
+                claim = task.get("claim") or {}
+                worker = workers.get(str(claim.get("agent_id", "")))
+                valid = bool(
+                    worker
+                    and worker.get("state") == "active"
+                    and hmac.compare_digest(
+                        str(worker.get("lease_hash", "")),
+                        str(claim.get("agent_lease_hash", "")),
+                    )
+                    and int(worker.get("worker_fence", -1))
+                    == int(claim.get("worker_fence", -2))
+                )
+                if valid:
+                    continue
+                task["state"] = TASK_RETRY_WAIT
+                task["claim"] = None
+                task["available_at_ms"] = now_ms
+                task["last_error"] = "worker_membership_fenced"
+                task["updated_at_ms"] = now_ms
+                task["revision"] = int(task.get("revision", 0)) + 1
+                task["reassignment_count"] = int(
+                    task.get("reassignment_count", 0)
+                ) + 1
+                self._write(_task_key(task["task_id"]), task)
+                reassigned += 1
+            if reassigned:
+                membership = dict(membership)
+                membership["reassignment_count"] = int(
+                    membership.get("reassignment_count", 0)
+                ) + reassigned
+                membership["updated_at_ms"] = now_ms
+                membership["last_change_reason"] = "unfinished_work_reassigned"
+                self._write(_membership_key(generation_id), membership)
+                metrics.inc_counter(
+                    "materialization_queue_reassignments_total",
+                    reassigned,
+                )
+        return reassigned
 
     def create_request(
         self,
@@ -422,6 +685,8 @@ class DurableWorkQueue:
         agent_lease_id: str,
         manager_owner: str,
         manager_fence: int,
+        membership_version: int = 0,
+        worker_fence: int = 0,
         now_ms: int | None = None,
     ) -> MaterializeTask:
         now_ms = _now_ms() if now_ms is None else int(now_ms)
@@ -457,6 +722,8 @@ class DurableWorkQueue:
                 "expires_at_ms": expires_at,
                 "manager_owner": manager_owner,
                 "manager_fence": int(manager_fence),
+                "membership_version": int(membership_version),
+                "worker_fence": int(worker_fence),
             }
             task["updated_at_ms"] = now_ms
             task["revision"] = int(task["revision"]) + 1
@@ -469,6 +736,8 @@ class DurableWorkQueue:
                 claim_token=claim_token,
                 attempt=attempt,
                 claim_expires_at_ms=expires_at,
+                membership_version=int(membership_version),
+                worker_fence=int(worker_fence),
             )
 
     def renew_agent_claims(
@@ -568,6 +837,10 @@ class DurableWorkQueue:
                     and int(saved.get("record_count", 0)) == result.record_count
                     and str(saved.get("content_hash", "")) == result.content_hash
                     and str(saved.get("error_code", "")) == result.error_code
+                    and int(saved.get("membership_version", 0))
+                    == result.membership_version
+                    and int(saved.get("worker_fence", 0))
+                    == result.worker_fence
                 )
                 return Ack(
                     ok=same,
@@ -624,6 +897,38 @@ class DurableWorkQueue:
                     state=TASK_CLAIMED,
                     reason_code=RESULT_STALE_CLAIM,
                 )
+            if (
+                int(claim.get("membership_version", 0))
+                != int(result.membership_version)
+                or int(claim.get("worker_fence", 0))
+                != int(result.worker_fence)
+            ):
+                return Ack(
+                    ok=False,
+                    state=TASK_CLAIMED,
+                    reason_code=RESULT_STALE_CLAIM,
+                )
+            membership = (
+                self.get_membership(result.generation_id)
+                if result.generation_id else None
+            )
+            if membership is not None:
+                worker = (membership.get("workers") or {}).get(result.agent_id)
+                if not (
+                    worker
+                    and worker.get("state") == "active"
+                    and hmac.compare_digest(
+                        str(worker.get("lease_hash", "")),
+                        _hash(agent_lease_id),
+                    )
+                    and int(worker.get("worker_fence", -1))
+                    == int(result.worker_fence)
+                ):
+                    return Ack(
+                        ok=False,
+                        state=TASK_CLAIMED,
+                        reason_code=RESULT_STALE_CLAIM,
+                    )
             task_payload = MaterializeTask.from_dict(task["task"])
             if (
                 result.generation_id != task_payload.generation_id
@@ -936,6 +1241,21 @@ class DurableWorkQueue:
                 or manifest.plan_sha256 != request["plan_sha256"]
             ):
                 raise WorkQueueConflict("snapshot identity does not match request")
+            from runtime.generation import (
+                COORDINATOR_KEY,
+                current_generation_record,
+            )
+
+            generation_raw, generation = current_generation_record(self.store)
+            if generation is not None and (
+                generation.generation_id != manifest.generation_id
+                or generation.fence != manifest.generation_fence
+                or generation.plan_sha256 != manifest.plan_sha256
+                or generation.expires_at_ms <= now_ms
+            ):
+                raise WorkQueueConflict(
+                    "snapshot generation is no longer active"
+                )
             for split in manifest.splits:
                 data = self.store.get(split.object_key)
                 if (
@@ -952,11 +1272,21 @@ class DurableWorkQueue:
                     )
             key = _snapshot_key(manifest.table, manifest.epoch)
             payload = manifest.to_dict()
-            self._write(key, {"version": 1, "manifest": payload})
             request["published"] = True
             request["snapshot_key"] = key
             request["updated_at_ms"] = now_ms
-            self._write(_request_key(request_id), request)
+            if generation is not None and generation_raw is not None:
+                self._guarded_write_batch(
+                    COORDINATOR_KEY,
+                    generation_raw,
+                    {
+                        key: {"version": 1, "manifest": payload},
+                        _request_key(request_id): request,
+                    },
+                )
+            else:
+                self._write(key, {"version": 1, "manifest": payload})
+                self._write(_request_key(request_id), request)
             metrics.inc_counter(
                 "materialization_queue_events_total", event="published"
             )
@@ -1012,6 +1342,82 @@ class DurableWorkQueue:
             if task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT}
         ]
         now = _now_ms()
+        memberships = self.list_memberships()
+        active_generation_ids = {
+            str((task.get("task") or {}).get("generation_id", ""))
+            for task in tasks
+            if (
+                task.get("state") not in TASK_TERMINAL_STATES
+                and (task.get("task") or {}).get("generation_id")
+            )
+        }
+        active_memberships = [
+            membership
+            for membership in memberships
+            if str(membership.get("generation_id", ""))
+            in active_generation_ids
+        ]
+        latest_membership = (
+            active_memberships[-1]
+            if active_memberships
+            else memberships[-1] if memberships else None
+        )
+        membership_status = None
+        if latest_membership is not None:
+            generation_id = str(latest_membership.get("generation_id", ""))
+            generation_tasks = [
+                task
+                for task in tasks
+                if str((task.get("task") or {}).get("generation_id", ""))
+                == generation_id
+            ]
+            claim_counts: dict[str, int] = {}
+            for task in generation_tasks:
+                agent_id = str((task.get("claim") or {}).get("agent_id", ""))
+                if agent_id:
+                    claim_counts[agent_id] = claim_counts.get(agent_id, 0) + 1
+            workers = []
+            for agent_id, worker in sorted(
+                (latest_membership.get("workers") or {}).items()
+            ):
+                workers.append({
+                    "agent_id": agent_id,
+                    "state": str(worker.get("state", "")),
+                    "capacity": int(worker.get("capacity", 1)),
+                    "worker_fence": int(worker.get("worker_fence", 0)),
+                    "joined_at_ms": int(worker.get("joined_at_ms", 0)),
+                    "last_seen_ms": int(worker.get("last_seen_ms", 0)),
+                    "active_claims": claim_counts.get(agent_id, 0),
+                })
+            total = len(generation_tasks)
+            completed = sum(
+                task.get("state") == TASK_SUCCEEDED
+                for task in generation_tasks
+            )
+            membership_status = {
+                "generation_id": generation_id,
+                "generation_fence": int(
+                    latest_membership.get("generation_fence", 0)
+                ),
+                "membership_version": int(
+                    latest_membership.get("membership_version", 0)
+                ),
+                "policy": str(latest_membership.get("policy", "fixed")),
+                "workers": workers,
+                "unassigned_work": sum(
+                    task.get("state") in {TASK_QUEUED, TASK_RETRY_WAIT}
+                    for task in generation_tasks
+                ),
+                "reassignment_count": int(
+                    latest_membership.get("reassignment_count", 0)
+                ),
+                "completed_tasks": completed,
+                "total_tasks": total,
+                "progress": completed / total if total else 1.0,
+                "last_change_reason": str(
+                    latest_membership.get("last_change_reason", "")
+                ),
+            }
         return {
             "requests": len(self.store.list(f"{REQUESTS_PREFIX}/")),
             "tasks": len(tasks),
@@ -1024,4 +1430,5 @@ class DurableWorkQueue:
             ),
             "active_claims": counts.get(TASK_CLAIMED, 0),
             "oldest_queued_age_ms": max(0, now - min(queued)) if queued else 0,
+            "membership": membership_status,
         }

@@ -2,7 +2,7 @@
 
 This chart packages the FSP Manager, Python materializers, C++ serving Agents,
 storage, network policy, nginx proxy, and optional cert-manager ingress as one
-Helm release. Chart and application version `2.9.3` represent the stable
+Helm release. Chart and application version `2.9.6` represent the stable
 baseline used for the enterprise demo migration.
 
 ## Prerequisites
@@ -70,6 +70,9 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   references. The default is `required`; values never contain token material.
 - `storage`: dynamic storage defaults or static Azure Files NFS volumes.
 - `manager`, `materializer`, `cppAgent`: workload sizing and feature settings.
+- `materializer.autoscaling`: optional HPA for the Python materializer
+  StatefulSet. It requires `fsp.materializeMode=lazy` and
+  `fsp.generationMembershipPolicy=elastic`; Helm rejects unsafe combinations.
 - `cppAgent.s3AuthMode`: `trusted-upstream` for the default gateway-terminated
   topology, or `sigv4` when the C++ Agent authenticates data-plane requests.
   In `sigv4` mode, create the Secret named by `cppAgent.s3AuthSecretName` with
@@ -118,7 +121,7 @@ render contains 27 resources. See the
 
 ## Release lifecycle
 
-The deployment script packages `fabric-shortcut-proxy-2.9.3.tgz` in a temporary directory and
+The deployment script packages `fabric-shortcut-proxy-2.9.6.tgz` in a temporary directory and
 runs `helm upgrade --install --atomic --take-ownership` through AKS Run Command. It also manages
 pinned cert-manager and ingress-nginx releases.
 

@@ -15,6 +15,7 @@ data:
   SHARD_STRATEGY: {{ .Values.fsp.shardStrategy | quote }}
   MATERIALIZE_WAIT_SECONDS: {{ .Values.fsp.materializeWaitSeconds | quote }}
   GENERATION_SOURCE_CONSISTENCY: {{ .Values.fsp.generationSourceConsistency | quote }}
+  GENERATION_MEMBERSHIP_POLICY: {{ .Values.fsp.generationMembershipPolicy | quote }}
   SNAPSHOT_MAX_LIFETIME_SECONDS: {{ .Values.fsp.snapshotMaxLifetimeSeconds | quote }}
   MANAGER_URL: http://fsp-manager:9200
   STREAMING_PARQUET: {{ .Values.fsp.streamingParquet | quote }}

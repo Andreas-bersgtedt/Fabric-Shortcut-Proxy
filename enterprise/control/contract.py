@@ -382,6 +382,8 @@ class MaterializeTask:
     num_splits: int = 1
     key_column: str = ""
     split_strategy: str = ""
+    membership_version: int = 0
+    worker_fence: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -412,6 +414,8 @@ class MaterializeTask:
             "generation_fence",
             "deadline_ms",
             "num_splits",
+            "membership_version",
+            "worker_fence",
         ):
             value = int(getattr(self, key))
             if value:
@@ -441,6 +445,8 @@ class MaterializeTask:
             num_splits=int(d.get("num_splits", 1)),
             key_column=str(d.get("key_column", "")),
             split_strategy=str(d.get("split_strategy", "")),
+            membership_version=int(d.get("membership_version", 0)),
+            worker_fence=int(d.get("worker_fence", 0)),
         )
 
 
@@ -465,6 +471,8 @@ class TaskResult:
     retryable: bool = False
     completed_at_ms: int = 0
     error_code: str = ""
+    membership_version: int = 0
+    worker_fence: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -486,6 +494,8 @@ class TaskResult:
             retryable=bool(d.get("retryable", False)),
             completed_at_ms=int(d.get("completed_at_ms", 0)),
             error_code=str(d.get("error_code", "")),
+            membership_version=int(d.get("membership_version", 0)),
+            worker_fence=int(d.get("worker_fence", 0)),
         )
 
 

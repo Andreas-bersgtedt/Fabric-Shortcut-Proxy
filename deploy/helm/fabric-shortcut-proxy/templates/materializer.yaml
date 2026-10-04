@@ -1,3 +1,9 @@
+{{- if and .Values.materializer.autoscaling.enabled (ne .Values.fsp.materializeMode "lazy") -}}
+{{- fail "materializer autoscaling requires fsp.materializeMode=lazy" -}}
+{{- end -}}
+{{- if and .Values.materializer.autoscaling.enabled (ne .Values.fsp.generationMembershipPolicy "elastic") -}}
+{{- fail "materializer autoscaling requires fsp.generationMembershipPolicy=elastic" -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -8,7 +14,9 @@ metadata:
     {{- include "fsp.commonLabels" . | nindent 4 }}
 spec:
   serviceName: fsp-materializer
+  {{- if not .Values.materializer.autoscaling.enabled }}
   replicas: {{ .Values.materializer.replicas }}
+  {{- end }}
   podManagementPolicy: Parallel
   selector:
     matchLabels:
@@ -178,4 +186,32 @@ spec:
     - name: s3
       port: 9000
       targetPort: health
+{{- end }}
+{{- if .Values.materializer.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fsp-materializer
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    app.kubernetes.io/name: fsp-materializer
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: fsp-materializer
+  minReplicas: {{ .Values.materializer.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.materializer.autoscaling.maxReplicas }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: {{ .Values.materializer.autoscaling.scaleDownStabilizationSeconds }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.materializer.autoscaling.targetCpuUtilization }}
 {{- end }}

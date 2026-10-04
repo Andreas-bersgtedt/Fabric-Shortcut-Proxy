@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added durable fixed or elastic generation membership for issue #96. Elastic
+  mode admits live materializers, fences departed or re-registered workers,
+  reassigns only unfinished claims, weights load by capacity, and exposes
+  membership version, worker fences, progress and reassignment counts.
+- Added optional Python materializer HPA resources to Kubernetes and Helm.
+  Kubernetes deployments use elastic membership; standalone deployments retain
+  fixed membership by default.
+- Refreshed current feature status, limitations, issue links, storage backend
+  comments, architecture labels and release comparison checks for issue #97.
 - Added fenced active/passive Manager HA for issue #95. Lease and Manager-state
   writes use shared-store compare-and-swap; Agent leases, pending commands,
   drain state and rolling-restart progress survive takeover.
@@ -701,7 +710,10 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.3...HEAD
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.6...HEAD
+[2.9.6]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.5...2.9.6
+[2.9.5]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.4...2.9.5
+[2.9.4]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.3...2.9.4
 [2.9.3]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.2...2.9.3
 [2.9.2]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.1...2.9.2
 [2.9.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.0...2.9.1

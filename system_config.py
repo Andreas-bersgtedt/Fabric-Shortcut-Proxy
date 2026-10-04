@@ -340,6 +340,11 @@ GENERATION_SOURCE_CONSISTENCY: str = _get_str(
     "GENERATION_SOURCE_CONSISTENCY", "generation_source_consistency", "best_effort"
 ).strip().lower()
 
+# Worker membership behavior for the durable Manager work queue.
+GENERATION_MEMBERSHIP_POLICY: str = _get_str(
+    "GENERATION_MEMBERSHIP_POLICY", "generation_membership_policy", "fixed"
+).strip().lower()
+
 # Maximum lifetime for a transaction-bound source read point.
 SNAPSHOT_MAX_LIFETIME_SECONDS: int = _get_int(
     "SNAPSHOT_MAX_LIFETIME_SECONDS", "snapshot_max_lifetime_seconds", 3600

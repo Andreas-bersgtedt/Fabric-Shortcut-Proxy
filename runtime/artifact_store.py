@@ -153,6 +153,29 @@ class ArtifactStore(abc.ABC):
         """Delete only while ``fence_key`` names the live owner and fence."""
         raise NotImplementedError("artifact store does not support fenced deletes")
 
+    def guarded_put_batch(
+        self,
+        guard_key: str,
+        expected_guard: bytes,
+        values: dict[str, bytes],
+    ) -> bool:
+        """Write all values only while the guard object remains byte-identical."""
+        raise NotImplementedError("artifact store does not support guarded batches")
+
+    def fenced_guarded_put_batch(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        guard_key: str,
+        expected_guard: bytes,
+        values: dict[str, bytes],
+    ) -> bool:
+        """Write a guarded batch only under the live Manager fence."""
+        raise NotImplementedError(
+            "artifact store does not support fenced guarded batches"
+        )
+
     def get_stream(self, key: str, *, offset: int = 0, length: int | None = None,
                    chunk_size: int = _STREAM_CHUNK):
         """Yield the object's bytes in chunks (optionally a ``[offset, +length)`` slice).
@@ -291,6 +314,38 @@ class MemoryStore(ArtifactStore):
                 return None
             return self._data.pop(_normalize_key(key), None) is not None
 
+    def guarded_put_batch(
+        self,
+        guard_key: str,
+        expected_guard: bytes,
+        values: dict[str, bytes],
+    ) -> bool:
+        with self._lock:
+            if self._data.get(_normalize_key(guard_key)) != expected_guard:
+                return False
+            for key, data in values.items():
+                self._data[_normalize_key(key)] = bytes(data)
+            return True
+
+    def fenced_guarded_put_batch(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        guard_key: str,
+        expected_guard: bytes,
+        values: dict[str, bytes],
+    ) -> bool:
+        with self._lock:
+            if (
+                not self._fence_matches(fence_key, owner_id, fence)
+                or self._data.get(_normalize_key(guard_key)) != expected_guard
+            ):
+                return False
+            for key, data in values.items():
+                self._data[_normalize_key(key)] = bytes(data)
+            return True
+
 
 class LocalDirStore(ArtifactStore):
     """Filesystem‑backed store rooted at ``root`` (a dir, NFS/SMB mount, etc.).
@@ -426,6 +481,45 @@ class LocalDirStore(ArtifactStore):
             if not self._fence_matches(fence_key, owner_id, fence):
                 return None
             return self.delete(key)
+
+    def _read_complete(self, key: str) -> bytes | None:
+        try:
+            with open(self._path(key), "rb") as handle:
+                return handle.read()
+        except FileNotFoundError:
+            return None
+
+    def guarded_put_batch(
+        self,
+        guard_key: str,
+        expected_guard: bytes,
+        values: dict[str, bytes],
+    ) -> bool:
+        with self._cas_lock():
+            if self._read_complete(guard_key) != expected_guard:
+                return False
+            for key, data in values.items():
+                self.put(key, data)
+            return True
+
+    def fenced_guarded_put_batch(
+        self,
+        fence_key: str,
+        owner_id: str,
+        fence: int,
+        guard_key: str,
+        expected_guard: bytes,
+        values: dict[str, bytes],
+    ) -> bool:
+        with self._cas_lock():
+            if (
+                not self._fence_matches(fence_key, owner_id, fence)
+                or self._read_complete(guard_key) != expected_guard
+            ):
+                return False
+            for key, data in values.items():
+                self.put(key, data)
+            return True
 
     def get(self, key: str, *, offset: int = 0, length: int | None = None) -> bytes:
         if offset < 0:

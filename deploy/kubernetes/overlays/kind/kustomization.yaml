@@ -13,3 +13,5 @@ patches:
   - path: python-statefulset-patch.yaml
   - path: cpp-deployment-patch.yaml
   - path: cpp-hpa-delete.yaml
+  - path: python-hpa-delete.yaml
+  - path: common-configmap-kind-patch.yaml

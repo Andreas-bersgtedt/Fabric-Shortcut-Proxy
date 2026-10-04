@@ -160,6 +160,8 @@ A task claim binds work to:
 - claim expiry;
 - generation ID;
 - generation fence;
+- membership version;
+- worker fence;
 - plan SHA-256.
 
 Only the claiming Agent may report a result.
@@ -297,6 +299,18 @@ delivery fails or the claim expires, the task returns to the runnable queue.
 Version 1.1 heartbeats list active task IDs. The Manager renews only those claims, so a
 command lost before Agent acknowledgement expires instead of remaining claimed.
 
+`GENERATION_MEMBERSHIP_POLICY=fixed` preserves the first live materializer
+identities recorded for a generation. `elastic` reconciles live,
+non-draining materializers on every scheduler scan. A join increments the
+membership version without revoking valid in-flight work. Heartbeat expiry,
+drain, or re-registration increments the affected worker fence and returns only
+its unfinished claims to the runnable queue. A late result must match the claim
+token, Agent lease hash, membership version and worker fence.
+
+Capacity hints set each worker's concurrent claim allowance. The scheduler
+compares active claims divided by capacity, then uses the existing deterministic
+task/worker tie-break.
+
 Python Agents execute materialization commands. C++ Agents retain the 1.0 serving
 contract and call `POST /control/materialize` on a store miss. That endpoint resolves the
 table, creates or reuses one deterministic request, and waits for durable publication.
@@ -308,8 +322,10 @@ split succeeds. `get_snapshot` rechecks published objects before returning the m
 
 ## Recovery and operations
 
-`GET /control/work-queue` reports task counts, queue age, scheduler state, and the active
-Manager fence. It does not return claim tokens or Agent lease IDs.
+`GET /control/work-queue` reports task counts, queue age, scheduler state, the
+active Manager fence, membership policy and version, active worker load,
+unassigned work, completed and total tasks, progress, and reassignment count.
+It does not return claim tokens, Agent lease IDs, or lease hashes.
 
 Operator endpoints:
 

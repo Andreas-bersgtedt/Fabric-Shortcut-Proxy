@@ -27,6 +27,7 @@ fsp:
   shardStrategy: modulo
   materializeWaitSeconds: "600"
   generationSourceConsistency: best_effort
+  generationMembershipPolicy: elastic
   snapshotMaxLifetimeSeconds: "3600"
   streamingParquet: "1"
   streamBatchRows: "10000"
@@ -111,6 +112,12 @@ manager:
 
 materializer:
   replicas: 3
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 8
+    targetCpuUtilization: 70
+    scaleDownStabilizationSeconds: 300
   auditLogEnabled: "0"
   credentialStoreEnabled: "0"
   resources:

@@ -126,7 +126,10 @@ class AgentLink:
         req = RegisterRequest(
             agent_id=self.agent_id, host=config.HOST, port=config.PORT,
             os=_os_name(), version=_APP_VERSION,
-            capacity_hint=(0),
+            capacity_hint=max(
+                1,
+                int(getattr(config, "SOURCE_MAX_CONCURRENCY", 0) or 1),
+            ),
             advertise_host=config.AGENT_ADVERTISE_HOST,
             capabilities=["materializer"],
             shard_index=config.AGENT_SHARD_INDEX,

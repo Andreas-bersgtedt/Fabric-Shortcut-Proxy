@@ -259,6 +259,24 @@ def test_validate_config_accepts_best_effort_generation_consistency(monkeypatch)
     config.validate_config()
 
 
+def test_validate_config_accepts_elastic_generation_membership(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_MEMBERSHIP_POLICY", "elastic")
+    config.validate_config()
+
+
+def test_validate_config_rejects_unknown_generation_membership(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_MEMBERSHIP_POLICY", "dynamic")
+    with pytest.raises(ValueError, match="GENERATION_MEMBERSHIP_POLICY"):
+        config.validate_config()
+
+
+def test_elastic_membership_accepts_hpa_ordinal_above_initial_count(monkeypatch):
+    monkeypatch.setattr(config, "GENERATION_MEMBERSHIP_POLICY", "elastic")
+    monkeypatch.setattr(config, "AGENT_SHARD_COUNT", 3)
+    monkeypatch.setattr(config, "AGENT_SHARD_INDEX", 7)
+    config.validate_config()
+
+
 def test_validate_config_accepts_registered_snapshot_provider(monkeypatch):
     monkeypatch.setattr(config, "GENERATION_SOURCE_CONSISTENCY", "snapshot")
     monkeypatch.setattr(config, "MATERIALIZE_MODE", "eager")

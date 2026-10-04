@@ -11,7 +11,7 @@ This deployment runs three Python materializers and two C++ serving replicas aga
 
 - Kubernetes 1.25 or later
 - A default StorageClass that supports `ReadWriteMany`
-- Metrics Server for the C++ HorizontalPodAutoscaler
+- Metrics Server for the Python materializer and C++ HorizontalPodAutoscalers
 - Network access from the materializer Pods to the source database
 - A source account with read-only access
 
@@ -152,4 +152,9 @@ A Pod without the `fabric-shortcut-proxy.io/data-plane-client: "true"` label is 
 	Manager Service remains cluster-private on port `9200`.
 - The C++ data plane does not verify SigV4. Keep it behind private networking and an authenticated gateway.
 - Source-wide snapshot consistency is not implemented. The supported setting is `best_effort`.
-- The base assumes one fixed three-worker generation epoch. Do not change the StatefulSet replica count during publication.
+- The base uses lazy materialization with
+  `GENERATION_MEMBERSHIP_POLICY=elastic`. The materializer HPA can
+  add workers during a generation. Scale-down or rolling replacement fences the
+  departed worker after its heartbeat lease expires and reassigns only
+  unfinished tasks. Set the policy to `fixed` and remove `python-hpa.yaml` when
+  the deployment must preserve its initial worker identities.

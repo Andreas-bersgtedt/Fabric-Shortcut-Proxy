@@ -54,6 +54,7 @@ from system_config import (
     # Fleet
     AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
     MANAGER_SUPERVISION_MODE, GENERATION_SOURCE_CONSISTENCY,
+    GENERATION_MEMBERSHIP_POLICY,
     SNAPSHOT_MAX_LIFETIME_SECONDS,
     # Control Plane
     MANAGER_URL, AGENT_ID, AGENT_AUTH_MODE, AGENT_TOKEN, AGENT_TOKEN_PREVIOUS,
@@ -208,6 +209,7 @@ _register("TLS_KEY_FILE", "tls_key_file", "str", TLS_KEY_FILE)
 _register("AGENT_COUNT", "agent_count", "int", AGENT_COUNT)
 _register("MANAGER_SUPERVISION_MODE", "manager_supervision_mode", "str", MANAGER_SUPERVISION_MODE)
 _register("GENERATION_SOURCE_CONSISTENCY", "generation_source_consistency", "str", GENERATION_SOURCE_CONSISTENCY)
+_register("GENERATION_MEMBERSHIP_POLICY", "generation_membership_policy", "str", GENERATION_MEMBERSHIP_POLICY)
 _register("SNAPSHOT_MAX_LIFETIME_SECONDS", "snapshot_max_lifetime_seconds", "int", SNAPSHOT_MAX_LIFETIME_SECONDS)
 _register("ENABLE_GATEWAY", "enable_gateway", "bool", ENABLE_GATEWAY)
 _register("SHARD_STRATEGY", "shard_strategy", "str", SHARD_STRATEGY)
@@ -804,6 +806,11 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
             "GENERATION_SOURCE_CONSISTENCY must be 'best_effort' or 'snapshot' "
             f"(got {GENERATION_SOURCE_CONSISTENCY!r})."
         )
+    if GENERATION_MEMBERSHIP_POLICY not in ("fixed", "elastic"):
+        problems.append(
+            "GENERATION_MEMBERSHIP_POLICY must be 'fixed' or 'elastic' "
+            f"(got {GENERATION_MEMBERSHIP_POLICY!r})."
+        )
     if SNAPSHOT_MAX_LIFETIME_SECONDS <= 0:
         problems.append(
             "SNAPSHOT_MAX_LIFETIME_SECONDS must be > 0 "
@@ -842,8 +849,18 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
             )
     if AGENT_SHARD_COUNT < 1:
         problems.append(f"AGENT_SHARD_COUNT must be >= 1 (got {AGENT_SHARD_COUNT}).")
-    if not (0 <= AGENT_SHARD_INDEX < AGENT_SHARD_COUNT):
-        problems.append(f"AGENT_SHARD_INDEX must be in 0..AGENT_SHARD_COUNT-1 (got {AGENT_SHARD_INDEX}/{AGENT_SHARD_COUNT}).")
+    if AGENT_SHARD_INDEX < 0:
+        problems.append(
+            f"AGENT_SHARD_INDEX must be >= 0 (got {AGENT_SHARD_INDEX})."
+        )
+    elif (
+        GENERATION_MEMBERSHIP_POLICY == "fixed"
+        and AGENT_SHARD_INDEX >= AGENT_SHARD_COUNT
+    ):
+        problems.append(
+            "AGENT_SHARD_INDEX must be in 0..AGENT_SHARD_COUNT-1 for fixed "
+            f"membership (got {AGENT_SHARD_INDEX}/{AGENT_SHARD_COUNT})."
+        )
     if SHARD_STRATEGY not in ("modulo", "weighted"):
         problems.append(f"SHARD_STRATEGY must be 'modulo' or 'weighted' (got {SHARD_STRATEGY!r}).")
     if QUERY_TIMEOUT_SECONDS <= 0:
@@ -1187,6 +1204,7 @@ SETTINGS_META: dict[str, dict] = {
     "mount_test_requests_per_minute": {"cat": "Cluster (scale)", "help": "Maximum mount test and schema inspection requests per identity in a rolling minute. Restart to apply."},
     "mount_test_max_concurrency": {"cat": "Cluster (scale)", "help": "Maximum concurrent mount test and schema inspection requests per process. Restart to apply."},
     "manager_ha": {"cat": "Cluster (scale)", "help": "Fenced active/passive Manager HA over an atomic shared local/NFS/SMB artifact directory."},
+    "generation_membership_policy": {"cat": "Cluster (scale)", "help": "Materializer membership during an active generation: fixed preserves the initial worker identities; elastic permits live join, leave and fenced reassignment.", "choices": ["fixed", "elastic"]},
     "leader_lease_ttl_ms": {"cat": "Cluster (scale)", "help": "Leader lease TTL (ms): takeover occurs after this timeout plus at most one renewal interval."},
     "leader_lease_renew_ms": {"cat": "Cluster (scale)", "help": "Leader lease renew interval (ms); must be < TTL."},
     "retention_gc": {"cat": "Cluster (scale)", "help": "Agent (shard 0): periodically prune orphaned Parquet splits from the shared store."},
@@ -1273,6 +1291,7 @@ _KEY_TO_ATTR: dict[str, str] = {
     "agent_count": "AGENT_COUNT",
     "manager_supervision_mode": "MANAGER_SUPERVISION_MODE",
     "generation_source_consistency": "GENERATION_SOURCE_CONSISTENCY",
+    "generation_membership_policy": "GENERATION_MEMBERSHIP_POLICY",
     "snapshot_max_lifetime_seconds": "SNAPSHOT_MAX_LIFETIME_SECONDS",
     "shard_strategy": "SHARD_STRATEGY",
     "table_format": "TABLE_FORMAT",

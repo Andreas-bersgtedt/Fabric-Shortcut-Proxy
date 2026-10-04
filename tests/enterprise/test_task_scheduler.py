@@ -34,6 +34,7 @@ def _register(
     capabilities: list[str],
     *,
     shard_index: int = -1,
+    capacity_hint: int = 0,
 ):
     return registry.register(
         RegisterRequest(
@@ -44,7 +45,30 @@ def _register(
             version="test",
             capabilities=capabilities,
             shard_index=shard_index,
+            capacity_hint=capacity_hint,
         )
+    )
+
+
+def _successful_result(claimed: MaterializeTask, data: bytes) -> TaskResult:
+    return TaskResult(
+        agent_id="",
+        table=claimed.table,
+        epoch=claimed.epoch,
+        split_index=claimed.split_index,
+        ok=True,
+        size_bytes=len(data),
+        record_count=2,
+        content_hash=hashlib.sha256(data).hexdigest(),
+        task_id=claimed.task_id,
+        request_id=claimed.request_id,
+        claim_token=claimed.claim_token,
+        attempt=claimed.attempt,
+        generation_id=claimed.generation_id,
+        generation_fence=claimed.generation_fence,
+        plan_sha256=claimed.plan_sha256,
+        membership_version=claimed.membership_version,
+        worker_fence=claimed.worker_fence,
     )
 
 
@@ -335,6 +359,8 @@ def test_standby_takeover_fences_claim_and_publishes_once():
             generation_id=claimed.generation_id,
             generation_fence=claimed.generation_fence,
             plan_sha256=claimed.plan_sha256,
+            membership_version=claimed.membership_version,
+            worker_fence=claimed.worker_fence,
         )
 
     assert not queue.accept_result(
@@ -366,3 +392,192 @@ def test_standby_takeover_fences_claim_and_publishes_once():
     )
     queue.publish_snapshot(request["request_id"], manifest)
     assert len(store.list("_control/work-queue/v1/snapshots/")) == 1
+
+
+def test_elastic_scale_up_completes_generation_without_duplicate_splits():
+    queue, request = _queue(task_count=4)
+    registry = Registry()
+    first_lease = _register(
+        registry, "agent-a", ["materializer"], capacity_hint=1
+    )
+    scheduler = TaskScheduler(
+        queue,
+        registry,
+        manager_owner="manager",
+        manager_fence=1,
+        max_inflight_per_agent=1,
+        membership_policy="elastic",
+    )
+    assert scheduler.dispatch_once() == 1
+    second_lease = _register(
+        registry, "agent-b", ["materializer"], capacity_hint=1
+    )
+    assert scheduler.dispatch_once() == 1
+
+    sink = io.BytesIO()
+    pq.write_table(pa.table({"id": [1, 2]}), sink)
+    data = sink.getvalue()
+
+    def finish(agent_id, lease_id):
+        commands = registry.heartbeat(
+            HeartbeatRequest(agent_id=agent_id, lease_id=lease_id)
+        )
+        for command in commands:
+            claimed = command.materialize
+            queue.store.put(claimed.output_key, data)
+            result = _successful_result(claimed, data)
+            result.agent_id = agent_id
+            assert queue.accept_result(result, agent_lease_id=lease_id).ok
+
+    finish("agent-a", first_lease.lease_id)
+    finish("agent-b", second_lease.lease_id)
+    assert scheduler.dispatch_once() == 2
+    finish("agent-a", first_lease.lease_id)
+    finish("agent-b", second_lease.lease_id)
+
+    assert queue.get_request(request["request_id"])["state"] == "SUCCEEDED"
+    assert {
+        queue.get_task(task_id)["result"]["agent_id"]
+        for task_id in request["task_ids"]
+    } == {"agent-a", "agent-b"}
+    membership = queue.status()["membership"]
+    assert membership["membership_version"] == 2
+    assert membership["completed_tasks"] == 4
+    assert membership["progress"] == 1.0
+
+
+def test_elastic_worker_loss_reassigns_only_unfinished_and_rejects_late_result():
+    queue, request = _queue(task_count=2)
+    registry = Registry(heartbeat_ms=1000, miss_limit=1)
+    first = _register(registry, "agent-a", ["materializer"])
+    failed = _register(registry, "agent-b", ["materializer"])
+    scheduler = TaskScheduler(
+        queue,
+        registry,
+        manager_owner="manager",
+        manager_fence=1,
+        max_inflight_per_agent=1,
+        membership_policy="elastic",
+    )
+    assert scheduler.dispatch_once() == 2
+    first_claim = registry.heartbeat(
+        HeartbeatRequest(agent_id="agent-a", lease_id=first.lease_id)
+    )[0].materialize
+    stale_claim = registry.heartbeat(
+        HeartbeatRequest(agent_id="agent-b", lease_id=failed.lease_id)
+    )[0].materialize
+    sink = io.BytesIO()
+    pq.write_table(pa.table({"id": [1, 2]}), sink)
+    data = sink.getvalue()
+    queue.store.put(first_claim.output_key, data)
+    first_result = _successful_result(first_claim, data)
+    first_result.agent_id = "agent-a"
+    assert queue.accept_result(
+        first_result, agent_lease_id=first.lease_id
+    ).ok
+
+    registry.get("agent-b").last_seen -= 10
+    replacement = _register(registry, "agent-c", ["materializer"])
+    assert scheduler.dispatch_once() == 1
+    replacement_claim = registry.heartbeat(
+        HeartbeatRequest(agent_id="agent-c", lease_id=replacement.lease_id)
+    )[0].materialize
+    assert replacement_claim.task_id == stale_claim.task_id
+    assert replacement_claim.claim_token != stale_claim.claim_token
+    stale_result = _successful_result(stale_claim, data)
+    stale_result.agent_id = "agent-b"
+    assert not queue.accept_result(
+        stale_result, agent_lease_id=failed.lease_id
+    ).ok
+    queue.store.put(replacement_claim.output_key, data)
+    replacement_result = _successful_result(replacement_claim, data)
+    replacement_result.agent_id = "agent-c"
+    assert queue.accept_result(
+        replacement_result, agent_lease_id=replacement.lease_id
+    ).ok
+
+    assert queue.get_request(request["request_id"])["state"] == "SUCCEEDED"
+    assert queue.status()["membership"]["reassignment_count"] == 1
+
+
+def test_fixed_membership_does_not_admit_new_worker_mid_generation():
+    queue, _request = _queue(task_count=2)
+    registry = Registry()
+    _register(registry, "agent-a", ["materializer"])
+    scheduler = TaskScheduler(
+        queue,
+        registry,
+        manager_owner="manager",
+        manager_fence=1,
+        max_inflight_per_agent=1,
+        membership_policy="fixed",
+    )
+    assert scheduler.dispatch_once() == 1
+    _register(registry, "agent-b", ["materializer"])
+    assert scheduler.dispatch_once() == 0
+    membership = queue.status()["membership"]
+    assert membership["policy"] == "fixed"
+    assert [worker["agent_id"] for worker in membership["workers"]] == [
+        "agent-a"
+    ]
+
+
+def test_elastic_reregistration_fences_old_worker_during_rolling_update():
+    queue, _request = _queue()
+    registry = Registry()
+    first = _register(registry, "agent-a", ["materializer"])
+    scheduler = TaskScheduler(
+        queue,
+        registry,
+        manager_owner="manager",
+        manager_fence=1,
+        max_inflight_per_agent=1,
+        membership_policy="elastic",
+    )
+    assert scheduler.dispatch_once() == 1
+    old_claim = registry.heartbeat(
+        HeartbeatRequest(agent_id="agent-a", lease_id=first.lease_id)
+    )[0].materialize
+
+    replacement = _register(registry, "agent-a", ["materializer"])
+    assert replacement.lease_id != first.lease_id
+    assert scheduler.dispatch_once() == 1
+    new_claim = registry.heartbeat(
+        HeartbeatRequest(agent_id="agent-a", lease_id=replacement.lease_id)
+    )[0].materialize
+
+    assert new_claim.task_id == old_claim.task_id
+    assert new_claim.claim_token != old_claim.claim_token
+    assert new_claim.worker_fence > old_claim.worker_fence
+    stale = _successful_result(old_claim, b"stale")
+    stale.agent_id = "agent-a"
+    assert not queue.accept_result(
+        stale, agent_lease_id=first.lease_id
+    ).ok
+
+
+def test_elastic_scheduler_weights_claim_limit_by_capacity():
+    queue, request = _queue(task_count=4)
+    registry = Registry()
+    _register(
+        registry, "low-capacity", ["materializer"], capacity_hint=1
+    )
+    _register(
+        registry, "high-capacity", ["materializer"], capacity_hint=3
+    )
+    scheduler = TaskScheduler(
+        queue,
+        registry,
+        manager_owner="manager",
+        manager_fence=1,
+        max_inflight_per_agent=1,
+        membership_policy="elastic",
+    )
+
+    assert scheduler.dispatch_once() == 4
+    claims = [
+        queue.get_task(task_id)["claim"]["agent_id"]
+        for task_id in request["task_ids"]
+    ]
+    assert claims.count("low-capacity") == 1
+    assert claims.count("high-capacity") == 3

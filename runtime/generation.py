@@ -42,18 +42,22 @@ def _encode(value: dict) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def _read_json(store, key: str) -> dict | None:
+def _read_raw_json(store, key: str) -> tuple[bytes | None, dict | None]:
     try:
         raw = store.get(key)
     except ObjectNotFound:
-        return None
+        return None, None
     try:
         value = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise GenerationError(f"invalid generation record {key}: {exc}") from exc
     if not isinstance(value, dict):
         raise GenerationError(f"invalid generation record {key}: expected object")
-    return value
+    return raw, value
+
+
+def _read_json(store, key: str) -> dict | None:
+    return _read_raw_json(store, key)[1]
 
 
 def _plan_payload(plans: tuple[TableReadPlan, ...]) -> list[dict]:
@@ -120,8 +124,15 @@ def _context(record: dict) -> GenerationContext:
 
 def current_generation(store) -> GenerationContext | None:
     """Return the current generation coordinator record, if one exists."""
-    record = _read_json(store, COORDINATOR_KEY)
-    return _context(record) if record is not None else None
+    return current_generation_record(store)[1]
+
+
+def current_generation_record(
+    store,
+) -> tuple[bytes | None, GenerationContext | None]:
+    """Return the exact coordinator bytes and their parsed context."""
+    raw, record = _read_raw_json(store, COORDINATOR_KEY)
+    return raw, _context(record) if record is not None else None
 
 
 def acquire_generation(
@@ -133,7 +144,8 @@ def acquire_generation(
     prepare_plan: bool = False,
 ) -> GenerationContext:
     """Fence any prior coordinator and create one immutable build generation."""
-    previous = _read_json(store, COORDINATOR_KEY) or {}
+    previous_raw, previous_record = _read_raw_json(store, COORDINATOR_KEY)
+    previous = previous_record or {}
     fence = int(previous.get("fence", 0)) + 1
     now_ms = int(time.time() * 1000)
     context = GenerationContext(
@@ -147,7 +159,12 @@ def acquire_generation(
     )
     context = replace(context, plan_sha256=_plan_digest(context.table_plans))
     record = _record(context)
-    store.put(COORDINATOR_KEY, _encode(record))
+    if not store.compare_and_swap(
+        COORDINATOR_KEY,
+        previous_raw,
+        _encode(record),
+    ):
+        raise GenerationError("coordinator lease was lost while being acquired")
     confirmed = _read_json(store, COORDINATOR_KEY)
     if confirmed != record:
         raise GenerationError("coordinator lease was lost while being acquired")
@@ -192,7 +209,15 @@ def publish_generation_plan(
         plan_sha256=_plan_digest(plans),
     )
     record = _record(ready)
-    store.put(COORDINATOR_KEY, _encode(record))
+    current_raw, current_record = _read_raw_json(store, COORDINATOR_KEY)
+    if current_record is None or _context(current_record) != context:
+        raise GenerationError("generation changed while plan was prepared")
+    if not store.compare_and_swap(
+        COORDINATOR_KEY,
+        current_raw,
+        _encode(record),
+    ):
+        raise GenerationError("generation plan changed while being published")
     store.put(BUILD_KEY, _encode({**record, "state": PLAN_READY}))
     confirmed = _context(_read_json(store, COORDINATOR_KEY) or {})
     if confirmed != ready:
@@ -320,7 +345,15 @@ def renew_generation(store, context: GenerationContext, *, lease_seconds: int = 
         expires_at_ms=int(time.time() * 1000) + lease_seconds * 1000,
     )
     record = _record(renewed)
-    store.put(COORDINATOR_KEY, _encode(record))
+    current_raw, current_record = _read_raw_json(store, COORDINATOR_KEY)
+    if current_record is None or _context(current_record) != context:
+        raise GenerationError("generation lease was lost before renewal")
+    if not store.compare_and_swap(
+        COORDINATOR_KEY,
+        current_raw,
+        _encode(record),
+    ):
+        raise GenerationError("generation lease was lost while renewing")
     build = _read_json(store, BUILD_KEY)
     if (
         build

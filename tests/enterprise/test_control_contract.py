@@ -148,13 +148,16 @@ def test_materialize_task_and_result_roundtrip():
         num_splits=8,
         key_column="id",
         split_strategy="range",
+        membership_version=4,
+        worker_fence=2,
     ))
     _roundtrip(TaskResult, TaskResult(
         agent_id="agent-1", table="Customer", epoch=8, split_index=0, ok=True,
         size_bytes=166579, record_count=6250, content_hash="5ce2c1b9a09f",
         task_id="task-1", request_id="request-1", claim_token="claim-1",
         attempt=2, generation_id="generation-1", generation_fence=3,
-        plan_sha256="b" * 64, completed_at_ms=6000))
+        plan_sha256="b" * 64, completed_at_ms=6000,
+        membership_version=4, worker_fence=2))
     _roundtrip(TaskResult, TaskResult(
         agent_id="agent-1", table="Customer", epoch=8, split_index=3, ok=False,
         error="source timeout"))
@@ -217,6 +220,10 @@ def test_frozen_proto_present_and_mirrors_contract():
         r"string\s+task_id\s*=\s*10",
         r"string\s+plan_sha256\s*=\s*16",
         r"string\s+connection_fingerprint\s*=\s*22",
+        r"int64\s+membership_version\s*=\s*23",
+        r"int64\s+worker_fence\s*=\s*24",
+        r"int64\s+membership_version\s*=\s*20",
+        r"int64\s+worker_fence\s*=\s*21",
     ):
         assert re.search(pattern, text), pattern
     # every contract message name appears in the frozen .proto

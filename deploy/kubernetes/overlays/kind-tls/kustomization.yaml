@@ -15,6 +15,8 @@ patches:
   - path: python-statefulset-kind-patch.yaml
   - path: cpp-deployment-kind-patch.yaml
   - path: cpp-hpa-delete.yaml
+  - path: python-hpa-delete.yaml
+  - path: common-configmap-kind-patch.yaml
   - path: manager-deployment-tls-patch.yaml
   - path: manager-service-tls-patch.yaml
   - path: python-statefulset-tls-patch.yaml

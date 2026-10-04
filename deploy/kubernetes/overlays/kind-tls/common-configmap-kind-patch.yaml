@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fsp-common
+  namespace: fabric-shortcut-proxy
+data:
+  MATERIALIZE_MODE: eager
+  GENERATION_MEMBERSHIP_POLICY: fixed

@@ -447,7 +447,8 @@ it exits with in‑flight requests finished. Rolling restarts recycle the fleet 
 (round‑robin by split index) or `weighted` (size‑weighted balancing using observed split sizes
 from the prior run; needs a shared store). `AGENT_ADVERTISE_HOST` is the routable address the LB
 dials for multi‑host fleets; `FORWARDED_ALLOW_IPS` makes audit log the real client IP behind the
-LB. Manager HA (leader lease over the shared store) is available via `MANAGER_HA=1`.
+LB. Fenced active/passive Manager HA over an atomic shared directory is
+available via `MANAGER_HA=1`.
 
 ---
 
@@ -538,7 +539,7 @@ cascades); further control‑plane hardening and Manager HA.
 | Freshness is poll‑bounded | changes appear after the poll interval + Fabric sync lag; not CDC |
 | Oracle / Databricks are capability‑gated | sync‑driver fallback; some features limited |
 | Read‑only | no `PUT`/`DELETE`; the proxy is a read‑path gateway by design |
-| Single Manager by default | HA via `MANAGER_HA` leader lease; full multi‑Manager Raft is deferred |
+| Single Manager by default | `MANAGER_HA=1` provides fenced active/passive failover over an atomic shared directory; full multi-Manager Raft consensus is deferred |
 | Native end‑to‑end TLS in the cluster | internal hops are HTTP by design — front with nginx TLS for production |
 
 ---

@@ -464,6 +464,7 @@ async def publish_table(
     dry_run: bool = False,
     max_rows: int | None = None,
     state_dir: str | None = None,
+    leadership_check=None,
 ) -> PublishResult:
     state_dir = state_dir or _state_dir()
     max_rows = _effective_max_rows(max_rows)
@@ -506,6 +507,8 @@ async def publish_table(
         input_cursor = pending.prior
         output_cursor = pending.next
         if publisher.backend.exists(pending.path):
+            if leadership_check is not None:
+                leadership_check()
             _finalize_pending(state_dir, target, table, state)
             return PublishResult(
                 target.id, table.name, action="recovery", rows=0, strategy=strategy,
@@ -521,7 +524,11 @@ async def publish_table(
                     f"pending payload path at {loaded.path} is outside the expected state path"
                 )
             payload = _read_pending_payload(pending.payload_path, pending.content_hash)
+            if leadership_check is not None:
+                leadership_check()
             publisher.write_batch_at(pending.path, payload)
+            if leadership_check is not None:
+                leadership_check()
             _finalize_pending(state_dir, target, table, state)
             return PublishResult(
                 target.id, table.name, action="recovery", rows=0, strategy=strategy,
@@ -557,17 +564,20 @@ async def publish_table(
             target, table, columns, publisher, state, loaded, reason=reason,
             dry_run=dry_run, max_rows=max_rows, state_dir=state_dir,
             control_columns=control_columns, control_aliases=control_aliases,
+            leadership_check=leadership_check,
         )
     return await _publish_snapshot(
         target, table, columns, publisher, state, loaded, reason=reason,
         dry_run=dry_run, max_rows=max_rows, state_dir=state_dir,
         control_columns=control_columns, control_aliases=control_aliases,
+        leadership_check=leadership_check,
     )
 
 
 async def _publish_watermark(
     target, table, columns, publisher, state, loaded, *,
     reason, dry_run, max_rows, state_dir, control_columns, control_aliases,
+    leadership_check,
 ) -> PublishResult:
     wm_col = table.watermark_column
     column_names = {
@@ -606,6 +616,8 @@ async def _publish_watermark(
         scanned += len(rows)
         if not rows:
             if initial and not dry_run:
+                if leadership_check is not None:
+                    leadership_check()
                 state.initialized = True
                 state.strategy = "watermark"
                 save_state(state_dir, target, table, state)
@@ -616,6 +628,8 @@ async def _publish_watermark(
         if dry_run:
             cursor = next_cursor
         else:
+            if leadership_check is not None:
+                leadership_check()
             publisher.ensure_partner_events()
             publisher.ensure_table_metadata(table)
             payload, digest = publisher.prepare_batch(rows, columns, row_markers=markers)
@@ -645,8 +659,14 @@ async def _publish_watermark(
                     initial=initial and published == 0,
                     payload_path=payload_path,
                 )
+                if leadership_check is not None:
+                    leadership_check()
                 save_state(state_dir, target, table, state)
+            if leadership_check is not None:
+                leadership_check()
             publisher.write_batch_at(path, payload)
+            if leadership_check is not None:
+                leadership_check()
             _finalize_pending(state_dir, target, table, state)
             cursor = state.committed
             last_path = path
@@ -686,6 +706,7 @@ async def _publish_watermark(
 async def _publish_snapshot(
     target, table, columns, publisher, state, loaded, *,
     reason, dry_run, max_rows, state_dir, control_columns, control_aliases,
+    leadership_check,
 ) -> PublishResult:
     rows = await _read_source_rows(
         table.source_table, columns, target.connection_id, max_rows=max_rows,
@@ -716,6 +737,8 @@ async def _publish_snapshot(
             query_mode="snapshot_full_scan",
         )
     else:
+        if leadership_check is not None:
+            leadership_check()
         publisher.ensure_partner_events()
         publisher.ensure_table_metadata(table)
         payload, digest = publisher.prepare_batch(
@@ -742,8 +765,14 @@ async def _publish_snapshot(
                 snapshot_keys=output_state.keys,
                 payload_path=payload_path,
             )
+            if leadership_check is not None:
+                leadership_check()
             save_state(state_dir, target, table, state)
+        if leadership_check is not None:
+            leadership_check()
         publisher.write_batch_at(path, payload)
+        if leadership_check is not None:
+            leadership_check()
         _finalize_pending(state_dir, target, table, state)
         state.strategy = "snapshot"
         save_state(state_dir, target, table, state)
@@ -782,6 +811,7 @@ def _reconcile_drops(target, publisher, state_dir, *, dry_run):
 async def publish_target(
     target: OpenMirrorTarget, *, backend=None, mode=None, dry_run=False,
     max_rows=None, state_dir=None, reconcile_drops=True,
+    leadership_check=None,
 ) -> TargetResult:
     if not target.enabled:
         return TargetResult(target.id, skipped=True)
@@ -794,6 +824,8 @@ async def publish_target(
     out = TargetResult(target.id)
     if reconcile_drops:
         try:
+            if leadership_check is not None:
+                leadership_check()
             out.dropped = _reconcile_drops(
                 target, publisher, state_dir, dry_run=dry_run
             )
@@ -803,9 +835,12 @@ async def publish_target(
         if not table.enabled:
             continue
         try:
+            if leadership_check is not None:
+                leadership_check()
             out.results.append(await publish_table(
                 target, table, publisher=publisher, mode=mode, dry_run=dry_run,
                 max_rows=max_rows, state_dir=state_dir,
+                leadership_check=leadership_check,
             ))
         except Exception as exc:  # noqa: BLE001
             loaded = load_state(state_dir, target, table)
@@ -827,6 +862,8 @@ async def publish_target(
                 state_status=loaded.status, state_path=loaded.path,
             ))
     if not dry_run:
+        if leadership_check is not None:
+            leadership_check()
         save_published_tables(
             state_dir, target,
             [{"schema": t.schema or "", "target_table": t.target_table}

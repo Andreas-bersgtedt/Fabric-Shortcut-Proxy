@@ -13,10 +13,17 @@ Each `.fspbackup` archive contains the FSP-managed state needed to rebuild a dep
 - logical connection and generic-secret records from the encrypted credential store;
 - scoped S3 access keys and their authorization settings;
 - Open Mirroring cursor, pending-file, key, and recovery state from
-  `OPEN_MIRROR_STATE_DIR`.
+  `OPEN_MIRROR_STATE_DIR`;
+- durable Manager HA registry, pending command, rolling-restart and work-queue
+  JSON records from `.artifacts/_control`.
 
-The archive does not include source database rows, OneLake data, generated Parquet or metadata
-artifacts, memory or disk caches, logs, environment-only secrets, external TLS certificate or
+The backup resets the ephemeral leader owner, renewal timestamp and fence.
+After restore, the first Manager acquires a new term while retaining the
+durable fleet and accepted control-plane work.
+
+The archive does not include source database rows, OneLake data, generated
+Parquet or table-format metadata artifacts, memory or disk caches, logs,
+environment-only secrets, external TLS certificate or
 key files, or secret values held only in a remote Key Vault. Protect and recover those systems
 separately.
 
@@ -42,22 +49,29 @@ directory.
 4. Download the generated `.fspbackup` file and record the displayed item counts.
 5. Store the archive and password separately in approved protected locations.
 
-Creating an archive does not stop the Manager. For the most consistent Open Mirroring recovery
-point, avoid starting a publish while the backup is being created.
+Creating an archive does not stop the Manager. For the most consistent Open
+Mirroring recovery point, avoid starting a publish while the backup is being
+created. A backup that includes Manager HA state requires all Managers to be
+stopped and the leader lease to expire. The operation fails rather than
+capturing queue and registry files from different leadership terms.
 
 ## Restore a backup
 
 1. Take a fresh backup of the destination before restoring.
-2. Stop scheduled or manual Open Mirroring publishes on the destination.
-3. Open **Security → Backup and restore**, select the `.fspbackup` file, and enter its password.
-4. Review the restore summary. Wrong passwords, damaged archives, unsupported config files, and
+2. Stop every Manager and wait for the leader lease TTL. Restore rejects a live
+   destination lease.
+3. Stop scheduled or manual Open Mirroring publishes on the destination.
+4. Run restore from an offline maintenance process or a Manager started with
+   HA disabled, select the `.fspbackup` file, and enter its password.
+5. Review the restore summary. Wrong passwords, damaged archives, unsupported config files, and
    unsafe state paths fail before replacement begins.
-5. Restart the Manager. The running process does not reload every restored setting immediately.
-6. Verify sources, table mappings, scoped access keys, and Open Mirroring status before resuming
+6. Restart the Manager. The running process does not reload every restored setting immediately.
+7. Verify sources, table mappings, scoped access keys, and Open Mirroring status before resuming
    normal publishing.
 
-Restore replaces the supported split config set, credential-store records, and Open Mirroring
-state as one operation. If a write fails, the previous config, credentials, and state are restored.
+Restore replaces the supported split config set, credential-store records,
+Open Mirroring state and Manager HA control records as one operation. If a
+write fails, the previous config, credentials, and state are restored.
 Files from the supported config set that are absent from the archive are removed so the
 destination matches the backup.
 

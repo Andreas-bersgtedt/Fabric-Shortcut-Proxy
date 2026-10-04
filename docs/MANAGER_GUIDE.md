@@ -84,9 +84,34 @@ Set `ENABLE_GATEWAY=1` to run the built-in round-robin S3 gateway in front of
 the Agent fleet. Point Fabric at the gateway instead of an individual Agent.
 For an external load balancer, follow [EXTERNAL_LB_RUNBOOK.md](EXTERNAL_LB_RUNBOOK.md).
 
-In HA mode, one Manager holds the leader lease and supervises the fleet. A
-standby remains available for control-plane health but its gateway returns `503`
-until it becomes leader and Agents register.
+In HA mode, one Manager holds a compare-and-swap leader lease and supervises
+the fleet. Standbys publish presence heartbeats and remain available for health
+checks. Their mutating control endpoints return retryable `503` responses until
+takeover.
+
+The supported guarantee is lease-based active/passive over a shared local, NFS
+or SMB artifact directory with atomic exclusive file creation and atomic
+rename. Each takeover increments a fencing term. Registry, pending command,
+drain and rolling-restart state is committed in the fenced lease record.
+Materialization requests, tasks, results and published snapshots remain in the
+durable work queue. Accepted durable work has an RPO of zero; an HTTP request
+in flight during takeover can fail and must be retried.
+
+Takeover occurs after `LEADER_LEASE_TTL_MS` plus at most one
+`LEADER_LEASE_RENEW_MS` polling interval. `GET /healthz` and `GET /readyz`
+report the leader owner, fence, lease age, remaining TTL, Manager presence and
+degraded reasons. HA is degraded when the shared store is unavailable, the
+lease is missing or expired, or no healthy standby has reported within two
+lease TTLs.
+
+This mode does not provide Raft consensus. Deploy the shared directory on
+storage that meets the required atomic filesystem semantics, and use one
+stable Manager service address so Agents retry the new leader without
+configuration changes.
+
+Open Mirroring scheduling runs only on a fully activated primary. The scheduler
+checks the live Manager fence before target, table, landing-zone and cursor
+mutations, and is cancelled before primary step-down completes.
 
 ### Control contract and materialization queue
 

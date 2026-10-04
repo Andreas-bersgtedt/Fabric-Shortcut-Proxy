@@ -67,4 +67,6 @@ async def rolling_restart(
             on_event("restarted", sup.name, healthy)
     log.info("rolling_restart_complete",
              agents=len(results), healthy=sum(1 for _, h in results if h))
+    if on_event:
+        on_event("complete", "", all(healthy for _, healthy in results))
     return results

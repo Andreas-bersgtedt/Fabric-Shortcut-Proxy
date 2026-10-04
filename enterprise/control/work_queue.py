@@ -9,6 +9,7 @@ import secrets
 import threading
 import time
 from dataclasses import replace
+from typing import Callable
 
 import pyarrow.parquet as pq
 
@@ -35,6 +36,7 @@ from enterprise.control.contract import (
     RESULT_STALE_GENERATION,
     RESULT_WRONG_OWNER,
 )
+from enterprise.control.lease import LEASE_KEY, StaleLeaderError
 from runtime.artifact_store import ArtifactStore, ObjectNotFound
 from observability import metrics
 
@@ -101,6 +103,7 @@ class DurableWorkQueue:
         max_attempts: int = 3,
         retry_backoff_seconds: int = 5,
         retry_max_seconds: int = 60,
+        leadership_check: Callable[[], dict] | None = None,
     ) -> None:
         self.store = store
         self.task_lease_seconds = max(1, int(task_lease_seconds))
@@ -110,6 +113,7 @@ class DurableWorkQueue:
             self.retry_backoff_seconds, int(retry_max_seconds)
         )
         self._lock = threading.RLock()
+        self._leadership_check = leadership_check
 
     def _read(self, key: str) -> dict | None:
         try:
@@ -125,9 +129,38 @@ class DurableWorkQueue:
         return value
 
     def _write(self, key: str, value: dict) -> None:
-        self.store.put(key, _json_bytes(value))
+        if self._leadership_check is not None:
+            term = self._leadership_check()
+            value = dict(value)
+            value["manager_owner"] = str(term["owner_id"])
+            value["manager_fence"] = int(term["fence"])
+            committed = self.store.fenced_put(
+                LEASE_KEY,
+                value["manager_owner"],
+                value["manager_fence"],
+                key,
+                _json_bytes(value),
+            )
+            if not committed:
+                raise StaleLeaderError("Manager leadership changed before queue write")
+        else:
+            self.store.put(key, _json_bytes(value))
         if self._read(key) != value:
             raise WorkQueueError(f"queue record verification failed: {key}")
+
+    def _delete(self, key: str) -> bool:
+        if self._leadership_check is None:
+            return self.store.delete(key)
+        term = self._leadership_check()
+        deleted = self.store.fenced_delete(
+            LEASE_KEY,
+            str(term["owner_id"]),
+            int(term["fence"]),
+            key,
+        )
+        if deleted is None:
+            raise StaleLeaderError("Manager leadership changed before queue delete")
+        return deleted
 
     def get_request(self, request_id: str) -> dict | None:
         return self._read(_request_key(request_id))
@@ -342,10 +375,10 @@ class DurableWorkQueue:
                     )
                     continue
                 for task_id in request.get("task_ids", []):
-                    if self.store.delete(_task_key(task_id)):
+                    if self._delete(_task_key(task_id)):
                         removed_tasks += 1
-                self.store.delete(_request_key(request_id))
-                self.store.delete(
+                self._delete(_request_key(request_id))
+                self._delete(
                     f"{IDEMPOTENCY_PREFIX}/{request['idempotency_key']}.json"
                 )
                 requests.pop(request_id, None)
@@ -355,8 +388,8 @@ class DurableWorkQueue:
                     for result in self.store.list(
                         f"{RESULTS_PREFIX}/{task['task_id']}/"
                     ):
-                        self.store.delete(result.key)
-                    if self.store.delete(_task_key(task["task_id"])):
+                        self._delete(result.key)
+                    if self._delete(_task_key(task["task_id"])):
                         removed_tasks += 1
                 elif task["state"] == TASK_EXPIRED:
                     deadline_ms = int(
@@ -742,7 +775,7 @@ class DurableWorkQueue:
             )
             deadline_ms = now_ms + original_window_ms
             for item in self.store.list(f"{RESULTS_PREFIX}/{task_id}/"):
-                self.store.delete(item.key)
+                self._delete(item.key)
             task["state"] = TASK_QUEUED
             task["attempt"] = 0
             task["available_at_ms"] = now_ms
@@ -812,12 +845,12 @@ class DurableWorkQueue:
                     continue
                 for task_id in request.get("task_ids", []):
                     for result in self.store.list(f"{RESULTS_PREFIX}/{task_id}/"):
-                        self.store.delete(result.key)
-                    self.store.delete(_task_key(task_id))
-                self.store.delete(
+                        self._delete(result.key)
+                    self._delete(_task_key(task_id))
+                self._delete(
                     f"{IDEMPOTENCY_PREFIX}/{request['idempotency_key']}.json"
                 )
-                self.store.delete(item.key)
+                self._delete(item.key)
                 pruned += 1
             if pruned:
                 metrics.inc_counter(

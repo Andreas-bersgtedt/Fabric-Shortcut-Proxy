@@ -602,13 +602,15 @@ Each phase is shippable and reversible; the default stays the known-good path.
     non-streaming, unlimited) keep the known-good path byte-identical.
 
 - **Phase 5, Robustness & Manager HA.**  ✅ **DONE**
-  Durable registry, rolling upgrades, retention GC, then Raft-replicated Manager.
-  - **Leader lease / Manager failover.**  ✅, `MANAGER_HA=1` runs a TTL leader
-    lease over the shared artifact store ([enterprise/control/lease.py](../enterprise/control/lease.py)):
-    only the **primary** supervises Agents + serves the gateway; **standbys** stay
-    passive and take over when the primary stops renewing (`/healthz` reports
-    `is_leader`, `/readyz` reports `primary`/`standby`). Best-effort read-check-
-    write-verify election (a brief dual-holder window at expiry is tolerable,     Agents serve reads regardless; strict single-writer election / Raft is backlog).
+  Durable registry, rolling upgrades, retention GC and fenced active/passive
+  Manager failover. Raft consensus remains deferred.
+  - **Leader lease / Manager failover.**  ✅, `MANAGER_HA=1` runs a
+    compare-and-swap TTL lease over the shared artifact store
+    ([enterprise/control/lease.py](../enterprise/control/lease.py)). Only the
+    fully activated **primary** supervises Agents, schedules Open Mirroring and
+    mutates durable control state. **Standbys** publish presence and take over
+    after lease expiry. Queue writes and deletes validate the owner and fence
+    under the same cross-process store lock as lease takeover.
   - **Rolling upgrade.**  ✅, `POST /_manager/api/rolling-restart` (console button)
     recycles Agents **one at a time**, health-gated ([enterprise/control/rolling.py](../enterprise/control/rolling.py)):
     it deregisters each Agent from the registry *before* stopping it so the gateway

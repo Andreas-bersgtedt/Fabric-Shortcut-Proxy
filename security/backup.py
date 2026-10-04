@@ -7,6 +7,7 @@ import os
 import pathlib
 import shutil
 import tempfile
+import time
 from datetime import datetime, timezone
 
 from cryptography.exceptions import InvalidTag
@@ -104,6 +105,63 @@ def _mirror_state_files(state_dir: pathlib.Path, store: CredentialStore) -> dict
     return files
 
 
+def _manager_ha_state_files(state_dir: pathlib.Path) -> dict[str, str]:
+    files: dict[str, str] = {}
+    if not state_dir.is_dir():
+        return files
+    leader_path = state_dir / "leader.json"
+    leader_before = leader_path.read_bytes() if leader_path.is_file() else None
+    _require_inactive_ha_record(leader_before, "create a Manager HA backup")
+    for path in sorted(state_dir.rglob("*.json")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        relative = path.relative_to(state_dir).as_posix()
+        raw = path.read_bytes()
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise BackupError(f"Manager HA state file {relative} is invalid") from exc
+        if not isinstance(value, dict):
+            raise BackupError(f"Manager HA state file {relative} must contain an object")
+        if relative == "leader.json":
+            value = {
+                "owner_id": "",
+                "renew_ms": 0,
+                "ttl_ms": int(value.get("ttl_ms", 10_000)),
+                "fence": 0,
+                "state": dict(value.get("state") or {}),
+            }
+            raw = json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        files[relative] = _b64(raw)
+    leader_after = leader_path.read_bytes() if leader_path.is_file() else None
+    if leader_after != leader_before:
+        raise BackupError(
+            "Manager HA state changed during backup; stop all Managers and retry"
+        )
+    return files
+
+
+def _require_inactive_ha_record(raw: bytes | None, operation: str) -> None:
+    if raw is None:
+        return
+    try:
+        value = json.loads(raw.decode("utf-8"))
+        owner = str(value.get("owner_id", ""))
+        renew_ms = int(value.get("renew_ms", 0))
+        ttl_ms = int(value.get("ttl_ms", 0))
+    except (UnicodeDecodeError, ValueError, TypeError) as exc:
+        raise BackupError("Manager HA leader record is invalid") from exc
+    if owner and renew_ms > 0 and int(time.time() * 1000) - renew_ms <= ttl_ms:
+        raise BackupError(
+            f"cannot {operation} while a Manager lease is active; "
+            "stop all Managers and wait for the lease TTL"
+        )
+
+
 def create_backup(
     password: str,
     *,
@@ -111,6 +169,8 @@ def create_backup(
     store: CredentialStore | None = None,
     include_mirror_state: bool = True,
     mirror_state_dir: str | os.PathLike[str] = "./.open_mirror_state",
+    include_manager_ha_state: bool = True,
+    manager_ha_state_dir: str | os.PathLike[str] | None = None,
 ) -> tuple[bytes, dict]:
     root_path = pathlib.Path(root).resolve()
     credential_store = store or CredentialStore()
@@ -126,6 +186,14 @@ def create_backup(
         _mirror_state_files(pathlib.Path(mirror_state_dir).resolve(), credential_store)
         if include_mirror_state else {}
     )
+    manager_ha_files = (
+        _manager_ha_state_files(
+            pathlib.Path(manager_ha_state_dir).resolve()
+            if manager_ha_state_dir is not None
+            else root_path / ".artifacts" / "_control"
+        )
+        if include_manager_ha_state else {}
+    )
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     payload = {
         "format": _FORMAT,
@@ -134,6 +202,7 @@ def create_backup(
         "configs": configs,
         "credentials": credentials,
         "open_mirror_state": mirror_files,
+        "manager_ha_state": manager_ha_files,
     }
     plaintext = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     salt, nonce = os.urandom(16), os.urandom(12)
@@ -155,6 +224,7 @@ def create_backup(
         "secrets": len(credentials["secrets"]),
         "access_keys": len(credentials["access_keys"]),
         "mirror_state_files": len(mirror_files),
+        "manager_ha_state_files": len(manager_ha_files),
     }
 
 
@@ -185,10 +255,17 @@ def _decrypt_archive(archive: bytes, password: str) -> dict:
     for key in ("configs", "credentials", "open_mirror_state"):
         if not isinstance(payload.get(key), dict):
             raise BackupError(f"backup payload is missing {key}")
+    payload["_manager_ha_state_present"] = "manager_ha_state" in payload
+    if "manager_ha_state" not in payload:
+        payload["manager_ha_state"] = {}
+    if not isinstance(payload["manager_ha_state"], dict):
+        raise BackupError("backup payload has invalid manager_ha_state")
     return payload
 
 
-def _validated_files(payload: dict) -> tuple[dict[str, bytes], dict[str, bytes]]:
+def _validated_files(
+    payload: dict,
+) -> tuple[dict[str, bytes], dict[str, bytes], dict[str, bytes]]:
     configs: dict[str, bytes] = {}
     for name, encoded in payload["configs"].items():
         if name not in _CONFIG_FILES:
@@ -215,7 +292,24 @@ def _validated_files(payload: dict) -> tuple[dict[str, bytes], dict[str, bytes]]
         if candidate.is_absolute() or ".." in candidate.parts or not candidate.parts:
             raise BackupError("backup contains an unsafe Open Mirroring state path")
         state_files[candidate.as_posix()] = _unb64(encoded, f"state file {relative}")
-    return configs, state_files
+    ha_state_files: dict[str, bytes] = {}
+    for relative, encoded in payload["manager_ha_state"].items():
+        candidate = pathlib.PurePosixPath(relative)
+        if candidate.is_absolute() or ".." in candidate.parts or not candidate.parts:
+            raise BackupError("backup contains an unsafe Manager HA state path")
+        raw = _unb64(encoded, f"Manager HA state file {relative}")
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise BackupError(
+                f"backup contains invalid Manager HA JSON in {relative}"
+            ) from exc
+        if not isinstance(value, dict):
+            raise BackupError(
+                f"backup Manager HA state {relative} must contain an object"
+            )
+        ha_state_files[candidate.as_posix()] = raw
+    return configs, state_files, ha_state_files
 
 
 def _atomic_write(path: pathlib.Path, content: bytes) -> None:
@@ -278,9 +372,11 @@ def restore_backup(
     root: str | os.PathLike[str] = ".",
     store: CredentialStore | None = None,
     mirror_state_dir: str | os.PathLike[str] = "./.open_mirror_state",
+    manager_ha_state_dir: str | os.PathLike[str] | None = None,
 ) -> dict:
     payload = _decrypt_archive(archive, password)
-    configs, state_files = _validated_files(payload)
+    configs, state_files, ha_state_files = _validated_files(payload)
+    restore_ha_state = bool(payload.get("_manager_ha_state_present"))
     credential_store = store or CredentialStore()
     if not credential_store.available:
         raise BackupError("credential store encryption is unavailable")
@@ -296,14 +392,41 @@ def restore_backup(
             content, relative, state_root, credential_store, encrypt_state
         )
         _atomic_write(staged_state / pathlib.PurePosixPath(relative), restored_content)
+    ha_state_root = (
+        pathlib.Path(manager_ha_state_dir).resolve()
+        if manager_ha_state_dir is not None
+        else pathlib.Path(root).resolve() / ".artifacts" / "_control"
+    )
+    existing_leader = ha_state_root / "leader.json"
+    _require_inactive_ha_record(
+        existing_leader.read_bytes() if existing_leader.is_file() else None,
+        "restore Manager HA state",
+    )
+    ha_state_root.parent.mkdir(parents=True, exist_ok=True)
+    staged_ha_state = pathlib.Path(
+        tempfile.mkdtemp(
+            prefix=f".{ha_state_root.name}.restore-",
+            dir=ha_state_root.parent,
+        )
+    )
+    for relative, content in ha_state_files.items():
+        _atomic_write(
+            staged_ha_state / pathlib.PurePosixPath(relative),
+            content,
+        )
     previous_configs = {
         name: (root_path / name).read_bytes() if (root_path / name).is_file() else None
         for name in _CONFIG_FILES
     }
     previous_credentials = credential_store.export_records()
     previous_state = state_root.with_name(f".{state_root.name}.pre-restore-{os.urandom(6).hex()}")
+    previous_ha_state = ha_state_root.with_name(
+        f".{ha_state_root.name}.pre-restore-{os.urandom(6).hex()}"
+    )
     state_swapped = False
     state_existed = state_root.exists()
+    ha_state_swapped = False
+    ha_state_existed = ha_state_root.exists()
     try:
         credential_store.replace_records(payload["credentials"])
         for name in _CONFIG_FILES:
@@ -316,6 +439,11 @@ def restore_backup(
             os.replace(state_root, previous_state)
         os.replace(staged_state, state_root)
         state_swapped = True
+        if restore_ha_state:
+            if ha_state_existed:
+                os.replace(ha_state_root, previous_ha_state)
+            os.replace(staged_ha_state, ha_state_root)
+            ha_state_swapped = True
     except Exception:
         credential_store.replace_records(previous_credentials)
         for name, content in previous_configs.items():
@@ -331,11 +459,20 @@ def restore_backup(
             os.replace(previous_state, state_root)
         elif state_swapped and not state_existed:
             shutil.rmtree(state_root, ignore_errors=True)
+        if ha_state_swapped and ha_state_root.exists():
+            shutil.rmtree(ha_state_root)
+        if previous_ha_state.exists():
+            os.replace(previous_ha_state, ha_state_root)
+        elif ha_state_swapped and not ha_state_existed:
+            shutil.rmtree(ha_state_root, ignore_errors=True)
         raise
     finally:
         shutil.rmtree(staged_state, ignore_errors=True)
+        shutil.rmtree(staged_ha_state, ignore_errors=True)
     if previous_state.exists():
         shutil.rmtree(previous_state)
+    if previous_ha_state.exists():
+        shutil.rmtree(previous_ha_state)
 
     credentials = payload["credentials"]
     return {
@@ -345,5 +482,6 @@ def restore_backup(
         "secrets": len(credentials["secrets"]),
         "access_keys": len(credentials["access_keys"]),
         "mirror_state_files": len(state_files),
+        "manager_ha_state_files": len(ha_state_files),
         "restart_required": True,
     }

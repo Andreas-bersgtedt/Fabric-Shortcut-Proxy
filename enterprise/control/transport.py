@@ -30,6 +30,7 @@ from enterprise.control.contract import (
     Assignment, SnapshotManifest, TaskResult, Ack,
 )
 from enterprise.control.registry import LeaseError
+from enterprise.control.lease import LeaseStoreError, StaleLeaderError
 from security.agent_auth import AGENT_ID_HEADER, AGENT_TOKEN_HEADER, agent_authentication_required
 
 # Path prefix for the REST control plane.
@@ -89,6 +90,12 @@ def create_control_router(server: ControlServer):
                 request.state.agent_auth_failure_reason = "identity_mismatch"
                 return agent_authentication_required()
             resp = server.register(parsed)
+        except (StaleLeaderError, LeaseStoreError) as exc:
+            return JSONResponse(
+                status_code=503,
+                headers={"Retry-After": "1"},
+                content={"error": "not_primary", "detail": str(exc)},
+            )
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"error": "invalid_registration", "detail": str(exc)})
         return resp.to_dict()
@@ -103,6 +110,12 @@ def create_control_router(server: ControlServer):
                 return agent_authentication_required()
             cmds = await asyncio.to_thread(
                 server.heartbeat, parsed
+            )
+        except (StaleLeaderError, LeaseStoreError) as exc:
+            return JSONResponse(
+                status_code=503,
+                headers={"Retry-After": "1"},
+                content={"error": "not_primary", "detail": str(exc)},
             )
         except LeaseError as e:
             return JSONResponse(status_code=409, content={"error": "stale_lease", "detail": str(e)})
@@ -129,9 +142,16 @@ def create_control_router(server: ControlServer):
         if parsed.agent_id != getattr(request.state, "agent_id", parsed.agent_id):
             request.state.agent_auth_failure_reason = "identity_mismatch"
             return agent_authentication_required()
-        result = await asyncio.to_thread(
-            server.report_task_result, parsed
-        )
+        try:
+            result = await asyncio.to_thread(
+                server.report_task_result, parsed
+            )
+        except (StaleLeaderError, LeaseStoreError) as exc:
+            return JSONResponse(
+                status_code=503,
+                headers={"Retry-After": "1"},
+                content={"error": "not_primary", "detail": str(exc)},
+            )
         return result.to_dict()
 
     return router

@@ -214,7 +214,7 @@ The AKS deployment has two declarative owners and two repeatable operator action
 ```mermaid
 flowchart LR
   PARAMS[Ignored local inputs] --> BICEP[Bicep<br/>Azure platform]
-  PARAMS --> HELM[Helm chart 2.9.3<br/>Kubernetes workloads]
+  PARAMS --> HELM[Helm chart<br/>Kubernetes workloads]
   BICEP --> AKS[Private AKS + ACR + Key Vault<br/>Azure Files + networking + identity]
   START[Start-FspDemo.ps1] --> AKS
   DEPLOY[Deploy-FspDemo.ps1<br/>AKS Run Command] --> HELM

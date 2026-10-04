@@ -98,9 +98,11 @@ never the source password or cloud credential. See [docs/SECURITY.md](docs/SECUR
 ## 3. Sources & drivers
 
 **Which sources are supported?**
-SQLite (demo), **PostgreSQL**, **SQL Server**, **Oracle**, and **Databricks SQL Warehouse**.
-**Amazon Redshift**, **Teradata**, and **Apache Impala** are available in preview with
-sync-fallback execution. All three have completed live source workload validation.
+SQLite is for development. PostgreSQL, SQL Server, and Oracle are supported.
+Databricks SQL, Amazon Redshift, and Teradata are beta. Apache Impala is
+preview. The synchronous dialects do not claim bounded-memory source
+streaming. See the per-capability evidence and fallbacks in
+[the source capability matrix](docs/SOURCE_CAPABILITIES.md).
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 [docs/ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](docs/ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md).
 
@@ -111,11 +113,11 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 | SQLite | `aiosqlite` | in core | demo/dev only |
 | SQL Server | `aioodbc` (in core) **+ OS ODBC Driver 18** | driver from Microsoft (no Python extra) | Windows Integrated auth supported |
 | PostgreSQL | `asyncpg` | Manager bootstrap or `pip install -e '.[postgres]'` | async‑native |
-| Oracle | `oracledb` | Manager bootstrap or `pip install -e '.[oracle]'` | sync fallback, capability‑gated |
-| Databricks SQL | `databricks-sqlalchemy` (in core) | in core | needs `http_path` in the URL |
-| Amazon Redshift | `sqlalchemy-redshift` + `redshift-connector` | Manager bootstrap or `pip install -e '.[redshift]'` | preview; sync fallback |
-| Teradata | `teradatasqlalchemy` | Manager bootstrap or `pip install -e '.[teradata]'` | preview; sync fallback |
-| Apache Impala | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | preview; live validated |
+| Oracle | `oracledb` | Manager bootstrap or `pip install -e '.[oracle]'` | supported; sync fallback |
+| Databricks SQL | `databricks-sqlalchemy` (in core) | in core | beta; requires `http_path` |
+| Amazon Redshift | `sqlalchemy-redshift` + `redshift-connector` | Manager bootstrap or `pip install -e '.[redshift]'` | beta; sync fallback |
+| Teradata | `teradatasqlalchemy` | Manager bootstrap or `pip install -e '.[teradata]'` | beta; sync fallback |
+| Apache Impala | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | preview; sync fallback |
 
 > The SQL Server ODBC driver is an **OS** package, not a pip extra. On Linux/macOS the
 > encrypted credential store additionally needs `pip install -e '.[credentials]'` (Windows uses
@@ -513,34 +515,54 @@ real secret. Follow logs with `journalctl -u fabric-shortcut-proxy.service -f`.
 
 ---
 
-## 12. Roadmap & known limitations
+## 12. Delivered backlog and known limitations
 
-**Delivered:** single‑node Lite proxy; Manager/Agent cluster; Iceberg **and** Delta output;
+**Delivered:** single-node Lite proxy; Manager/Agent cluster; Iceberg **and** Delta output;
 storage proxy (local/S3/Azure) with per‑key ACLs, credential mediation, and audit; SigV4;
 multi‑table; content‑addressed refresh (`AUTO_REFRESH`); disk cache; snapshot history;
 config-builder + monitor UIs; authenticated Manager health cards and historical host-resource
 trends; Open Mirroring publishing; Oracle & Databricks (limited); TLS at the proxy or a fronting
-LB; `MANAGER_AUTH` gate. See [docs/archive/PLANNING.md](docs/archive/PLANNING.md),
-[docs/archive/Roadmap.md](docs/archive/Roadmap.md), and [docs/CHANGELOG.md](docs/CHANGELOG.md).
+LB; `MANAGER_AUTH` gate; row-target split sizing and range/date/auto planning.
+See [the Changelog](docs/CHANGELOG.md) for current release history. Files under
+[docs/archive](docs/archive/README.md) are historical records, not current
+status sources.
 
-The [C++ serving Agent](agent-cpp/README.md) is implemented; its independent
+The [C++ serving Agent](agent-cpp/README.md) is implemented. Its independent
 `1.0.0-rc.1` release is scoped to read-only serving, not native materializer
 parity. Stable promotion requires the documented authentication, performance,
-and live verification gates for #92.
+and live verification gates from
+[#92](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/92).
 
-**In progress / planned:** split‑planner enhancements (row‑target sizing, richer range/date/auto
-cascades); further control‑plane hardening and Manager HA.
+Accepted scale-out work is tracked in:
+
+- [#89](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/89):
+  distributed snapshot consistency, delivered;
+- [#90](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/90):
+  durable Manager materialization queue, delivered;
+- [#91](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/91):
+  Agent control-plane authentication, delivered;
+- [#92](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/92):
+  C++ Agent SigV4, delivered for the release candidate;
+- [#93](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/93):
+  remote Iceberg readers, delivered;
+- [#94](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/94):
+  source capability parity, with Databricks, Redshift, and Teradata at beta;
+- [#95](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/95):
+  durable fenced Manager HA, delivered;
+- [#96](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/96):
+  elastic generation membership.
 
 **Known limitations:**
 
-| Limitation | Note |
-|---|---|
-| `modulo` splits full‑scan the table | use `range`/`date`/`auto` on an integer/date key for index pruning |
-| Freshness is poll‑bounded | changes appear after the poll interval + Fabric sync lag; not CDC |
-| Oracle / Databricks are capability‑gated | sync‑driver fallback; some features limited |
-| Read‑only | no `PUT`/`DELETE`; the proxy is a read‑path gateway by design |
-| Single Manager by default | `MANAGER_HA=1` provides fenced active/passive failover over an atomic shared directory; full multi-Manager Raft consensus is deferred |
-| Native end‑to‑end TLS in the cluster | internal hops are HTTP by design — front with nginx TLS for production |
+| Type | Limitation | Safe action |
+|---|---|---|
+| Product gap | `modulo` splits full-scan the table | use `range`, `date`, or `auto` on an integer or date key for index pruning |
+| Product gap | Freshness is poll-bounded rather than CDC | size the poll interval for source load and expected Fabric sync lag |
+| Capability gate | Oracle is supported; Databricks, Redshift, and Teradata are beta; Impala is preview | review [the source capability matrix](docs/SOURCE_CAPABILITIES.md) and its explicit fallbacks |
+| Deliberate behavior | Storage mounts and the proxy data plane are read-only | use the source system or Open Mirroring write path for mutations |
+| Deployment constraint | Single Manager is the default | enable fenced active/passive HA with `MANAGER_HA=1`; Raft consensus is not implemented |
+| Deployment constraint | Internal cluster hops use HTTP | terminate TLS at the supplied nginx profile or another trusted ingress |
+| Optional dependency | Remote Iceberg and cloud mounts need their declared extras | install the matching `objectstore`, `s3proxy`, or `azureblob` extra |
 
 ---
 

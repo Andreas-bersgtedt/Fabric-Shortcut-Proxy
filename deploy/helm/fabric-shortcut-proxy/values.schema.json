@@ -51,6 +51,7 @@
         "shardStrategy": { "type": "string" },
         "materializeWaitSeconds": { "type": "string" },
         "generationSourceConsistency": { "type": "string" },
+        "generationMembershipPolicy": { "enum": ["fixed", "elastic"] },
         "snapshotMaxLifetimeSeconds": { "type": "string" },
         "streamingParquet": { "type": "string" },
         "streamBatchRows": { "type": "string" },
@@ -156,7 +157,41 @@
         }
       ]
     },
-    "materializer": { "$ref": "#/definitions/workload" },
+    "materializer": {
+      "allOf": [
+        { "$ref": "#/definitions/workload" },
+        {
+          "type": "object",
+          "required": ["autoscaling"],
+          "properties": {
+            "autoscaling": {
+              "type": "object",
+              "required": [
+                "enabled",
+                "minReplicas",
+                "maxReplicas",
+                "targetCpuUtilization",
+                "scaleDownStabilizationSeconds"
+              ],
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "minReplicas": { "type": "integer", "minimum": 1 },
+                "maxReplicas": { "type": "integer", "minimum": 1 },
+                "targetCpuUtilization": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "scaleDownStabilizationSeconds": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
     "cppAgent": {
       "allOf": [
         { "$ref": "#/definitions/workload" },

@@ -116,6 +116,46 @@ def test_cpp_sigv4_mode_renders_secret_references_and_prefixes() -> None:
     assert 'value: "tenant/;shared/"' in rendered
 
 
+def test_materializer_autoscaling_renders_elastic_membership_hpa() -> None:
+    rendered = _render(
+        "--set",
+        "materializer.autoscaling.enabled=true",
+        "--set",
+        "fsp.materializeMode=lazy",
+    )
+    assert "kind: HorizontalPodAutoscaler" in rendered
+    assert "name: fsp-materializer" in rendered
+    assert 'GENERATION_MEMBERSHIP_POLICY: "elastic"' in rendered
+
+
+def test_materializer_autoscaling_requires_lazy_elastic_queue() -> None:
+    eager = _helm(
+        "template",
+        "fsp",
+        str(CHART),
+        "--set",
+        "materializer.autoscaling.enabled=true",
+        expect_success=False,
+    )
+    assert eager.returncode != 0
+    assert "requires fsp.materializeMode=lazy" in eager.stderr
+
+    fixed = _helm(
+        "template",
+        "fsp",
+        str(CHART),
+        "--set",
+        "materializer.autoscaling.enabled=true",
+        "--set",
+        "fsp.materializeMode=lazy",
+        "--set",
+        "fsp.generationMembershipPolicy=fixed",
+        expect_success=False,
+    )
+    assert fixed.returncode != 0
+    assert "requires fsp.generationMembershipPolicy=elastic" in fixed.stderr
+
+
 @pytest.mark.parametrize(
     ("nginx_enabled", "tls_enabled"),
     [(True, False), (False, True)],

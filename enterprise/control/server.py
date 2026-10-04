@@ -1,10 +1,9 @@
-"""
-ControlService — the Manager's :class:`~enterprise.control.transport.ControlServer` impl.
+"""Manager implementation of the Agent control-plane contract.
 
-Phase 1 scope: Agent lifecycle only (register / heartbeat / assignment). Snapshot
-distribution and the materialization work‑queue are stubs here — they light up in
-Phase 2 (shared store + publish) and Phase 3 (distributed materialization). Keeping
-them on the interface now means the transport + callers don't change later.
+Registration, heartbeat, assignment, durable snapshot lookup, materialization
+claim renewal, and task-result acceptance are active behavior. Assignment
+remains table-wide rather than per-worker because durable split ownership lives
+in the #90 work queue and #96 generation-membership record.
 """
 from __future__ import annotations
 
@@ -20,8 +19,8 @@ from observability.logging import get_logger
 
 log = get_logger(__name__)
 
-# A hook the Manager can inject to answer GetSnapshot (Phase 2). Returns the
-# published manifest for (table, epoch) or None. ``epoch == 0`` means "current".
+# Returns the durable published manifest for (table, epoch), or None.
+# ``epoch == 0`` means "current".
 SnapshotProvider = Callable[[str, int], "SnapshotManifest | None"]
 
 
@@ -69,12 +68,12 @@ class ControlService:
         return commands
 
     def get_assignment(self, agent_id: str) -> Assignment:
-        # Phase 1: a single Agent serves every configured table.
+        # Serving Agents remain interchangeable; materialization is assigned per task.
         return Assignment(agent_id=agent_id, tables=list(self._tables))
 
     def get_snapshot(self, table: str, epoch: int) -> SnapshotManifest | None:
         if self._snapshot_provider is None:
-            return None            # Phase 2 wires this up
+            return None
         return self._snapshot_provider(table, epoch)
 
     def report_task_result(self, res: TaskResult) -> Ack:

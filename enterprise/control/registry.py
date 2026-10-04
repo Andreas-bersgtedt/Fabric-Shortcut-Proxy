@@ -69,6 +69,7 @@ class AgentRecord:
             "port": self.port,
             "os": self.os,
             "version": self.version,
+            "capacity_hint": self.capacity_hint,
             "serving_tables": list(self.serving_tables),
             "epochs": dict(self.epochs),
             "capabilities": list(self.capabilities),

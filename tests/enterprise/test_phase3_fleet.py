@@ -190,6 +190,68 @@ async def test_external_manager_readiness_uses_registered_agents(monkeypatch):
             assert response.json()["supervision_mode"] == "external"
 
 
+async def test_public_readiness_exposes_only_aggregate_membership(monkeypatch):
+    from enterprise.control.manager_app import create_manager_app
+
+    monkeypatch.setattr(config, "MANAGER_SUPERVISION_MODE", "external", raising=False)
+    monkeypatch.setattr(config, "MATERIALIZATION_WORK_QUEUE", True, raising=False)
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    app = create_manager_app()
+    monkeypatch.setattr(
+        app.state.work_queue,
+        "status",
+        lambda: {
+            "requests": 1,
+            "tasks": 2,
+            "published_snapshots": 0,
+            "states": {"CLAIMED": 1, "QUEUED": 1},
+            "queue_depth": 1,
+            "active_claims": 1,
+            "oldest_queued_age_ms": 5,
+            "membership": {
+                "generation_id": "secret-generation",
+                "membership_version": 7,
+                "policy": "elastic",
+                "workers": [{
+                    "agent_id": "private-agent-id",
+                    "state": "active",
+                    "capacity": 2,
+                    "worker_fence": 9,
+                    "joined_at_ms": 1,
+                    "last_seen_ms": 2,
+                    "active_claims": 1,
+                }],
+                "unassigned_work": 1,
+                "reassignment_count": 3,
+                "completed_tasks": 1,
+                "total_tasks": 2,
+                "progress": 0.5,
+            },
+        },
+    )
+
+    async with app.router.lifespan_context(app):
+        _register(app.state.registry, "external-1", 9400, "127.0.0.1")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://mgr",
+        ) as client:
+            payload = (await client.get("/readyz")).json()
+
+    public_membership = payload["work_queue"]["membership"]
+    assert public_membership == {
+        "policy": "elastic",
+        "active_workers": 1,
+        "unassigned_work": 1,
+        "reassignment_count": 3,
+        "completed_tasks": 1,
+        "total_tasks": 2,
+        "progress": 0.5,
+    }
+    assert "private-agent-id" not in str(payload)
+    assert "secret-generation" not in str(payload)
+
+
 async def test_external_manager_rejects_local_lifecycle_actions(monkeypatch):
     from enterprise.control.manager_app import create_manager_app
     monkeypatch.setattr(config, "MANAGER_SUPERVISION_MODE", "external", raising=False)

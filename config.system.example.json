@@ -35,6 +35,8 @@
     "materialize_wait_seconds": 30,
     "_comment_generation_source_consistency": "best_effort supports every source. snapshot provides one read point per table for SQL Server and PostgreSQL, fails closed for unsupported sources, and never downgrades to best_effort.",
     "generation_source_consistency": "best_effort",
+    "_comment_generation_membership_policy": "fixed preserves the generation's initial materializer identities. elastic allows live join, leave, drain, failure reassignment, rolling replacement, and HPA scaling.",
+    "generation_membership_policy": "fixed",
     "snapshot_max_lifetime_seconds": 3600,
     "manager_url": "",
     "agent_id": "",

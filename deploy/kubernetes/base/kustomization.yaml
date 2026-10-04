@@ -8,6 +8,7 @@ resources:
   - manager-service.yaml
   - python-headless-service.yaml
   - python-statefulset.yaml
+  - python-hpa.yaml
   - cpp-deployment.yaml
   - cpp-service.yaml
   - cpp-hpa.yaml

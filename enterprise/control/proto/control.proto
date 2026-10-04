@@ -168,6 +168,8 @@ message MaterializeTask {
   string          key_column = 20;
   string          split_strategy = 21;
   string          connection_fingerprint = 22;
+  int64           membership_version = 23;
+  int64           worker_fence = 24;
 }
 
 message TaskResult {
@@ -190,6 +192,8 @@ message TaskResult {
   bool   retryable = 17;
   int64  completed_at_ms = 18;
   string error_code = 19;
+  int64  membership_version = 20;
+  int64  worker_fence = 21;
 }
 
 message Ack {

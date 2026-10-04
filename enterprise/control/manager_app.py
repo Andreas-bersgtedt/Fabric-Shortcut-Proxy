@@ -233,6 +233,7 @@ def create_manager_app() -> FastAPI:
             registry,
             manager_owner=manager_owner,
             manager_fence=manager_fence,
+            membership_policy=config.GENERATION_MEMBERSHIP_POLICY,
         )
         app.state.work_scheduler = scheduler
         scheduler.start()
@@ -447,7 +448,37 @@ def create_manager_app() -> FastAPI:
         )
         if config.MATERIALIZATION_WORK_QUEUE:
             try:
-                queue_status = await asyncio.to_thread(queue.status)
+                detailed_queue = await asyncio.to_thread(queue.status)
+                membership = detailed_queue.get("membership") or {}
+                queue_status = {
+                    key: detailed_queue[key]
+                    for key in (
+                        "requests",
+                        "tasks",
+                        "published_snapshots",
+                        "states",
+                        "queue_depth",
+                        "active_claims",
+                        "oldest_queued_age_ms",
+                    )
+                }
+                queue_status["membership"] = (
+                    {
+                        "policy": membership.get("policy"),
+                        "active_workers": sum(
+                            worker.get("state") == "active"
+                            for worker in membership.get("workers", [])
+                        ),
+                        "unassigned_work": membership.get("unassigned_work", 0),
+                        "reassignment_count": membership.get(
+                            "reassignment_count", 0
+                        ),
+                        "completed_tasks": membership.get("completed_tasks", 0),
+                        "total_tasks": membership.get("total_tasks", 0),
+                        "progress": membership.get("progress", 0.0),
+                    }
+                    if membership else None
+                )
             except Exception:
                 queue_ready = False
                 log.exception("work_queue_readiness_failed")

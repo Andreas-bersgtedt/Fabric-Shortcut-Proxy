@@ -22,6 +22,7 @@ from enterprise.control.contract import (
     RESULT_STALE_GENERATION,
     RESULT_WRONG_OWNER,
     TASK_CANCELLED,
+    TASK_CLAIMED,
     TASK_FAILED,
     TASK_QUEUED,
     TASK_RETRY_WAIT,
@@ -32,6 +33,7 @@ from enterprise.control.work_queue import (
     IDEMPOTENCY_PREFIX,
     REQUESTS_PREFIX,
     TASKS_PREFIX,
+    WorkQueueConflict,
     WorkQueueError,
 )
 from enterprise.control.lease import LeaderLease, StaleLeaderError
@@ -104,6 +106,8 @@ def _result(task: MaterializeTask, data: bytes, **changes) -> TaskResult:
         "generation_id": task.generation_id,
         "generation_fence": task.generation_fence,
         "plan_sha256": task.plan_sha256,
+        "membership_version": task.membership_version,
+        "worker_fence": task.worker_fence,
     }
     values.update(changes)
     return TaskResult(**values)
@@ -179,6 +183,69 @@ def test_queue_records_manager_term_and_rejects_stale_leader():
         queue.cancel_request(request["request_id"], "stale-manager")
 
 
+def test_superseded_generation_cannot_publish_completed_request():
+    from runtime.generation import acquire_generation
+
+    store = MemoryStore()
+    generation = acquire_generation(store, shard_count=1)
+    queue = DurableWorkQueue(store)
+    task = MaterializeTask(
+        table="sales",
+        epoch=7,
+        split_index=0,
+        source_table="sales",
+        output_key="warehouse/sales/data/0.parquet",
+        schema=[Column(1, "id", "long", False, "id")],
+    )
+    request = queue.create_request(
+        requested_key="warehouse/sales/metadata.json",
+        table="sales",
+        epoch=7,
+        table_format="iceberg",
+        generation_id=generation.generation_id,
+        generation_fence=generation.fence,
+        plan_sha256=generation.plan_sha256,
+        tasks=[task],
+        deadline_ms=int(time.time() * 1000) + 60_000,
+    )
+    claimed = queue.claim_task(
+        request["task_ids"][0],
+        agent_id="agent-1",
+        agent_lease_id="lease-1",
+        manager_owner="manager",
+        manager_fence=1,
+    )
+    data = _parquet()
+    store.put(claimed.output_key, data)
+    assert queue.accept_result(
+        _result(claimed, data),
+        agent_lease_id="lease-1",
+    ).ok
+    metadata_key = "warehouse/sales/metadata.json"
+    store.put(metadata_key, b"{}")
+    manifest = SnapshotManifest(
+        table="sales",
+        epoch=7,
+        table_format="iceberg",
+        splits=[SplitRef(
+            object_key=claimed.output_key,
+            size_bytes=len(data),
+            record_count=3,
+            content_hash=hashlib.sha256(data).hexdigest(),
+        )],
+        metadata_keys=[metadata_key],
+        generation_id=generation.generation_id,
+        generation_fence=generation.fence,
+        plan_sha256=generation.plan_sha256,
+        request_id=request["request_id"],
+    )
+    acquire_generation(store, shard_count=1)
+
+    with pytest.raises(WorkQueueConflict, match="no longer active"):
+        queue.publish_snapshot(request["request_id"], manifest)
+    assert queue.get_request(request["request_id"])["published"] is False
+
+
 def test_accepted_request_survives_manager_takeover():
     store = MemoryStore()
     started = int(time.time() * 1000)
@@ -195,6 +262,55 @@ def test_accepted_request_survives_manager_takeover():
     assert recovery["removed_requests"] == 0
     assert recovered.get_request(request["request_id"])["ready"] is True
     assert recovered.get_task(task_id)["state"] == TASK_QUEUED
+
+
+def test_membership_fence_rejects_result_before_claim_cleanup():
+    queue = DurableWorkQueue(MemoryStore())
+    request, task_id = _create(queue)
+    membership = queue.reconcile_membership(
+        "generation-4",
+        4,
+        [{"agent_id": "agent-1", "lease_id": "lease-1", "capacity": 1}],
+        policy="elastic",
+    )
+    claimed = queue.claim_task(
+        task_id,
+        agent_id="agent-1",
+        agent_lease_id="lease-1",
+        manager_owner="manager",
+        manager_fence=1,
+        membership_version=membership["membership_version"],
+        worker_fence=membership["workers"]["agent-1"]["worker_fence"],
+    )
+    queue.reconcile_membership(
+        "generation-4",
+        4,
+        [],
+        policy="elastic",
+    )
+
+    assert queue.get_task(task_id)["state"] == TASK_CLAIMED
+    rejected = queue.accept_result(
+        _result(claimed, b"stale"),
+        agent_lease_id="lease-1",
+    )
+    assert not rejected.ok
+    assert rejected.reason_code == RESULT_STALE_CLAIM
+    assert queue.get_request(request["request_id"])["state"] == TASK_CLAIMED
+
+
+def test_membership_status_prefers_generation_with_nonterminal_work():
+    queue = DurableWorkQueue(MemoryStore())
+    _create(queue)
+    workers = [{"agent_id": "agent-1", "lease_id": "lease-1", "capacity": 1}]
+    queue.reconcile_membership(
+        "generation-4", 4, workers, policy="elastic", now_ms=100
+    )
+    queue.reconcile_membership(
+        "historical-generation", 1, workers, policy="elastic", now_ms=200
+    )
+
+    assert queue.status()["membership"]["generation_id"] == "generation-4"
 
 
 def test_takeover_between_validation_and_queue_write_rejects_stale_commit():

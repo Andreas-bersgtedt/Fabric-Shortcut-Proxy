@@ -1,19 +1,18 @@
-"""
-Mount registry — the storage-proxy mount table (devplan/StorageProxy.md, Phase 1).
+"""Mount registry for local, S3-compatible, and Azure storage passthrough.
 
 A **mount** maps an S3 *bucket* to a storage backend + optional prefix so the
 proxy can serve existing files as byte passthrough. Loaded from the gitignored
 ``config.mounts.json`` (top-level ``mounts`` array); empty by default, so the
 feature is inert unless configured AND ``ENABLE_STORAGE_PROXY`` is set.
 
-Phase 1 supports the ``local`` backend only — a filesystem path, which covers an
-NFS or SMB share mounted by the OS (UNC path / mount point). Native S3/SMB/Azure
-backends are later phases; unknown backends are rejected at load with a clear
-message.
+Supported backends are ``local`` for filesystem, NFS, or SMB paths; ``s3`` for
+AWS S3, MinIO, and compatible services; and ``azure`` for Blob Storage or ADLS
+Gen2. Each remote backend uses its configured credential provider. Unknown
+backends are rejected during configuration loading.
 
 Security: a mount bucket must differ from the DB warehouse bucket, keys are
 confined to the mount's ``prefix`` subtree (the backend also rejects ``..``), and
-mounts are read-only in Phase 1.
+mounts are deliberately read-only.
 """
 from __future__ import annotations
 
@@ -189,7 +188,7 @@ def _build_mounts() -> dict[str, Mount]:
             print(f"[mounts] bucket {m.bucket!r} is not a valid S3 bucket name; skipped.", file=sys.stderr)
             continue
         if m.backend not in _SUPPORTED_BACKENDS:
-            print(f"[mounts] backend {m.backend!r} not supported yet (Phase 1 = {_SUPPORTED_BACKENDS}); "
+            print(f"[mounts] backend {m.backend!r} is unsupported (expected one of {_SUPPORTED_BACKENDS}); "
                   f"bucket {m.bucket!r} skipped.", file=sys.stderr)
             continue
         if m.backend == "local" and not m.root:

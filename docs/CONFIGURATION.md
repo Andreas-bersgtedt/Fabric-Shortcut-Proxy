@@ -641,6 +641,7 @@ Create one Fabric shortcut per table.
 | `AGENT_TOKEN_PREVIOUS` | *(empty)* | Prior fleet credential accepted only before the configured deadline. Manager only |
 | `AGENT_TOKEN_PREVIOUS_VALID_UNTIL` | `0` | Positive Unix UTC expiry for the previous token. Manager only |
 | `GENERATION_SOURCE_CONSISTENCY` | `best_effort` | Source-read contract for one table generation. SQL Server and PostgreSQL support fail-closed per-table `snapshot` |
+| `GENERATION_MEMBERSHIP_POLICY` | `fixed` | Durable work-queue membership: `fixed` preserves initial workers; `elastic` allows live scaling and fenced reassignment |
 | `SNAPSHOT_MAX_LIFETIME_SECONDS` | `3600` | Maximum lifetime of a transaction-bound table read point |
 | `MATERIALIZATION_WORK_QUEUE` | `1` | Dispatch lazy materialization to Python Agents through the durable Manager queue. Set to `0` only for compatibility rollback |
 | `WORK_QUEUE_RETENTION_SECONDS` | `604800` | Retain terminal queue records for seven days. Published manifests and artifacts are not removed |

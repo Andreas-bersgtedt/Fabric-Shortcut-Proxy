@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -142,9 +143,7 @@ def test_kind_agent_auth_secret_satisfies_every_control_workload(overlay: str) -
     workloads = [
         document
         for document in documents
-        if (
-            "kind: Deployment" in document or "kind: StatefulSet" in document
-        )
+        if re.search(r"^kind: (?:Deployment|StatefulSet)$", document, re.MULTILINE)
         and any(
             f"\n  name: {name}\n" in document
             for name in ("fsp-manager", "fsp-materializer", "fsp-cpp-agent")

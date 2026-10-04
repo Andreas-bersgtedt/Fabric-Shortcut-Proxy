@@ -11,6 +11,7 @@ from iceberg.state_store import SnapshotState, SplitDescriptor
 from planner.split_planner import (
     build_split_query,
     choose_table_num_splits,
+    compute_temporal_ranges,
     compute_split_count,
     plan_ranges_for_snapshot,
 )
@@ -45,6 +46,29 @@ def _snapshot(table: TableDef, splits: int = 4) -> SnapshotState:
         for i in range(splits)
     ]
     return snap
+
+
+def test_temporal_ranges_preserve_naive_oracle_timestamp_bounds():
+    lo = datetime(2024, 1, 1)
+    hi = datetime(2024, 1, 4)
+
+    ranges = compute_temporal_ranges(lo, hi, 2, "timestamp")
+
+    assert all(start.tzinfo is None and end.tzinfo is None for start, end in ranges)
+    assert ranges[0][0] == lo
+    assert ranges[-1][1] > hi
+
+
+def test_temporal_ranges_keep_timezone_aware_bounds_in_utc():
+    lo = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    hi = datetime(2024, 1, 4, tzinfo=timezone.utc)
+
+    ranges = compute_temporal_ranges(lo, hi, 2, "timestamp")
+
+    assert all(
+        start.tzinfo == timezone.utc and end.tzinfo == timezone.utc
+        for start, end in ranges
+    )
 
 
 def test_build_split_query_non_integer_key_uses_row_number_strategy():

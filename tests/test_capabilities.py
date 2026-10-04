@@ -83,6 +83,84 @@ def test_expanded_sources_capabilities_are_conservative():
         assert matrix[flavor]["required_connection_fields"] == []
 
 
+def test_source_capability_matrix_exposes_evidence_and_gap_contract():
+    matrix = capability_matrix()
+    for flavor in ("oracle", "databricks", "redshift", "teradata", "impala"):
+        source = matrix[flavor]
+        assert source["support_status"] in {"supported", "beta", "preview"}
+        assert source["supports_streaming_query"] is False
+        assert "streaming_query" in source["capability_gaps"]
+        for gap in source["capability_gaps"].values():
+            assert gap["reason"]
+            assert gap["fallback"]
+            assert gap["cost"]
+    for flavor in ("databricks", "impala"):
+        assert matrix[flavor]["requires_explicit_split_key"] is True
+        assert "explicit key_column" in matrix[flavor]["capability_gaps"][
+            "primary_key_reflection"
+        ]["fallback"]
+
+
+def test_issue_94_beta_release_gate_is_conservative():
+    matrix = capability_matrix()
+    assert {
+        flavor: matrix[flavor]["support_status"]
+        for flavor in ("oracle", "databricks", "redshift", "teradata", "impala")
+    } == {
+        "oracle": "supported",
+        "databricks": "beta",
+        "redshift": "beta",
+        "teradata": "beta",
+        "impala": "preview",
+    }
+    for flavor in ("databricks", "redshift", "teradata"):
+        source = matrix[flavor]
+        assert source["supports_streaming_query"] is False
+        assert source["supports_freshness_probe"] is False
+        assert source["supports_stats_histogram"] is False
+        assert source["source_snapshot_provider"] == "none"
+        assert {"streaming_query", "freshness_probe", "stats_histogram"} <= set(
+            source["capability_gaps"]
+        )
+    for flavor in ("redshift", "teradata"):
+        source = matrix[flavor]
+        assert source["supports_deterministic_tokenization"] is False
+        assert source["supports_random_tokenization"] is False
+        assert "native_tokenization" in source["capability_gaps"]
+
+
+def test_capability_documentation_matches_source_matrix():
+    from pathlib import Path
+
+    matrix = capability_matrix()
+    document = (
+        Path(__file__).parents[1] / "docs" / "SOURCE_CAPABILITIES.md"
+    ).read_text(encoding="utf-8")
+    for flavor in ("oracle", "databricks", "redshift", "teradata", "impala"):
+        caps = matrix[flavor]
+        row = next(
+            line for line in document.splitlines()
+            if line.startswith(f"| {flavor} |")
+        )
+        expected = [
+            caps["support_status"],
+            "yes" if caps["supports_view_listing"] else "no",
+            "yes" if caps["supports_primary_key_reflection"] else "no",
+            "yes" if caps["requires_explicit_split_key"] else "no",
+            "yes" if caps["supports_range_key_bounds"] else "no",
+            "yes" if caps["supports_modulo_split"] else "no",
+            "yes" if caps["supports_ntile"] else "no",
+            "yes" if caps["supports_stats_histogram"] else "no",
+            "yes" if caps["supports_fast_row_estimate"] else "no",
+            "yes" if caps["supports_freshness_probe"] else "no",
+            "yes" if caps["supports_deterministic_tokenization"] else "no",
+            "yes" if caps["supports_random_tokenization"] else "no",
+            "yes" if caps["supports_streaming_query"] else "no",
+        ]
+        cells = [cell.strip().lower() for cell in row.strip().strip("|").split("|")]
+        assert cells[1:] == expected
+
+
 def test_snapshot_capabilities_advertise_only_implemented_providers():
     matrix = capability_matrix()
     assert matrix["postgresql"]["source_snapshot_provider"] == "postgresql_exported"

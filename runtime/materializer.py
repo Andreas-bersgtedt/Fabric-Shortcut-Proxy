@@ -31,6 +31,7 @@ from planner.split_planner import arrow_fallback_columns, build_split_query
 from iceberg.stats import collect_split_stats
 from iceberg.state_store import SnapshotState
 from observability.logging import get_logger
+from observability.tokenization import record_arrow_fallback
 from runtime.artifact_store import get_default_store
 from runtime.split_completion import (
     apply_split_completion,
@@ -105,13 +106,44 @@ def _apply_bytes(split, data: bytes) -> int:
     return split.record_count
 
 
-def _apply_arrow_fallback(rows: list[dict], split) -> list[dict]:
+def _apply_arrow_fallback(
+    rows: list[dict], split, announced: set[tuple[str, str]] | None = None
+) -> list[dict]:
     """Apply only explicitly selected Arrow fallback transforms to SQL rows."""
     if not rows:
         return rows
     columns = arrow_fallback_columns(split)
     if not any(column.transform for column in columns):
         return rows
+    from db.capabilities import capabilities_for_db_url
+
+    flavor = capabilities_for_db_url(
+        config.effective_db_url(split.table.connection_id)
+    ).flavor
+    announced = announced if announced is not None else set()
+    for column in columns:
+        if not column.transform:
+            continue
+        kind = column.transform.kind
+        identity = (column.source_name, kind)
+        if identity in announced:
+            continue
+        announced.add(identity)
+        log.warning(
+            "arrow_tokenization_fallback",
+            table=split.table.name,
+            split_index=split.split_index,
+            flavor=flavor,
+            column=column.source_name,
+            token_kind=kind,
+            plaintext_values_cross_proxy=True,
+        )
+        record_arrow_fallback(
+            table=split.table.name,
+            column=column.source_name,
+            flavor=flavor,
+            kind=kind,
+        )
     from storage.tokenizer import tokenize_batch
     batch = pa.RecordBatch.from_pylist(rows)
     return tokenize_batch(batch, columns).to_pylist()
@@ -145,6 +177,7 @@ async def _materialize_split_once(split, *, enforce_ownership: bool = True) -> i
                     f"snapshot read session is unavailable for {split.table.name!r}"
                 )
         if config.STREAMING_PARQUET:
+            announced_fallbacks: set[tuple[str, str]] = set()
             batches = (
                 read_session.stream_split_query(
                     sql,
@@ -161,7 +194,7 @@ async def _materialize_split_once(split, *, enforce_ownership: bool = True) -> i
             )
             async def transformed_batches():
                 async for batch in batches:
-                    yield _apply_arrow_fallback(batch, split)
+                    yield _apply_arrow_fallback(batch, split, announced_fallbacks)
 
             pq_bytes, nrows = await stream_rows_to_parquet(
                 transformed_batches(), split_index=split.split_index, columns=split.table.schema
@@ -178,7 +211,7 @@ async def _materialize_split_once(split, *, enforce_ownership: bool = True) -> i
                 )
             )
             pq_bytes = rows_to_parquet(
-                _apply_arrow_fallback(rows, split), split_index=split.split_index,
+                _apply_arrow_fallback(rows, split, set()), split_index=split.split_index,
                 columns=split.table.schema
             )
             nrows = len(rows)
@@ -285,6 +318,7 @@ async def _verify_determinism(split) -> None:
         return
     sql, params = build_split_query(split)
     if config.STREAMING_PARQUET:
+        announced_fallbacks: set[tuple[str, str]] = set()
         batches = stream_split_query(
             sql, params, split_index=split.split_index,
             batch_rows=config.STREAM_BATCH_ROWS,
@@ -293,7 +327,7 @@ async def _verify_determinism(split) -> None:
 
         async def transformed_batches():
             async for batch in batches:
-                yield _apply_arrow_fallback(batch, split)
+                yield _apply_arrow_fallback(batch, split, announced_fallbacks)
 
         second, _ = await stream_rows_to_parquet(
             transformed_batches(), split_index=split.split_index, columns=split.table.schema
@@ -304,7 +338,7 @@ async def _verify_determinism(split) -> None:
             connection=split.table.connection_id,
         )
         second = rows_to_parquet(
-            _apply_arrow_fallback(rows, split), split_index=split.split_index,
+            _apply_arrow_fallback(rows, split, set()), split_index=split.split_index,
             columns=split.table.schema
         )
     if hashlib.sha256(first).digest() != hashlib.sha256(second).digest():

@@ -29,7 +29,10 @@ _SCHEMA = [
     ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
     ColumnDef(field_id=2, name="name", iceberg_type="string", nullable=True),
 ]
-_TABLE = TableDef(name="widgets", source_table="widgets", schema=_SCHEMA, num_splits=4)
+_TABLE = TableDef(
+    name="widgets", source_table="widgets", schema=_SCHEMA,
+    num_splits=4, key_column="id",
+)
 
 
 def _split() -> SplitDescriptor:
@@ -80,6 +83,14 @@ def test_dialect_cast_type():
 def test_quote_qualified_dotted():
     assert MSSQLDialect().quote_qualified("dbo.sales") == "[dbo].[sales]"
     assert SQLiteDialect().quote_qualified("main.sales") == '"main"."sales"'
+    assert OracleDialect().quote_qualified("issue94_gate.issue94_rows") == (
+        '"ISSUE94_GATE"."ISSUE94_ROWS"'
+    )
+    assert OracleDialect().quote_qualified('"sales"."orders"') == (
+        '"sales"."orders"'
+    )
+    assert OracleDialect().quote('"orders"') == '"orders"'
+    assert OracleDialect().quote("MixedCase") == '"MixedCase"'
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +106,82 @@ def test_split_query_sqlite(monkeypatch):
     assert "LIMIT :max_rows" in sql
     assert "TOP" not in sql
     assert params == {"num_splits": 4, "split_index": 1, "max_rows": config.QUERY_MAX_ROWS}
+
+
+@pytest.mark.parametrize(
+    "db_url",
+    ["databricks://dbc.example", "impala://host:21050/analytics"],
+)
+def test_sources_without_pk_reflection_reject_implicit_split_keys(monkeypatch, db_url):
+    monkeypatch.setattr(config, "DB_URL", db_url)
+    table = TableDef(
+        name="events",
+        source_table="events",
+        schema=_SCHEMA,
+        num_splits=4,
+    )
+    split = SplitDescriptor(
+        split_index=0,
+        num_splits=4,
+        object_key="warehouse/events/split-0.parquet",
+        watermark_ms=0,
+        table=table,
+    )
+    from planner.split_planner import _choose_strategy_key
+
+    with pytest.raises(ValueError, match="requires an explicit key_column"):
+        _choose_strategy_key(table, "range")
+    with pytest.raises(ValueError, match="requires an explicit key_column"):
+        build_split_query(split)
+
+
+@pytest.mark.parametrize(
+    "db_url",
+    ["databricks://dbc.example", "impala://host:21050/analytics"],
+)
+def test_sources_without_pk_reflection_accept_only_the_explicit_schema_key(
+    monkeypatch, db_url
+):
+    monkeypatch.setattr(config, "DB_URL", db_url)
+    table = TableDef(
+        name="events",
+        source_table="events",
+        schema=_SCHEMA,
+        num_splits=4,
+        key_column="id",
+    )
+    split = SplitDescriptor(
+        split_index=0,
+        num_splits=4,
+        object_key="warehouse/events/split-0.parquet",
+        watermark_ms=0,
+        table=table,
+        split_key_column="id",
+    )
+    sql, _ = build_split_query(split)
+    assert "id" in sql
+    split.split_key_column = "name"
+    with pytest.raises(ValueError, match="match the explicit table key_column"):
+        build_split_query(split)
+
+
+@pytest.mark.parametrize(
+    "db_url",
+    ["databricks://dbc.example", "impala://host:21050/analytics"],
+)
+def test_explicit_split_key_must_exist_in_reflected_schema(monkeypatch, db_url):
+    monkeypatch.setattr(config, "DB_URL", db_url)
+    table = TableDef(
+        name="events",
+        source_table="events",
+        schema=_SCHEMA,
+        num_splits=4,
+        key_column="unknown",
+    )
+    with pytest.raises(ValueError, match="not present in the reflected source columns"):
+        from planner.split_planner import _choose_strategy_key
+
+        _choose_strategy_key(table, "range")
 
 
 def test_split_query_postgres(monkeypatch):
@@ -133,9 +220,44 @@ def test_split_query_mssql_range_uses_top_not_limit(monkeypatch):
 def test_split_query_oracle(monkeypatch):
     monkeypatch.setattr(config, "DB_URL", "oracle+oracledb://h/db")
     sql, _ = build_split_query(_split())
-    assert 'FROM "widgets"' in sql
-    assert "MOD(CAST(\"id\" AS NUMBER(19)), :num_splits)" in sql
+    assert 'FROM "WIDGETS"' in sql
+    assert 'SELECT "ID" AS "id", "NAME" AS "name"' in sql
+    assert "MOD(CAST(\"ID\" AS NUMBER(19)), :num_splits)" in sql
     assert "FETCH FIRST :max_rows ROWS ONLY" in sql
+
+
+def test_split_query_oracle_preserves_timestamp_range_precision(monkeypatch):
+    from datetime import datetime
+
+    monkeypatch.setattr(config, "DB_URL", "oracle+oracledb://h/db")
+    table = TableDef(
+        name="events",
+        source_table="events",
+        schema=[
+            ColumnDef(field_id=1, name="event_ts", iceberg_type="timestamp"),
+            ColumnDef(field_id=2, name="payload", iceberg_type="string"),
+        ],
+        key_column="EVENT_TS",
+        num_splits=1,
+        split_strategy="date",
+    )
+    split = SplitDescriptor(
+        split_index=0,
+        num_splits=1,
+        object_key="events/split-0.parquet",
+        watermark_ms=0,
+        table=table,
+        split_key_column="EVENT_TS",
+        key_lo=datetime(2024, 1, 1),
+        key_hi=datetime(2024, 1, 2, 0, 0, 0, 1),
+    )
+
+    sql, params = build_split_query(split)
+
+    assert "TO_TIMESTAMP(:key_lo, 'YYYY-MM-DD HH24:MI:SS.FF6')" in sql
+    assert "TO_TIMESTAMP(:key_hi, 'YYYY-MM-DD HH24:MI:SS.FF6')" in sql
+    assert params["key_lo"] == "2024-01-01 00:00:00.000000"
+    assert params["key_hi"] == "2024-01-02 00:00:00.000001"
 
 
 def test_split_query_databricks(monkeypatch):
@@ -301,7 +423,7 @@ def test_oracle_deterministic_hash_projection(monkeypatch):
     sql, params = build_split_query(_table_split(_tokenized_table()))
 
     assert "RAWTOHEX(STANDARD_HASH(" in sql
-    assert "LOWER(TRIM(CAST(\"email\" AS VARCHAR2(4000))))" in sql
+    assert "LOWER(TRIM(CAST(\"EMAIL\" AS VARCHAR2(4000))))" in sql
     assert "'SHA256')) END AS \"email_token\"" in sql
     assert "uat-secret" not in sql
     assert params["fsp_token_key_1"] == "uat-secret"

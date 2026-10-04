@@ -904,13 +904,27 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
                     f"Table {t.name!r}: connection {t.connection_id!r} is not defined "
                     f"(known: {sorted(CONNECTIONS)})."
                 )
+            from db.capabilities import capabilities_for_db_url
+
+            capabilities = capabilities_for_db_url(effective_db_url(t.connection_id))
+            if capabilities.requires_explicit_split_key:
+                if not (t.key_column or "").strip():
+                    problems.append(
+                        f"Table {t.name!r}: dialect {capabilities.flavor!r} requires "
+                        "an explicit key_column because primary-key reflection is unavailable."
+                    )
+                elif t.schema and not any(
+                    t.key_column in {column.name, column.source_name}
+                    for column in t.schema
+                ):
+                    problems.append(
+                        f"Table {t.name!r}: explicit key_column {t.key_column!r} "
+                        "is not present in the configured source schema."
+                    )
             transforms = [c for c in (t.schema or []) if c.transform]
             if not transforms:
                 continue
 
-            from db.capabilities import capabilities_for_db_url
-
-            capabilities = capabilities_for_db_url(effective_db_url(t.connection_id))
             for col in transforms:
                 if t.key_column in {col.name, col.source_name}:
                     problems.append(
@@ -1563,6 +1577,22 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
     """
     clean: dict = {}
     errors: list[str] = []
+    updated_connections = {
+        str((entry or {}).get("id") or "").strip(): str(
+            (entry or {}).get("db_url") or ""
+        ).strip()
+        for entry in (updates or {}).get("connections", [])
+        if isinstance(entry, dict)
+    }
+
+    def _updated_connection_url(connection_id: str) -> str | None:
+        if connection_id == "default":
+            return str(updates.get("db_url") or DB_URL or "").strip() or None
+        if connection_id in updated_connections:
+            return updated_connections[connection_id] or None
+        connection = CONNECTIONS.get(connection_id)
+        return getattr(connection, "db_url", None)
+
     for k, v in (updates or {}).items():
         # Special case: "tables" is an array of table configs, not a scalar setting
         if k == "tables":
@@ -1586,11 +1616,39 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                             table_errors.append(f"{prefix}: source_table must be non-empty")
                         if not str(raw_table.get("key_column") or "").strip():
                             table_errors.append(f"{prefix}: key_column must be non-empty")
+                        connection_id = str(raw_table.get("connection") or "default").strip() or "default"
+                        source_url = _updated_connection_url(connection_id)
+                        if source_url:
+                            from db.capabilities import capabilities_for_db_url
+
+                            source_capabilities = capabilities_for_db_url(source_url)
+                            key_column = str(raw_table.get("key_column") or "").strip()
+                            if source_capabilities.requires_explicit_split_key and not key_column:
+                                table_errors.append(
+                                    f"{prefix}: dialect {source_capabilities.flavor!r} "
+                                    "requires an explicit key_column because "
+                                    "primary-key reflection is unavailable."
+                                )
                         raw_schema = raw_table.get("schema")
                         if raw_schema is not None and not isinstance(raw_schema, list):
                             table_errors.append(f"{prefix}.schema: must be a list")
                             continue
                         if isinstance(raw_schema, list):
+                            source_columns = {
+                                str(column.get("source") or column.get("name") or "")
+                                for column in raw_schema
+                                if isinstance(column, dict)
+                            }
+                            if (
+                                source_url
+                                and source_capabilities.requires_explicit_split_key
+                                and key_column
+                                and key_column not in source_columns
+                            ):
+                                table_errors.append(
+                                    f"{prefix}: explicit key_column {key_column!r} "
+                                    "is not present in the configured source schema."
+                                )
                             field_ids = [c.get("field_id") for c in raw_schema if isinstance(c, dict)]
                             output_names = [str(c.get("name") or "") for c in raw_schema if isinstance(c, dict)]
                             if len(field_ids) != len(raw_schema):

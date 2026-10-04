@@ -11,6 +11,8 @@ planner code produces correct SQL for SQLite, PostgreSQL and SQL Server.
 """
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
+
 
 class Dialect:
     """Generic ANSI-ish dialect (double-quoted identifiers, LIMIT suffix)."""
@@ -19,6 +21,12 @@ class Dialect:
     int_cast_type = "INTEGER"
     quote_open = '"'
     quote_close = '"'
+
+    def range_parameter(self, name: str, key_type: str | None) -> str:
+        return f":{name}"
+
+    def serialize_range_bound(self, value, key_type: str | None):
+        return value
 
     def quote(self, ident: str) -> str:
         """Quote a single identifier, escaping any embedded quote char."""
@@ -74,6 +82,7 @@ class Dialect:
         key_lo_param: str,
         key_hi_param: str,
         max_rows_param: str,
+        key_type: str | None = None,
     ) -> str:
         """Range predicate (Phase 4): only this split's contiguous key slice,
         served straight off the PK index instead of a full-table modulo scan."""
@@ -249,6 +258,7 @@ class MSSQLDialect(Dialect):
         key_lo_param: str,
         key_hi_param: str,
         max_rows_param: str,
+        key_type: str | None = None,
     ) -> str:
         # T-SQL has no LIMIT: the range slice must use the TOP prefix too.
         predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
@@ -292,12 +302,24 @@ class OracleDialect(Dialect):
     name = "oracle"
     int_cast_type = "NUMBER(19)"
 
-    def render_projection(self, column, param_prefix: str) -> tuple[str, str, dict]:
-        if not column.transform:
-            return super().render_projection(column, param_prefix)
+    def quote(self, ident: str) -> str:
+        if getattr(ident, "quote", None) is True:
+            return super().quote(str(ident))
+        if len(ident) >= 2 and ident.startswith('"') and ident.endswith('"'):
+            return super().quote(ident[1:-1].replace('""', '"'))
+        # Oracle normalizes unquoted names to uppercase in the catalog, while
+        # SQLAlchemy reflects those names to lowercase for Python callers.
+        # Explicitly quoted names retain their configured case above.
+        normalized = ident.upper() if ident.islower() else ident
+        return super().quote(normalized)
 
+    def render_projection(self, column, param_prefix: str) -> tuple[str, str, dict]:
         source = self.quote(column.source_name)
-        output = self.quote(column.name)
+        output = Dialect.quote(self, column.name)
+        if not column.transform:
+            projected = source if source == output else f"{source} AS {output}"
+            return projected, output, {}
+
         transform = column.transform
         if transform.kind == "random_token":
             expression = (
@@ -329,7 +351,8 @@ class OracleDialect(Dialect):
             }
             return expression, output, params
 
-        return super().render_projection(column, param_prefix)
+        projected = source if source == output else f"{source} AS {output}"
+        return projected, output, {}
 
     def build_select(
         self,
@@ -361,8 +384,12 @@ class OracleDialect(Dialect):
         key_lo_param: str,
         key_hi_param: str,
         max_rows_param: str,
+        key_type: str | None = None,
     ) -> str:
-        predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
+        predicate = (
+            f"{pk} >= {self.range_parameter(key_lo_param, key_type)} "
+            f"AND {pk} < {self.range_parameter(key_hi_param, key_type)}"
+        )
         return (
             f"SELECT {projected} "
             f"FROM {source} "
@@ -370,6 +397,35 @@ class OracleDialect(Dialect):
             f"ORDER BY {pk} "
             f"FETCH FIRST :{max_rows_param} ROWS ONLY"
         )
+
+    def range_parameter(self, name: str, key_type: str | None) -> str:
+        if key_type == "date":
+            return f"TO_DATE(:{name}, 'YYYY-MM-DD')"
+        if key_type == "timestamp":
+            return f"TO_TIMESTAMP(:{name}, 'YYYY-MM-DD HH24:MI:SS.FF6')"
+        if key_type == "timestamptz":
+            return (
+                f"TO_TIMESTAMP_TZ(:{name}, "
+                "'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM')"
+            )
+        return f":{name}"
+
+    def serialize_range_bound(self, value, key_type: str | None):
+        if key_type == "date":
+            if isinstance(value, datetime):
+                value = value.date()
+            if isinstance(value, date):
+                return value.isoformat()
+        if key_type in {"timestamp", "timestamptz"} and isinstance(value, datetime):
+            if key_type == "timestamptz":
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+                value = value.astimezone(timezone.utc)
+                offset = value.strftime("%z")
+                zone = f"{offset[:3]}:{offset[3:]}"
+                return f"{value.strftime('%Y-%m-%d %H:%M:%S.%f')} {zone}"
+            return value.strftime("%Y-%m-%d %H:%M:%S.%f")
+        return value
 
     def build_select_row_number(
         self,
@@ -455,6 +511,7 @@ class DatabricksDialect(Dialect):
         key_lo_param: str,
         key_hi_param: str,
         max_rows_param: str,
+        key_type: str | None = None,
     ) -> str:
         predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
         return (
@@ -519,6 +576,7 @@ class TeradataDialect(Dialect):
         key_lo_param: str,
         key_hi_param: str,
         max_rows_param: str,
+        key_type: str | None = None,
     ) -> str:
         predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
         return (

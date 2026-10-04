@@ -2250,6 +2250,7 @@ async function inspectSourceObject(object){
     name:object.name, schema:object.schema||null, source_table:sourceTable,
     connection:runtimeId, source_kind:source.kind, source_type:source.type,
     key_column:metadata.detected_key||null, integer_keys:metadata.integer_keys||[],
+    requires_explicit_split_key:!!metadata.requires_explicit_split_key,
     columns:reflectedPolicyColumns(metadata.columns||[]), approx_rows:metadata.approx_rows,
     num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
     invalid:!metadata.detected_key, pending:false, policies_open:true, enabled:true,
@@ -2273,7 +2274,10 @@ function renderAddTableMetadata(){
   const nameLabel=document.createElement("label"); nameLabel.textContent="Exposed table name";
   const nameInput=document.createElement("input"); nameInput.value=draft.name;
   nameInput.oninput=()=>{ draft.name=nameInput.value.trim(); $("btnSaveAddedTable").disabled=!draft.name||!draft.key_column; };
-  const keyLabel=document.createElement("label"); keyLabel.textContent="Key / split column";
+  const keyLabel=document.createElement("label");
+  keyLabel.textContent=draft.requires_explicit_split_key
+    ?"Key / split column (required; select explicitly)"
+    :"Key / split column";
   const keySelect=document.createElement("select");
   const candidates=keyCandidates(draft);
   if(!draft.key_column){ const option=document.createElement("option"); option.value=""; option.textContent="Choose a key column"; keySelect.appendChild(option); }
@@ -2333,7 +2337,8 @@ async function saveAddedTable(){
 function stub(t){ return { name:t.name, schema:t.schema||null,
   source_table:(t.schema? t.schema+"." : "")+t.name, connection: state.activeConnId,
   key_column:null, num_splits:null, split_target_rows:null, split_strategy:null, split_balance:null,
-  integer_keys:[], columns:[], schema_explicit:false, approx_rows:null, pending:true, policies_open:false, enabled:true }; }
+  integer_keys:[], columns:[], schema_explicit:false, approx_rows:null,
+  requires_explicit_split_key:false, pending:true, policies_open:false, enabled:true }; }
 
 function policyColumn(column, index){
   const transform = column.transform || null;
@@ -2417,8 +2422,10 @@ async function validateConfiguredTable(entry, openEditor=false){
   const merged=mergeReflectedColumns(entry,metadata.columns||[]);
   entry.columns=merged.columns;
   entry.integer_keys=metadata.integer_keys||[];
+  entry.requires_explicit_split_key=!!metadata.requires_explicit_split_key;
   entry.approx_rows=metadata.approx_rows;
-  if(!entry.key_column) entry.key_column=metadata.detected_key||(entry.integer_keys[0]||null);
+  if(!entry.key_column && !entry.requires_explicit_split_key)
+    entry.key_column=metadata.detected_key||(entry.integer_keys[0]||null);
   entry.invalid=!entry.key_column;
   entry.pending=false;
   const errors=policyErrors(entry);
@@ -2461,8 +2468,11 @@ async function runInspect(){
     entry.integer_keys = meta.integer_keys || [];
     entry.columns = reflectedPolicyColumns(meta.columns);
     entry.approx_rows = meta.approx_rows;
-    entry.key_column = meta.detected_key || (entry.integer_keys[0]||null);
-    entry.invalid = entry.integer_keys.length===0;
+    entry.requires_explicit_split_key = !!meta.requires_explicit_split_key;
+    entry.key_column = meta.detected_key || (
+      entry.requires_explicit_split_key ? null : (entry.integer_keys[0]||null)
+    );
+    entry.invalid = !entry.key_column;
     entry.pending = false;
   }
   renderSelected();
@@ -2498,6 +2508,9 @@ function policyErrors(entry){
   const incompatible=kept.filter((column,index)=>column.name.trim()!==parquetSafeName(column.name,index+1));
   if(incompatible.length) errors.push("Output names may contain only letters, numbers, and underscores, and cannot start with a number.");
   const splitKey = entry.columns.find(column=>column.source===entry.key_column);
+  if(entry.requires_explicit_split_key && !splitKey){
+    errors.push("This source requires an explicit split key selected from the reflected columns.");
+  }
   if(splitKey && splitKey.policy!=="keep") errors.push("The split key must be kept.");
   if(names.some(name=>!name)) errors.push("Every kept column needs an output name.");
   if(new Set(names).size!==names.length) errors.push("Output names must be unique.");
@@ -4141,6 +4154,7 @@ async function omInspectTable(i, picked){
       if(!row.watermark_column){ const wm = omGuessWatermark(d.columns||[]); if(wm) row.watermark_column = wm; }
       if(d.detected_key&&!row.key_column) row.key_column=d.detected_key;
       if(d.detected_key){ s.className="status ok"; s.textContent="Loaded columns for "+source.name+" · key: "+row.key_column+(row.watermark_column?(" · watermark: "+row.watermark_column):""); }
+      else if(d.requires_explicit_split_key){ s.className="status"; s.textContent="Loaded columns for "+source.name+" · select an explicit split key (primary-key reflection unavailable)."; }
       else { s.className="status"; s.textContent="Loaded columns for "+source.name+"; no key was detected."; }
       omRenderTableRows();
     } else { s.className="status err"; s.textContent="✗ "+((d&&d.error)||"key detection failed"); }

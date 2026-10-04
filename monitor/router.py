@@ -31,6 +31,7 @@ from iceberg.state_store import get_all_snapshots
 from observability import metrics, querystats, trace
 from observability.logbuffer import get_buffer
 from observability.logging import get_logger
+from observability.tokenization import snapshot as arrow_fallback_snapshot
 from open_mirror.config import load_targets
 from open_mirror.fabric_api import FabricApiError, get_mirroring_status
 from open_mirror.landing_zone import open_landing_zone, table_relative_path
@@ -128,6 +129,7 @@ async def summary() -> dict:
     names &= set(snap_by_table)
 
     source_meta: dict[str, dict] = {}
+    arrow_fallbacks = arrow_fallback_snapshot()
 
     def _source_for(connection_id: str) -> dict:
         meta = source_meta.get(connection_id)
@@ -179,6 +181,9 @@ async def summary() -> dict:
             "p95_total_ms": q.get("p95_total_ms", 0),
             "max_total_ms": q.get("max_total_ms", 0),
             "last_read_ts": q.get("last_ts"),
+            "arrow_fallback": arrow_fallbacks.get(
+                name, {"count": 0, "columns": [], "flavors": [], "kinds": []}
+            ),
         })
 
     return {
@@ -193,6 +198,9 @@ async def summary() -> dict:
             "bytes_served": _counter_total(m, "s3_bytes_served_total"),
             "source_unavailable": _counter_total(m, "source_unavailable_total"),
             "data_requests": sum(q.get("data_requests", 0) for q in qtables.values()),
+            "arrow_tokenization_fallbacks": sum(
+                int(item["count"]) for item in arrow_fallbacks.values()
+            ),
         },
         "refresh": {
             "auto_refresh": config.AUTO_REFRESH,

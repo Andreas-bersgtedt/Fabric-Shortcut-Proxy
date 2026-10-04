@@ -649,13 +649,14 @@ async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, 
             if stride >= 2:
                 # Value-uniform stride sample keeps the planning scan's sort/window bounded.
                 ntile_src = (f"(SELECT {pk} FROM {src} "
-                             f"WHERE {pk} IS NOT NULL AND (ABS({pk}) % {int(stride)}) = 0) __s")
+                             f"WHERE {pk} IS NOT NULL AND (ABS({pk}) % {int(stride)}) = 0) "
+                             "fsp_ntile_sample")
 
     sql = (
         f"SELECT MIN({pk}) AS lo, MAX({pk}) AS hi "
-        f"FROM (SELECT {pk}, NTILE({n_int}) OVER (ORDER BY {pk}) AS __b "
+        f"FROM (SELECT {pk}, NTILE({n_int}) OVER (ORDER BY {pk}) AS fsp_ntile_bucket "
         f"FROM {ntile_src} WHERE {pk} IS NOT NULL) q "
-        f"GROUP BY __b ORDER BY __b"
+        "GROUP BY fsp_ntile_bucket ORDER BY fsp_ntile_bucket"
     )
     async with asyncio.timeout(_query_timeout_for(connection)):
         if _async_mode_for(connection):

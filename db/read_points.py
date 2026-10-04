@@ -540,13 +540,15 @@ class TransactionalReadSession:
                 if stride >= 2:
                     ntile_source = (
                         f"(SELECT {key} FROM {source} WHERE {key} IS NOT NULL "
-                        f"AND (ABS({key}) % {int(stride)}) = 0) __s"
+                        f"AND (ABS({key}) % {int(stride)}) = 0) "
+                        "fsp_ntile_sample"
                     )
         sql = (
             f"SELECT MIN({key}) AS lo, MAX({key}) AS hi "
-            f"FROM (SELECT {key}, NTILE({int(n)}) OVER (ORDER BY {key}) AS __b "
+            f"FROM (SELECT {key}, NTILE({int(n)}) OVER (ORDER BY {key}) "
+            "AS fsp_ntile_bucket "
             f"FROM {ntile_source} WHERE {key} IS NOT NULL) q "
-            f"GROUP BY __b ORDER BY __b"
+            "GROUP BY fsp_ntile_bucket ORDER BY fsp_ntile_bucket"
         )
         rows = (await self._connection.execute(text(sql))).all()
         if not rows:

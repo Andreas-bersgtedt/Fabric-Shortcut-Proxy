@@ -28,7 +28,11 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import config
-from db.capabilities import capabilities_for_dialect, flavor_warnings
+from db.capabilities import (
+    capabilities_for_db_url,
+    capabilities_for_dialect,
+    flavor_warnings,
+)
 from db.reflect import (
     _installed_sql_server_odbc_drivers,
     build_url,
@@ -141,6 +145,33 @@ def _flavor_from_url(db_url: str) -> str:
     return flavor_from_db_url(db_url)
 
 
+async def _split_key_metadata(reflector, db_url: str, source_table: str, columns: list[dict]) -> dict:
+    """Reflect only the metadata the dialect supports and never imply a detected key
+    when the operator must choose one explicitly.
+    """
+    capabilities = capabilities_for_db_url(db_url)
+    primary_key = (
+        await reflector.primary_key(source_table)
+        if capabilities.supports_primary_key_reflection
+        else []
+    )
+    detected_key, integer_keys = detect_key_column(columns, primary_key)
+    if capabilities.requires_explicit_split_key:
+        detected_key = None
+    return {
+        "primary_key": primary_key,
+        "detected_key": detected_key,
+        "integer_keys": integer_keys,
+        "requires_explicit_split_key": capabilities.requires_explicit_split_key,
+        "split_key_guidance": (
+            "Select an explicit key from the reflected columns; primary-key reflection "
+            "is unavailable."
+            if capabilities.requires_explicit_split_key
+            else None
+        ),
+    }
+
+
 def _connection_form_fields(connection_id: str, db_url: str) -> dict:
     """Return editable, non-secret form fields for a saved SQLAlchemy URL."""
     from sqlalchemy.engine import make_url
@@ -177,7 +208,9 @@ def _connection_form_fields(connection_id: str, db_url: str) -> dict:
 
     database = url.database or ""
     port = str(url.port or "")
-    if dialect == "teradata":
+    if dialect == "oracle":
+        database = query.get("service_name", query.get("sid", database))
+    elif dialect == "teradata":
         database = query.get("database", database)
         port = query.get("dbs_port", port)
 
@@ -1953,13 +1986,16 @@ async def inspect_source_object(source_id: str, request: Request) -> JSONRespons
                            for item in available):
                     raise ValueError("object is not part of the selected database source")
                 columns = await reflector.columns(source_table)
-                primary_key = await reflector.primary_key(source_table)
-                detected_key, integer_keys = detect_key_column(columns, primary_key)
+                key_metadata = await _split_key_metadata(
+                    reflector,
+                    _connection_url_for(runtime_id).render_as_string(hide_password=True),
+                    source_table,
+                    columns,
+                )
                 approx_rows = await reflector.approx_row_count(source_table)
             result = {
                 "name": name, "schema": schema, "source_table": source_table,
-                "columns": columns, "primary_key": primary_key,
-                "detected_key": detected_key, "integer_keys": integer_keys,
+                "columns": columns, **key_metadata,
                 "approx_rows": approx_rows,
             }
         else:
@@ -2030,14 +2066,14 @@ async def open_mirror_inspect_table(request: Request) -> JSONResponse:
     try:
         async with SchemaReflector(url) as ref:
             cols = await ref.columns(source_table)
-            pk = await ref.primary_key(source_table)
-            detected, int_keys = detect_key_column(cols, pk)
+            key_metadata = await _split_key_metadata(
+                ref, url.render_as_string(hide_password=True), source_table, cols
+            )
     except Exception as exc:  # noqa: BLE001
         log.warning("open_mirror_inspect_table_failed", connection=connection, error=_clean_error(exc))
         return JSONResponse({"ok": False, "error": _clean_error(exc)}, status_code=400)
     return JSONResponse({
-        "ok": True, "source_table": source_table, "detected_key": detected,
-        "integer_keys": int_keys, "columns": cols,
+        "ok": True, "source_table": source_table, **key_metadata, "columns": cols,
     })
 
 
@@ -3089,13 +3125,13 @@ async def inspect_tables(request: Request) -> JSONResponse:
                     continue
                 source_table = f"{schema}.{name}" if schema else name
                 cols = await ref.columns(source_table)
-                pk = await ref.primary_key(source_table)
-                detected, int_keys = detect_key_column(cols, pk)
+                key_metadata = await _split_key_metadata(
+                    ref, url.render_as_string(hide_password=True), source_table, cols
+                )
                 out.append({
                     "name": name,
                     "source_table": source_table,
-                    "detected_key": detected,
-                    "integer_keys": int_keys,
+                    **key_metadata,
                     "columns": cols,
                     "approx_rows": await ref.approx_row_count(source_table),
                 })

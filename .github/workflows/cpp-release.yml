@@ -76,18 +76,38 @@ jobs:
         with:
           name: cpp-release
           path: dist
-      - name: Publish release candidate
+      - name: Publish verified release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
-          # Stable promotion requires the live release checklist, not just CI.
+          release_flags=()
           case "$RELEASE_TAG" in
-            cpp-v*-rc.*) ;;
-            *) echo "Stable releases require reviewed live verification evidence." >&2; exit 1 ;;
+            cpp-v*-rc.*)
+              release_flags+=(--prerelease)
+              ;;
+            cpp-v*-*)
+              echo "Unsupported C++ release tag: $RELEASE_TAG" >&2
+              exit 1
+              ;;
+            cpp-v*)
+              expected_version="cpp-${RELEASE_TAG#cpp-v}"
+              documented_version="$(
+                sed -n 's/^Version: `\([^`]*\)`.*/\1/p' agent-cpp/README.md
+              )"
+              test "$documented_version" = "$expected_version"
+              if grep -q '^- \[ \]' agent-cpp/README.md; then
+                echo "Stable releases require a completed live release checklist." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported C++ release tag: $RELEASE_TAG" >&2
+              exit 1
+              ;;
           esac
-          gh release create "$RELEASE_TAG" dist/* --verify-tag --prerelease \
+          gh release create "$RELEASE_TAG" dist/* --verify-tag "${release_flags[@]}" \
             --title "C++ serving Agent ${RELEASE_TAG#cpp-v}" \
             --notes-file agent-cpp/README.md

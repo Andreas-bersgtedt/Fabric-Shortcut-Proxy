@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Promoted the independent C++ serving Agent to stable `1.0.0` after its
+  isolated AKS SigV4 deployment passed four hours of sustained verified GET
+  load, termination/restart recovery, and zero-error integrity gates.
+
 ## [2.10.0]: 2026-10-04
 
 ### Added

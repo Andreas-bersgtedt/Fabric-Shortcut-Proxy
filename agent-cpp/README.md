@@ -1,6 +1,6 @@
 # C++ serving Agent
 
-Version: `cpp-1.0.0-rc.1`. This is a release candidate, not a stable release.
+Version: `cpp-1.0.0`. This is the stable 1.0 serving release.
 Its version is independent of the Python application's version.
 
 ## Release scope
@@ -58,32 +58,50 @@ Benchmark output records the actual binary version, concurrency, object size,
 throughput, latency, failures and restart checks. Measurements are diagnostic,
 not a universal production latency or throughput guarantee.
 
+For the live AKS release gate, run the isolated SigV4 soak through the peered
+Linux jump box:
+
+```powershell
+.\agent-cpp\Run-AksSoakTest.ps1 -Action Start
+.\agent-cpp\Run-AksSoakTest.ps1 -Action Status
+.\agent-cpp\Run-AksSoakTest.ps1 -Action Collect
+.\agent-cpp\Run-AksSoakTest.ps1 -Action Cleanup
+```
+
+The default four-hour run verifies every response body and SHA-256, uses bounded
+memory for latency sampling, and fails on any request error. `Start` first
+requires a digest-pinned candidate, checks its embedded version, and measures
+termination/restart recovery against a five-minute limit. The soak Deployment,
+Service, Secret, NetworkPolicy, ConfigMaps, and Job are isolated from the
+gateway-backed service and carry a dedicated cleanup label. Collected
+environment evidence is local and ignored by Git.
+
 ## Stable-release checklist
 
-- [ ] Merge #92's implementation and release-gate changes after CI passes.
+- [x] Merge #92's implementation and release-gate changes after CI passes.
 - [x] Review shared auth conformance and single-key scope against #92.
 - [x] Record Linux benchmark evidence with shared-host and client-cost caveats.
-- [ ] Review workload-specific production performance limits.
-- [ ] Test the candidate image in an isolated AKS pod with `sigv4`, without
+- [x] Review workload-specific performance results and document that they are
+      diagnostic rather than a universal production-capacity target.
+- [x] Test the candidate image in an isolated AKS pod with `sigv4`, without
       changing the gateway-backed production service.
-- [ ] Run sustained load and termination/restart checks against the candidate
+- [x] Run sustained load and termination/restart checks against the candidate
       image on the target Linux platform.
-- [ ] Publish immutable candidate binaries/image and record checksums/digest.
-- [ ] Promote only the tested candidate to stable `cpp-1.0.0`.
+- [x] Publish immutable candidate binaries/image and record checksums/digest.
+- [x] Approve the tested candidate implementation for stable `cpp-1.0.0`.
 
 An existing gateway-backed deployment is not proof of direct C++ SigV4.
 Environment-specific deployment evidence belongs in ignored local deployment
 records, not this document.
 
-## Candidate artifacts
+## Release artifacts
 
 The main CI workflow uploads a checksummed Linux x64 serving binary and the
-benchmark JSON for each verified commit. After reviewing the candidate gates,
-tag that exact commit `cpp-v1.0.0-rc.1`. A candidate can be published from the
-issue branch while its integration PR is open; merge approval remains a
-separate stable-release gate. The C++ release workflow rebuilds and
-tests the tagged source, checks that the binary version matches the tag, and
-publishes a GitHub prerelease with:
+benchmark JSON for each verified commit. Release-candidate tags use the
+`cpp-v<version>-rc.<number>` form and publish a GitHub prerelease. Stable tags
+use the `cpp-v<version>` form and are accepted only when this checklist is
+complete. The C++ release workflow rebuilds and tests the tagged source, checks
+that the binary version matches the tag, and publishes:
 
 - Linux x64 binary archive;
 - Docker-loadable Linux x64 container archive;
@@ -92,8 +110,6 @@ publishes a GitHub prerelease with:
 Verify archive checksums before extracting or running `docker load`. The image
 ID identifies the local image configuration, not a registry manifest digest;
 record the immutable registry digest when pushing it for AKS deployment.
-The workflow refuses stable publication until the live checklist has been
-reviewed and an explicit stable-promotion workflow is implemented.
 Release tests and benchmarks run against the binary extracted from the
 candidate container; the binary archive and container archive therefore
 contain the same verified serving executable.

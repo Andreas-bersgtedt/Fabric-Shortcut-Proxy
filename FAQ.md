@@ -528,10 +528,11 @@ See [the Changelog](docs/CHANGELOG.md) for current release history. Files under
 status sources.
 
 The [C++ serving Agent](agent-cpp/README.md) is implemented. Its independent
-`1.0.0-rc.1` release is scoped to read-only serving, not native materializer
-parity. Stable promotion requires the documented authentication, performance,
-and live verification gates from
-[#92](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/92).
+stable `1.0.0` release is scoped to read-only serving, not native materializer
+parity. The documented authentication, performance, and live verification
+gates from
+[#92](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/92)
+were completed before promotion.
 
 Accepted scale-out work is tracked in:
 
@@ -542,7 +543,7 @@ Accepted scale-out work is tracked in:
 - [#91](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/91):
   Agent control-plane authentication, delivered;
 - [#92](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/92):
-  C++ Agent SigV4, delivered for the release candidate;
+  C++ Agent SigV4, delivered;
 - [#93](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/93):
   remote Iceberg readers, delivered;
 - [#94](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/94):

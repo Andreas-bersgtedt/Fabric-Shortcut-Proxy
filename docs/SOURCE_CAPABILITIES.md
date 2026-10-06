@@ -182,8 +182,11 @@ and every configured coordinator. The timeout check uses Impala's
 `EXEC_TIME_LIMIT_S` execution limit; `QUERY_TIMEOUT_S` applies to idle queries
 and does not bound active execution. Timeout and source-mutation checks require
 the additional `FSP_RUN_IMPALA_TIMEOUT_GATE=1` and
-`FSP_RUN_IMPALA_MUTATION_GATE=1` flags. Impala remains preview until the
-separate authentication, TLS, fault-recovery, external-serving, repeated-run,
+`FSP_RUN_IMPALA_MUTATION_GATE=1` flags. Coordinator restart testing requires
+`FSP_RUN_IMPALA_RESTART_GATE=1` plus Cloudera Manager control URL, cluster,
+coordinator, username, and password variables. The test discovers the role name
+at runtime and restores the role in cleanup. Impala remains preview until the
+separate authentication, TLS, network-fault, external-serving, repeated-run,
 and evidence-review gates also pass.
 
 To include Oracle native null/Unicode tokenization, also set

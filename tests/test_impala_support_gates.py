@@ -5,11 +5,15 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
+import base64
 import json
 import os
 import re
+import threading
 import time
 from typing import Iterator
+import urllib.error
+import urllib.request
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
@@ -96,6 +100,84 @@ def _support_settings() -> ImpalaSupportSettings:
             "fsp_impala_cert.refresh_rows",
         ),
         coordinators=coordinators,
+    )
+
+
+def _control_api(
+    method: str,
+    path: str,
+    payload: dict | None = None,
+) -> dict:
+    root = _required_environment("IMPALA_CONTROL_URL").rstrip("/")
+    username = _required_environment("IMPALA_CONTROL_USERNAME")
+    password = _required_environment("IMPALA_CONTROL_PASSWORD")
+    authorization = base64.b64encode(
+        f"{username}:{password}".encode()
+    ).decode()
+    request = urllib.request.Request(
+        f"{root}/{path.lstrip('/')}",
+        data=None if payload is None else json.dumps(payload).encode(),
+        method=method,
+        headers={
+            "Authorization": f"Basic {authorization}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            body = response.read()
+    except urllib.error.HTTPError as error:
+        body = error.read().decode(errors="replace")
+        raise RuntimeError(
+            f"control request {method} {path} returned HTTP {error.code}: {body}"
+        ) from error
+    return json.loads(body) if body else {}
+
+
+def _wait_for_role(role_name: str, expected: str, timeout: int = 600) -> dict:
+    cluster = _required_environment("IMPALA_CONTROL_CLUSTER")
+    service = os.environ.get("IMPALA_CONTROL_SERVICE", "impala")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        role = _control_api(
+            "GET",
+            f"clusters/{cluster}/services/{service}/roles/{role_name}"
+            "?view=summary",
+        )
+        if role.get("roleState") == expected:
+            return role
+        time.sleep(5)
+    raise TimeoutError(f"role did not reach {expected} within {timeout} seconds")
+
+
+def _coordinator_role() -> str:
+    cluster = _required_environment("IMPALA_CONTROL_CLUSTER")
+    service = os.environ.get("IMPALA_CONTROL_SERVICE", "impala")
+    hostname = _required_environment("IMPALA_CONTROL_COORDINATOR")
+    roles = _control_api(
+        "GET",
+        f"clusters/{cluster}/services/{service}/roles?view=summary",
+    )
+    matches = [
+        role["name"]
+        for role in roles.get("items", [])
+        if role.get("type") == "IMPALAD"
+        and role.get("hostRef", {}).get("hostname") == hostname
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"expected one IMPALAD role for the configured coordinator, got {len(matches)}"
+        )
+    return matches[0]
+
+
+def _role_command(command: str, role_name: str) -> None:
+    cluster = _required_environment("IMPALA_CONTROL_CLUSTER")
+    service = os.environ.get("IMPALA_CONTROL_SERVICE", "impala")
+    _control_api(
+        "POST",
+        f"clusters/{cluster}/services/{service}/roleCommands/{command}",
+        {"items": [role_name]},
     )
 
 
@@ -317,3 +399,60 @@ def test_impala_support_source_mutation_live_gate():
             text(f"SELECT id, value FROM {schema}.{table}")
         ).one()
         assert restored == (1, "baseline")
+
+
+def test_impala_support_coordinator_restart_live_gate():
+    if os.environ.get("FSP_RUN_IMPALA_RESTART_GATE") != "1":
+        pytest.skip("set FSP_RUN_IMPALA_RESTART_GATE=1 to run the restart gate")
+
+    settings = _support_settings()
+    schema, table = _qualified_table(settings.scale_table)
+    role_name = _coordinator_role()
+    started = threading.Event()
+    result: dict[str, BaseException | None] = {"error": None}
+
+    def run_query() -> None:
+        try:
+            with _connection(settings) as connection:
+                started.set()
+                connection.execute(
+                    text(
+                        f"SELECT COUNT(*) FROM {schema}.{table} a "
+                        f"CROSS JOIN {schema}.{table} b"
+                    )
+                ).scalar_one()
+        except BaseException as error:  # noqa: BLE001 - asserted by the gate
+            result["error"] = error
+        finally:
+            started.set()
+
+    query = threading.Thread(target=run_query, name="impala-restart-query")
+    query.start()
+    assert started.wait(timeout=30)
+    time.sleep(2)
+
+    try:
+        _role_command("stop", role_name)
+        _wait_for_role(role_name, "STOPPED")
+        query.join(timeout=30)
+        assert not query.is_alive()
+        assert result["error"] is not None
+    finally:
+        role = _control_api(
+            "GET",
+            "clusters/"
+            f"{_required_environment('IMPALA_CONTROL_CLUSTER')}/services/"
+            f"{os.environ.get('IMPALA_CONTROL_SERVICE', 'impala')}/roles/"
+            f"{role_name}?view=summary",
+        )
+        if role.get("roleState") != "STARTED":
+            _role_command("start", role_name)
+        healthy = _wait_for_role(role_name, "STARTED")
+        deadline = time.monotonic() + 300
+        while healthy.get("healthSummary") != "GOOD" and time.monotonic() < deadline:
+            time.sleep(5)
+            healthy = _wait_for_role(role_name, "STARTED")
+        assert healthy.get("healthSummary") == "GOOD"
+
+    with _connection(settings) as connection:
+        assert connection.execute(text("SELECT 1")).scalar_one() == 1

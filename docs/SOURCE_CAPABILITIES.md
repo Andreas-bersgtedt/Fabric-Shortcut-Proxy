@@ -189,6 +189,13 @@ at runtime and restores the role in cleanup. Impala remains preview until the
 separate authentication, TLS, network-fault, external-serving, repeated-run,
 and evidence-review gates also pass.
 
+The Azure network-fault harness is
+`tests/fixtures/source_capabilities/run_impala_network_fault_gate.py`. It
+requires all resource names, prefixes, pod details, priority, and endpoint
+values through environment variables. It creates a uniquely named temporary
+deny rule and removes it in `finally`, then requires the HS2 connection to
+recover. Do not store environment values in the script or test output.
+
 To include Oracle native null/Unicode tokenization, also set
 `INTEGRATION_TOKENIZATION_KEY` to an ephemeral test key and use the
 `INTEGRATION_ORACLE_TOKEN_COLUMN`, `INTEGRATION_ORACLE_NULL_ROW_KEY`, and

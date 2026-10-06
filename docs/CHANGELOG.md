@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0]: 2026-10-06
+
 ### Changed
 
+- Established 3.0 as the supported compatibility baseline for the Lite,
+  Enterprise, Manager, Agent, Helm, and operational surfaces delivered through
+  2.10.0. Existing 2.10.0 configuration and artifact layouts remain supported;
+  package and image versions must be upgraded together.
 - Promoted the independent C++ serving Agent to stable `1.0.0` after its
   isolated AKS SigV4 deployment passed four hours of sustained verified GET
   load, termination/restart recovery, and zero-error integrity gates.
+- Retained Databricks, Redshift, and Teradata at beta and Impala at preview.
+  Issue #94 remains open for additional live-source, recovery, timeout, and
+  scale evidence; 3.0.0 does not promote those dialects to supported.
 
 ## [2.10.0]: 2026-10-04
 
@@ -720,7 +729,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.10.0...HEAD
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.0...HEAD
+[3.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.10.0...3.0.0
 [2.10.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.6...2.10.0
 [2.9.6]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.5...2.9.6
 [2.9.5]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.4...2.9.5

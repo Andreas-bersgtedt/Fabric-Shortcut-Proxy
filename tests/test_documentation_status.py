@@ -59,6 +59,28 @@ def test_unreleased_changelog_starts_at_package_release():
         assert expected in (ROOT / relative).read_text(encoding="utf-8")
 
 
+def test_major_release_compatibility_contract_is_documented():
+    package = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    version = package["project"]["version"]
+    if not version.startswith("3."):
+        return
+
+    upgrade = (ROOT / "docs" / "UPGRADE_3_0.md").read_text(encoding="utf-8")
+    changelog = (ROOT / "docs" / "CHANGELOG.md").read_text(encoding="utf-8")
+    normalized_upgrade = " ".join(upgrade.split())
+    assert (
+        "does not introduce a storage-format or configuration-schema migration"
+        in normalized_upgrade
+    )
+    assert "fabric-shortcut-proxy==3.0.0" in upgrade
+    assert "C++ serving Agent 1.0.0" in upgrade
+    assert "Databricks, Redshift, and Teradata remain beta" in upgrade
+    assert "Impala remains preview" in upgrade
+    assert "Issue #94 remains open" in changelog
+
+
 def test_current_diagrams_do_not_hard_code_fsp_release_version():
     stale_pattern = re.compile(
         r"\b(?:FSP|fsp release)\s+\d+\.\d+\.\d+\b"

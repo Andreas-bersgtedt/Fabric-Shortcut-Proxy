@@ -168,6 +168,24 @@ materialization is gated separately for Redshift, Teradata, and Impala; set the
 values printed by the seeder, then select
 `-k arrow_fallback_live_materialization_gate`.
 
+Impala support-graduation work is tracked separately from the small fixture
+gate in issue #109. Set `FSP_RUN_IMPALA_SUPPORT_GATES=1` and provide an explicit
+`IMPALA_USERNAME`, three comma-separated `IMPALA_COORDINATORS`, and the
+environment-specific table names before running:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_impala_support_gates.py -q
+```
+
+The support gate covers the richer type matrix, one-million-row skew fixture,
+and every configured coordinator. The timeout check uses Impala's
+`EXEC_TIME_LIMIT_S` execution limit; `QUERY_TIMEOUT_S` applies to idle queries
+and does not bound active execution. Timeout and source-mutation checks require
+the additional `FSP_RUN_IMPALA_TIMEOUT_GATE=1` and
+`FSP_RUN_IMPALA_MUTATION_GATE=1` flags. Impala remains preview until the
+separate authentication, TLS, fault-recovery, external-serving, repeated-run,
+and evidence-review gates also pass.
+
 To include Oracle native null/Unicode tokenization, also set
 `INTEGRATION_TOKENIZATION_KEY` to an ephemeral test key and use the
 `INTEGRATION_ORACLE_TOKEN_COLUMN`, `INTEGRATION_ORACLE_NULL_ROW_KEY`, and

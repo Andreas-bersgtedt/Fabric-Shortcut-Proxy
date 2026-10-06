@@ -100,7 +100,7 @@ never the source password or cloud credential. See [docs/SECURITY.md](docs/SECUR
 **Which sources are supported?**
 SQLite is for development. PostgreSQL, SQL Server, and Oracle are supported.
 Databricks SQL, Amazon Redshift, and Teradata are beta. Apache Impala is
-preview. The synchronous dialects do not claim bounded-memory source
+supported for CDP 7.1.7 / Impala 3.4. The synchronous dialects do not claim bounded-memory source
 streaming. See the per-capability evidence and fallbacks in
 [the source capability matrix](docs/SOURCE_CAPABILITIES.md).
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
@@ -117,7 +117,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
 | Databricks SQL | `databricks-sqlalchemy` (in core) | in core | beta; requires `http_path` |
 | Amazon Redshift | `sqlalchemy-redshift` + `redshift-connector` | Manager bootstrap or `pip install -e '.[redshift]'` | beta; sync fallback |
 | Teradata | `teradatasqlalchemy` | Manager bootstrap or `pip install -e '.[teradata]'` | beta; sync fallback |
-| Apache Impala | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | preview; sync fallback |
+| Apache Impala | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | supported for CDP 7.1.7 / Impala 3.4; sync fallback |
 
 > The SQL Server ODBC driver is an **OS** package, not a pip extra. On Linux/macOS the
 > encrypted credential store additionally needs `pip install -e '.[credentials]'` (Windows uses
@@ -559,7 +559,7 @@ Accepted scale-out work is tracked in:
 |---|---|---|
 | Product gap | `modulo` splits full-scan the table | use `range`, `date`, or `auto` on an integer or date key for index pruning |
 | Product gap | Freshness is poll-bounded rather than CDC | size the poll interval for source load and expected Fabric sync lag |
-| Capability gate | Oracle is supported; Databricks, Redshift, and Teradata are beta; Impala is preview | review [the source capability matrix](docs/SOURCE_CAPABILITIES.md) and its explicit fallbacks |
+| Capability gate | Oracle and scoped Impala 3.4 are supported; Databricks, Redshift, and Teradata are beta | review [the source capability matrix](docs/SOURCE_CAPABILITIES.md) and its explicit fallbacks |
 | Deliberate behavior | Storage mounts and the proxy data plane are read-only | use the source system or Open Mirroring write path for mutations |
 | Deployment constraint | Single Manager is the default | enable fenced active/passive HA with `MANAGER_HA=1`; Raft consensus is not implemented |
 | Deployment constraint | Internal cluster hops use HTTP | terminate TLS at the supplied nginx profile or another trusted ingress |

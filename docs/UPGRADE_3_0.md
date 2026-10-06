@@ -1,21 +1,23 @@
 # Upgrade to 3.0
 
-Version 3.0.0 establishes the current Lite and Enterprise feature set as a new
+Version 3.0.1 retains the 3.0 compatibility baseline and adds the scoped Impala
+support described below. Version 3.0.0 established the Lite and Enterprise feature set as a new
 supported compatibility baseline. It does not introduce a storage-format or
 configuration-schema migration from 2.10.0.
 
 ## Compatibility contract
 
-- Upgrade the Lite and Enterprise Python packages together. Enterprise 3.0.0
-  requires exactly `fabric-shortcut-proxy==3.0.0`.
+- Upgrade the Lite and Enterprise Python packages together. Enterprise 3.0.1
+  requires exactly `fabric-shortcut-proxy==3.0.1`.
 - Upgrade the Manager, Python materializer, and Helm chart together. Do not mix
-  2.10.0 and 3.0.0 Python control-plane components.
+  3.0.0 and 3.0.1 Python control-plane components.
 - Existing configuration files, encrypted credential stores, shared artifact
   generations, durable Manager state, and backup archives remain compatible.
 - The independently versioned C++ serving Agent 1.0.0 is the supported serving
   binary for this baseline. Its read-only S3 contract is unchanged.
-- Databricks, Redshift, and Teradata remain beta. Impala remains preview.
-  Issue #94 tracks the additional evidence required for promotion.
+- Databricks, Redshift, and Teradata remain beta. Apache Impala is supported
+  for the tested CDP 7.1.7 / Impala 3.4 runtime. Other Impala versions require
+  separate certification evidence.
 
 ## Helm upgrade
 

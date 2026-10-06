@@ -47,7 +47,8 @@ At startup the proxy:
 See the [SQL source capability matrix](SOURCE_CAPABILITIES.md) for per-dialect
 status, missing-feature reasons/fallbacks/costs, the lack of bounded-memory
 streaming for synchronous sources, and opt-in live integration gates.
-Databricks, Redshift and Teradata are beta; Impala remains preview. Running a
+Databricks, Redshift and Teradata are beta; Impala is supported for the tested
+CDP 7.1.7 / Impala 3.4 runtime. Running a
 gate does not promote a source to supported status.
 
 ### 1.1 Using split config files (recommended for multi-table)
@@ -170,7 +171,7 @@ Auditor authorization, audit requirements, quotas, and rollback procedure.
 | **Oracle** | `oracledb` | Manager bootstrap or `pip install -e '.[oracle]'` | ✅ Manager |
 | **Amazon Redshift** (beta) | `sqlalchemy-redshift` + `redshift-connector` | Manager bootstrap or `pip install -e '.[redshift]'` | ✅ Manager |
 | **Teradata** (beta) | `teradatasqlalchemy` | Manager bootstrap or `pip install -e '.[teradata]'` | ✅ Manager |
-| **Apache Impala** (preview) | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | ✅ Manager |
+| **Apache Impala** (supported for CDP 7.1.7 / Impala 3.4) | `impyla` | Manager bootstrap or `pip install -e '.[impala]'` | ✅ Manager |
 
 ```powershell
 # Manual install outside the Manager bootstrap: all supported Python DB drivers

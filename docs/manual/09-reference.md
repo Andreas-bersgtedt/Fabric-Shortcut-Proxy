@@ -112,7 +112,8 @@ because primary-key reflection is unavailable, and an `http_path` to a SQL wareh
 Server accepts a SQL login, Windows (Integrated Security), or an Entra ID service principal —
 choose the method in the Config Builder or set it in the `DB_URL` (see
 [CONFIGURATION.md](../CONFIGURATION.md) §6). Databricks, Redshift and Teradata are beta;
-Impala is preview. Use pass-through columns or explicitly opt into Arrow fallback where
+Impala is supported for CDP 7.1.7 / Impala 3.4. Use pass-through columns or
+explicitly opt into Arrow fallback where
 native tokenization is unavailable.
 
 ## 9.4 Path formats

@@ -2,7 +2,7 @@
 
 This chart packages the FSP Manager, Python materializers, C++ serving Agents,
 storage, network policy, nginx proxy, and optional cert-manager ingress as one
-Helm release. Chart and application version `3.0.0` represent the stable
+Helm release. Chart and application version `3.0.1` represent the stable
 baseline used for the enterprise demo migration.
 
 ## Prerequisites
@@ -121,7 +121,7 @@ render contains 27 resources. See the
 
 ## Release lifecycle
 
-The deployment script packages `fabric-shortcut-proxy-3.0.0.tgz` in a temporary directory and
+The deployment script packages `fabric-shortcut-proxy-3.0.1.tgz` in a temporary directory and
 runs `helm upgrade --install --atomic --take-ownership` through AKS Run Command. It also manages
 pinned cert-manager and ingress-nginx releases.
 

@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 import base64
+import hashlib
+import io
 import json
 import os
 import re
@@ -16,10 +18,19 @@ import urllib.error
 import urllib.request
 
 import pytest
+import httpx
+import pyarrow.parquet as pq
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
 
+import cache.lru_cache as parquet_cache
+import config
+from config import ColumnDef, TableDef
+from db import executor
 from db.reflect import build_url
+from db.read_points import BestEffortReadSession
+from iceberg import freshness
+import iceberg.state_store as state_store
 
 
 _SUPPORT_GATE_FLAG = "FSP_RUN_IMPALA_SUPPORT_GATES"
@@ -456,3 +467,143 @@ def test_impala_support_coordinator_restart_live_gate():
 
     with _connection(settings) as connection:
         assert connection.execute(text("SELECT 1")).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_impala_support_large_materialization_live_gate(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    if os.environ.get("FSP_RUN_IMPALA_MATERIALIZATION_GATE") != "1":
+        pytest.skip(
+            "set FSP_RUN_IMPALA_MATERIALIZATION_GATE=1 to run the materialization gate"
+        )
+
+    settings = _support_settings()
+    source_schema, source_table = _qualified_table(settings.scale_table)
+    url = build_url(
+        dialect="impala",
+        host=settings.host,
+        port=settings.port,
+        database=settings.database,
+        username=settings.username,
+        password=settings.password,
+        query=settings.query,
+    )
+    db_url = url.render_as_string(hide_password=False)
+    monkeypatch.setattr(config, "DB_URL", db_url)
+    monkeypatch.setattr(config, "REFRESH_STRATEGY", "content_hash")
+    monkeypatch.setattr(config, "BUCKET_NAME", "impala-support-bucket")
+    await executor.dispose_engines()
+
+    engine = _engine(settings)
+    try:
+        reflected = inspect(engine).get_columns(
+            source_table,
+            schema=source_schema,
+        )
+    finally:
+        engine.dispose()
+    schema = [
+        ColumnDef(
+            field_id=index + 1,
+            name=column["name"],
+            iceberg_type=executor.sqlalchemy_type_to_iceberg(column["type"]),
+            nullable=column["nullable"],
+        )
+        for index, column in enumerate(reflected)
+    ]
+    name = "impala_support_large_materialization"
+    table = TableDef(
+        name=name,
+        source_table=settings.scale_table,
+        schema=schema,
+        key_column="split_key",
+        num_splits=4,
+        split_strategy="range",
+        split_target_rows=1_000_000,
+    )
+    expected_rows = await BestEffortReadSession().execute_scalar(
+        f"SELECT COUNT(*) FROM {settings.scale_table}"
+    )
+
+    import psutil
+
+    process = psutil.Process()
+    peak_rss = process.memory_info().rss
+    stop_monitor = threading.Event()
+
+    def monitor_memory() -> None:
+        nonlocal peak_rss
+        while not stop_monitor.wait(0.05):
+            peak_rss = max(peak_rss, process.memory_info().rss)
+
+    monitor = threading.Thread(target=monitor_memory, name="impala-memory-monitor")
+    monitor.start()
+    started = time.monotonic()
+    state_store.unregister_snapshot(name)
+    try:
+        assert await freshness.poll_once(
+            table,
+            "impala-support-gate",
+            "impala-support-gate",
+        )
+        elapsed = time.monotonic() - started
+        snapshot = state_store.get_snapshot(name)
+        assert snapshot.total_records == expected_rows == 1_000_000
+        assert sum(split.record_count or 0 for split in snapshot.splits) == expected_rows
+        assert len(snapshot.splits) == 4
+        for split in snapshot.splits:
+            data = parquet_cache.peek_parquet(split.object_key)
+            assert data is not None
+            assert pq.read_metadata(io.BytesIO(data)).num_rows == split.record_count
+        from main import app
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://impala-support.test",
+        ) as client:
+            listing = await client.get(
+                f"/{config.BUCKET_NAME}",
+                params={"list-type": "2", "prefix": ""},
+            )
+            assert listing.status_code == 200
+            key = snapshot.splits[0].object_key
+            assert key in listing.text
+
+            head = await client.head(f"/{config.BUCKET_NAME}/{key}")
+            full = await client.get(f"/{config.BUCKET_NAME}/{key}")
+            byte_range = await client.get(
+                f"/{config.BUCKET_NAME}/{key}",
+                headers={"Range": "bytes=0-1023"},
+            )
+            assert head.status_code == full.status_code == 200
+            assert byte_range.status_code == 206
+            assert byte_range.content == full.content[:1024]
+            assert head.headers["etag"] == full.headers["etag"]
+            assert int(head.headers["content-length"]) == len(full.content)
+            assert hashlib.sha256(full.content).hexdigest() == hashlib.sha256(
+                parquet_cache.peek_parquet(key)
+            ).hexdigest()
+            assert pq.read_metadata(io.BytesIO(full.content)).num_rows == (
+                snapshot.splits[0].record_count
+            )
+        assert not await freshness.poll_once(
+            table,
+            "impala-support-gate",
+            "impala-support-gate",
+        )
+        assert elapsed <= int(os.environ.get("IMPALA_MAX_MATERIALIZATION_SECONDS", "600"))
+        assert peak_rss <= int(
+            os.environ.get("IMPALA_MAX_MATERIALIZATION_RSS_BYTES", str(2 * 1024**3))
+        )
+    finally:
+        stop_monitor.set()
+        monitor.join(timeout=5)
+        for snapshot in state_store.get_snapshot_history(name):
+            for split in snapshot.splits:
+                parquet_cache.evict_parquet(split.object_key)
+        state_store.unregister_snapshot(name)
+        freshness._probe_tokens.pop(name, None)
+        freshness._ttl_gen.pop(name, None)
+        await executor.dispose_engines()

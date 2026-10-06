@@ -67,7 +67,7 @@ See [DELTA_FORMAT.md](../DELTA_FORMAT.md) for the commit model and type mapping.
 | Databricks SQL | `databricks-sqlalchemy` (bundled) | beta; requires an HTTP path to a SQL warehouse |
 | Amazon Redshift | `sqlalchemy-redshift`, `redshift-connector` (`[redshift]` extra) | beta |
 | Teradata | `teradatasqlalchemy` (`[teradata]` extra) | beta |
-| Apache Impala | `impyla` (`[impala]` extra) | preview; Arrow fallback is required for tokenization |
+| Apache Impala | `impyla` (`[impala]` extra) | supported for CDP 7.1.7 / Impala 3.4; Arrow fallback is required for tokenization |
 
 Storage-proxy mounts add three passthrough backends: `local` (a filesystem path,
 including an OS-mounted NFS or SMB share), `s3` (S3, MinIO, or S3-compatible), and
@@ -83,7 +83,7 @@ The project ships as two distributions built from one repository.
 | **Enterprise (cluster)** | `fabric-shortcut-proxy-enterprise` | `python -m enterprise.manager` | Manager control plane supervising one or more agents, gateway load balancing, leader-lease HA, retention GC |
 
 The enterprise wheel is pinned to the exact Lite core version it was built against
-(`fabric-shortcut-proxy==3.0.0`). The `Manager.ps1` and `Manager.sh` launchers bootstrap
+(`fabric-shortcut-proxy==3.0.1`). The `Manager.ps1` and `Manager.sh` launchers bootstrap
 the virtual environment and start the cluster edition. A Lite-only install runs the
 standalone proxy unchanged.
 

@@ -74,10 +74,10 @@ def test_major_release_compatibility_contract_is_documented():
         "does not introduce a storage-format or configuration-schema migration"
         in normalized_upgrade
     )
-    assert "fabric-shortcut-proxy==3.0.0" in upgrade
+    assert f"fabric-shortcut-proxy=={version}" in upgrade
     assert "C++ serving Agent 1.0.0" in upgrade
     assert "Databricks, Redshift, and Teradata remain beta" in upgrade
-    assert "Impala remains preview" in upgrade
+    assert "Impala 3.4" in upgrade
     assert "Issue #94 remains open" in changelog
 
 

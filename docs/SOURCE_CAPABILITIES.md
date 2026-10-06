@@ -13,7 +13,7 @@ evidence before wider use. Oracle retains its existing `supported` status.
 | databricks | beta | yes | no | yes | yes | yes | yes | no | no | no | yes | yes | no |
 | redshift | beta | yes | yes | no | yes | yes | yes | no | no | no | no | no | no |
 | teradata | beta | yes | yes | no | yes | yes | yes | no | no | no | no | no | no |
-| impala | preview | yes | no | yes | yes | yes | yes | no | no | no | no | no | no |
+| impala | supported | yes | no | yes | yes | yes | yes | no | no | no | no | no | no |
 
 ## Beta release gate
 
@@ -167,6 +167,47 @@ materialization is gated separately for Redshift, Teradata, and Impala; set the
 `INTEGRATION_<SOURCE>_TOKEN_COLUMN`, `NULL_ROW_KEY`, and `UNICODE_ROW_KEY`
 values printed by the seeder, then select
 `-k arrow_fallback_live_materialization_gate`.
+
+Impala support-graduation work is tracked separately from the small fixture
+gate in issue #109. Set `FSP_RUN_IMPALA_SUPPORT_GATES=1` and provide an explicit
+`IMPALA_USERNAME`, three comma-separated `IMPALA_COORDINATORS`, and the
+environment-specific table names before running:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_impala_support_gates.py -q
+```
+
+The support gate covers the richer type matrix, one-million-row skew fixture,
+and every configured coordinator. The timeout check uses Impala's
+`EXEC_TIME_LIMIT_S` execution limit; `QUERY_TIMEOUT_S` applies to idle queries
+and does not bound active execution. Timeout and source-mutation checks require
+the additional `FSP_RUN_IMPALA_TIMEOUT_GATE=1` and
+`FSP_RUN_IMPALA_MUTATION_GATE=1` flags. Coordinator restart testing requires
+`FSP_RUN_IMPALA_RESTART_GATE=1` plus Cloudera Manager control URL, cluster,
+coordinator, username, and password variables. The test discovers the role name
+at runtime and restores the role in cleanup. The scoped CDP 7.1.7 / Impala 3.4
+support claim requires dedicated LDAP authentication, TLS hostname validation,
+network and coordinator recovery, materialization and S3 verification, and
+three consecutive clean runs.
+
+Set `FSP_RUN_IMPALA_MATERIALIZATION_GATE=1` to materialize the documented
+one-million-row skew fixture into four Parquet splits. The gate verifies exact
+row coverage, Parquet metadata, unchanged-refresh deduplication, elapsed time,
+peak RSS, ListObjectsV2, HEAD, full GET, range GET, ETag consistency, and
+SHA-256 consistency. Optional byte and time limits are supplied through
+`IMPALA_MAX_MATERIALIZATION_RSS_BYTES` and
+`IMPALA_MAX_MATERIALIZATION_SECONDS`. The gate sets `split_target_rows` to one
+million so the effective per-split cap can contain the prepared 800,000-row hot
+partition. Production tables with skew must set the target above the largest
+expected split; the global query cap otherwise remains an intentional safety
+limit.
+
+The Azure network-fault harness is
+`tests/fixtures/source_capabilities/run_impala_network_fault_gate.py`. It
+requires all resource names, prefixes, pod details, priority, and endpoint
+values through environment variables. It creates a uniquely named temporary
+deny rule and removes it in `finally`, then requires the HS2 connection to
+recover. Do not store environment values in the script or test output.
 
 To include Oracle native null/Unicode tokenization, also set
 `INTEGRATION_TOKENIZATION_KEY` to an ephemeral test key and use the

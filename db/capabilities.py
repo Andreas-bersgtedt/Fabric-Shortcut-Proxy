@@ -245,7 +245,7 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         supports_range_key_bounds=True,
         supports_modulo_split=True,
         supports_fast_row_estimate=False,
-        support_status="preview",
+        support_status="supported",
         requires_explicit_split_key=True,
     ),
     "generic": FlavorCapabilities(

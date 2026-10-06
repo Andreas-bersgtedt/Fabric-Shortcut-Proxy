@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1]: 2026-10-06
+
+### Changed
+
+- Promoted Apache Impala from preview to supported for the tested CDP 7.1.7 /
+  Impala 3.4 runtime. The exit gates covered dedicated LDAP authentication,
+  TLS hostname verification, Ranger least privilege, type and NULL
+  preservation, one-million-row skew, three coordinators, execution timeout,
+  source mutation, coordinator and network recovery, exact materialization,
+  bounded memory, unchanged-refresh deduplication, and S3 list, HEAD, range,
+  full GET, ETag, and SHA-256 checks.
+- Ran the final authenticated Python 3.12 gate set three consecutive times
+  without failure. Broader Impala version claims remain out of scope until
+  equivalent evidence is recorded.
+
 ## [3.0.0]: 2026-10-06
 
 ### Changed
@@ -733,7 +748,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.0...HEAD
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.1...HEAD
+[3.0.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.0...3.0.1
 [3.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.10.0...3.0.0
 [2.10.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.6...2.10.0
 [2.9.6]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.5...2.9.6

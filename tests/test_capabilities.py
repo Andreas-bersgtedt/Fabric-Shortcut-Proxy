@@ -111,7 +111,7 @@ def test_issue_94_beta_release_gate_is_conservative():
         "databricks": "beta",
         "redshift": "beta",
         "teradata": "beta",
-        "impala": "preview",
+        "impala": "supported",
     }
     for flavor in ("databricks", "redshift", "teradata"):
         source = matrix[flavor]

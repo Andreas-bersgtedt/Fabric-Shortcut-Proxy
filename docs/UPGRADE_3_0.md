@@ -29,6 +29,11 @@ helm template fsp deploy/helm/fabric-shortcut-proxy `
   -f deploy/helm/fabric-shortcut-proxy/values-enterprise-demo.example.yaml
 ```
 
+When SQL Server is a configured source, build the enterprise Python image with
+`--build-arg FSP_INSTALL_MSSQL_ODBC=1` as shown in the enterprise deployment
+guide. Before pushing it, verify that the image contains `libodbc.so.2`, imports
+`pyodbc`, and reports matching Lite and Enterprise package versions.
+
 Apply the upgrade through the environment's private-cluster administration
 path. For the enterprise demo, use the peered Linux jump box. Wait for the
 Manager, materializers, C++ Agents, and Nginx deployments to become ready before

@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retained Databricks, Redshift, and Teradata at beta and Impala at preview.
   Issue #94 remains open for additional live-source, recovery, timeout, and
   scale evidence; 3.0.0 does not promote those dialects to supported.
+- Validated an atomic Helm upgrade from the deployed 2.10 baseline to 3.0.0,
+  rollback to 2.10, and forward recovery to 3.0.0 on AKS. Manager health,
+  materializer readiness, C++ serving readiness, immutable image digests, and
+  an MSSQL-backed S3 object listing passed after the final rollout.
 
 ## [2.10.0]: 2026-10-04
 

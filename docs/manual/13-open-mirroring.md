@@ -6,7 +6,7 @@ serve S3 reads, while mirror targets create numbered landing-zone batches.
 
 ## 13.1 Configure a target
 
-Copy `config.open_mirror.example.json` to `config.open_mirror.json`. A target
+Copy `config/examples/config.open_mirror.example.json` to `config.open_mirror.json`. A target
 references a configured source connection and the Fabric workspace, mirrored
 database, and landing-zone identifiers.
 

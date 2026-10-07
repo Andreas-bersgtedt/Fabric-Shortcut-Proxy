@@ -172,10 +172,10 @@ committed). Copy the templates and edit.
 
 ```bash
 cd /opt/fabric-shortcut-proxy
-sudo -u fsp cp config.connection.example.json config.connection.json
-sudo -u fsp cp config.tables.example.json      config.tables.json
-sudo -u fsp cp config.system.example.json      config.system.json
-sudo -u fsp cp config.freshness.example.json   config.freshness.json
+sudo -u fsp cp config/examples/config.connection.example.json config.connection.json
+sudo -u fsp cp config/examples/config.tables.example.json      config.tables.json
+sudo -u fsp cp config/examples/config.system.example.json      config.system.json
+sudo -u fsp cp config/examples/config.freshness.example.json   config.freshness.json
 ```
 
 ### 7.1 Source connection — `config.connection.json`

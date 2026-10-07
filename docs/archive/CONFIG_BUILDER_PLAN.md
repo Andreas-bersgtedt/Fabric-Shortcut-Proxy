@@ -138,7 +138,7 @@ password; inline validation; friendly errors from the API.
 }
 ```
 
-Matches [config.example.json](../config.example.json) exactly, so the file works
+Matches [config.example.json](../../config/examples/config.example.json) exactly, so the file works
 with the existing loader with zero changes.
 
 ---

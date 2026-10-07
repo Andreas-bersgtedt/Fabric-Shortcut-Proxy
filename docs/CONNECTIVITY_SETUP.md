@@ -195,7 +195,7 @@ Store the upstream credential encrypted via the Config Builder **Sources** area,
 must set `"auth"` (`anonymous`/`instance` for s3; `default`/`managed_identity`/`anonymous` for
 azure). Scope Fabric's access with per‑key ACLs and keep `ENFORCE_MOUNT_AUTH=1` (default) so a
 mount is never served anonymously. See [SECURITY.md](SECURITY.md) and
-[../config.mounts.example.json](../config.mounts.example.json).
+[../config/examples/config.mounts.example.json](../config/examples/config.mounts.example.json).
 
 Then create the Fabric shortcut against the **mount bucket** (e.g. `secure-nfs`) exactly as in
 §1 (OPDG) — the connectivity pattern is the same; only the bucket changes.

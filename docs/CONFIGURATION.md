@@ -460,7 +460,7 @@ table has a primary key (auto-detected); pass it for views or composite keys.
 
 Tables can be served from **different source databases of different dialects** at
 once. Declare each extra source in a `connections` array in
-[config.connection.json](../config.connection.example.json), then bind a table to
+[config.connection.json](../config/examples/config.connection.example.json), then bind a table to
 one with its `connection` field.
 
 ```jsonc
@@ -893,7 +893,7 @@ Independently of the DB→table virtualization, the same S3 endpoint can serve
 is **additive**: a bucket with a **mount** streams bytes from its backend; every
 other bucket (including the DB warehouse) resolves exactly as before. Grounded in
 [storage/mounts.py](../src/fabric_shortcut_proxy/storage/mounts.py), [storage/passthrough.py](../src/fabric_shortcut_proxy/storage/passthrough.py),
-and [config.mounts.example.json](../config.mounts.example.json).
+and [config.mounts.example.json](../config/examples/config.mounts.example.json).
 
 Turn it on with `ENABLE_STORAGE_PROXY=1` and a `config.mounts.json` (gitignored),
 or use the config-builder **Storage** tab.

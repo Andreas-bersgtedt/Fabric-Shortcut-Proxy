@@ -32,11 +32,14 @@ dist/
 response.xml
 *.log
 
-# Local runtime config (use config.example.json as a template)
+# Local runtime config (use config/examples/config.example.json as a template)
 config.json
 
 # Persistent Parquet cache (F5)
 .parquet_cache/
+
+# Runtime Iceberg data and metadata
+/artifacts/iceberg/
 
 # Artifact store (Phase 0 - local backend default dir)
 .artifacts/

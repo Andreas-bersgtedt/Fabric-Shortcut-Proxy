@@ -72,7 +72,7 @@ a **mount** streams bytes from its backend; every other bucket resolves through 
 Iceberg/Delta path unchanged, so a single deployment exposes the DB warehouse *and* file
 shares/object stores at once.
 
-**Backends** (`config.mounts.json`, gitignored, see [config.mounts.example.json](config.mounts.example.json)):
+**Backends** (`config.mounts.json`, gitignored, see [config.mounts.example.json](config/examples/config.mounts.example.json)):
 
 | Backend | Serves | Notes |
 |---|---|---|
@@ -111,6 +111,7 @@ tests/                       Core and Enterprise test suites
 deploy/                      Helm and Kubernetes manifests
 infra/                       Azure infrastructure and deployment automation
 docs/                        Operator guides, architecture, and reference material
+config/examples/             Committed JSON templates for local configuration
 main.py                      Source-checkout launcher kept for existing commands
 Manager.ps1, Manager.sh      Local Manager and Agent bootstrap scripts
 ```

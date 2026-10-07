@@ -149,9 +149,9 @@ git push origin --force-with-lease
 
 When the storage proxy serves **mounted buckets** (existing files from `local` /
 `s3` / `azure` backends), the S3 front door is hardened beyond the single-key
-POC path. Grounded in [security/access_keys.py](../security/access_keys.py),
-[s3/auth.py](../s3/auth.py), [main.py](../main.py) (auth middleware), and
-[observability/audit.py](../observability/audit.py).
+POC path. Grounded in [security/access_keys.py](../src/fabric_shortcut_proxy/security/access_keys.py),
+[s3/auth.py](../src/fabric_shortcut_proxy/s3/auth.py), [main.py](../src/fabric_shortcut_proxy/main.py) (auth middleware), and
+[observability/audit.py](../src/fabric_shortcut_proxy/observability/audit.py).
 
 ### Front-door authentication (inbound)
 
@@ -223,7 +223,7 @@ See [BACKUP_RESTORE.md](BACKUP_RESTORE.md) for the operator procedure and exact 
 
 Clients **never** see the credentials the proxy uses to reach the upstream S3 or
 Azure backend. Those secrets are held in the encrypted credential store
-([security/credential_store.py](../security/credential_store.py); DPAPI on Windows,
+([security/credential_store.py](../src/fabric_shortcut_proxy/security/credential_store.py); DPAPI on Windows,
 Fernet elsewhere) and resolved by the mount's `credential` id, never written to
 `config.mounts.json`.
 
@@ -248,7 +248,7 @@ Vault, and the same identity is reused for Azure storage mounts.
   environment, or CLI), `managed_identity`, or `service_principal`. A service-principal
   client secret is read only from `AZURE_CLIENT_SECRET` (environment), never a config
   file. The credential is built once in
-  [security/azure_credential.py](../security/azure_credential.py) and shared.
+  [security/azure_credential.py](../src/fabric_shortcut_proxy/security/azure_credential.py) and shared.
 - **Read-through source** (`KEYVAULT_URI`): on a local cache miss the encrypted store
   resolves a secret from Key Vault and caches it, so the DB URL, mount credentials, S3
   secret, admin token, and Manager password can live in the vault. A background loop
@@ -302,7 +302,7 @@ A01/A03). This applies to `local`, `s3`, and `azure` backends alike.
   that mode. The current S3 data plane is read-only; writeback must pass the
   consumed or streaming-verified body into this verifier before enabling writes.
 - Terminate HTTPS **at the proxy** by setting **both** `TLS_CERT_FILE` and
-  `TLS_KEY_FILE` (wired into uvicorn for [main.py](../main.py) and
+  `TLS_KEY_FILE` (wired into uvicorn for [main.py](../src/fabric_shortcut_proxy/main.py) and
   [enterprise/manager.py](../enterprise/manager.py)), or terminate at a fronting load balancer.
 - SigV4 read requests use `UNSIGNED-PAYLOAD`, so signatures give **no
   confidentiality** over plain HTTP, enable TLS before turning on auth. The proxy

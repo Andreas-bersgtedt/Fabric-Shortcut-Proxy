@@ -10,8 +10,8 @@ just host / user / password, lets you pick one or more tables, and **downloads a
 ready-to-use `config.json`** for the proxy.
 
 Status: **✅ BUILT (M1–M4)**: enable with `ENABLE_CONFIG_BUILDER=1`, open
-`http://localhost:9000/_config/`. Backend in [configbuilder/router.py](../configbuilder/router.py)
-+ [db/reflect.py](../db/reflect.py); SPA in [configbuilder/index.html](../configbuilder/index.html);
+`http://localhost:9000/_config/`. Backend in [configbuilder/router.py](../src/fabric_shortcut_proxy/configbuilder/router.py)
++ [db/reflect.py](../src/fabric_shortcut_proxy/db/reflect.py); SPA in [configbuilder/index.html](../src/fabric_shortcut_proxy/configbuilder/index.html);
 tests in `tests/test_config_builder.py`. Decisions taken: `asyncpg` is a
 `pip install` (not bundled); password included in `db_url` by default with an
 omit toggle; SPA served inline from a Python route.
@@ -38,7 +38,7 @@ drivers. So the builder is **SPA + thin backend**:
 
 - **Backend** (Python, in this repo): opens the DB connection, lists tables,
   reflects columns/keys. **Reuses the reflection code we already have** in
-  [db/executor.py](../db/executor.py): `reflect_columns`, `reflect_primary_key`,
+  [db/executor.py](../src/fabric_shortcut_proxy/db/executor.py): `reflect_columns`, `reflect_primary_key`,
   `sqlalchemy_type_to_iceberg`, `derive_table_schema`, `_split_qualified`.
 - **Frontend**: a single static HTML page (vanilla JS, no build step) that calls
   the backend and assembles/downloads the JSON.
@@ -76,7 +76,7 @@ class SchemaReflector:
 
 ### 3.2 New: `/_config` API router (mounted only when enabled)
 
-`configbuilder/router.py` (an `APIRouter`), included in [main.py](../main.py) only when
+`configbuilder/router.py` (an `APIRouter`), included in [main.py](../src/fabric_shortcut_proxy/main.py) only when
 `config.ENABLE_CONFIG_BUILDER` is true. Config-builder routes require SigV4
 authentication and are not part of the public endpoint allowlist.
 
@@ -95,7 +95,7 @@ authentication and are not part of the public endpoint allowlist.
 - Live-mode saves write to `config.json`; environment variables still take
   precedence at runtime (`env > file > default`).
 
-### 3.3 Config flags ([config.py](../config.py))
+### 3.3 Config flags ([config.py](../src/fabric_shortcut_proxy/config.py))
 
 ```
 ENABLE_CONFIG_BUILDER      (bool, default 0)   # mounts the /_config surface

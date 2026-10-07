@@ -13,9 +13,9 @@ import os
 
 import pytest
 
-import config
-from db.reflect import build_url, SchemaReflector
-import db.executor as executor
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.db.reflect import build_url, SchemaReflector
+import fabric_shortcut_proxy.db.executor as executor
 
 
 def _has_required(prefix: str, required: list[str]) -> bool:

@@ -12,7 +12,7 @@ import importlib.util
 import pyarrow as pa
 import pytest
 
-from configbuilder.router import (
+from fabric_shortcut_proxy.configbuilder.router import (
     _clean_error,
     _object_store_capabilities,
     _validate_mounts_payload,
@@ -180,7 +180,7 @@ async def test_inspect_mount_reflects_delta_columns(tmp_path):
     import deltalake
     import httpx
     from fastapi import FastAPI
-    from configbuilder.router import router as cfg_router
+    from fabric_shortcut_proxy.configbuilder.router import router as cfg_router
 
     src = tmp_path / "src"
     deltalake.write_deltalake(str(src), pa.table({
@@ -203,7 +203,7 @@ async def test_inspect_mount_reflects_delta_columns(tmp_path):
 async def test_inspect_mount_requires_format():
     import httpx
     from fastapi import FastAPI
-    from configbuilder.router import router as cfg_router
+    from fabric_shortcut_proxy.configbuilder.router import router as cfg_router
 
     app = FastAPI()
     app.include_router(cfg_router)
@@ -219,8 +219,8 @@ async def test_inspect_mount_requires_format():
 def test_custom_reader_is_tokenizable(monkeypatch):
     """A new table-format reader only needs to yield Arrow batches; the tokenize
     pipeline is reader-agnostic (criterion 5)."""
-    from config import ColumnDef, ColumnTransform
-    from storage.tokenizer import tokenize_batch
+    from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform
+    from fabric_shortcut_proxy.storage.tokenizer import tokenize_batch
 
     monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "uat-secret")
 

@@ -23,14 +23,14 @@ import pyarrow.parquet as pq
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
 
-import cache.lru_cache as parquet_cache
-import config
-from config import ColumnDef, TableDef
-from db import executor
-from db.reflect import build_url
-from db.read_points import BestEffortReadSession
-from iceberg import freshness
-import iceberg.state_store as state_store
+import fabric_shortcut_proxy.cache.lru_cache as parquet_cache
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
+from fabric_shortcut_proxy.db import executor
+from fabric_shortcut_proxy.db.reflect import build_url
+from fabric_shortcut_proxy.db.read_points import BestEffortReadSession
+from fabric_shortcut_proxy.iceberg import freshness
+import fabric_shortcut_proxy.iceberg.state_store as state_store
 
 
 _SUPPORT_GATE_FLAG = "FSP_RUN_IMPALA_SUPPORT_GATES"

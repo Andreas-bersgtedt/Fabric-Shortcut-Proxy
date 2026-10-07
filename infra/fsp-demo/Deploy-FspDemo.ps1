@@ -24,6 +24,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$requestedWhatIfPreference = $WhatIfPreference
+$WhatIfPreference = $false
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $chartPath = Join-Path $repositoryRoot "deploy\helm\fabric-shortcut-proxy"
 
@@ -251,10 +253,13 @@ try {
     Copy-Item $valuesPath $attachedValues
     Copy-Item $ingressValuesPath $attachedIngressValues
 
+    $WhatIfPreference = $requestedWhatIfPreference
     if (-not $PSCmdlet.ShouldProcess($aksName, "Install or upgrade cert-manager, ingress-nginx, and FSP Helm releases")) {
+        $WhatIfPreference = $false
         Write-Host "Preflight and local Helm validation completed; no cluster changes were made."
         return
     }
+    $WhatIfPreference = $false
 
     Push-Location $temporaryDirectory
     try {

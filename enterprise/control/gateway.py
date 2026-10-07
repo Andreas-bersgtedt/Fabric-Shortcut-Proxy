@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from enterprise.control.registry import Registry
-from observability.logging import get_logger
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
 

@@ -5,7 +5,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from db.capabilities import capability_matrix
+from fabric_shortcut_proxy.db.capabilities import capability_matrix
 
 
 ROOT = Path(__file__).parents[1]
@@ -49,11 +49,11 @@ def test_unreleased_changelog_starts_at_package_release():
     ).read_text(encoding="utf-8")
     assert f"Enterprise {version} requires" in enterprise_readme
     expected_runtime_versions = {
-        "main.py": f'version="{version}"',
+        "src/fabric_shortcut_proxy/main.py": f'version="{version}"',
         "enterprise/agent_link.py": f'_APP_VERSION = "{version}"',
         "enterprise/control/admin.py": f'return "{version}"',
         "enterprise/control/manager_app.py": f'version="{version}"',
-        "configbuilder/router.py": f'return "{version}"',
+        "src/fabric_shortcut_proxy/configbuilder/router.py": f'return "{version}"',
     }
     for relative, expected in expected_runtime_versions.items():
         assert expected in (ROOT / relative).read_text(encoding="utf-8")
@@ -111,7 +111,9 @@ def test_current_status_docs_match_delivered_features_and_issue_links():
             f"Fabric-Shortcut-Proxy/issues/{issue}"
         ) in faq
 
-    mounts = (ROOT / "storage" / "mounts.py").read_text(encoding="utf-8")
+    mounts = (
+        ROOT / "src" / "fabric_shortcut_proxy" / "storage" / "mounts.py"
+    ).read_text(encoding="utf-8")
     assert "local, S3-compatible, and Azure" in mounts
     assert "supports the ``local`` backend only" not in mounts
 

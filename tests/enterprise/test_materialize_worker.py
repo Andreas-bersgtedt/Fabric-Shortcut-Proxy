@@ -7,10 +7,10 @@ import time
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.contract import Column, MaterializeTask
 from enterprise.materialize_worker import execute_task
-from runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 
 
 def _data() -> bytes:
@@ -98,7 +98,7 @@ async def test_worker_rejects_expired_task_without_query(monkeypatch):
 
 async def test_worker_rejects_fenced_generation_before_query(monkeypatch):
     import enterprise.materialize_worker as worker
-    from runtime.generation import acquire_generation
+    from fabric_shortcut_proxy.runtime.generation import acquire_generation
 
     store = MemoryStore()
     acquire_generation(store, shard_count=1)

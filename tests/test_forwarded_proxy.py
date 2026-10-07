@@ -7,7 +7,7 @@ import os
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("S3_BUCKET", "test-bucket")
 
-import config
+from fabric_shortcut_proxy import config
 import main
 
 

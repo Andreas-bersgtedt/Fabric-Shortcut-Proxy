@@ -13,9 +13,9 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
 import pytest
 
-import system_config
-from security import keyvault
-from security.credential_store import CredentialStore
+from fabric_shortcut_proxy import system_config
+from fabric_shortcut_proxy.security import keyvault
+from fabric_shortcut_proxy.security.credential_store import CredentialStore
 
 
 class ResourceNotFoundError(Exception):
@@ -302,7 +302,7 @@ def test_attach_write_back_no_uri(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_write_back_setting_defaults_and_persists(tmp_path, monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     assert config.KEYVAULT_WRITE_BACK is False
     monkeypatch.chdir(tmp_path)
     config.write_config_updates({"keyvault_write_back": True})

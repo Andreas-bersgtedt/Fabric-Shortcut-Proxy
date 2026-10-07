@@ -13,10 +13,10 @@ import pytest
 import httpx
 from fastapi import FastAPI
 
-import config
-from configbuilder.router import router as cb_router
-import security.credential_store as cs
-from security.credential_store import CredentialStore, env_var_for, hydrate_environment
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.configbuilder.router import router as cb_router
+import fabric_shortcut_proxy.security.credential_store as cs
+from fabric_shortcut_proxy.security.credential_store import CredentialStore, env_var_for, hydrate_environment
 
 
 class _FakeCipher:
@@ -223,7 +223,7 @@ def test_native_backend_roundtrip_if_available(tmp_path):
 @pytest.fixture
 def cred_app(tmp_path, monkeypatch):
     # Force the router's store to use the deterministic fake cipher.
-    monkeypatch.setattr("configbuilder.router._store",
+    monkeypatch.setattr("fabric_shortcut_proxy.configbuilder.router._store",
                         lambda: CredentialStore(str(tmp_path / "creds.json"), cipher=_FakeCipher()))
     monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True, raising=False)
     a = FastAPI()
@@ -273,7 +273,7 @@ async def test_endpoint_apply_reports_manager_restart_required(cred_app, monkeyp
     async def restart_agents(_request):
         return 2
 
-    monkeypatch.setattr("configbuilder.router._restart_agents", restart_agents)
+    monkeypatch.setattr("fabric_shortcut_proxy.configbuilder.router._restart_agents", restart_agents)
     async with _client(cred_app) as client:
         response = await client.post("/_config/api/credentials", json={
             "connection_id": "default",
@@ -289,8 +289,8 @@ async def test_endpoint_apply_reports_manager_restart_required(cred_app, monkeyp
 
 
 async def test_tokenization_key_endpoint_never_returns_secret(cred_app, monkeypatch, tmp_path):
-    from security.authorization import User
-    from security.identity import identity_provider
+    from fabric_shortcut_proxy.security.authorization import User
+    from fabric_shortcut_proxy.security.identity import identity_provider
 
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(tmp_path / "users.json"))
     monkeypatch.delenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", raising=False)
@@ -306,7 +306,7 @@ async def test_tokenization_key_endpoint_never_returns_secret(cred_app, monkeypa
     async def restart_agents(_request):
         return 2
 
-    monkeypatch.setattr("configbuilder.router._restart_agents", restart_agents)
+    monkeypatch.setattr("fabric_shortcut_proxy.configbuilder.router._restart_agents", restart_agents)
     secret = "tokenization-secret-value-that-must-not-leak"
     async with _client(cred_app) as client:
         client.cookies.set("fsp_session", session)

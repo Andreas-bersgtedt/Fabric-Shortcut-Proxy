@@ -11,7 +11,7 @@ import pathlib
 import httpx
 import pytest
 
-import config
+from fabric_shortcut_proxy import config
 from main import app
 
 _DB = pathlib.Path(__file__).parent / "test_lazy.db"
@@ -21,10 +21,10 @@ _VDB = pathlib.Path(__file__).parent / "test_virtual.db"
 
 @pytest.fixture
 async def lazy_client(monkeypatch):
-    import db.executor as _executor
-    import runtime.materializer as materializer
-    from iceberg.state_store import build_snapshot, _snapshots, _history
-    from demo.seed_db import seed_demo_database
+    import fabric_shortcut_proxy.db.executor as _executor
+    import fabric_shortcut_proxy.runtime.materializer as materializer
+    from fabric_shortcut_proxy.iceberg.state_store import build_snapshot, _snapshots, _history
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
 
     monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{_DB.as_posix()}")
     monkeypatch.setattr(config, "NUM_SPLITS", 4)
@@ -109,11 +109,11 @@ async def test_lazy_gate_is_idempotent(lazy_client):
 
 @pytest.fixture
 async def lazy_delta_client(monkeypatch):
-    import db.executor as _executor
-    import runtime.materializer as materializer
-    from iceberg.state_store import build_snapshot, _snapshots, _history
-    from demo.seed_db import seed_demo_database
-    from delta import log as delta_log
+    import fabric_shortcut_proxy.db.executor as _executor
+    import fabric_shortcut_proxy.runtime.materializer as materializer
+    from fabric_shortcut_proxy.iceberg.state_store import build_snapshot, _snapshots, _history
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
+    from fabric_shortcut_proxy.delta import log as delta_log
 
     monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{_DDB.as_posix()}")
     monkeypatch.setattr(config, "NUM_SPLITS", 4)
@@ -185,11 +185,11 @@ async def test_delta_lazy_commit_size_matches_served_bytes(lazy_delta_client):
 
 @pytest.fixture
 async def virtual_client(monkeypatch):
-    import db.executor as _executor
-    import runtime.materializer as materializer
-    import cache.lru_cache as cache
-    from iceberg.state_store import build_snapshot, _snapshots, _history
-    from demo.seed_db import seed_demo_database
+    import fabric_shortcut_proxy.db.executor as _executor
+    import fabric_shortcut_proxy.runtime.materializer as materializer
+    import fabric_shortcut_proxy.cache.lru_cache as cache
+    from fabric_shortcut_proxy.iceberg.state_store import build_snapshot, _snapshots, _history
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
 
     monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{_VDB.as_posix()}")
     monkeypatch.setattr(config, "NUM_SPLITS", 4)
@@ -223,7 +223,7 @@ async def virtual_client(monkeypatch):
 
 
 async def test_virtual_materializes_without_pinning(virtual_client):
-    import cache.lru_cache as cache
+    import fabric_shortcut_proxy.cache.lru_cache as cache
     c, snap = virtual_client
     assert (await c.get(f"/virtual-bucket/{snap.metadata_key}")).status_code == 200
     # Sizes are known (the manifest is correct) but NO split is pinned at rest.
@@ -240,7 +240,7 @@ async def test_virtual_manifest_size_matches_served_bytes(virtual_client):
 
 
 async def test_virtual_regenerates_byte_identical_after_eviction(virtual_client):
-    import cache.lru_cache as cache
+    import fabric_shortcut_proxy.cache.lru_cache as cache
     c, snap = virtual_client
     assert (await c.get(f"/virtual-bucket/{snap.metadata_key}")).status_code == 200
     split = snap.splits[0]
@@ -336,7 +336,7 @@ def test_virtual_rejects_auto_refresh(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_owns_split_single_shard(monkeypatch):
-    import runtime.materializer as m
+    import fabric_shortcut_proxy.runtime.materializer as m
 
     class _S:
         def __init__(self, i): self.split_index = i
@@ -346,7 +346,7 @@ def test_owns_split_single_shard(monkeypatch):
 
 
 def test_owns_split_modulo(monkeypatch):
-    import runtime.materializer as m
+    import fabric_shortcut_proxy.runtime.materializer as m
 
     class _S:
         def __init__(self, i): self.split_index = i

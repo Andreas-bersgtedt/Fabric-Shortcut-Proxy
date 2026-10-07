@@ -8,9 +8,9 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import pytest
 
-import config
-import cache.lru_cache as cache
-from runtime.artifact_store import MemoryStore, set_default_store, reset_default_store
+from fabric_shortcut_proxy import config
+import fabric_shortcut_proxy.cache.lru_cache as cache
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore, set_default_store, reset_default_store
 
 KEY = "warehouse/db/sales/data/split-0-deadbeef.parquet"
 BODY = b"PAR1-phase2-body-" + bytes(range(64)) + b"-PAR1"

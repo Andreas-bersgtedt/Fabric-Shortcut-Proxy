@@ -17,8 +17,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import config
-from configbuilder.router import router as cb_router
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.configbuilder.router import router as cb_router
 
 
 @pytest.fixture
@@ -70,11 +70,11 @@ async def test_preview_rejects_target_on_unknown_connection(app):
 
 
 async def test_health_checks_full_dependency_chain(app, monkeypatch):
-    import configbuilder.router as router_module
-    import db.executor as executor
-    import open_mirror.fabric_api as fabric_api
-    import open_mirror.landing_zone as landing_zone
-    import open_mirror.source as source
+    import fabric_shortcut_proxy.configbuilder.router as router_module
+    import fabric_shortcut_proxy.db.executor as executor
+    import fabric_shortcut_proxy.open_mirror.fabric_api as fabric_api
+    import fabric_shortcut_proxy.open_mirror.landing_zone as landing_zone
+    import fabric_shortcut_proxy.open_mirror.source as source
 
     calls = {"source": 0, "schema": 0, "fabric": 0, "landing": 0}
 
@@ -130,11 +130,11 @@ async def test_health_checks_full_dependency_chain(app, monkeypatch):
 
 
 async def test_health_isolates_source_failure_and_redacts_secrets(app, monkeypatch):
-    import configbuilder.router as router_module
-    import db.executor as executor
-    import open_mirror.fabric_api as fabric_api
-    import open_mirror.landing_zone as landing_zone
-    import open_mirror.source as source
+    import fabric_shortcut_proxy.configbuilder.router as router_module
+    import fabric_shortcut_proxy.db.executor as executor
+    import fabric_shortcut_proxy.open_mirror.fabric_api as fabric_api
+    import fabric_shortcut_proxy.open_mirror.landing_zone as landing_zone
+    import fabric_shortcut_proxy.open_mirror.source as source
 
     calls = {"schema": 0, "fabric": 0, "landing": 0}
 
@@ -182,11 +182,11 @@ async def test_health_isolates_source_failure_and_redacts_secrets(app, monkeypat
 
 
 async def test_health_reports_actionable_warnings(app, monkeypatch):
-    import configbuilder.router as router_module
-    import db.executor as executor
-    import open_mirror.fabric_api as fabric_api
-    import open_mirror.landing_zone as landing_zone
-    import open_mirror.source as source
+    import fabric_shortcut_proxy.configbuilder.router as router_module
+    import fabric_shortcut_proxy.db.executor as executor
+    import fabric_shortcut_proxy.open_mirror.fabric_api as fabric_api
+    import fabric_shortcut_proxy.open_mirror.landing_zone as landing_zone
+    import fabric_shortcut_proxy.open_mirror.source as source
 
     async def fake_scalar(sql, params=None, connection="default"):
         return 1
@@ -235,9 +235,9 @@ async def test_health_reports_actionable_warnings(app, monkeypatch):
 
 
 async def test_health_reports_landing_zone_failure(app, monkeypatch):
-    import db.executor as executor
-    import open_mirror.landing_zone as landing_zone
-    import open_mirror.source as source
+    import fabric_shortcut_proxy.db.executor as executor
+    import fabric_shortcut_proxy.open_mirror.landing_zone as landing_zone
+    import fabric_shortcut_proxy.open_mirror.source as source
 
     async def fake_scalar(sql, params=None, connection="default"):
         return 1
@@ -296,7 +296,13 @@ async def test_bootstrap_includes_open_mirror_targets(app):
 
 def test_index_has_open_mirror_tab():
     from pathlib import Path
-    html = (Path(__file__).parent.parent / "configbuilder" / "index.html").read_text(encoding="utf-8")
+    html = (
+        Path(__file__).parent.parent
+        / "src"
+        / "fabric_shortcut_proxy"
+        / "configbuilder"
+        / "index.html"
+    ).read_text(encoding="utf-8")
     assert 'data-tab="openmirror"' in html
     assert 'id="openmirror-tab"' in html
     assert "api/open-mirror/save" in html
@@ -388,10 +394,10 @@ async def test_publish_no_targets_is_ok(app, tmp_path, monkeypatch):
 
 
 async def test_publish_job_reports_per_target_progress(app, monkeypatch):
-    import configbuilder.router as router_module
-    import open_mirror.config as mirror_config
-    import open_mirror.scheduler as scheduler
-    from open_mirror.source import PublishResult, TargetResult
+    import fabric_shortcut_proxy.configbuilder.router as router_module
+    import fabric_shortcut_proxy.open_mirror.config as mirror_config
+    import fabric_shortcut_proxy.open_mirror.scheduler as scheduler
+    from fabric_shortcut_proxy.open_mirror.source import PublishResult, TargetResult
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -503,8 +509,8 @@ async def test_save_rejects_missing_token_key(app, tmp_path, monkeypatch):
 async def test_reset_requires_confirmation_and_is_table_scoped(
     app, tmp_path, monkeypatch
 ):
-    import open_mirror.config as om_config
-    from open_mirror.config import target_from_dict
+    import fabric_shortcut_proxy.open_mirror.config as om_config
+    from fabric_shortcut_proxy.open_mirror.config import target_from_dict
 
     target = target_from_dict(_target(str(tmp_path / "lz")))
     monkeypatch.setattr(om_config, "load_targets", lambda: [target])

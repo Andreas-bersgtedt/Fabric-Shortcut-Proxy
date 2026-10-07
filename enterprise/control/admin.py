@@ -26,11 +26,11 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.contract import ControlCommand, Drain
 from enterprise.control.registry import Registry
 from enterprise.control.supervisor import AgentSupervisor
-from observability.logging import get_logger
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -208,7 +208,7 @@ def create_admin_router(
     async def manager_authorization(request: Request) -> dict:
       """Expose safe current-principal permissions for the Manager UI."""
       import os
-      from security.authorization import authenticate_request, bearer_token
+      from fabric_shortcut_proxy.security.authorization import authenticate_request, bearer_token
 
       user = getattr(request.state, "user", None)
       if user is None:

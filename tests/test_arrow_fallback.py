@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import re
 
-import config
-from config import ColumnDef, ColumnTransform, TableDef
-from iceberg.state_store import SplitDescriptor
-from observability import tokenization as tokenization_metrics
-from runtime.materializer import _apply_arrow_fallback
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform, TableDef
+from fabric_shortcut_proxy.iceberg.state_store import SplitDescriptor
+from fabric_shortcut_proxy.observability import tokenization as tokenization_metrics
+from fabric_shortcut_proxy.runtime.materializer import _apply_arrow_fallback
 
 
 def test_arrow_fallback_preserves_nulls_and_records_safe_operational_event(

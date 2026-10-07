@@ -13,19 +13,19 @@ import os
 import pytest
 import pyarrow.parquet as pq
 
-import config
-import db.executor as executor
-from config import ColumnDef, ColumnTransform, TableDef
-from db.capabilities import capabilities_for_db_url
-from db.read_points import BestEffortReadSession
-from db.reflect import SchemaReflector, build_url
-import cache.lru_cache as parquet_cache
-import iceberg.state_store as state_store
-from iceberg import freshness
-from iceberg.state_store import SplitDescriptor
-from observability import tokenization as tokenization_metrics
-from planner.dialects import get_dialect
-from planner.split_planner import (
+from fabric_shortcut_proxy import config
+import fabric_shortcut_proxy.db.executor as executor
+from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform, TableDef
+from fabric_shortcut_proxy.db.capabilities import capabilities_for_db_url
+from fabric_shortcut_proxy.db.read_points import BestEffortReadSession
+from fabric_shortcut_proxy.db.reflect import SchemaReflector, build_url
+import fabric_shortcut_proxy.cache.lru_cache as parquet_cache
+import fabric_shortcut_proxy.iceberg.state_store as state_store
+from fabric_shortcut_proxy.iceberg import freshness
+from fabric_shortcut_proxy.iceberg.state_store import SplitDescriptor
+from fabric_shortcut_proxy.observability import tokenization as tokenization_metrics
+from fabric_shortcut_proxy.planner.dialects import get_dialect
+from fabric_shortcut_proxy.planner.split_planner import (
     build_split_query,
     compute_key_ranges,
     compute_temporal_ranges,
@@ -150,7 +150,7 @@ async def test_source_capability_live_gate(dialect: str, monkeypatch):
         reflected_names = {column["name"].casefold() for column in columns}
         assert integer_key.casefold() in reflected_names
         assert date_column.casefold() in reflected_names
-        from configbuilder.router import _split_key_metadata
+        from fabric_shortcut_proxy.configbuilder.router import _split_key_metadata
 
         key_metadata = await _split_key_metadata(
             reflector, db_url, table, columns
@@ -432,7 +432,7 @@ async def test_arrow_fallback_live_materialization_gate(
         table=table,
     )
     try:
-        from runtime.materializer import _materialize_split_once
+        from fabric_shortcut_proxy.runtime.materializer import _materialize_split_once
 
         assert capabilities_for_db_url(db_url).tokenization_backend(
             "random_token", "arrow"

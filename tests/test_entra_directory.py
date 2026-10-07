@@ -5,8 +5,8 @@ import json
 
 
 def test_directory_search_returns_safe_user_metadata(monkeypatch):
-    import config
-    from security.entra_directory import EntraDirectoryClient
+    from fabric_shortcut_proxy import config
+    from fabric_shortcut_proxy.security.entra_directory import EntraDirectoryClient
 
     monkeypatch.setattr(config, "ENTRA_TENANT_ID", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", raising=False)
     monkeypatch.setattr(config, "ENTRA_GRAPH_CLIENT_ID", "graph-client", raising=False)
@@ -32,7 +32,7 @@ def test_directory_search_returns_safe_user_metadata(monkeypatch):
             "passwordProfile": {"password": "never return"},
         }]}).encode())
 
-    monkeypatch.setattr("security.entra_directory.urlopen", fake_urlopen)
+    monkeypatch.setattr("fabric_shortcut_proxy.security.entra_directory.urlopen", fake_urlopen)
     results = client.search_users("Alex")
 
     assert results == [{
@@ -49,8 +49,8 @@ def test_directory_search_returns_safe_user_metadata(monkeypatch):
 
 
 def test_directory_search_filters_security_groups(monkeypatch):
-    import config
-    from security.entra_directory import EntraDirectoryClient
+    from fabric_shortcut_proxy import config
+    from fabric_shortcut_proxy.security.entra_directory import EntraDirectoryClient
 
     monkeypatch.setattr(config, "ENTRA_TENANT_ID", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", raising=False)
     monkeypatch.setattr(config, "ENTRA_GRAPH_CLIENT_ID", "graph-client", raising=False)
@@ -70,7 +70,7 @@ def test_directory_search_filters_security_groups(monkeypatch):
             {"id": "33333333-4444-5555-6666-777777777777", "displayName": "Mail Group", "securityEnabled": False},
         ]}).encode())
 
-    monkeypatch.setattr("security.entra_directory.urlopen", fake_urlopen)
+    monkeypatch.setattr("fabric_shortcut_proxy.security.entra_directory.urlopen", fake_urlopen)
     results = client.search_security_groups("Proxy")
 
     assert [item["display_name"] for item in results] == ["Proxy Operators"]
@@ -79,8 +79,8 @@ def test_directory_search_filters_security_groups(monkeypatch):
 
 
 def test_user_group_membership_is_cached(monkeypatch):
-    import config
-    from security.entra_directory import EntraDirectoryClient, _group_cache
+    from fabric_shortcut_proxy import config
+    from fabric_shortcut_proxy.security.entra_directory import EntraDirectoryClient, _group_cache
 
     monkeypatch.setattr(config, "ENTRA_TENANT_ID", "cache-test-tenant", raising=False)
     client = EntraDirectoryClient()

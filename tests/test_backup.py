@@ -8,10 +8,10 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import configbuilder.router as backup_router
-from configbuilder.router import router
-from security.backup import BackupError, create_backup, restore_backup
-from security.credential_store import CredentialStore
+import fabric_shortcut_proxy.configbuilder.router as backup_router
+from fabric_shortcut_proxy.configbuilder.router import router
+from fabric_shortcut_proxy.security.backup import BackupError, create_backup, restore_backup
+from fabric_shortcut_proxy.security.credential_store import CredentialStore
 
 
 class _SourceCipher:

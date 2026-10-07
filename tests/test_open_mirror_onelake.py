@@ -16,13 +16,13 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 import pyarrow.parquet as pq
 import pytest
 
-import config
-import security.azure_credential as azcred
-from config import ColumnDef
-from open_mirror import open_landing_zone, target_from_dict
-from open_mirror.landing_zone import is_onelake_uri
-from open_mirror.onelake import OneLakeLandingZone, _parse_onelake_url
-from open_mirror.publisher import LandingZonePublisher
+from fabric_shortcut_proxy import config
+import fabric_shortcut_proxy.security.azure_credential as azcred
+from fabric_shortcut_proxy.config import ColumnDef
+from fabric_shortcut_proxy.open_mirror import open_landing_zone, target_from_dict
+from fabric_shortcut_proxy.open_mirror.landing_zone import is_onelake_uri
+from fabric_shortcut_proxy.open_mirror.onelake import OneLakeLandingZone, _parse_onelake_url
+from fabric_shortcut_proxy.open_mirror.publisher import LandingZonePublisher
 
 _ONELAKE = "https://onelake.dfs.fabric.microsoft.com/ws-guid/db-guid/Files/LandingZone"
 

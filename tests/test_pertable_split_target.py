@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-import config
-from config import ColumnDef, TableDef, _tabledef_from_json
-from iceberg.state_store import SnapshotState, SplitDescriptor
-from planner.split_planner import build_split_query, choose_table_num_splits
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, TableDef, _tabledef_from_json
+from fabric_shortcut_proxy.iceberg.state_store import SnapshotState, SplitDescriptor
+from fabric_shortcut_proxy.planner.split_planner import build_split_query, choose_table_num_splits
 
 
 class _Caps:
@@ -95,7 +95,7 @@ async def test_choose_table_num_splits_honors_override(monkeypatch):
     async def _fake_count(_source: str, connection: str = "default"):
         return 4_000_000
 
-    monkeypatch.setattr("db.executor.fetch_table_row_count", _fake_count)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.fetch_table_row_count", _fake_count)
 
     # Global 100k -> ceil(4M / 100k) = 40 splits.
     assert await choose_table_num_splits(_table()) == 40
@@ -110,7 +110,7 @@ async def test_choose_table_num_splits_override_zero_keeps_configured(monkeypatc
     async def _boom(*_a, **_k):  # must not be called when planning is disabled
         raise AssertionError("row count should not be fetched when target is 0")
 
-    monkeypatch.setattr("db.executor.fetch_table_row_count", _boom)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.fetch_table_row_count", _boom)
     assert await choose_table_num_splits(_table(num_splits=8, split_target_rows=0)) == 8
 
 
@@ -160,17 +160,17 @@ def test_tabledef_from_json_absent_strategy_is_none():
 
 @pytest.mark.asyncio
 async def test_plan_ranges_honors_per_table_strategy(monkeypatch):
-    from planner.split_planner import plan_ranges_for_snapshot
+    from fabric_shortcut_proxy.planner.split_planner import plan_ranges_for_snapshot
 
     # Global strategy is modulo + dynamic planning disabled, but the table forces range.
     monkeypatch.setattr(config, "SPLIT_STRATEGY", "modulo", raising=False)
     monkeypatch.setattr(config, "SPLIT_TARGET_ROWS", 0, raising=False)
-    monkeypatch.setattr("planner.split_planner.capabilities_for_db_url", lambda _u: _Caps())
+    monkeypatch.setattr("fabric_shortcut_proxy.planner.split_planner.capabilities_for_db_url", lambda _u: _Caps())
 
     async def _fake_bounds(_table: str, _col: str, connection: str = "default"):
         return 1, 400_000
 
-    monkeypatch.setattr("db.executor.fetch_key_bounds", _fake_bounds)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.fetch_key_bounds", _fake_bounds)
 
     table = _table(split_strategy="range")
     base = "db/local/default/dbo/events"

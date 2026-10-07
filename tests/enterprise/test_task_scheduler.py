@@ -25,7 +25,7 @@ from enterprise.control.registry import Registry
 from enterprise.control.lease import LeaderLease
 from enterprise.control.task_scheduler import TaskScheduler
 from enterprise.control.work_queue import DurableWorkQueue
-from runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 
 
 def _register(
@@ -204,7 +204,7 @@ def test_scheduler_releases_claim_when_command_delivery_fails(monkeypatch):
 
 
 def test_scheduler_cancels_tasks_from_fenced_generation():
-    from runtime.generation import acquire_generation
+    from fabric_shortcut_proxy.runtime.generation import acquire_generation
 
     queue, request = _queue()
     acquire_generation(queue.store, shard_count=1)

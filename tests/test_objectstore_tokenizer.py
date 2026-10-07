@@ -16,15 +16,15 @@ import re
 import pyarrow as pa
 import pytest
 
-from config import ColumnDef, ColumnTransform
-from storage.tokenizer import (
+from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform
+from fabric_shortcut_proxy.storage.tokenizer import (
     TokenizerError,
     get_tokenizer,
     register_tokenizer,
     supported_kinds,
     tokenize_batch,
 )
-from storage.objectstore_capabilities import (
+from fabric_shortcut_proxy.storage.objectstore_capabilities import (
     SUPPORTED_FORMATS,
     get_format_capabilities,
     validate_object_store_policy,
@@ -212,7 +212,7 @@ def test_validate_accepts_valid_policy():
 
 def test_delta_reader_tokenizes_local_table(tmp_path, monkeypatch):
     deltalake = pytest.importorskip("deltalake")
-    from storage.objectstore_reader import DeltaTableReader
+    from fabric_shortcut_proxy.storage.objectstore_reader import DeltaTableReader
 
     monkeypatch.setenv(_KEY_ENV, "uat-secret")
     table = pa.table({
@@ -239,7 +239,13 @@ def test_delta_reader_tokenizes_local_table(tmp_path, monkeypatch):
 # --- containment: no engine imports -----------------------------------------
 
 def test_tokenizer_module_does_not_import_engine():
-    src = pathlib.Path(__file__).resolve().parents[1] / "storage" / "tokenizer.py"
+    src = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "src"
+        / "fabric_shortcut_proxy"
+        / "storage"
+        / "tokenizer.py"
+    )
     text = src.read_text(encoding="utf-8")
     for module in ("planner", "db", "iceberg", "delta", "runtime"):
         assert not re.search(rf"^\s*(from|import)\s+{module}(\.|\s|$)", text, re.M), (

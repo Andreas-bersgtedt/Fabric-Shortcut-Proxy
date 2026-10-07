@@ -16,11 +16,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import config
-from config import ColumnDef, TableDef
-import db.executor as _executor
-import iceberg.state_store as state_store
-from iceberg import freshness
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
+import fabric_shortcut_proxy.db.executor as _executor
+import fabric_shortcut_proxy.iceberg.state_store as state_store
+from fabric_shortcut_proxy.iceberg import freshness
 
 _DB = pathlib.Path(__file__).parent / "test_freshness.db"
 
@@ -82,10 +82,10 @@ def _isolate(monkeypatch):
     state_store._history.pop("frtest", None)
     freshness._probe_tokens.pop("frtest", None)
     freshness._ttl_gen.pop("frtest", None)
-    import cache.lru_cache as _cache
+    import fabric_shortcut_proxy.cache.lru_cache as _cache
     _cache.unpin_all()
     yield
-    import cache.lru_cache as _cache2
+    import fabric_shortcut_proxy.cache.lru_cache as _cache2
     _cache2.unpin_all()
 
 
@@ -118,7 +118,7 @@ async def test_materialize_is_content_deterministic(monkeypatch):
 
 
 async def test_materialize_reuses_pinned_content_addressed_bytes():
-    import cache.lru_cache as _cache
+    import fabric_shortcut_proxy.cache.lru_cache as _cache
     await _write_rows([(1, "a", 1.0), (2, "b", 2.0)])
     t = _table()
     first = await freshness.materialize_table(t, _BUCKET, _PREFIX)
@@ -186,7 +186,7 @@ async def test_publish_bumps_version_on_change():
 
 
 async def test_history_is_pruned_and_chunks_evicted():
-    import cache.lru_cache as _cache
+    import fabric_shortcut_proxy.cache.lru_cache as _cache
     t = _table()
     # Publish 4 distinct versions; history limit is 3, so v1 is pruned.
     for n in range(1, 5):

@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import json
 
-import config
+from fabric_shortcut_proxy import config
 import pytest
-import system_config
+from fabric_shortcut_proxy import system_config
 
 
 # ---------------------------------------------------------------------------

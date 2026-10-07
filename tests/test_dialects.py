@@ -7,11 +7,11 @@ Verifies build_split_query() emits correct SQL per dialect:
 """
 from __future__ import annotations
 
-import config
+from fabric_shortcut_proxy import config
 import pytest
-from config import ColumnDef, ColumnTransform, TableDef
-from iceberg.state_store import SplitDescriptor
-from planner.dialects import (
+from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform, TableDef
+from fabric_shortcut_proxy.iceberg.state_store import SplitDescriptor
+from fabric_shortcut_proxy.planner.dialects import (
     get_dialect,
     SQLiteDialect,
     PostgresDialect,
@@ -22,7 +22,7 @@ from planner.dialects import (
     TeradataDialect,
     ImpalaDialect,
 )
-from planner.split_planner import build_split_query
+from fabric_shortcut_proxy.planner.split_planner import build_split_query
 
 
 _SCHEMA = [
@@ -127,7 +127,7 @@ def test_sources_without_pk_reflection_reject_implicit_split_keys(monkeypatch, d
         watermark_ms=0,
         table=table,
     )
-    from planner.split_planner import _choose_strategy_key
+    from fabric_shortcut_proxy.planner.split_planner import _choose_strategy_key
 
     with pytest.raises(ValueError, match="requires an explicit key_column"):
         _choose_strategy_key(table, "range")
@@ -179,7 +179,7 @@ def test_explicit_split_key_must_exist_in_reflected_schema(monkeypatch, db_url):
         key_column="unknown",
     )
     with pytest.raises(ValueError, match="not present in the reflected source columns"):
-        from planner.split_planner import _choose_strategy_key
+        from fabric_shortcut_proxy.planner.split_planner import _choose_strategy_key
 
         _choose_strategy_key(table, "range")
 
@@ -476,7 +476,7 @@ def test_impala_arrow_fallback_selects_plaintext_source_for_postprocessing(monke
 
 
 def test_arrow_fallback_tokenizes_aliased_rows_before_parquet(monkeypatch):
-    from runtime.materializer import _apply_arrow_fallback
+    from fabric_shortcut_proxy.runtime.materializer import _apply_arrow_fallback
 
     monkeypatch.setattr(config, "DB_URL", "impala://h:21050/db")
     monkeypatch.setattr(config, "TOKENIZATION_FALLBACK", "arrow", raising=False)
@@ -497,7 +497,7 @@ def test_arrow_fallback_passes_through_native_pushdown_rows(monkeypatch):
     longer returns, and raise TokenizerError — this previously broke
     materialization of any table with a natively-pushed-down transform column
     (e.g. AdventureWorksLT's SalesLT.Product.Weight)."""
-    from runtime.materializer import _apply_arrow_fallback
+    from fabric_shortcut_proxy.runtime.materializer import _apply_arrow_fallback
 
     monkeypatch.setattr(config, "DB_URL", "mssql+aioodbc://h/db")
     rows = [{"customer_id": 1, "email_token": "already-tokenized-by-sql"}]

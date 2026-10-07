@@ -15,11 +15,11 @@ import pyarrow.parquet as pq
 import pytest
 from sqlalchemy import create_engine, text
 
-import config
-import db.executor as executor
-from config import ColumnDef, ColumnTransform
-from open_mirror import target_from_dict
-from open_mirror.source import (
+from fabric_shortcut_proxy import config
+import fabric_shortcut_proxy.db.executor as executor
+from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform
+from fabric_shortcut_proxy.open_mirror import target_from_dict
+from fabric_shortcut_proxy.open_mirror.source import (
     _select_all_sql,
     _control_columns,
     _configured_columns,
@@ -28,8 +28,8 @@ from open_mirror.source import (
     publish_initial_load,
     publish_target_initial_load,
 )
-from open_mirror.state import projection_fingerprint
-from planner.dialects import _MSSQL, _ORACLE, _SQLITE, _TERADATA
+from fabric_shortcut_proxy.open_mirror.state import projection_fingerprint
+from fabric_shortcut_proxy.planner.dialects import _MSSQL, _ORACLE, _SQLITE, _TERADATA
 
 
 def _seed_sqlite(path: pathlib.Path) -> None:

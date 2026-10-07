@@ -15,8 +15,8 @@ import socket
 import time
 import uuid
 
-from runtime.artifact_store import ArtifactStore, ObjectNotFound
-from observability.logging import get_logger
+from fabric_shortcut_proxy.runtime.artifact_store import ArtifactStore, ObjectNotFound
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
 

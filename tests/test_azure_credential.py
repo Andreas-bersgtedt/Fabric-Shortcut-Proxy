@@ -12,8 +12,8 @@ import types
 
 import pytest
 
-from security import azure_credential
-from storage import azure_auth
+from fabric_shortcut_proxy.security import azure_credential
+from fabric_shortcut_proxy.storage import azure_auth
 
 
 def _install_fake_identity(monkeypatch):

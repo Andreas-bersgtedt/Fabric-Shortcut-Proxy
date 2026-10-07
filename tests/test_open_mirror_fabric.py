@@ -17,9 +17,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import open_mirror.fabric_api as fab
-from configbuilder.router import router as cb_router
-from open_mirror import scheduler, target_from_dict
+import fabric_shortcut_proxy.open_mirror.fabric_api as fab
+from fabric_shortcut_proxy.configbuilder.router import router as cb_router
+from fabric_shortcut_proxy.open_mirror import scheduler, target_from_dict
 
 # --- helper --------------------------------------------------------------
 

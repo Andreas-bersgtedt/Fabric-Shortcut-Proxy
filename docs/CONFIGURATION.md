@@ -10,8 +10,8 @@ You do **not** hand-write a column schema. Point the proxy at a **table/view
 name** and a **key column**; the Iceberg schema is **reflected from the source
 database automatically** at startup.
 
-Grounded in [config.py](../config.py), [db/executor.py](../db/executor.py) (reflection),
-and [planner/dialects.py](../planner/dialects.py).
+Grounded in [config.py](../src/fabric_shortcut_proxy/config.py), [db/executor.py](../src/fabric_shortcut_proxy/db/executor.py) (reflection),
+and [planner/dialects.py](../src/fabric_shortcut_proxy/planner/dialects.py).
 
 ---
 
@@ -29,7 +29,7 @@ Settings resolve with this precedence (highest wins):
 | --- | --- | --- |
 | **Environment variables** | Connection string, source table, **key column**, bucket, port, splits, flags | `DB_URL`, `DB_SOURCE_TABLE`, `KEY_COLUMN`, … |
 | **Split `config.*.json` files** | Settings grouped by concern plus the full `tables` registry: no Python edits | Copy the matching `config.*.example.json` template |
-| **`config.py` → `TABLES`** | Code-level table defaults for local development | Edit [config.py](../config.py) |
+| **`config.py` → `TABLES`** | Code-level table defaults for local development | Edit [config.py](../src/fabric_shortcut_proxy/config.py) |
 
 At startup the proxy:
 1. Reads `DB_URL` and auto-selects the SQL **dialect** from its scheme.
@@ -892,7 +892,7 @@ Independently of the DB→table virtualization, the same S3 endpoint can serve
 **existing files** from a storage backend as **read-only byte passthrough**. This
 is **additive**: a bucket with a **mount** streams bytes from its backend; every
 other bucket (including the DB warehouse) resolves exactly as before. Grounded in
-[storage/mounts.py](../storage/mounts.py), [storage/passthrough.py](../storage/passthrough.py),
+[storage/mounts.py](../src/fabric_shortcut_proxy/storage/mounts.py), [storage/passthrough.py](../src/fabric_shortcut_proxy/storage/passthrough.py),
 and [config.mounts.example.json](../config.mounts.example.json).
 
 Turn it on with `ENABLE_STORAGE_PROXY=1` and a `config.mounts.json` (gitignored),

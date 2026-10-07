@@ -20,14 +20,14 @@ os.environ["NUM_SPLITS"] = "4"
 os.environ["S3_BUCKET"] = "ops-bucket"
 
 import httpx
-import config
+from fabric_shortcut_proxy import config
 
 config.DB_URL = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
 config.NUM_SPLITS = 4
 config.BUCKET_NAME = "ops-bucket"
 
 from main import app
-from observability import metrics
+from fabric_shortcut_proxy.observability import metrics
 
 
 def _operator_headers() -> dict[str, str]:
@@ -37,11 +37,11 @@ def _operator_headers() -> dict[str, str]:
 
 @pytest.fixture(scope="module")
 async def client():
-    from demo.seed_db import seed_demo_database
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
     await seed_demo_database()
 
-    import db.executor as _executor
-    from iceberg.state_store import build_snapshot
+    import fabric_shortcut_proxy.db.executor as _executor
+    from fabric_shortcut_proxy.iceberg.state_store import build_snapshot
 
     _executor._engine = None
     _saved_layout = config.OBJECT_PATH_LAYOUT
@@ -64,7 +64,7 @@ async def client():
     )
     metrics.reset()
     # Isolate from other test modules that may have populated the shared caches.
-    import cache.lru_cache as _cache
+    import fabric_shortcut_proxy.cache.lru_cache as _cache
     for _c in (_cache._metadata_cache, _cache._parquet_cache):
         _c._store.clear()
         _c._current_bytes = 0

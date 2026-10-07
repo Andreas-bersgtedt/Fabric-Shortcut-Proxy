@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-import config
-from runtime import quarantine, table_health
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.runtime import quarantine, table_health
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +56,7 @@ async def test_resolve_resiliently_quarantines_only_failures(monkeypatch):
             if t.name == "bad":
                 raise RuntimeError("could not connect to source db")
 
-    monkeypatch.setattr("db.executor.resolve_tables", fake_resolve)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.resolve_tables", fake_resolve)
     monkeypatch.setattr(config, "VALIDATE_SOURCE_SCHEMA", False)
 
     healthy = await table_health.resolve_resiliently([_table("good"), _table("bad")])
@@ -73,7 +73,7 @@ async def test_resolve_resiliently_releases_recovered_table(monkeypatch):
     async def ok(tables):
         return None
 
-    monkeypatch.setattr("db.executor.resolve_tables", ok)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.resolve_tables", ok)
     monkeypatch.setattr(config, "VALIDATE_SOURCE_SCHEMA", False)
 
     healthy = await table_health.resolve_resiliently([_table("good")])
@@ -116,7 +116,7 @@ async def test_retry_pass_drops_unconfigured_table(monkeypatch):
 # --- enabled flag ------------------------------------------------------------
 
 def test_tabledef_enabled_defaults_true_and_parses():
-    from config import _tabledef_from_json
+    from fabric_shortcut_proxy.config import _tabledef_from_json
 
     assert config.TableDef(name="x", source_table="x").enabled is True
     off = _tabledef_from_json({"name": "d", "source_table": "d", "key_column": "id", "enabled": False})

@@ -13,7 +13,7 @@ from typing import Callable
 
 import pyarrow.parquet as pq
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.contract import (
     Ack,
     MaterializeTask,
@@ -37,8 +37,8 @@ from enterprise.control.contract import (
     RESULT_WRONG_OWNER,
 )
 from enterprise.control.lease import LEASE_KEY, StaleLeaderError
-from runtime.artifact_store import ArtifactStore, ObjectNotFound
-from observability import metrics
+from fabric_shortcut_proxy.runtime.artifact_store import ArtifactStore, ObjectNotFound
+from fabric_shortcut_proxy.observability import metrics
 
 PREFIX = "_control/work-queue/v1"
 REQUESTS_PREFIX = f"{PREFIX}/requests"
@@ -940,7 +940,7 @@ class DurableWorkQueue:
                     state=TASK_CLAIMED,
                     reason_code=RESULT_STALE_GENERATION,
                 )
-            from runtime.generation import current_generation
+            from fabric_shortcut_proxy.runtime.generation import current_generation
 
             generation = current_generation(self.store)
             if generation is not None and (
@@ -1241,7 +1241,7 @@ class DurableWorkQueue:
                 or manifest.plan_sha256 != request["plan_sha256"]
             ):
                 raise WorkQueueConflict("snapshot identity does not match request")
-            from runtime.generation import (
+            from fabric_shortcut_proxy.runtime.generation import (
                 COORDINATOR_KEY,
                 current_generation_record,
             )

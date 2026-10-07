@@ -12,8 +12,8 @@ import pytest
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
-from security import keyvault
-from security.credential_store import CredentialStore
+from fabric_shortcut_proxy.security import keyvault
+from fabric_shortcut_proxy.security.credential_store import CredentialStore
 
 
 class ResourceNotFoundError(Exception):

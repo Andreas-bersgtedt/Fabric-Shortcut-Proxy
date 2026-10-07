@@ -6,8 +6,8 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy.engine import make_url
 
-import db.reflect
-from db.executor import (
+import fabric_shortcut_proxy.db.reflect as reflect
+from fabric_shortcut_proxy.db.executor import (
     _extract_mssql_workload_identity,
     _odbc_access_token,
     _strip_odbc_trusted_connection,
@@ -82,14 +82,14 @@ async def test_schema_reflector_uses_workload_identity_engine_factory(monkeypatc
     engine = Mock()
     engine.dispose.return_value = None
     factory = Mock(return_value=engine)
-    monkeypatch.setattr(db.reflect, "_make_async_engine", factory)
+    monkeypatch.setattr(reflect, "_make_async_engine", factory)
     url = make_url(
         "mssql+aioodbc://sql.example/database?"
         "driver=ODBC+Driver+18+for+SQL+Server&"
         "Authentication=ActiveDirectoryWorkloadIdentity&Encrypt=yes"
     )
 
-    reflector = db.reflect.SchemaReflector(url)
+    reflector = reflect.SchemaReflector(url)
     await reflector.__aenter__()
 
     factory.assert_called_once_with(url)

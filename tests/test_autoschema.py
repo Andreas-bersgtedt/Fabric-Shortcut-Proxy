@@ -15,10 +15,10 @@ from sqlalchemy import types as satypes, text
 _DB = pathlib.Path(__file__).parent / "test_autoschema.db"
 os.environ["DB_URL"] = f"sqlite+aiosqlite:///{_DB.as_posix()}"
 
-import config
-from config import TableDef
-import db.executor as executor
-from db.executor import (
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import TableDef
+import fabric_shortcut_proxy.db.executor as executor
+from fabric_shortcut_proxy.db.executor import (
     sqlalchemy_type_to_iceberg,
     derive_table_schema,
     resolve_tables,
@@ -47,7 +47,7 @@ def test_type_mapping():
 
 
 def test_naive_datetime_ntz_opt_out(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     monkeypatch.setattr(config, "TIMESTAMP_ASSUME_UTC", False, raising=False)
     assert sqlalchemy_type_to_iceberg(satypes.DateTime()) == "timestamp"
     # An explicit timezone is always timestamptz regardless of the flag.
@@ -83,7 +83,7 @@ def test_type_mapping_rejects_nested_composite_types():
 
 def test_pyarrow_schema_handles_uuid_fixed_binary():
     import pyarrow as pa
-    from iceberg.schema import _iceberg_to_pa
+    from fabric_shortcut_proxy.iceberg.schema import _iceberg_to_pa
     # These previously crashed with AttributeError (pa.fixed_size_binary).
     assert _iceberg_to_pa("uuid") == pa.binary(16)
     assert _iceberg_to_pa("fixed(8)") == pa.binary(8)

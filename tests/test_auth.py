@@ -20,14 +20,14 @@ os.environ["S3_BUCKET"] = "auth-bucket"
 
 import pytest
 
-import config
+from fabric_shortcut_proxy import config
 config.DB_URL = f"sqlite+aiosqlite:///{_DB.as_posix()}"
 config.NUM_SPLITS = 4
 config.BUCKET_NAME = "auth-bucket"
 config.ACCESS_KEY_ID = "test-access-key"
 config.SECRET_ACCESS_KEY = "test-secret-key"
 
-from s3.auth import verify_signature, SigV4Error
+from fabric_shortcut_proxy.s3.auth import verify_signature, SigV4Error
 
 botocore = pytest.importorskip("botocore")
 from botocore.auth import S3SigV4Auth
@@ -280,9 +280,9 @@ def test_unsigned_payload_rejected_for_body():
 @pytest.fixture
 async def auth_client(monkeypatch):
     import httpx
-    from demo.seed_db import seed_demo_database
-    import db.executor as _executor
-    from iceberg.state_store import build_snapshot
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
+    import fabric_shortcut_proxy.db.executor as _executor
+    from fabric_shortcut_proxy.iceberg.state_store import build_snapshot
     from main import app
 
     monkeypatch.setattr(config, "REQUIRE_SIGV4", True)

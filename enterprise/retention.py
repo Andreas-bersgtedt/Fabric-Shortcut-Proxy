@@ -14,15 +14,15 @@ it is safe to run the sweep from a single Agent (shard 0) on a timer.
 """
 from __future__ import annotations
 
-import config
-from observability.logging import get_logger
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
 
 
 def live_object_keys() -> set[str]:
     """Every artifact key referenced by any RETAINED snapshot (current + history)."""
-    from iceberg.state_store import get_all_snapshots
+    from fabric_shortcut_proxy.iceberg.state_store import get_all_snapshots
 
     keys: set[str] = set()
     for snap in get_all_snapshots():

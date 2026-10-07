@@ -13,7 +13,7 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 import pytest
 import httpx
 
-from config import ColumnDef, TableDef
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
 from enterprise.control.contract import (
     AgentHealth,
     ControlCommand,
@@ -24,7 +24,7 @@ from enterprise.control.contract import (
 from enterprise.control.lease import LeaderLease, StaleLeaderError
 from enterprise.control.registry import Registry
 from enterprise.control.rolling import rolling_restart
-from runtime.artifact_store import LocalDirStore, MemoryStore
+from fabric_shortcut_proxy.runtime.artifact_store import LocalDirStore, MemoryStore
 
 
 def _acquire_shared_lease(root, owner, now_ms, start, results):
@@ -293,9 +293,9 @@ def test_stale_registry_mutation_is_rolled_back_after_takeover():
 
 
 async def test_manager_health_exposes_term_and_store_degradation(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     from enterprise.control.manager_app import create_manager_app
-    from runtime.artifact_store import reset_default_store, set_default_store
+    from fabric_shortcut_proxy.runtime.artifact_store import reset_default_store, set_default_store
 
     store = MemoryStore()
     set_default_store(store)
@@ -344,9 +344,9 @@ async def test_manager_health_exposes_term_and_store_degradation(monkeypatch):
 async def test_manager_rejects_mutations_until_takeover_recovery_finishes(
     monkeypatch,
 ):
-    import config
+    from fabric_shortcut_proxy import config
     from enterprise.control.manager_app import create_manager_app
-    from runtime.artifact_store import reset_default_store, set_default_store
+    from fabric_shortcut_proxy.runtime.artifact_store import reset_default_store, set_default_store
 
     store = MemoryStore()
     set_default_store(store)
@@ -406,10 +406,10 @@ async def test_manager_rejects_mutations_until_takeover_recovery_finishes(
 
 
 async def test_open_mirror_scheduler_does_not_start_on_standby(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     from enterprise.control.manager_app import create_manager_app
-    from open_mirror.scheduler import OpenMirrorScheduler
-    from runtime.artifact_store import reset_default_store, set_default_store
+    from fabric_shortcut_proxy.open_mirror.scheduler import OpenMirrorScheduler
+    from fabric_shortcut_proxy.runtime.artifact_store import reset_default_store, set_default_store
 
     store = MemoryStore()
     active = LeaderLease(store, "other-manager", ttl_ms=5000)
@@ -487,7 +487,7 @@ def test_gc_ignores_non_data_objects(monkeypatch):
 
 
 def test_live_object_keys_from_snapshot(monkeypatch):
-    import iceberg.state_store as ss
+    import fabric_shortcut_proxy.iceberg.state_store as ss
     from enterprise.retention import live_object_keys
     monkeypatch.setattr(ss, "_snapshots", {}, raising=False)
     monkeypatch.setattr(ss, "_history", {}, raising=False)

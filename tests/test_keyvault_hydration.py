@@ -12,9 +12,9 @@ import pytest
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
-import system_config
-from security import keyvault
-from security.credential_store import CredentialStore
+from fabric_shortcut_proxy import system_config
+from fabric_shortcut_proxy.security import keyvault
+from fabric_shortcut_proxy.security.credential_store import CredentialStore
 
 _ENV_VARS = [
     "DB_URL",

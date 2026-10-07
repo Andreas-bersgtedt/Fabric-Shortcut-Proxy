@@ -129,16 +129,16 @@ flowchart TB
   MAIN --> Obs
 ```
 
-Referenced: [s3/router.py](../s3/router.py), [security/access_keys.py](../security/access_keys.py),
-[iceberg/state_store.py](../iceberg/state_store.py), [storage/mounts.py](../storage/mounts.py),
-[enterprise/control/registry.py](../enterprise/control/registry.py), [config.py](../config.py).
+Referenced: [s3/router.py](../src/fabric_shortcut_proxy/s3/router.py), [security/access_keys.py](../src/fabric_shortcut_proxy/security/access_keys.py),
+[iceberg/state_store.py](../src/fabric_shortcut_proxy/iceberg/state_store.py), [storage/mounts.py](../src/fabric_shortcut_proxy/storage/mounts.py),
+[enterprise/control/registry.py](../enterprise/control/registry.py), [config.py](../src/fabric_shortcut_proxy/config.py).
 
 ---
 
 ## 3. Request lifecycle: auth middleware
 
 The outermost hop for every S3 request. Grounded in
-[main.py](../main.py) (`sigv4_auth_middleware`) and [s3/auth.py](../s3/auth.py).
+[main.py](../src/fabric_shortcut_proxy/main.py) (`sigv4_auth_middleware`) and [s3/auth.py](../src/fabric_shortcut_proxy/s3/auth.py).
 
 ```mermaid
 sequenceDiagram
@@ -184,8 +184,8 @@ sequenceDiagram
 
 ## 4. Access keys + per-key authorization (ACL)
 
-Grounded in [security/access_keys.py](../security/access_keys.py) and
-[security/credential_store.py](../security/credential_store.py).
+Grounded in [security/access_keys.py](../src/fabric_shortcut_proxy/security/access_keys.py) and
+[security/credential_store.py](../src/fabric_shortcut_proxy/security/credential_store.py).
 
 ```mermaid
 flowchart TB
@@ -225,7 +225,7 @@ allowed_buckets, allowed_prefixes, permissions, enabled}`.
 
 ## 5. Warehouse read path: metadata & data
 
-The DB→table serving path in [s3/router.py](../s3/router.py) `get_object`.
+The DB→table serving path in [s3/router.py](../src/fabric_shortcut_proxy/s3/router.py) `get_object`.
 
 ```mermaid
 flowchart TB
@@ -258,16 +258,16 @@ flowchart TB
 ```
 
 Data-generation timing (`querystats.record_query`) captures SQL vs generation vs
-total ms per split. Referenced: [planner/split_planner.py](../planner/split_planner.py),
-[db/executor.py](../db/executor.py), [parquet/generator.py](../parquet/generator.py),
-[cache/lru_cache.py](../cache/lru_cache.py).
+total ms per split. Referenced: [planner/split_planner.py](../src/fabric_shortcut_proxy/planner/split_planner.py),
+[db/executor.py](../src/fabric_shortcut_proxy/db/executor.py), [parquet/generator.py](../src/fabric_shortcut_proxy/parquet/generator.py),
+[cache/lru_cache.py](../src/fabric_shortcut_proxy/cache/lru_cache.py).
 
 ---
 
 ## 6. Snapshot state & data freshness
 
 Deterministic, content-addressed snapshots. Grounded in
-[iceberg/state_store.py](../iceberg/state_store.py) and [iceberg/freshness.py](../iceberg/freshness.py).
+[iceberg/state_store.py](../src/fabric_shortcut_proxy/iceberg/state_store.py) and [iceberg/freshness.py](../src/fabric_shortcut_proxy/iceberg/freshness.py).
 
 ```mermaid
 flowchart TB
@@ -301,7 +301,7 @@ restart-stable and any change yields a new path + `current-snapshot-id`.
 ## 7. Storage proxy: passthrough serving
 
 Read-only byte passthrough for mounted buckets. Grounded in
-[storage/passthrough.py](../storage/passthrough.py) and [storage/mounts.py](../storage/mounts.py).
+[storage/passthrough.py](../src/fabric_shortcut_proxy/storage/passthrough.py) and [storage/mounts.py](../src/fabric_shortcut_proxy/storage/mounts.py).
 
 ```mermaid
 flowchart TB
@@ -330,7 +330,7 @@ flowchart TB
   HEAD -. audit .-> AU
 ```
 
-Backends implement the same [runtime/artifact_store.py](../runtime/artifact_store.py)
+Backends implement the same [runtime/artifact_store.py](../src/fabric_shortcut_proxy/runtime/artifact_store.py)
 `ArtifactStore` interface (`head`, `get_stream`, `list`, `list_dir`), so serving
 code is backend-agnostic.
 
@@ -339,8 +339,8 @@ code is backend-agnostic.
 ## 8. Outbound credential mediation
 
 Upstream secrets never reach the client. Grounded in
-[storage/s3_auth.py](../storage/s3_auth.py), [storage/azure_auth.py](../storage/azure_auth.py),
-and [security/credential_store.py](../security/credential_store.py).
+[storage/s3_auth.py](../src/fabric_shortcut_proxy/storage/s3_auth.py), [storage/azure_auth.py](../src/fabric_shortcut_proxy/storage/azure_auth.py),
+and [security/credential_store.py](../src/fabric_shortcut_proxy/security/credential_store.py).
 
 ```mermaid
 flowchart TB
@@ -381,8 +381,8 @@ on the mount; secret material lives only in the encrypted store.
 
 ## 9. Caching & artifact store
 
-Grounded in [cache/lru_cache.py](../cache/lru_cache.py) and
-[runtime/artifact_store.py](../runtime/artifact_store.py).
+Grounded in [cache/lru_cache.py](../src/fabric_shortcut_proxy/cache/lru_cache.py) and
+[runtime/artifact_store.py](../src/fabric_shortcut_proxy/runtime/artifact_store.py).
 
 ```mermaid
 flowchart LR
@@ -414,8 +414,8 @@ stateless Agents serve the Manager's published splits.
 ## 10. Configuration system
 
 Layered, multi-file config with a settings registry. Grounded in
-[config.py](../config.py), [system_config.py](../system_config.py),
-[connection_config.py](../connection_config.py).
+[config.py](../src/fabric_shortcut_proxy/config.py), [system_config.py](../src/fabric_shortcut_proxy/system_config.py),
+[connection_config.py](../src/fabric_shortcut_proxy/connection_config.py).
 
 ```mermaid
 flowchart TB

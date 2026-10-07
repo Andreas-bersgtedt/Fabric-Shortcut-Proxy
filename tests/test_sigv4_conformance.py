@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from s3.auth import SigV4Error, _canonical_uri, verify_signature
+from fabric_shortcut_proxy.s3.auth import SigV4Error, _canonical_uri, verify_signature
 from sigv4_conformance_vectors import (
     ACCESS_KEY,
     INVALID_REQUESTS,

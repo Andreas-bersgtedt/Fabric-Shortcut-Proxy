@@ -8,8 +8,8 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import pytest
 
-import config
-from observability import trace
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.observability import trace
 
 
 @pytest.fixture(autouse=True)

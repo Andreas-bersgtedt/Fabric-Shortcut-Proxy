@@ -15,11 +15,11 @@ from sqlalchemy import create_engine, text
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
-import config
-import connection_config
-import db.executor as executor
-import iceberg.state_store as state_store
-from config import ColumnDef, TableDef
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy import connection_config
+import fabric_shortcut_proxy.db.executor as executor
+import fabric_shortcut_proxy.iceberg.state_store as state_store
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
 
 
 def _seed_sqlite(path: pathlib.Path, ids: list[int]) -> None:

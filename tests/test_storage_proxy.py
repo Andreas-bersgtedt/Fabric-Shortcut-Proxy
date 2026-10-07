@@ -12,11 +12,11 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import config
-from runtime.artifact_store import LocalDirStore, ObjectNotFound
-import storage.mounts as mounts
-from storage.mounts import Mount
-from s3.router import router as s3_router
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.runtime.artifact_store import LocalDirStore, ObjectNotFound
+import fabric_shortcut_proxy.storage.mounts as mounts
+from fabric_shortcut_proxy.storage.mounts import Mount
+from fabric_shortcut_proxy.s3.router import router as s3_router
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ async def test_passthrough_missing_key_404(proxy_app):
 
 async def test_passthrough_confinement_rejects_traversal(proxy_app):
     # Call the handler directly so the client can't normalize the ".." away.
-    from storage import passthrough
+    from fabric_shortcut_proxy.storage import passthrough
 
     class _Req:
         headers: dict = {}
@@ -216,7 +216,7 @@ async def test_listbuckets_advertises_mounts(proxy_app):
 @pytest.fixture
 def cb_app():
     from fastapi import FastAPI as _FastAPI
-    from configbuilder.router import router as cb_router
+    from fabric_shortcut_proxy.configbuilder.router import router as cb_router
     a = _FastAPI()
     a.include_router(cb_router)
     return a
@@ -297,7 +297,7 @@ async def test_mount_test_validates_custom_endpoint_shape(cb_app, monkeypatch):
 
 
 def test_mount_test_host_allowlist_accepts_exact_hosts_and_cidrs(monkeypatch):
-    from configbuilder.router import _mount_test_host_allowed
+    from fabric_shortcut_proxy.configbuilder.router import _mount_test_host_allowed
 
     monkeypatch.setattr(
         config,
@@ -311,7 +311,7 @@ def test_mount_test_host_allowlist_accepts_exact_hosts_and_cidrs(monkeypatch):
 
 
 def test_mount_test_validates_azure_derived_host(monkeypatch):
-    from configbuilder.router import _validate_mount_test_destination
+    from fabric_shortcut_proxy.configbuilder.router import _validate_mount_test_destination
 
     monkeypatch.setattr(config, "MOUNT_TEST_HOST_ALLOWLIST", "", raising=False)
     mount = Mount(

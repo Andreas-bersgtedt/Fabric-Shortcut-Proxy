@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from db.read_points import ReadPointDescriptor, TableReadPlan
-from runtime.artifact_store import MemoryStore
-from runtime.generation import (
+from fabric_shortcut_proxy.db.read_points import ReadPointDescriptor, TableReadPlan
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy.runtime.generation import (
     BUILD_KEY,
     COORDINATOR_KEY,
     GenerationError,

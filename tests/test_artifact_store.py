@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from runtime.artifact_store import (
+from fabric_shortcut_proxy.runtime.artifact_store import (
     ArtifactStore, LocalDirStore, MemoryStore, ObjectNotFound, ObjectStat,
     build_store, get_default_store, set_default_store, reset_default_store,
 )

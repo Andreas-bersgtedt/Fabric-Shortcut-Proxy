@@ -31,7 +31,7 @@ from enterprise.control.contract import (
 )
 from enterprise.control.registry import LeaseError
 from enterprise.control.lease import LeaseStoreError, StaleLeaderError
-from security.agent_auth import AGENT_ID_HEADER, AGENT_TOKEN_HEADER, agent_authentication_required
+from fabric_shortcut_proxy.security.agent_auth import AGENT_ID_HEADER, AGENT_TOKEN_HEADER, agent_authentication_required
 
 # Path prefix for the REST control plane.
 CONTROL_PREFIX = "/control"

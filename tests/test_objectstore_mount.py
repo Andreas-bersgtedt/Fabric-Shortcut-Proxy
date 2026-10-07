@@ -14,10 +14,10 @@ from datetime import UTC
 import pyarrow as pa
 import pytest
 
-from config import ColumnDef, ColumnTransform
-from storage import tokenizing_store
-from storage.mounts import Mount, _mount_from_json
-from storage.objectstore_reader import ObjectStoreReaderUnavailable
+from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform
+from fabric_shortcut_proxy.storage import tokenizing_store
+from fabric_shortcut_proxy.storage.mounts import Mount, _mount_from_json
+from fabric_shortcut_proxy.storage.objectstore_reader import ObjectStoreReaderUnavailable
 
 _KEY_ENV = "FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1"
 _HAS_DELTALAKE = importlib.util.find_spec("deltalake") is not None
@@ -210,7 +210,7 @@ def test_iceberg_reader_honors_pinned_snapshot(tmp_path):
 
     from pyiceberg.catalog.sql import SqlCatalog
 
-    from storage.objectstore_reader import reader_for_mount
+    from fabric_shortcut_proxy.storage.objectstore_reader import reader_for_mount
 
     warehouse = tmp_path / "iceberg_wh"
     warehouse.mkdir()
@@ -278,7 +278,7 @@ def test_local_s3_and_azure_iceberg_reads_are_equivalent(tmp_path, monkeypatch):
     from pyiceberg.transforms import IdentityTransform
     from pyiceberg.types import LongType, NestedField, StringType
 
-    from storage.objectstore_reader import reader_for_mount
+    from fabric_shortcut_proxy.storage.objectstore_reader import reader_for_mount
 
     class StoredInput(InputFile):
         def __init__(self, location):
@@ -413,7 +413,7 @@ def test_local_s3_and_azure_iceberg_reads_are_equivalent(tmp_path, monkeypatch):
     module.StoredFileIO = StoredFileIO
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
-        "storage.objectstore_reader._remote_client",
+        "fabric_shortcut_proxy.storage.objectstore_reader._remote_client",
         lambda mount, store=None: MemoryRemoteClient(
             "s3" if mount.backend == "s3" else "az", mount.root,
         ),
@@ -600,8 +600,8 @@ def test_local_s3_and_azure_iceberg_reads_are_equivalent(tmp_path, monkeypatch):
 def test_remote_iceberg_fileio_reads_confined_s3_and_azure_objects():
     import io
 
-    from storage.iceberg_fileio import ScopedIcebergFileIO
-    from storage.objectstore_reader import (
+    from fabric_shortcut_proxy.storage.iceberg_fileio import ScopedIcebergFileIO
+    from fabric_shortcut_proxy.storage.objectstore_reader import (
         _iceberg_fileio_properties,
         _remote_object_key,
         _remote_table_root,
@@ -701,7 +701,7 @@ def test_remote_iceberg_fileio_reads_confined_s3_and_azure_objects():
     ],
 )
 def test_remote_iceberg_rejects_untrusted_metadata_locations(backend, location):
-    from storage.objectstore_reader import _remote_object_key
+    from fabric_shortcut_proxy.storage.objectstore_reader import _remote_object_key
 
     mount = Mount(
         bucket="proxy-bucket", backend=backend, root="source",
@@ -716,8 +716,8 @@ def test_remote_iceberg_rejects_untrusted_metadata_locations(backend, location):
 
 
 def test_remote_iceberg_fileio_propagates_denied_access():
-    from storage.iceberg_fileio import ScopedIcebergFileIO
-    from storage.objectstore_reader import (
+    from fabric_shortcut_proxy.storage.iceberg_fileio import ScopedIcebergFileIO
+    from fabric_shortcut_proxy.storage.objectstore_reader import (
         _iceberg_fileio_properties,
         _remote_table_root,
     )
@@ -741,7 +741,7 @@ def test_remote_iceberg_fileio_propagates_denied_access():
 
 
 def test_local_iceberg_metadata_discovery_rejects_symlinked_version_hint(tmp_path):
-    from storage.objectstore_reader import _discover_iceberg_metadata
+    from fabric_shortcut_proxy.storage.objectstore_reader import _discover_iceberg_metadata
 
     table_root = tmp_path / "table"
     metadata = table_root / "metadata"
@@ -802,7 +802,7 @@ def test_tokenizing_store_materializes_iceberg_source(tmp_path, monkeypatch):
 def test_tokenizing_store_iceberg_output(tmp_path, monkeypatch):
     import deltalake
 
-    from storage.objectstore_reader import (
+    from fabric_shortcut_proxy.storage.objectstore_reader import (
         IcebergTableReader,
         _discover_iceberg_metadata,
     )
@@ -844,7 +844,7 @@ def test_tokenizing_store_iceberg_output(tmp_path, monkeypatch):
 
 
 def test_resolve_output_format():
-    from storage.tokenizing_store import _resolve_output_format
+    from fabric_shortcut_proxy.storage.tokenizing_store import _resolve_output_format
 
     def _m(fmt, out):
         return Mount(bucket="b", backend="local", root="/x", format=fmt, output_format=out)
@@ -905,8 +905,8 @@ async def test_tokenizing_mount_serves_over_http(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
 
-    from s3.router import router as s3_router
-    from storage import mounts
+    from fabric_shortcut_proxy.s3.router import router as s3_router
+    from fabric_shortcut_proxy.storage import mounts
 
     src = tmp_path / "src"
     deltalake.write_deltalake(str(src), pa.table({
@@ -946,8 +946,8 @@ async def test_readyz_surfaces_tokenizing_mounts(monkeypatch):
     import httpx
     from fastapi import FastAPI
 
-    from observability.endpoints import router as obs_router
-    from storage import mounts
+    from fabric_shortcut_proxy.observability.endpoints import router as obs_router
+    from fabric_shortcut_proxy.storage import mounts
 
     monkeypatch.setenv("ENABLE_STORAGE_PROXY", "1")
     monkeypatch.setattr(mounts, "MOUNTS", {"customers-safe": _delta_mount("/src")})
@@ -973,8 +973,8 @@ async def test_readyz_reports_pinned_iceberg_mount(monkeypatch):
     import httpx
     from fastapi import FastAPI
 
-    from observability.endpoints import router as obs_router
-    from storage import mounts
+    from fabric_shortcut_proxy.observability.endpoints import router as obs_router
+    from fabric_shortcut_proxy.storage import mounts
 
     monkeypatch.setenv("ENABLE_STORAGE_PROXY", "1")
     iceberg = replace(_iceberg_mount("/src"), snapshot_id=456)
@@ -990,7 +990,7 @@ async def test_readyz_reports_pinned_iceberg_mount(monkeypatch):
 # --- s3 delta-rs storage_options mapping (no network) ------------------------
 
 def test_s3_storage_options_anonymous_custom_endpoint():
-    from storage.objectstore_reader import _s3_storage_options, _s3_table_uri
+    from fabric_shortcut_proxy.storage.objectstore_reader import _s3_storage_options, _s3_table_uri
 
     mount = Mount(bucket="b", backend="s3", root="lake", prefix="curated/",
                   format="delta", auth="anonymous",
@@ -1005,7 +1005,7 @@ def test_s3_storage_options_anonymous_custom_endpoint():
 
 
 def test_s3_storage_options_instance_default_region_and_uri():
-    from storage.objectstore_reader import _s3_storage_options, _s3_table_uri
+    from fabric_shortcut_proxy.storage.objectstore_reader import _s3_storage_options, _s3_table_uri
 
     mount = Mount(bucket="b", backend="s3", root="lake", format="delta", auth="instance")
     options = _s3_storage_options(mount)
@@ -1015,7 +1015,7 @@ def test_s3_storage_options_instance_default_region_and_uri():
 
 
 def test_s3_storage_options_rejects_unsupported_mode():
-    from storage.objectstore_reader import (
+    from fabric_shortcut_proxy.storage.objectstore_reader import (
         ObjectStoreReaderUnavailable,
         _s3_storage_options,
     )
@@ -1036,7 +1036,7 @@ class _FakeSecretStore:
 
 
 def test_azure_storage_options_account_key():
-    from storage.objectstore_reader import _azure_storage_options, _azure_table_uri
+    from fabric_shortcut_proxy.storage.objectstore_reader import _azure_storage_options, _azure_table_uri
 
     mount = Mount(bucket="b", backend="azure", root="lakefs", account="acct",
                   prefix="curated/", format="delta", credential="azv")
@@ -1048,7 +1048,7 @@ def test_azure_storage_options_account_key():
 
 
 def test_azure_storage_options_connection_string_parses_account():
-    from storage.objectstore_reader import _azure_storage_options
+    from fabric_shortcut_proxy.storage.objectstore_reader import _azure_storage_options
 
     cs = "DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=abc==;EndpointSuffix=core.windows.net"
     mount = Mount(bucket="b", backend="azure", root="container", format="delta", credential="azv")
@@ -1059,7 +1059,7 @@ def test_azure_storage_options_connection_string_parses_account():
 
 
 def test_azure_storage_options_service_principal():
-    from storage.objectstore_reader import _azure_storage_options
+    from fabric_shortcut_proxy.storage.objectstore_reader import _azure_storage_options
 
     mount = Mount(bucket="b", backend="azure", root="container", account="acct",
                   format="delta", credential="azv")
@@ -1071,7 +1071,7 @@ def test_azure_storage_options_service_principal():
 
 
 def test_azure_storage_options_rejects_managed_identity():
-    from storage.objectstore_reader import (
+    from fabric_shortcut_proxy.storage.objectstore_reader import (
         ObjectStoreReaderUnavailable,
         _azure_storage_options,
     )

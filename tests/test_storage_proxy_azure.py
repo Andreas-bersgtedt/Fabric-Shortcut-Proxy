@@ -18,13 +18,13 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import config
-import storage.mounts as mounts
-from storage.mounts import Mount
-from runtime.artifact_store import ObjectNotFound
-from storage.azure_store import AzureBlobStore
-from storage import azure_auth
-from s3.router import router as s3_router
+from fabric_shortcut_proxy import config
+import fabric_shortcut_proxy.storage.mounts as mounts
+from fabric_shortcut_proxy.storage.mounts import Mount
+from fabric_shortcut_proxy.runtime.artifact_store import ObjectNotFound
+from fabric_shortcut_proxy.storage.azure_store import AzureBlobStore
+from fabric_shortcut_proxy.storage import azure_auth
+from fabric_shortcut_proxy.s3.router import router as s3_router
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ async def test_azure_mount_advertised_in_listbuckets(az_proxy_app):
 @pytest.fixture
 def cb_app(tmp_path, monkeypatch):
     from fastapi import FastAPI as _FastAPI
-    from configbuilder.router import router as cb_router
+    from fabric_shortcut_proxy.configbuilder.router import router as cb_router
     monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True, raising=False)
     monkeypatch.setattr(config, "CREDENTIAL_STORE_PATH", str(tmp_path / "credentials.json"), raising=False)
     a = _FastAPI()
@@ -283,7 +283,7 @@ def cb_app(tmp_path, monkeypatch):
 
 
 async def test_azure_credential_save_list_resolve_delete(cb_app, tmp_path):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     if not CredentialStore(str(tmp_path / "credentials.json")).available:
         pytest.skip("no encryption backend available on this host")
     async with _client(cb_app) as c:
@@ -306,7 +306,7 @@ async def test_azure_credential_save_list_resolve_delete(cb_app, tmp_path):
 
 
 async def test_azure_credential_rejects_invalid(cb_app, tmp_path):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     if not CredentialStore(str(tmp_path / "credentials.json")).available:
         pytest.skip("no encryption backend available on this host")
     async with _client(cb_app) as c:
@@ -318,7 +318,7 @@ async def test_azure_credential_rejects_invalid(cb_app, tmp_path):
 async def test_azure_workload_identity_credential_stays_in_encrypted_store(
     cb_app, tmp_path, monkeypatch,
 ):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     if not CredentialStore(str(tmp_path / "credentials.json")).available:
         pytest.skip("no encryption backend available on this host")
     monkeypatch.setenv("MOUNTS_CONFIG_FILE", str(tmp_path / "config.mounts.json"))

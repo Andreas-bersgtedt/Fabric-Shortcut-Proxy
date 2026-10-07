@@ -16,7 +16,7 @@ import io
 _TEST_DB = pathlib.Path(__file__).parent / "test_poc.db"
 
 import httpx
-import config
+from fabric_shortcut_proxy import config
 
 from main import app
 
@@ -25,10 +25,10 @@ from main import app
 async def client():
     # Seed demo DB and build snapshot before the ASGI transport is exercised,
     # because ASGITransport does not fire the FastAPI lifespan automatically.
-    import config
-    import db.executor as _executor
-    from iceberg.state_store import build_snapshot
-    from demo.seed_db import seed_demo_database
+    from fabric_shortcut_proxy import config
+    import fabric_shortcut_proxy.db.executor as _executor
+    from fabric_shortcut_proxy.iceberg.state_store import build_snapshot
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
 
     saved = (
         config.DB_URL,

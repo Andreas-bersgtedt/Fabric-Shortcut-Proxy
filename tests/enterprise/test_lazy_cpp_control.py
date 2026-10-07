@@ -17,18 +17,18 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 import httpx
 import pytest
 
-import config
+from fabric_shortcut_proxy import config
 
 
 async def _seed_and_configure(monkeypatch, db_path: pathlib.Path, store_dir: pathlib.Path,
                               table_format: str = "iceberg"):
-    import db.executor as _executor
-    import runtime.artifact_store as artifact_store
-    import runtime.materializer as materializer
+    import fabric_shortcut_proxy.db.executor as _executor
+    import fabric_shortcut_proxy.runtime.artifact_store as artifact_store
+    import fabric_shortcut_proxy.runtime.materializer as materializer
     from enterprise.control import materialize_service
-    from iceberg.state_store import _snapshots, _history
-    from delta import log as delta_log
-    from demo.seed_db import seed_demo_database
+    from fabric_shortcut_proxy.iceberg.state_store import _snapshots, _history
+    from fabric_shortcut_proxy.delta import log as delta_log
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
 
     monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{db_path.as_posix()}")
     monkeypatch.setattr(config, "NUM_SPLITS", 4)
@@ -52,9 +52,9 @@ async def _seed_and_configure(monkeypatch, db_path: pathlib.Path, store_dir: pat
 
 
 def _teardown():
-    import db.executor as _executor
-    from iceberg.state_store import _snapshots, _history
-    from delta import log as delta_log
+    import fabric_shortcut_proxy.db.executor as _executor
+    from fabric_shortcut_proxy.iceberg.state_store import _snapshots, _history
+    from fabric_shortcut_proxy.delta import log as delta_log
     _snapshots.clear()
     _history.clear()
     delta_log.reset()
@@ -63,7 +63,7 @@ def _teardown():
 
 async def test_materialize_service_populates_store_iceberg(tmp_path, monkeypatch):
     from enterprise.control import materialize_service
-    from iceberg.state_store import get_all_snapshots
+    from fabric_shortcut_proxy.iceberg.state_store import get_all_snapshots
 
     db = tmp_path / "src.db"
     store = tmp_path / "store"
@@ -89,7 +89,7 @@ async def test_materialize_service_populates_store_iceberg(tmp_path, monkeypatch
 
 async def test_materialize_service_populates_store_delta(tmp_path, monkeypatch):
     from enterprise.control import materialize_service
-    from iceberg.state_store import get_all_snapshots
+    from fabric_shortcut_proxy.iceberg.state_store import get_all_snapshots
 
     db = tmp_path / "src.db"
     store = tmp_path / "store"
@@ -134,7 +134,7 @@ async def test_control_materialize_endpoint(
     tmp_path, monkeypatch, table_format
 ):
     from enterprise.control.manager_app import create_manager_app
-    from iceberg.state_store import get_all_snapshots
+    from fabric_shortcut_proxy.iceberg.state_store import get_all_snapshots
 
     db = tmp_path / "src.db"
     store = tmp_path / "store"
@@ -148,8 +148,8 @@ async def test_control_materialize_endpoint(
 
     from enterprise.control import materialize_service
     from enterprise.materialize_worker import execute_task
-    from runtime.artifact_store import get_default_store
-    from runtime.generation import acquire_generation
+    from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
+    from fabric_shortcut_proxy.runtime.generation import acquire_generation
     await materialize_service._ensure_snapshots()
     snap = get_all_snapshots()[0]
     acquire_generation(get_default_store(), shard_count=1)
@@ -208,7 +208,7 @@ async def test_control_materialize_endpoint(
         )
         assert cancelled.status_code == 404
         assert retried.status_code == 409
-        from observability.audit import recent
+        from fabric_shortcut_proxy.observability.audit import recent
 
         queue_audits = [
             event

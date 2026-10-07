@@ -29,7 +29,7 @@ try:
 except ImportError:
     psutil = None
 
-from observability.logging import get_logger
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
 

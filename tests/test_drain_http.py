@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from main import app
-from runtime import drain
+from fabric_shortcut_proxy.runtime import drain
 
 
 @pytest.fixture

@@ -7,9 +7,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import config
-import db.executor as executor
-from db.read_points import PostgresSnapshotProvider, SqlServerSnapshotProvider
+from fabric_shortcut_proxy import config
+import fabric_shortcut_proxy.db.executor as executor
+from fabric_shortcut_proxy.db.read_points import PostgresSnapshotProvider, SqlServerSnapshotProvider
 
 
 async def _configure_default(monkeypatch, url):

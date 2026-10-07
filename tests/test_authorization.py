@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi import Request
 
-from security.authorization import (
+from fabric_shortcut_proxy.security.authorization import (
     AuthorizationError,
     PermissionGrant,
     User,
@@ -120,7 +120,7 @@ def test_entra_user_round_trips_immutable_identity_and_display_name(tmp_path):
 
 
 def test_user_directory_group_roles_are_tenant_scoped():
-    from security.authorization import ROLE_PERMISSIONS
+    from fabric_shortcut_proxy.security.authorization import ROLE_PERMISSIONS
 
     tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     group_id = "22222222-3333-4444-5555-666666666666"
@@ -207,7 +207,7 @@ def test_signed_oidc_subject_uses_central_rights_and_ignores_token_roles(tmp_pat
     assert authenticate_request("", "", signed_token("unknown-user")) is None
     assert authenticate_request("", "", signed_token("disabled-user")) is None
 
-    import security.identity as identity
+    import fabric_shortcut_proxy.security.identity as identity
     discovery_urls = []
     monkeypatch.delenv("FSP_OIDC_JWKS_URL")
     monkeypatch.setattr(
@@ -227,8 +227,8 @@ def test_entra_access_token_uses_tid_oid_scope_and_central_roles(tmp_path, monke
     import jwt
     from cryptography.hazmat.primitives.asymmetric import rsa
 
-    import config
-    from security.identity import authenticate_entra_token
+    from fabric_shortcut_proxy import config
+    from fabric_shortcut_proxy.security.identity import authenticate_entra_token
 
     tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     object_id = "11111111-2222-3333-4444-555555555555"
@@ -279,8 +279,8 @@ def test_entra_access_token_uses_tid_oid_scope_and_central_roles(tmp_path, monke
 async def test_msal_config_uses_app_id_uri_with_v2_guid_audience(monkeypatch):
     import json
 
-    import config
-    from configbuilder.router import authorization_msal_config
+    from fabric_shortcut_proxy import config
+    from fabric_shortcut_proxy.configbuilder.router import authorization_msal_config
 
     monkeypatch.setattr(config, "ENTRA_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "ENTRA_TENANT_ID", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", raising=False)
@@ -304,7 +304,7 @@ async def test_authorization_endpoints_require_admin_and_hide_user_secrets(tmp_p
         User("ops-user", roles=("monitor_troubleshooter",)),
     ]).save(str(user_path))
     monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -337,7 +337,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(tmp_path / "identities.json"))
     UserDirectory([User("admin", roles=("system_administrator",))]).save(str(user_path))
     monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -368,7 +368,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
     assert disabled.status_code == 200
     assert last_admin.status_code == 409
 
-    from security.identity import IdentityProvider
+    from fabric_shortcut_proxy.security.identity import IdentityProvider
     assert IdentityProvider(str(tmp_path / "identities.json")).authenticate(
         "support", "correct horse battery staple"
     ) is None
@@ -377,7 +377,7 @@ async def test_authorization_user_mutations_are_admin_only_and_preserve_last_adm
 async def test_entra_group_assignment_api_round_trip_and_disable(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
     group_path = tmp_path / "users.json"
@@ -412,7 +412,7 @@ async def test_entra_group_assignment_api_round_trip_and_disable(tmp_path, monke
 async def test_entra_directory_search_api_requires_users_admin_and_returns_safe_results(monkeypatch):
     import httpx
     from fastapi import FastAPI
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
 
@@ -423,7 +423,7 @@ async def test_entra_directory_search_api_requires_users_admin_and_returns_safe_
                      "tenant_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                      "display_name": "Alex Operator", "user_principal_name": "alex@example.com"}]
 
-    monkeypatch.setattr("security.entra_directory.EntraDirectoryClient", FakeDirectoryClient)
+    monkeypatch.setattr("fabric_shortcut_proxy.security.entra_directory.EntraDirectoryClient", FakeDirectoryClient)
     app = FastAPI()
     app.include_router(router)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -448,7 +448,7 @@ async def test_user_creation_validates_password_before_metadata_write(tmp_path, 
     identity_path = tmp_path / "identities.json"
     monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -474,7 +474,7 @@ async def test_oidc_user_enrollment_requires_no_local_credential(tmp_path, monke
     identity_path = tmp_path / "identities.json"
     monkeypatch.setenv("FSP_USER_DIRECTORY_FILE", str(user_path))
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -498,7 +498,7 @@ async def test_oidc_user_enrollment_requires_no_local_credential(tmp_path, monke
 async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
-    from security.identity import IdentityProvider
+    from fabric_shortcut_proxy.security.identity import IdentityProvider
 
     identity_path = tmp_path / "identities.json"
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
@@ -506,7 +506,7 @@ async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
         User("ops", roles=("monitor_troubleshooter",)),
         "correct horse battery staple",
     )
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -530,7 +530,7 @@ async def test_local_login_session_me_and_logout(tmp_path, monkeypatch):
 
 
 async def test_manager_credentials_create_single_ui_session(tmp_path, monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     import httpx
     from fastapi import FastAPI
 
@@ -539,7 +539,7 @@ async def test_manager_credentials_create_single_ui_session(tmp_path, monkeypatc
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator", raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret", raising=False)
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -569,14 +569,14 @@ async def test_manager_credentials_create_single_ui_session(tmp_path, monkeypatc
 
 
 async def test_authorization_status_reports_only_enforcement_mode(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     import httpx
     from fastapi import FastAPI
 
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", False, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "", raising=False)
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -593,12 +593,12 @@ async def test_oidc_bearer_reaches_config_authorization_route(monkeypatch):
     from fastapi import FastAPI
 
     monkeypatch.setattr(
-        "security.identity.authenticate_oidc_token",
+        "fabric_shortcut_proxy.security.identity.authenticate_oidc_token",
         lambda token: User(
             "external-ops", roles=("monitor_troubleshooter",), identity_source="oidc"
         ) if token == "signed-token" else None,
     )
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -615,14 +615,14 @@ async def test_oidc_bearer_reaches_config_authorization_route(monkeypatch):
 
 
 async def test_authorization_status_is_enforced_by_manager_auth(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     import httpx
     from fastapi import FastAPI
 
     monkeypatch.delenv("FSP_AUTHZ_ENFORCE", raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret", raising=False)
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -635,10 +635,10 @@ async def test_authorization_status_is_enforced_by_manager_auth(monkeypatch):
 
 
 async def test_manager_auth_enforces_operator_routes_without_authz_flag(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     import httpx
     from fastapi import FastAPI
-    from security.authorization_middleware import AuthorizationMiddleware
+    from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
 
     monkeypatch.delenv("FSP_AUTHZ_ENFORCE", raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
@@ -659,7 +659,7 @@ async def test_manager_auth_enforces_operator_routes_without_authz_flag(monkeypa
 
 
 def test_authorization_route_map_separates_security_from_config():
-    from security.authorization_middleware import _permission
+    from fabric_shortcut_proxy.security.authorization_middleware import _permission
 
     assert _permission("/_config/api/credentials", "GET") == "security.metadata.read"
     assert _permission("/_config/api/credentials", "POST") == "security.credentials.admin"
@@ -679,7 +679,7 @@ def test_authorization_route_map_separates_security_from_config():
 
 
 def _missing_operator_route_decisions(route_sources, public_routes):
-    from security.authorization_middleware import _permission
+    from fabric_shortcut_proxy.security.authorization_middleware import _permission
 
     operator_prefixes = ("/_admin", "/_config", "/_monitor", "/_manager", "/agents", "/control")
     missing: list[tuple[str, str]] = []
@@ -697,10 +697,10 @@ def _missing_operator_route_decisions(route_sources, public_routes):
 
 
 def test_registered_standalone_operator_routes_have_authorization_decisions():
-    from configbuilder.router import router as config_builder_router
+    from fabric_shortcut_proxy.configbuilder.router import router as config_builder_router
     from main import app
-    from monitor.router import router as monitor_router
-    from observability.endpoints import router as observability_router
+    from fabric_shortcut_proxy.monitor.router import router as monitor_router
+    from fabric_shortcut_proxy.observability.endpoints import router as observability_router
 
     public_routes = {
         ("GET", "/_config"),
@@ -720,7 +720,7 @@ def test_registered_standalone_operator_routes_have_authorization_decisions():
 
 
 def test_registered_manager_operator_routes_have_authorization_decisions(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     from enterprise.control.admin import create_admin_router
     from enterprise.control.manager_app import create_manager_app
 
@@ -742,7 +742,7 @@ def test_registered_manager_operator_routes_have_authorization_decisions(monkeyp
 
 def test_authorization_context_ignores_caller_supplied_scope_claims():
     from starlette.requests import Request
-    from security.authorization_middleware import _context
+    from fabric_shortcut_proxy.security.authorization_middleware import _context
 
     scope = {
         "type": "http", "path": "/_config/api/tokenization/policies/policy-v1",
@@ -757,7 +757,7 @@ def test_authorization_context_ignores_caller_supplied_scope_claims():
 async def test_authorization_middleware_enforces_operator_functions(monkeypatch):
     import httpx
     from fastapi import FastAPI
-    from security.authorization_middleware import AuthorizationMiddleware
+    from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
 
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
@@ -792,10 +792,10 @@ async def test_authorization_middleware_enforces_operator_functions(monkeypatch)
 
 async def test_mount_operation_rate_limit_is_audited(monkeypatch):
     import httpx
-    import config
+    from fabric_shortcut_proxy import config
     from fastapi import FastAPI
-    from observability import audit
-    from security.authorization_middleware import AuthorizationMiddleware
+    from fabric_shortcut_proxy.observability import audit
+    from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
 
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "0")
     monkeypatch.setattr(config, "MOUNT_TEST_REQUESTS_PER_MINUTE", 1, raising=False)
@@ -830,9 +830,9 @@ async def test_mount_operation_rate_limit_is_audited(monkeypatch):
 async def test_mount_operation_concurrency_limit(monkeypatch):
     import asyncio
     import httpx
-    import config
+    from fabric_shortcut_proxy import config
     from fastapi import FastAPI
-    from security.authorization_middleware import AuthorizationMiddleware
+    from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
 
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "0")
     monkeypatch.setattr(config, "MOUNT_TEST_REQUESTS_PER_MINUTE", 10, raising=False)
@@ -863,10 +863,10 @@ async def test_mount_operation_concurrency_limit(monkeypatch):
 
 async def test_denied_mount_operation_is_audited_without_body(monkeypatch):
     import httpx
-    import config
+    from fabric_shortcut_proxy import config
     from fastapi import FastAPI
-    from observability import audit
-    from security.authorization_middleware import AuthorizationMiddleware
+    from fabric_shortcut_proxy.observability import audit
+    from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
 
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
@@ -895,8 +895,8 @@ async def test_denied_mount_operation_is_audited_without_body(monkeypatch):
 async def test_monitor_troubleshooter_session_is_read_only_across_route_groups(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
-    from security.authorization_middleware import AuthorizationMiddleware
-    from security.identity import IdentityProvider, identity_provider
+    from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
+    from fabric_shortcut_proxy.security.identity import IdentityProvider, identity_provider
 
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
     identity_path = tmp_path / "identities.json"
@@ -942,7 +942,7 @@ async def test_config_mutations_require_config_write_when_enforced(monkeypatch):
 
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "1")
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)

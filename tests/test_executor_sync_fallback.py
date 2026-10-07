@@ -6,8 +6,8 @@ import time
 import pytest
 from sqlalchemy import text
 
-import config
-import db.executor as executor
+from fabric_shortcut_proxy import config
+import fabric_shortcut_proxy.db.executor as executor
 
 
 _DB = pathlib.Path(__file__).parent / "test_sync_fallback.db"

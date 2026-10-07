@@ -14,10 +14,10 @@ import pytest
 from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import config
-from config import ColumnDef, TableDef, _tabledef_from_json
-from iceberg.state_store import SnapshotState, SplitDescriptor
-from planner.split_planner import (
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, TableDef, _tabledef_from_json
+from fabric_shortcut_proxy.iceberg.state_store import SnapshotState, SplitDescriptor
+from fabric_shortcut_proxy.planner.split_planner import (
     mins_from_equidepth,
     mins_from_histogram_steps,
     plan_ranges_for_snapshot,
@@ -100,7 +100,7 @@ def test_tabledef_from_json_parses_sample_rows():
 
 @pytest.fixture
 async def skew_db(tmp_path, monkeypatch):
-    import db.executor as ex
+    import fabric_shortcut_proxy.db.executor as ex
     url = f"sqlite+aiosqlite:///{(tmp_path / 'skew.db').as_posix()}"
     monkeypatch.setattr(config, "DB_URL", url, raising=False)
     old_engine = ex._engine
@@ -127,7 +127,7 @@ async def skew_db(tmp_path, monkeypatch):
 
 
 async def test_fetch_key_quantile_bounds_balances_rows(skew_db):
-    from db.executor import fetch_key_quantile_bounds
+    from fabric_shortcut_proxy.db.executor import fetch_key_quantile_bounds
     result = await fetch_key_quantile_bounds("events", "id", 4)
     assert result is not None
     mins, overall_max = result
@@ -137,13 +137,13 @@ async def test_fetch_key_quantile_bounds_balances_rows(skew_db):
 
 
 async def test_fetch_key_quantile_bounds_empty_is_none(skew_db):
-    from db.executor import fetch_key_quantile_bounds
+    from fabric_shortcut_proxy.db.executor import fetch_key_quantile_bounds
     assert await fetch_key_quantile_bounds("empty_t", "id", 4) is None
 
 
 async def test_balanced_planning_beats_span_on_skew(skew_db):
-    from db.executor import execute_split_query, fetch_key_bounds
-    from planner.split_planner import build_split_query, compute_key_ranges
+    from fabric_shortcut_proxy.db.executor import execute_split_query, fetch_key_bounds
+    from fabric_shortcut_proxy.planner.split_planner import build_split_query, compute_key_ranges
 
     n = 4
 
@@ -187,7 +187,7 @@ async def test_balance_span_default_uses_equal_span(skew_db):
 
 
 async def test_sampled_quantiles_still_cover_all_rows(skew_db):
-    from db.executor import fetch_key_quantile_bounds
+    from fabric_shortcut_proxy.db.executor import fetch_key_quantile_bounds
 
     # Sample far below the row count so a stride sample is used. The result must
     # still anchor to the true min (1) and max (6000) so no edge rows are lost.
@@ -199,8 +199,8 @@ async def test_sampled_quantiles_still_cover_all_rows(skew_db):
 
 
 async def test_balanced_planning_with_sampling_covers_all_rows(skew_db):
-    from db.executor import execute_split_query
-    from planner.split_planner import build_split_query
+    from fabric_shortcut_proxy.db.executor import execute_split_query
+    from fabric_shortcut_proxy.planner.split_planner import build_split_query
 
     n = 4
     table = _table(split_strategy="range", split_balance="count", split_sample_rows=40)
@@ -220,7 +220,7 @@ async def test_balanced_planning_with_sampling_covers_all_rows(skew_db):
 # ---------------------------------------------------------------------------
 
 def test_capability_stats_histogram_flags():
-    from db.capabilities import capabilities_for_db_url
+    from fabric_shortcut_proxy.db.capabilities import capabilities_for_db_url
     assert capabilities_for_db_url("mssql+aioodbc://h/db").supports_stats_histogram is True
     assert capabilities_for_db_url("postgresql+asyncpg://h/db").supports_stats_histogram is True
     assert capabilities_for_db_url("sqlite+aiosqlite:///x.db").supports_stats_histogram is False
@@ -261,10 +261,10 @@ async def test_balanced_planning_prefers_histogram(skew_db, monkeypatch):
         called["ntile"] = True
         raise AssertionError("NTILE must not run when the histogram provides bounds")
 
-    monkeypatch.setattr("db.executor.fetch_key_histogram_bounds", _fake_hist)
-    monkeypatch.setattr("db.executor.fetch_key_quantile_bounds", _no_ntile)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.fetch_key_histogram_bounds", _fake_hist)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.fetch_key_quantile_bounds", _no_ntile)
     monkeypatch.setattr(config, "SPLIT_USE_STATS_HISTOGRAM", True, raising=False)
-    monkeypatch.setattr("planner.split_planner.capabilities_for_db_url",
+    monkeypatch.setattr("fabric_shortcut_proxy.planner.split_planner.capabilities_for_db_url",
                         lambda _u: type("C", (), {"supports_range_key_bounds": True,
                                                   "supports_ntile": True,
                                                   "supports_stats_histogram": True})())
@@ -281,7 +281,7 @@ async def test_balanced_planning_falls_back_to_ntile_when_no_histogram(skew_db, 
     async def _no_hist(source, key, n, connection="default"):
         return None                                       # no stats available
 
-    monkeypatch.setattr("db.executor.fetch_key_histogram_bounds", _no_hist)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.fetch_key_histogram_bounds", _no_hist)
     monkeypatch.setattr(config, "SPLIT_USE_STATS_HISTOGRAM", True, raising=False)
 
     table = _table(split_strategy="range", split_balance="count")

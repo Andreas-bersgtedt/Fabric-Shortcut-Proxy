@@ -8,8 +8,8 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import pytest
 
-from observability import endpoints
-from runtime import drain
+from fabric_shortcut_proxy.observability import endpoints
+from fabric_shortcut_proxy.runtime import drain
 
 
 def test_drain_flag_roundtrip():

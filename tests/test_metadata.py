@@ -14,18 +14,18 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 import fastavro
 import pytest
 
-import config
-from iceberg.state_store import build_snapshot
-from iceberg.metadata import build_metadata_json
-from iceberg.manifest import build_manifest_list, build_manifest_file
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.iceberg.state_store import build_snapshot
+from fabric_shortcut_proxy.iceberg.metadata import build_metadata_json
+from fabric_shortcut_proxy.iceberg.manifest import build_manifest_list, build_manifest_file
 
 
 def test_decimal_type_serializes_as_iceberg_string():
     """Iceberg spec: decimal is a PRIMITIVE and must serialize as the string
     'decimal(P, S)', NOT an object. The object form breaks XTable/Fabric
     conversion (e.g. AdventureWorks money/decimal columns)."""
-    from config import ColumnDef
-    from iceberg.schema import iceberg_schema_dict
+    from fabric_shortcut_proxy.config import ColumnDef
+    from fabric_shortcut_proxy.iceberg.schema import iceberg_schema_dict
 
     cols = [
         ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),

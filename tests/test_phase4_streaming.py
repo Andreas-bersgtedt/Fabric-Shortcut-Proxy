@@ -12,9 +12,9 @@ import pytest
 from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import config
-from config import ColumnDef
-from parquet.generator import rows_to_parquet, stream_rows_to_parquet
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef
+from fabric_shortcut_proxy.parquet.generator import rows_to_parquet, stream_rows_to_parquet
 
 _COLS = [
     ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
@@ -68,7 +68,7 @@ async def test_stream_skips_empty_batches():
 
 @pytest.fixture
 async def stream_db(tmp_path, monkeypatch):
-    import db.executor as ex
+    import fabric_shortcut_proxy.db.executor as ex
     url = f"sqlite+aiosqlite:///{(tmp_path / 'stream.db').as_posix()}"
     monkeypatch.setattr(config, "DB_URL", url, raising=False)
     old_engine = ex._engine
@@ -88,7 +88,7 @@ async def stream_db(tmp_path, monkeypatch):
 
 
 async def test_stream_split_query_batches_all_rows(stream_db):
-    from db.executor import stream_split_query
+    from fabric_shortcut_proxy.db.executor import stream_split_query
     seen: list[int] = []
     batch_sizes: list[int] = []
     gen = stream_split_query("SELECT id, val FROM s ORDER BY id", {},
@@ -102,7 +102,7 @@ async def test_stream_split_query_batches_all_rows(stream_db):
 
 
 async def test_stream_end_to_end_materialize(stream_db):
-    from db.executor import stream_split_query
+    from fabric_shortcut_proxy.db.executor import stream_split_query
     gen = stream_split_query("SELECT id, val FROM s ORDER BY id", {},
                              split_index=0, batch_rows=25)
     pq_bytes, n = await stream_rows_to_parquet(gen, split_index=0, columns=_COLS)
@@ -111,7 +111,7 @@ async def test_stream_end_to_end_materialize(stream_db):
 
 
 async def test_stream_split_query_retries_before_first_batch(monkeypatch):
-    import db.executor as ex
+    import fabric_shortcut_proxy.db.executor as ex
 
     attempts = 0
 
@@ -138,7 +138,7 @@ async def test_stream_split_query_retries_before_first_batch(monkeypatch):
 
 
 async def test_stream_split_query_does_not_retry_after_first_batch(monkeypatch):
-    import db.executor as ex
+    import fabric_shortcut_proxy.db.executor as ex
 
     class FailingResult:
         def keys(self):
@@ -193,7 +193,7 @@ import asyncio
 
 
 async def _peak_concurrency(n_workers: int) -> int:
-    import db.executor as ex
+    import fabric_shortcut_proxy.db.executor as ex
     ex._source_sem = None                       # rebuild for this loop/limit
     peak = cur = 0
     lock = asyncio.Lock()

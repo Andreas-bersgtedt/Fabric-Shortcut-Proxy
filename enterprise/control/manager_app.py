@@ -26,9 +26,9 @@ import time
 
 from fastapi import FastAPI, Request
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.auth import ManagerAuthMiddleware, manager_auth_active
-from security.authorization_middleware import AuthorizationMiddleware
+from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
 from enterprise.control.registry import Registry
 from enterprise.control.server import ControlService
 from enterprise.control.snapshot_provider import DurableSnapshotProvider
@@ -36,8 +36,8 @@ from enterprise.control.task_scheduler import TaskScheduler
 from enterprise.control.work_queue import DurableWorkQueue
 from enterprise.control.supervisor import AgentSupervisor
 from enterprise.control.transport import create_control_router
-from observability.logging import configure_logging, get_logger
-from security.agent_auth import AgentAuthMiddleware
+from fabric_shortcut_proxy.observability.logging import configure_logging, get_logger
+from fabric_shortcut_proxy.security.agent_auth import AgentAuthMiddleware
 
 log = get_logger(__name__)
 
@@ -135,7 +135,7 @@ def create_manager_app() -> FastAPI:
             item.strip() for item in config.AGENT_HOST_ALLOWLIST.split(",") if item.strip()
         ),
     )
-    from runtime.artifact_store import get_default_store
+    from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
 
     store = get_default_store()
     lease = None
@@ -258,7 +258,7 @@ def create_manager_app() -> FastAPI:
         nonlocal om_scheduler
         if not config.OPEN_MIRROR_PUBLISH or om_scheduler is not None:
             return
-        from open_mirror.scheduler import OpenMirrorScheduler
+        from fabric_shortcut_proxy.open_mirror.scheduler import OpenMirrorScheduler
         om_scheduler = OpenMirrorScheduler(leadership_check=_require_active_leader)
         om_scheduler.start()
         app.state.open_mirror_scheduler = om_scheduler
@@ -421,7 +421,7 @@ def create_manager_app() -> FastAPI:
     @app.get("/metrics")
     async def manager_metrics():
         from fastapi.responses import PlainTextResponse
-        from observability.metrics import render_prometheus
+        from fabric_shortcut_proxy.observability.metrics import render_prometheus
 
         return PlainTextResponse(
             render_prometheus(),
@@ -589,7 +589,7 @@ def create_manager_app() -> FastAPI:
     @app.post("/control/work-queue/requests/{request_id}/cancel")
     async def cancel_work_request(request_id: str, request: Request):
         from fastapi.responses import JSONResponse
-        from observability.audit import record_queue_operation
+        from fabric_shortcut_proxy.observability.audit import record_queue_operation
 
         try:
             await asyncio.to_thread(_require_active_leader)
@@ -625,7 +625,7 @@ def create_manager_app() -> FastAPI:
     @app.post("/control/work-queue/tasks/{task_id}/retry")
     async def retry_work_task(task_id: str, request: Request):
         from fastapi.responses import JSONResponse
-        from observability.audit import record_queue_operation
+        from fabric_shortcut_proxy.observability.audit import record_queue_operation
 
         try:
             await asyncio.to_thread(_require_active_leader)
@@ -731,14 +731,14 @@ def create_manager_app() -> FastAPI:
     # so cluster settings (agent_count etc.) are editable where they apply. Reserved
     # from the gateway catch-all (see enterprise.control.gateway._RESERVED_PREFIXES).
     if config.ENABLE_CONFIG_BUILDER:
-        from configbuilder.router import router as config_builder_router
+        from fabric_shortcut_proxy.configbuilder.router import router as config_builder_router
         app.include_router(config_builder_router)
 
     # The re-identification endpoint is intentionally absent unless both its
     # module profile and restart-bound system setting are active.
-    from reidentification.gate import enabled as reidentification_enabled
+    from fabric_shortcut_proxy.reidentification.gate import enabled as reidentification_enabled
     if reidentification_enabled():
-        from reidentification.router import router as reidentification_router
+        from fabric_shortcut_proxy.reidentification.router import router as reidentification_router
         app.include_router(reidentification_router)
 
     # Fleet monitor: the operator console's Monitor tab (and the standalone SPA)

@@ -21,8 +21,8 @@ os.environ["DB_URL"] = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
 os.environ["S3_BUCKET"] = "mt-bucket"
 
 import httpx
-import config
-from config import ColumnDef, TableDef
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
 
 config.DB_URL = f"sqlite+aiosqlite:///{_TEST_DB.as_posix()}"
 config.BUCKET_NAME = "mt-bucket"
@@ -38,7 +38,7 @@ _PRODUCTS_SCHEMA = [
 
 async def _seed_products():
     """Create and populate a second source table ``products``."""
-    import db.executor as _executor
+    import fabric_shortcut_proxy.db.executor as _executor
     from sqlalchemy import text
 
     engine = _executor.get_engine()
@@ -58,9 +58,9 @@ async def _seed_products():
 
 @pytest.fixture(scope="module")
 async def client():
-    from demo.seed_db import seed_demo_database
-    import db.executor as _executor
-    from iceberg.state_store import build_all_snapshots
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
+    import fabric_shortcut_proxy.db.executor as _executor
+    from fabric_shortcut_proxy.iceberg.state_store import build_all_snapshots
 
     # Module-scoped pin: other test modules mutate these globals at import time,
     # so set them here (and restore on teardown) to keep this module isolated.
@@ -94,9 +94,9 @@ async def client():
         warehouse_prefix=config.WAREHOUSE_PREFIX,
     )
     # Materialize each split so manifest stats + parquet cache are accurate.
-    import cache.lru_cache as _cache
-    from planner.split_planner import build_split_query
-    from parquet.generator import rows_to_parquet
+    import fabric_shortcut_proxy.cache.lru_cache as _cache
+    from fabric_shortcut_proxy.planner.split_planner import build_split_query
+    from fabric_shortcut_proxy.parquet.generator import rows_to_parquet
 
     for snap in snaps:
         total = 0

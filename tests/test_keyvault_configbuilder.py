@@ -14,8 +14,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import config
-from configbuilder.router import router as cb_router
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.configbuilder.router import router as cb_router
 
 
 @pytest.fixture(scope="module")
@@ -39,7 +39,7 @@ def test_settings_catalog_categorizes_keyvault():
 
 
 async def test_keyvault_status_disabled_by_default(app, monkeypatch):
-    import security.keyvault as kv
+    import fabric_shortcut_proxy.security.keyvault as kv
     monkeypatch.setattr(kv, "sdk_available", lambda: True)
     async with _client(app) as c:
         r = await c.get("/_config/api/keyvault")
@@ -60,7 +60,7 @@ async def test_keyvault_test_no_uri_returns_clear_error(app):
 
 
 async def test_keyvault_test_without_sdk_reports_install_hint(app, monkeypatch):
-    import security.keyvault as kv
+    import fabric_shortcut_proxy.security.keyvault as kv
     monkeypatch.setattr(kv, "sdk_available", lambda: False)
     async with _client(app) as c:
         r = await c.post(

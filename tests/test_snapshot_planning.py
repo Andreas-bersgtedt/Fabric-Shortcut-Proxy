@@ -5,18 +5,18 @@ import json
 
 import pytest
 
-import config
-from config import ColumnDef, TableDef
-from db.read_points import (
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
+from fabric_shortcut_proxy.db.read_points import (
     ReadPointDescriptor,
     clear_provider_registry,
     register_builtin_providers,
     register_provider,
 )
-from iceberg import state_store
-from runtime.artifact_store import MemoryStore
-from runtime.generation import BUILD_KEY, acquire_generation, join_generation
-from runtime.snapshot_planning import (
+from fabric_shortcut_proxy.iceberg import state_store
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy.runtime.generation import BUILD_KEY, acquire_generation, join_generation
+from fabric_shortcut_proxy.runtime.snapshot_planning import (
     close_snapshot_preparation,
     hydrate_snapshot_generation,
     prepare_snapshot_generation,
@@ -232,7 +232,7 @@ async def test_active_lookup_returns_plan_and_session():
         warehouse_prefix="warehouse",
         owner_shard=0,
     )
-    from runtime.snapshot_planning import activate_snapshot_preparation
+    from fabric_shortcut_proxy.runtime.snapshot_planning import activate_snapshot_preparation
 
     activate_snapshot_preparation(preparation)
     assert read_session_for(table) is provider.owner.session

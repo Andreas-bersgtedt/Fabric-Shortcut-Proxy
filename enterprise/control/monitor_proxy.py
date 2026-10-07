@@ -15,23 +15,21 @@ Agents — see :mod:`enterprise.control.manager_app`).
 from __future__ import annotations
 
 import asyncio
-import pathlib
+from importlib.resources import files
 from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.monitor_agg import merge_summaries
-from observability.logbuffer import get_buffer
-from observability.logging import get_logger
+from fabric_shortcut_proxy.observability.logbuffer import get_buffer
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-# monitor/index.html lives in the Lite core (repo root), three levels up from
-# <repo>/enterprise/control/monitor_proxy.py.
-_HTML_PATH = pathlib.Path(__file__).resolve().parent.parent.parent / "monitor" / "index.html"
+_MONITOR_HTML = files("fabric_shortcut_proxy.monitor").joinpath("index.html")
 
 
 def _dial_host(host: str) -> str:
@@ -95,7 +93,7 @@ def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str =
     @router.get("")
     @router.get("/")
     async def index() -> HTMLResponse:
-        return HTMLResponse(_HTML_PATH.read_text(encoding="utf-8"),
+        return HTMLResponse(_MONITOR_HTML.read_text(encoding="utf-8"),
                             headers={"Cache-Control": "no-store, max-age=0"})
 
     @router.get("/api/summary")
@@ -130,7 +128,7 @@ def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str =
         targets and state are authoritative there. Agent data is retained as a
         fallback for deployments where publishing is delegated to Agents.
         """
-        from monitor.router import open_mirror_summary
+        from fabric_shortcut_proxy.monitor.router import open_mirror_summary
 
         local = await open_mirror_summary(
             include_landing_zone_count=include_landing_zone_count
@@ -214,7 +212,7 @@ def create_monitor_proxy_router(supervisors, registry=None, monitor_token: str =
 
     @router.post("/api/open-mirror/cleanup")
     async def open_mirror_cleanup(payload: dict) -> JSONResponse:
-        from monitor.router import open_mirror_cleanup as run_cleanup
+        from fabric_shortcut_proxy.monitor.router import open_mirror_cleanup as run_cleanup
 
         target_id = str(payload.get("target_id") or "").strip()
         if not target_id:

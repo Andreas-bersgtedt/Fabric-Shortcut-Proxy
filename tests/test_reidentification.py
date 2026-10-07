@@ -6,22 +6,22 @@ import pytest
 from fastapi import FastAPI
 import httpx
 
-import config
+from fabric_shortcut_proxy import config
 import module_registry
-from config import ColumnDef, ColumnTransform, TableDef
-from observability import audit
-from reidentification.gate import enabled
-from reidentification.mappings import (
+from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform, TableDef
+from fabric_shortcut_proxy.observability import audit
+from fabric_shortcut_proxy.reidentification.gate import enabled
+from fabric_shortcut_proxy.reidentification.mappings import (
     LookupMappings,
     ReidentificationMappingError,
     default_mappings_path,
 )
-from reidentification.source_lookup import build_lookup_query
-from reidentification.limits import RequestLimiter
-from reidentification.router import router
-from security.authorization import User
-from security.authorization_middleware import AuthorizationMiddleware
-from security.identity import IdentityProvider, identity_provider
+from fabric_shortcut_proxy.reidentification.source_lookup import build_lookup_query
+from fabric_shortcut_proxy.reidentification.limits import RequestLimiter
+from fabric_shortcut_proxy.reidentification.router import router
+from fabric_shortcut_proxy.security.authorization import User
+from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
+from fabric_shortcut_proxy.security.identity import IdentityProvider, identity_provider
 
 
 def test_reidentification_module_profile_is_optional(monkeypatch, tmp_path):
@@ -111,7 +111,7 @@ def test_lookup_query_is_bounded_and_parameterized(monkeypatch, db_url, expected
         "column_id": "email_token", "lookup_column": "email_token_lookup",
         "clear_text_column": "email", "primary_key_column": "customer_id",
     }]}).list_public()[0]
-    from reidentification.mappings import LookupMapping
+    from fabric_shortcut_proxy.reidentification.mappings import LookupMapping
 
     monkeypatch.setattr(config, "TABLES", [table])
     monkeypatch.setattr(config, "effective_db_url", lambda connection: db_url)
@@ -132,7 +132,7 @@ def test_lookup_query_rejects_invalid_token_and_unsupported_dialect(monkeypatch)
         "column_id": "email_token", "lookup_column": "email_token_lookup",
         "clear_text_column": "email", "primary_key_column": "customer_id",
     }]}).list_public()[0]
-    from reidentification.mappings import LookupMapping
+    from fabric_shortcut_proxy.reidentification.mappings import LookupMapping
 
     monkeypatch.setattr(config, "TABLES", [table])
     monkeypatch.setattr(config, "effective_db_url", lambda connection: "sqlite+aiosqlite:///x.db")
@@ -153,7 +153,7 @@ def test_reidentification_request_limits_per_minute_and_day():
 
 @pytest.mark.asyncio
 async def test_reidentification_route_is_auditor_only_and_redacted(tmp_path, monkeypatch):
-    import reidentification.router as reidentification_router
+    import fabric_shortcut_proxy.reidentification.router as reidentification_router
 
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
     monkeypatch.setattr(config, "AUDIT_LOG_FILE", str(tmp_path / "audit.jsonl"), raising=False)
@@ -219,7 +219,7 @@ async def test_reidentification_route_is_auditor_only_and_redacted(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_reidentification_fails_closed_when_durable_audit_is_unavailable(tmp_path, monkeypatch):
-    import reidentification.router as reidentification_router
+    import fabric_shortcut_proxy.reidentification.router as reidentification_router
 
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
     monkeypatch.setattr(config, "AUDIT_LOG_FILE", "", raising=False)

@@ -18,12 +18,12 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import config
-from runtime.artifact_store import ObjectNotFound
-from s3.router import router as s3_router
-from storage import mounts, s3_auth
-from storage.mounts import Mount
-from storage.s3_store import S3Store
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.runtime.artifact_store import ObjectNotFound
+from fabric_shortcut_proxy.s3.router import router as s3_router
+from fabric_shortcut_proxy.storage import mounts, s3_auth
+from fabric_shortcut_proxy.storage.mounts import Mount
+from fabric_shortcut_proxy.storage.s3_store import S3Store
 
 # ---------------------------------------------------------------------------
 # Fake boto3 S3 client
@@ -325,7 +325,7 @@ async def test_s3_mount_advertised_in_listbuckets(s3_proxy_app):
 def cb_app(tmp_path, monkeypatch):
     from fastapi import FastAPI as _FastAPI
 
-    from configbuilder.router import router as cb_router
+    from fabric_shortcut_proxy.configbuilder.router import router as cb_router
     monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True, raising=False)
     monkeypatch.setattr(config, "CREDENTIAL_STORE_PATH", str(tmp_path / "credentials.json"), raising=False)
     a = _FastAPI()
@@ -334,7 +334,7 @@ def cb_app(tmp_path, monkeypatch):
 
 
 async def test_s3_credential_save_list_resolve_delete(cb_app, tmp_path):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     if not CredentialStore(str(tmp_path / "credentials.json")).available:
         pytest.skip("no encryption backend available on this host")
     async with _client(cb_app) as c:
@@ -357,7 +357,7 @@ async def test_s3_credential_save_list_resolve_delete(cb_app, tmp_path):
 
 
 async def test_s3_credential_rejects_invalid(cb_app, tmp_path):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     if not CredentialStore(str(tmp_path / "credentials.json")).available:
         pytest.skip("no encryption backend available on this host")
     async with _client(cb_app) as c:
@@ -367,7 +367,7 @@ async def test_s3_credential_rejects_invalid(cb_app, tmp_path):
 
 
 async def test_s3_credential_rejects_process_mode(cb_app, tmp_path):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     if not CredentialStore(str(tmp_path / "credentials.json")).available:
         pytest.skip("no encryption backend available on this host")
     async with _client(cb_app) as c:

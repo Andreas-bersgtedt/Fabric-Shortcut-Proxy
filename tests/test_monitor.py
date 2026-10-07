@@ -13,9 +13,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from observability import querystats, trace
-from observability import tokenization as tokenization_metrics
-from monitor.router import router as monitor_router
+from fabric_shortcut_proxy.observability import querystats, trace
+from fabric_shortcut_proxy.observability import tokenization as tokenization_metrics
+from fabric_shortcut_proxy.monitor.router import router as monitor_router
 
 
 @pytest.fixture(autouse=True)
@@ -120,7 +120,7 @@ async def test_reset_clears(client):
 
 
 async def test_logs_tail_and_search(client):
-    from observability.logbuffer import get_buffer
+    from fabric_shortcut_proxy.observability.logbuffer import get_buffer
 
     buf = get_buffer()
     buf.clear()
@@ -151,7 +151,7 @@ async def test_logs_tail_and_search(client):
 
 
 async def test_logs_suppress_self_poll(client):
-    from observability.logbuffer import get_buffer
+    from fabric_shortcut_proxy.observability.logbuffer import get_buffer
 
     buf = get_buffer()
     buf.clear()
@@ -172,8 +172,8 @@ def test_self_poll_suppressed_through_real_logging_handler():
     # logging path must not reach the buffer (proves the wiring, not just append).
     import logging
 
-    from observability.logbuffer import get_buffer
-    from observability.logging import configure_logging
+    from fabric_shortcut_proxy.observability.logbuffer import get_buffer
+    from fabric_shortcut_proxy.observability.logging import configure_logging
 
     configure_logging()
     buf = get_buffer()

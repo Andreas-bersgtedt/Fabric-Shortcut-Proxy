@@ -149,10 +149,10 @@ Copy the templates (all **gitignored** — secrets never get committed) and edit
 Notepad/VS Code.
 
 ```powershell
-Copy-Item config.connection.example.json config.connection.json
-Copy-Item config.tables.example.json      config.tables.json
-Copy-Item config.system.example.json      config.system.json
-Copy-Item config.freshness.example.json   config.freshness.json
+Copy-Item config/examples/config.connection.example.json config.connection.json
+Copy-Item config/examples/config.tables.example.json      config.tables.json
+Copy-Item config/examples/config.system.example.json      config.system.json
+Copy-Item config/examples/config.freshness.example.json   config.freshness.json
 ```
 
 ### 7.1 Source connection — `config.connection.json`

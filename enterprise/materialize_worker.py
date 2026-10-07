@@ -6,14 +6,14 @@ import hashlib
 import hmac
 import time
 
-import config
-from config import ColumnDef, ColumnTransform, TableDef
-from db.executor import SourceUnavailable
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform, TableDef
+from fabric_shortcut_proxy.db.executor import SourceUnavailable
 from enterprise.control.contract import MaterializeTask, TaskResult
-from iceberg.state_store import SplitDescriptor
-from runtime.artifact_store import get_default_store
-from runtime.materializer import materialize_queued_split
-from runtime.generation import GenerationError
+from fabric_shortcut_proxy.iceberg.state_store import SplitDescriptor
+from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
+from fabric_shortcut_proxy.runtime.materializer import materialize_queued_split
+from fabric_shortcut_proxy.runtime.generation import GenerationError
 
 
 def _columns(task: MaterializeTask) -> list[ColumnDef]:
@@ -82,7 +82,7 @@ def _split(task: MaterializeTask) -> SplitDescriptor:
     split.generation_id = task.generation_id
     split.generation_fence = task.generation_fence
     split.generation_plan_sha256 = task.plan_sha256
-    from runtime.generation import current_generation
+    from fabric_shortcut_proxy.runtime.generation import current_generation
 
     generation = current_generation(get_default_store())
     if generation is not None and (

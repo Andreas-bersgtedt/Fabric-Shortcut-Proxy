@@ -49,13 +49,13 @@ Grounded in the current code:
 
 | Area | Current behavior | Why it fails at 10⁸ rows |
 |---|---|---|
-| **Split strategy** | [planner/split_planner.py](../planner/split_planner.py): `WHERE (pk % :num_splits) = :i` | Modulo forces a **full-table scan per split** (can't use the PK index). 8 splits × 100M rows = 8 scans of 100M rows. |
+| **Split strategy** | [planner/split_planner.py](../src/fabric_shortcut_proxy/planner/split_planner.py): `WHERE (pk % :num_splits) = :i` | Modulo forces a **full-table scan per split** (can't use the PK index). 8 splits × 100M rows = 8 scans of 100M rows. |
 | **Rows per file** | `NUM_SPLITS` fixed (default 8) | 100M / 8 = **12.5M rows/file**: huge Parquet, slow, memory-heavy. |
 | **Materialization** | Eager at startup, all splits built and **pinned in RAM** (`PIN_MATERIALIZED_SPLITS`) | Pins every split in memory for the snapshot's life → **OOM** well before 100M rows. |
-| **Parquet generation** | [parquet/generator.py](../parquet/generator.py) buffers the full result set, then writes | Buffering 12.5M rows in Arrow arrays per split → memory blow-up. |
-| **State** | [iceberg/state_store.py](../iceberg/state_store.py) in-memory dict, one process | No shared/consistent view across workers; lost on restart. |
+| **Parquet generation** | [parquet/generator.py](../src/fabric_shortcut_proxy/parquet/generator.py) buffers the full result set, then writes | Buffering 12.5M rows in Arrow arrays per split → memory blow-up. |
+| **State** | [iceberg/state_store.py](../src/fabric_shortcut_proxy/iceberg/state_store.py) in-memory dict, one process | No shared/consistent view across workers; lost on restart. |
 | **Process model** | Single FastAPI/uvicorn process | One core-bound event loop; a crash takes the whole service down; no horizontal scale. |
-| **Refresh** | [iceberg/freshness.py](../iceberg/freshness.py) re-reads & re-hashes **every** chunk each poll | Re-reading 100M rows per poll is infeasible; needs incremental/CDC. |
+| **Refresh** | [iceberg/freshness.py](../src/fabric_shortcut_proxy/iceberg/freshness.py) re-reads & re-hashes **every** chunk each poll | Re-reading 100M rows per poll is infeasible; needs incremental/CDC. |
 
 **Root shift required:** decouple the **write path** (materialize Parquet + publish
 metadata, orchestrated by the Manager, parallel, streamed to a shared store) from
@@ -140,7 +140,7 @@ flowchart TB
 
 ### 4.2 Agent / Runtime (the Worker)
 - **S3 data plane only.** `GET`/`HEAD`/`ListObjectsV2`, ranged reads, SigV4, the
-  existing [s3/router.py](../s3/router.py) behavior, unchanged on the wire.
+  existing [s3/router.py](../src/fabric_shortcut_proxy/s3/router.py) behavior, unchanged on the wire.
 - **Stateless.** Holds no authoritative state. On startup it registers with the
   Manager, pulls its assignment + the current published snapshot, and warms local
   caches from the shared store. A restart is cheap and safe.
@@ -578,7 +578,7 @@ Each phase is shippable and reversible; the default stays the known-good path.
       (via `MANAGER_URL`) so either port lands on the console instead of a SigV4 403.
   - **Range-based split planning (§7.1).**  ✅, `SPLIT_STRATEGY="range"` (default
     `modulo`) slices `[MIN(pk), MAX(pk)]` into contiguous half-open key ranges
-    ([planner/split_planner.py](../planner/split_planner.py) `compute_key_ranges`) so
+    ([planner/split_planner.py](../src/fabric_shortcut_proxy/planner/split_planner.py) `compute_key_ranges`) so
     each split runs `WHERE pk >= lo AND pk < hi` off the **PK index** instead of a
     full-table modulo scan, the shape that scales to 10⁸ rows. Planned once at
     startup from a single `MIN/MAX` probe (`db.executor.fetch_key_bounds`); falls
@@ -586,7 +586,7 @@ Each phase is shippable and reversible; the default stays the known-good path.
   - **Streaming Parquet (§7.2).**  ✅, `STREAMING_PARQUET=1` reads a split in
     `STREAM_BATCH_ROWS` batches (`db.executor.stream_split_query`) and writes them
     incrementally through one `ParquetWriter`
-    ([parquet/generator.py](../parquet/generator.py) `stream_rows_to_parquet`), so peak
+    ([parquet/generator.py](../src/fabric_shortcut_proxy/parquet/generator.py) `stream_rows_to_parquet`), so peak
     *input* memory is ~one batch instead of the whole split.
   - **Cluster backpressure.**  ✅, `SOURCE_MAX_CONCURRENCY` caps concurrent source
     queries per Agent (startup **and** on-demand regeneration) via a shared gate in
@@ -671,7 +671,7 @@ Each phase is shippable and reversible; the default stays the known-good path.
     fully self-contained table image to the artifact store: every S3 object the
     Agent serves, data splits **and** the Iceberg `metadata.json`/manifests/
     `version-hint.text` (or Delta `_delta_log`), keyed by its exact S3 key
-    ([runtime/serving_image.py](../runtime/serving_image.py); `POST /_admin/publish-image`).
+    ([runtime/serving_image.py](../src/fabric_shortcut_proxy/runtime/serving_image.py); `POST /_admin/publish-image`).
     The store dir becomes a valid, servable warehouse.
   - **C++ serving Agent** ([agent-cpp/agent.cpp](../agent-cpp/agent.cpp), no third-party
     deps; build via [agent-cpp/build.ps1](../agent-cpp/build.ps1) on Windows and

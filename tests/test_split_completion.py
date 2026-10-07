@@ -4,12 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-import cache.lru_cache as cache
-import config
-from iceberg.stats import ColumnStats
-from runtime.artifact_store import MemoryStore, reset_default_store, set_default_store
-from runtime.generation import GenerationError, acquire_generation
-from runtime.split_completion import publish_split_completion, read_split_completion
+import fabric_shortcut_proxy.cache.lru_cache as cache
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.iceberg.stats import ColumnStats
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore, reset_default_store, set_default_store
+from fabric_shortcut_proxy.runtime.generation import GenerationError, acquire_generation
+from fabric_shortcut_proxy.runtime.split_completion import publish_split_completion, read_split_completion
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ def test_completion_round_trips_split_metadata(shared_store):
 async def test_non_owner_uses_completion_without_loading_or_pinning_parquet(
     shared_store, monkeypatch
 ):
-    import runtime.materializer as materializer
+    import fabric_shortcut_proxy.runtime.materializer as materializer
 
     split = _split(index=1)
     data = b"owner-parquet-bytes"
@@ -102,7 +102,7 @@ async def test_non_owner_uses_completion_without_loading_or_pinning_parquet(
 
 @pytest.mark.asyncio
 async def test_non_owner_timeout_never_falls_back_to_sql(shared_store, monkeypatch):
-    import runtime.materializer as materializer
+    import fabric_shortcut_proxy.runtime.materializer as materializer
 
     split = _split(index=1)
     sql_called = False
@@ -125,7 +125,7 @@ async def test_non_owner_timeout_never_falls_back_to_sql(shared_store, monkeypat
 
 @pytest.mark.asyncio
 async def test_fenced_non_owner_rejoins_current_generation(shared_store, monkeypatch):
-    import runtime.materializer as materializer
+    import fabric_shortcut_proxy.runtime.materializer as materializer
 
     stale = acquire_generation(shared_store, 2)
     current = acquire_generation(shared_store, 2)
@@ -176,7 +176,7 @@ def test_completion_rejects_plan_digest_mismatch(shared_store):
 
 @pytest.mark.asyncio
 async def test_owner_backfills_completion_for_existing_durable_split(shared_store, monkeypatch):
-    import runtime.materializer as materializer
+    import fabric_shortcut_proxy.runtime.materializer as materializer
 
     split = _split(index=0)
     parquet = pytest.importorskip("pyarrow")

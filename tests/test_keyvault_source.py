@@ -14,8 +14,8 @@ import pytest
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
-from security import keyvault
-from security.credential_store import CredentialStore
+from fabric_shortcut_proxy.security import keyvault
+from fabric_shortcut_proxy.security.credential_store import CredentialStore
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ def test_no_read_through_is_unchanged(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_auth_config_section_defaults():
-    import config
+    from fabric_shortcut_proxy import config
     assert config.AUTH_MODE == "default"
     assert config.KEYVAULT_URI == ""
     assert config.REQUIRE_KEYVAULT is False

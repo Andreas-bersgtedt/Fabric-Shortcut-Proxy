@@ -5,15 +5,15 @@ import json
 
 import pytest
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.contract import CONTRACT_VERSION
-from security.agent_auth import (
+from fabric_shortcut_proxy.security.agent_auth import (
     agent_authentication_required,
     agent_authentication_unavailable,
     is_agent_route,
     is_operator_control_route,
 )
-from security.credentials import scrub_dict, scrub_secrets
+from fabric_shortcut_proxy.security.credentials import scrub_dict, scrub_secrets
 
 
 @pytest.mark.parametrize(

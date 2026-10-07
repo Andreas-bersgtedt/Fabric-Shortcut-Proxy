@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import config
-from planner import shard_weight as sw
-from runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.planner import shard_weight as sw
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # Chapter 9: Reference
 
 Quick lookup for settings, dialects, paths, launcher flags, endpoints, and terms. The
-settings registry in [config.py](../../config.py) is the source of truth, and the config
+settings registry in [config.py](../../src/fabric_shortcut_proxy/config.py) is the source of truth, and the config
 builder's All settings panel lists every key with its default and help text. The complete
 narrative settings reference is [CONFIGURATION.md](../CONFIGURATION.md).
 

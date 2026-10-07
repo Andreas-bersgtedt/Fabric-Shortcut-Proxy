@@ -11,8 +11,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import config
-from configbuilder.router import router as cb_router
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.configbuilder.router import router as cb_router
 from enterprise.control.admin import create_admin_router
 from enterprise.control.registry import Registry
 
@@ -205,7 +205,7 @@ async def test_restart_manager_allows_authenticated_entra_admin(monkeypatch):
 
     app = _cb_app()
     app.state.restart_manager = fake_restart
-    from security.authorization import User
+    from fabric_shortcut_proxy.security.authorization import User
     app.state.user = User(
         "entra:362353c2-34bc-4dcc-bebc-cd1be76cc068:a4bec7ab-e85e-4664-a78f-4a2fd9660772",
         roles=("system_administrator",),

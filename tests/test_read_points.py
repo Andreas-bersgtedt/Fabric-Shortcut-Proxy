@@ -5,8 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from config import ColumnDef, TableDef
-from db.read_points import (
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
+from fabric_shortcut_proxy.db.read_points import (
     BestEffortReadSession,
     PostgresSnapshotProvider,
     ReadPointDescriptor,
@@ -22,8 +22,8 @@ from db.read_points import (
     registered_providers,
     require_provider,
 )
-from iceberg.state_store import build_table_snapshot
-from planner.split_planner import choose_table_num_splits, plan_ranges_for_snapshot
+from fabric_shortcut_proxy.iceberg.state_store import build_table_snapshot
+from fabric_shortcut_proxy.planner.split_planner import choose_table_num_splits, plan_ranges_for_snapshot
 
 
 @pytest.mark.parametrize(
@@ -324,7 +324,7 @@ async def test_planner_uses_injected_read_session_for_count_and_bounds():
 
 
 async def test_best_effort_session_delegates_to_existing_executor(monkeypatch):
-    import db.executor as executor
+    import fabric_shortcut_proxy.db.executor as executor
 
     calls = []
 
@@ -434,7 +434,7 @@ class _FakeEngine:
 
 
 async def test_sql_server_provider_owns_one_snapshot_transaction(monkeypatch):
-    import db.executor as executor
+    import fabric_shortcut_proxy.db.executor as executor
 
     provider = SqlServerSnapshotProvider()
     engine = _FakeEngine()
@@ -465,7 +465,7 @@ async def test_sql_server_provider_owns_one_snapshot_transaction(monkeypatch):
 
 
 async def test_postgres_provider_exports_and_imports_snapshot(monkeypatch):
-    import db.executor as executor
+    import fabric_shortcut_proxy.db.executor as executor
 
     provider = PostgresSnapshotProvider()
     engine = _FakeEngine()
@@ -495,7 +495,7 @@ async def test_postgres_provider_exports_and_imports_snapshot(monkeypatch):
 
 
 async def test_postgres_provider_rejects_invalid_snapshot_identifier(monkeypatch):
-    import db.executor as executor
+    import fabric_shortcut_proxy.db.executor as executor
 
     provider = PostgresSnapshotProvider()
     engine = _FakeEngine()
@@ -522,7 +522,7 @@ async def test_postgres_provider_rejects_invalid_snapshot_identifier(monkeypatch
 
 
 async def test_transactional_session_fails_after_read_point_expiry(monkeypatch):
-    import db.read_points as read_points
+    import fabric_shortcut_proxy.db.read_points as read_points
 
     connection = _FakeConnection()
     session = read_points.TransactionalReadSession(
@@ -564,7 +564,7 @@ class _RetrySession:
 
 
 async def test_postgres_join_retries_with_same_snapshot_before_rows(monkeypatch):
-    import db.executor as executor
+    import fabric_shortcut_proxy.db.executor as executor
 
     provider = PostgresSnapshotProvider()
     descriptor = _descriptor(
@@ -594,7 +594,7 @@ async def test_postgres_join_retries_with_same_snapshot_before_rows(monkeypatch)
 
 
 async def test_postgres_join_does_not_retry_after_yield(monkeypatch):
-    import db.executor as executor
+    import fabric_shortcut_proxy.db.executor as executor
 
     provider = PostgresSnapshotProvider()
     descriptor = _descriptor(

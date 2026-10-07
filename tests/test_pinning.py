@@ -9,8 +9,8 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import pytest
 
-import config
-import cache.lru_cache as cache
+from fabric_shortcut_proxy import config
+import fabric_shortcut_proxy.cache.lru_cache as cache
 
 
 @pytest.fixture(autouse=True)

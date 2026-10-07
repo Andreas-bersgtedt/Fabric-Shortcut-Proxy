@@ -63,7 +63,7 @@ sudo -u fsp bash -c '
   source /etc/fabric-shortcut-proxy.env
   set +a
   cd /opt/fabric-shortcut-proxy
-  .venv/bin/python -c "import config; print(\"MATERIALIZE_MODE=\" + config.MATERIALIZE_MODE); print(\"AUTO_REFRESH=\" + str(config.AUTO_REFRESH))"
+  .venv/bin/python -c "from fabric_shortcut_proxy import config; print(\"MATERIALIZE_MODE=\" + config.MATERIALIZE_MODE); print(\"AUTO_REFRESH=\" + str(config.AUTO_REFRESH))"
 '
 ```
 

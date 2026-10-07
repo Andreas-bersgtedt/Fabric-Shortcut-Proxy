@@ -10,10 +10,10 @@ import pytest
 from sqlalchemy import text as _text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import config
-from config import ColumnDef, TableDef
-from iceberg.state_store import SplitDescriptor
-from planner.split_planner import compute_key_ranges, build_split_query, pk_column
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
+from fabric_shortcut_proxy.iceberg.state_store import SplitDescriptor
+from fabric_shortcut_proxy.planner.split_planner import compute_key_ranges, build_split_query, pk_column
 
 
 def _table(source="t", n=4):
@@ -92,7 +92,7 @@ def test_pk_column_prefers_key_column():
 
 @pytest.fixture
 async def range_db(tmp_path, monkeypatch):
-    import db.executor as ex
+    import fabric_shortcut_proxy.db.executor as ex
     url = f"sqlite+aiosqlite:///{(tmp_path / 'range.db').as_posix()}"
     monkeypatch.setattr(config, "DB_URL", url, raising=False)
     old_engine = ex._engine
@@ -116,13 +116,13 @@ async def range_db(tmp_path, monkeypatch):
 
 
 async def test_fetch_key_bounds(range_db):
-    from db.executor import fetch_key_bounds
+    from fabric_shortcut_proxy.db.executor import fetch_key_bounds
     assert await fetch_key_bounds("t2", "id") == (1, 250)
     assert await fetch_key_bounds("t_empty", "id") is None    # empty -> modulo fallback
 
 
 async def test_range_splits_cover_all_rows_once(range_db):
-    from db.executor import fetch_key_bounds, execute_split_query
+    from fabric_shortcut_proxy.db.executor import fetch_key_bounds, execute_split_query
     bounds = await fetch_key_bounds("t2", "id")
     ranges = compute_key_ranges(*bounds, 8)
     seen: list[int] = []

@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from security.authorization import User
-from security.identity import IdentityProvider, hash_password, verify_password
+from fabric_shortcut_proxy.security.authorization import User
+from fabric_shortcut_proxy.security.identity import IdentityProvider, hash_password, verify_password
 
 
 def test_password_hash_is_salted_and_verifiable():

@@ -17,7 +17,7 @@ import asyncio
 import hashlib
 import time
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.contract import (
     Column,
     KeyRange,
@@ -26,7 +26,7 @@ from enterprise.control.contract import (
     SplitRef,
 )
 from enterprise.control.work_queue import DurableWorkQueue
-from observability.logging import get_logger
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -58,22 +58,22 @@ async def _ensure_snapshots() -> None:
     async with _build_lock:
         if _snapshots_ready:
             return
-        from db.executor import resolve_tables
-        from iceberg.state_store import build_all_snapshots, get_all_snapshots
+        from fabric_shortcut_proxy.db.executor import resolve_tables
+        from fabric_shortcut_proxy.iceberg.state_store import build_all_snapshots, get_all_snapshots
 
         await resolve_tables(config.TABLES)
         build_all_snapshots(config.TABLES, config.BUCKET_NAME, config.WAREHOUSE_PREFIX)
         if any(t.effective_split_strategy in ("range", "date", "auto") for t in config.TABLES) or any(
             t.effective_split_target_rows > 0 for t in config.TABLES
         ):
-            from planner.split_planner import plan_ranges_for_snapshot
+            from fabric_shortcut_proxy.planner.split_planner import plan_ranges_for_snapshot
             for snap in get_all_snapshots():
                 await plan_ranges_for_snapshot(snap)
         _snapshots_ready = True
 
 
 def _snapshot_for_key(key: str):
-    from iceberg.state_store import get_all_snapshots, get_split_by_key
+    from fabric_shortcut_proxy.iceberg.state_store import get_all_snapshots, get_split_by_key
 
     for snap in get_all_snapshots():
         if key in (snap.metadata_key, snap.version_hint_key,
@@ -94,8 +94,8 @@ def _publish_snapshot_objects(snap) -> tuple[int, list[str]]:
     so a stateless Agent can serve them. Idempotent (overwrites with identical
     bytes). Data splits are pinned in memory by the materializer; here we persist
     every object explicitly rather than relying on write-through settings."""
-    import cache.lru_cache as cache
-    from runtime.artifact_store import build_store
+    import fabric_shortcut_proxy.cache.lru_cache as cache
+    from fabric_shortcut_proxy.runtime.artifact_store import build_store
 
     store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
     written = 0
@@ -107,15 +107,15 @@ def _publish_snapshot_objects(snap) -> tuple[int, list[str]]:
             written += 1
 
     if config.TABLE_FORMAT == "delta":
-        from delta import log as delta_log
+        from fabric_shortcut_proxy.delta import log as delta_log
         for k, meta in delta_log.delta_log_objects().items():
             if k.startswith(snap.table_path + "/") and meta.get("data") is not None:
                 store.put(k, meta["data"])
                 metadata_keys.append(k)
                 written += 1
     else:
-        from iceberg.metadata import build_metadata_json
-        from iceberg.manifest import build_manifest_file, build_manifest_list
+        from fabric_shortcut_proxy.iceberg.metadata import build_metadata_json
+        from fabric_shortcut_proxy.iceberg.manifest import build_manifest_file, build_manifest_list
 
         store.put(snap.metadata_key, build_metadata_json(snap))
         store.put(snap.manifest_list_key, build_manifest_list(snap))
@@ -140,7 +140,7 @@ async def _materialize_direct(key: str) -> dict:
     snap = _snapshot_for_key(key)
     if snap is None:
         return {"ok": False, "materialized": False, "reason": "unknown_key"}
-    from runtime.materializer import ensure_snapshot_materialized
+    from fabric_shortcut_proxy.runtime.materializer import ensure_snapshot_materialized
 
     await ensure_snapshot_materialized(snap)
     published, _ = _publish_snapshot_objects(snap)
@@ -183,8 +183,8 @@ async def materialize_for_key(key: str) -> dict:
     if snap is None:
         return {"ok": False, "materialized": False, "reason": "unknown_key"}
 
-    from runtime.artifact_store import get_default_store
-    from runtime.generation import current_generation
+    from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
+    from fabric_shortcut_proxy.runtime.generation import current_generation
 
     generation = await asyncio.to_thread(
         current_generation, get_default_store()
@@ -294,7 +294,7 @@ async def materialize_for_key(key: str) -> dict:
                 )
             )
         if config.TABLE_FORMAT == "delta":
-            from delta import log as delta_log
+            from fabric_shortcut_proxy.delta import log as delta_log
 
             delta_log.invalidate_table(snap.table.name)
         published, metadata_keys = await asyncio.to_thread(

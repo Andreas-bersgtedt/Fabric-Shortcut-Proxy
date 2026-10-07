@@ -16,7 +16,7 @@ from enterprise.control.registry import Registry, LeaseError
 from enterprise.control.lease import LeaderLease
 from enterprise.control.server import ControlService
 from enterprise.control.transport import create_control_router, RestControlClient, StaleLeaseError
-from runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 
 
 # ---------------------------------------------------------------------------

@@ -17,11 +17,11 @@ import pyarrow.parquet as pq
 _TEST_DB = pathlib.Path(__file__).parent / "test_delta.db"
 
 import httpx
-import config
+from fabric_shortcut_proxy import config
 
 from main import app
-from config import ColumnDef
-from delta import log as delta_log
+from fabric_shortcut_proxy.config import ColumnDef
+from fabric_shortcut_proxy.delta import log as delta_log
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ def test_schema_string_is_valid_struct():
 
 def _mk_snap(table, version, hashes):
     """Build a minimal SnapshotState with content-addressed keys (one per hash)."""
-    from iceberg.state_store import SnapshotState, SplitDescriptor
+    from fabric_shortcut_proxy.iceberg.state_store import SnapshotState, SplitDescriptor
     tp = f"{config.WAREHOUSE_PREFIX}/{table.name}"
     snap = SnapshotState(
         snapshot_id=version * 1000, sequence_number=version,
@@ -92,10 +92,10 @@ def test_previous_version_files_stay_servable_after_refresh():
     Also verifies the commit is a DIFF: an unchanged content-addressed split
     carries forward (no add, no remove) — a full add+remove of the same path
     would net the file out of the table for a replaying reader (data loss)."""
-    import iceberg.state_store as ss
-    import cache.lru_cache as cache
-    from iceberg.state_store import register_snapshot, get_split_by_key
-    from config import TableDef
+    import fabric_shortcut_proxy.iceberg.state_store as ss
+    import fabric_shortcut_proxy.cache.lru_cache as cache
+    from fabric_shortcut_proxy.iceberg.state_store import register_snapshot, get_split_by_key
+    from fabric_shortcut_proxy.config import TableDef
 
     ss._snapshots.clear(); ss._history.clear()
     cache.unpin_all()
@@ -143,8 +143,8 @@ def test_delta_log_keys_follow_snapshot_table_path_in_canonical_layout():
     Regression: commits were emitted under db/<table>/_delta_log even when data
     files used canonical db/<server>/<database>/<schema>/<object>/data paths.
     """
-    import iceberg.state_store as ss
-    from config import TableDef
+    import fabric_shortcut_proxy.iceberg.state_store as ss
+    from fabric_shortcut_proxy.config import TableDef
 
     ss._snapshots.clear(); ss._history.clear()
     delta_log.reset()
@@ -174,9 +174,9 @@ def test_delta_log_keys_follow_snapshot_table_path_in_canonical_layout():
 
 @pytest.fixture(scope="module")
 async def delta_client():
-    from demo.seed_db import seed_demo_database
-    import db.executor as _executor
-    from iceberg.state_store import build_snapshot
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
+    import fabric_shortcut_proxy.db.executor as _executor
+    from fabric_shortcut_proxy.iceberg.state_store import build_snapshot
 
     # Set config in the fixture (not at module scope) so cross-module import
     # ordering can't clobber these values before the tests run.
@@ -433,10 +433,10 @@ async def test_delta_listing_rejects_invalid_max_keys(delta_client, max_keys):
 
 async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypatch, tmp_path):
     """Fabric's first ListObjectsV2 request must publish virtual Delta commit 0."""
-    import db.executor as executor
-    import iceberg.state_store as state_store
-    from iceberg.state_store import build_table_snapshot
-    from runtime import materializer
+    import fabric_shortcut_proxy.db.executor as executor
+    import fabric_shortcut_proxy.iceberg.state_store as state_store
+    from fabric_shortcut_proxy.iceberg.state_store import build_table_snapshot
+    from fabric_shortcut_proxy.runtime import materializer
 
     saved_config = (
         config.DB_URL, config.BUCKET_NAME, config.TABLE_FORMAT,
@@ -452,12 +452,12 @@ async def test_virtual_delta_listing_materializes_before_log_discovery(monkeypat
     monkeypatch.setattr(config, "TABLE_NAME", "sales")
     monkeypatch.setattr(config, "DB_SOURCE_TABLE", "sales")
 
-    from demo.seed_db import seed_demo_database
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
     await seed_demo_database()
     executor._engine = None
     materializer._locks.clear()
     snap = build_table_snapshot(config.TABLES[0], config.BUCKET_NAME, config.WAREHOUSE_PREFIX)
-    from delta import log as delta_log
+    from fabric_shortcut_proxy.delta import log as delta_log
     delta_log.reset()
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -606,7 +606,7 @@ async def test_unknown_delta_log_file_404(delta_client):
 async def test_delta_crc_probe_is_absent_without_materializing(
     delta_client, monkeypatch, method
 ):
-    from runtime import materializer
+    from fabric_shortcut_proxy.runtime import materializer
 
     async def unexpected_materialization(_snap):
         pytest.fail("optional Delta sidecar probe triggered materialization")
@@ -622,7 +622,7 @@ async def test_delta_crc_probe_is_absent_without_materializing(
 
 
 async def test_delta_crc_listing_is_empty_without_materializing(delta_client, monkeypatch):
-    from runtime import materializer
+    from fabric_shortcut_proxy.runtime import materializer
 
     async def unexpected_materialization(_snap):
         pytest.fail("optional Delta sidecar listing triggered materialization")

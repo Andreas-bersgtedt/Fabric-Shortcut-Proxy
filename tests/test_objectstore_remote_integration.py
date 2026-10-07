@@ -16,8 +16,8 @@ pytest.importorskip("pyiceberg")
 from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.io import FileIO, InputFile, OutputFile
 
-from storage.mounts import Mount
-from storage.objectstore_reader import reader_for_mount
+from fabric_shortcut_proxy.storage.mounts import Mount
+from fabric_shortcut_proxy.storage.objectstore_reader import reader_for_mount
 
 
 class _StoredFileIO(FileIO):

@@ -36,20 +36,20 @@ committed `*.example.json` template; the real files are gitignored.
 
 | File | Holds | Template |
 |---|---|---|
-| `config.system.json` | S3 endpoint, server, ports, feature flags, cluster settings | `config.system.example.json` |
-| `config.connection.json` | Connection string and query/robustness settings | `config.connection.example.json` |
-| `config.performance.json` | Split planning, query, cache, and materialization settings | `config.performance.example.json` |
-| `config.freshness.json` | Refresh strategy, cadence, and full-pull policy | `config.freshness.example.json` |
-| `config.tables.json` | The table registry | `config.tables.example.json` |
-| `config.mounts.json` | Storage-proxy mount table (references credential ids, not secrets) | `config.mounts.example.json` |
-| `config.open_mirror.json` | Open Mirroring targets and table policies | `config.open_mirror.example.json` |
+| `config.system.json` | S3 endpoint, server, ports, feature flags, cluster settings | `config/examples/config.system.example.json` |
+| `config.connection.json` | Connection string and query/robustness settings | `config/examples/config.connection.example.json` |
+| `config.performance.json` | Split planning, query, cache, and materialization settings | `config/examples/config.performance.example.json` |
+| `config.freshness.json` | Refresh strategy, cadence, and full-pull policy | `config/examples/config.freshness.example.json` |
+| `config.tables.json` | The table registry | `config/examples/config.tables.example.json` |
+| `config.mounts.json` | Storage-proxy mount table (references credential ids, not secrets) | `config/examples/config.mounts.example.json` |
+| `config.open_mirror.json` | Open Mirroring targets and table policies | `config/examples/config.open_mirror.example.json` |
 
 Copy a template, edit it, and place the real `config.*.json` file next to `main.py`, or set
 `FSP_CONFIG_DIR` to the mounted directory that contains the files:
 
 ```powershell
-Copy-Item config.connection.example.json config.connection.json
-Copy-Item config.tables.example.json config.tables.json
+Copy-Item config/examples/config.connection.example.json config.connection.json
+Copy-Item config/examples/config.tables.example.json config.tables.json
 ```
 
 Never commit a file that contains a connection string or key. The live `config.*.json` files
@@ -204,7 +204,7 @@ in [Chapter 8, §8.8](08-operations.md).
 ## 5.11 Open Mirroring targets
 
 Open Mirror publishing is configured separately from the shortcut table registry. Copy
-[config.open_mirror.example.json](../../config.open_mirror.example.json) to
+[config.open_mirror.example.json](../../config/examples/config.open_mirror.example.json) to
 `config.open_mirror.json`, then set the source connection, Fabric mirrored database identifiers,
 landing-zone root, and tables to publish.
 

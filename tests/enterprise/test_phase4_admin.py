@@ -149,7 +149,7 @@ async def test_manager_page_and_fleet_api_served():
 
 
 async def test_manager_msal_uses_app_id_uri_and_fleet_fetch_guards_json(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
 
     monkeypatch.setattr(config, "ENTRA_ENABLED", True)
     monkeypatch.setattr(config, "ENTRA_TENANT_ID", "tenant-id")

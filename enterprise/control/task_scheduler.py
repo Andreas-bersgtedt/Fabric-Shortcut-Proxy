@@ -10,7 +10,7 @@ from enterprise.control.contract import MaterializeTask
 from enterprise.control.contract import TASK_TERMINAL_STATES
 from enterprise.control.registry import Registry
 from enterprise.control.work_queue import DurableWorkQueue, WorkQueueConflict
-from observability.logging import get_logger
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -139,7 +139,7 @@ class TaskScheduler:
         for task in self.queue.runnable_tasks(
             tasks=all_tasks, expire=False
         ):
-            from runtime.generation import current_generation
+            from fabric_shortcut_proxy.runtime.generation import current_generation
 
             generation = current_generation(self.queue.store)
             task_payload = MaterializeTask.from_dict(task["task"])

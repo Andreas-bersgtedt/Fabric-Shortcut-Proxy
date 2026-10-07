@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from db.capabilities import (
+from fabric_shortcut_proxy.db.capabilities import (
     capabilities_for_db_url,
     capabilities_for_dialect,
     capability_matrix,
@@ -44,10 +44,10 @@ def test_tokenization_backend_topology_prefers_native_then_arrow_then_none():
 
 
 def test_flavor_warnings_include_arrow_operational_impact(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
 
     monkeypatch.setattr(config, "TOKENIZATION_FALLBACK", "arrow", raising=False)
-    warnings = __import__("db.capabilities", fromlist=["flavor_warnings"]).flavor_warnings("impala")
+    warnings = __import__("fabric_shortcut_proxy.db.capabilities", fromlist=["flavor_warnings"]).flavor_warnings("impala")
     assert any("plaintext source values" in warning for warning in warnings)
 
 

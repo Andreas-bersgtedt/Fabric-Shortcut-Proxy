@@ -18,13 +18,13 @@ from __future__ import annotations
 # set (e.g. via -DbUrl) always wins; the store only fills what is missing.
 # Key Vault (issue #16) is resolved first (into the cache + env), then the store
 # fills any remaining DB_URL_<ID>. No-op unless a Key Vault URI is configured.
-from security.keyvault import hydrate_from_keyvault
-from security.credential_store import hydrate_environment
+from fabric_shortcut_proxy.security.keyvault import hydrate_from_keyvault
+from fabric_shortcut_proxy.security.credential_store import hydrate_environment
 
 hydrate_from_keyvault()
 hydrate_environment()
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.manager_app import app
 
 

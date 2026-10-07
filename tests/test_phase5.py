@@ -16,11 +16,11 @@ import fastavro
 _DB = pathlib.Path(__file__).parent / "test_phase5.db"
 os.environ["DB_URL"] = f"sqlite+aiosqlite:///{_DB.as_posix()}"
 
-import config
-from iceberg.stats import encode_bound, collect_split_stats
-from parquet.generator import rows_to_parquet
-from iceberg import manifest as mf
-from iceberg.state_store import build_snapshot
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.iceberg.stats import encode_bound, collect_split_stats
+from fabric_shortcut_proxy.parquet.generator import rows_to_parquet
+from fabric_shortcut_proxy.iceberg import manifest as mf
+from fabric_shortcut_proxy.iceberg.state_store import build_snapshot
 
 
 _ROWS = [
@@ -36,7 +36,7 @@ _ROWS = [
 # ---------------------------------------------------------------------------
 
 def test_disk_cache_roundtrip(tmp_path, monkeypatch):
-    import cache.lru_cache as lru
+    import fabric_shortcut_proxy.cache.lru_cache as lru
 
     monkeypatch.setattr(config, "PARQUET_DISK_CACHE", True)
     monkeypatch.setattr(config, "PARQUET_DISK_CACHE_DIR", str(tmp_path))
@@ -62,7 +62,7 @@ def test_disk_cache_roundtrip(tmp_path, monkeypatch):
 
 
 def test_disk_cache_disabled_writes_nothing(tmp_path, monkeypatch):
-    import cache.lru_cache as lru
+    import fabric_shortcut_proxy.cache.lru_cache as lru
 
     monkeypatch.setattr(config, "PARQUET_DISK_CACHE", False)
     monkeypatch.setattr(config, "PARQUET_DISK_CACHE_DIR", str(tmp_path))
@@ -103,7 +103,7 @@ def test_collect_split_stats_timestamptz_never_crashes():
     """Reading a tz-aware timestamp stat's Python value needs tzdata, which may
     be absent (Windows). Stats are optional — collection must NOT raise; the
     column's bounds are simply skipped when they can't be read."""
-    from config import ColumnDef
+    from fabric_shortcut_proxy.config import ColumnDef
     cols = [
         ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
         ColumnDef(field_id=2, name="ts", iceberg_type="timestamptz", nullable=True),
@@ -169,11 +169,11 @@ def test_manifest_without_stats_has_no_stat_maps(monkeypatch):
 
 def test_snapshot_history_and_time_travel(monkeypatch):
     import json
-    from iceberg.state_store import (
+    from fabric_shortcut_proxy.iceberg.state_store import (
         build_snapshot as _bs, advance_table_snapshot, get_snapshot_history,
     )
-    from iceberg.metadata import build_metadata_json
-    import s3.router as router
+    from fabric_shortcut_proxy.iceberg.metadata import build_metadata_json
+    import fabric_shortcut_proxy.s3.router as router
 
     monkeypatch.setattr(config, "ICEBERG_SNAPSHOT_HISTORY", True)
 

@@ -1,10 +1,10 @@
 """Phase 1 path-layout tests: canonical pathing + legacy alias compatibility."""
 from __future__ import annotations
 
-import config
-from config import ColumnDef, TableDef
-import iceberg.state_store as ss
-from s3 import router as s3_router
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef, TableDef
+import fabric_shortcut_proxy.iceberg.state_store as ss
+from fabric_shortcut_proxy.s3 import router as s3_router
 
 
 _SCHEMA = [

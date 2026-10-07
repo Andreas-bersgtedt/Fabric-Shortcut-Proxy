@@ -72,7 +72,7 @@ a **mount** streams bytes from its backend; every other bucket resolves through 
 Iceberg/Delta path unchanged, so a single deployment exposes the DB warehouse *and* file
 shares/object stores at once.
 
-**Backends** (`config.mounts.json`, gitignored, see [config.mounts.example.json](config.mounts.example.json)):
+**Backends** (`config.mounts.json`, gitignored, see [config.mounts.example.json](config/examples/config.mounts.example.json)):
 
 | Backend | Serves | Notes |
 |---|---|---|
@@ -95,103 +95,25 @@ and [Security](docs/SECURITY.md).
 ## Project layout
 
 ```
-s3emulator/
-├── main.py                  FastAPI app + lifespan + auth middleware (SigV4 multi-key + mount enforcement) + TLS
-├── enterprise/              Scale-out cluster package (fabric-shortcut-proxy-enterprise wheel)
-│   ├── manager.py               Manager entrypoint (control plane + local Agent supervision)
-│   ├── agent_link.py            Agent register/heartbeat/drain link to the Manager
-│   ├── retention.py             Retention GC (prunes orphaned Parquet splits)
-│   └── control/                 Manager control plane: registry, gateway, LB renderer, HA
-├── config.py                Settings registry (env / split config files / defaults) + validation
-├── config.*.example.json    Templates for split deployment config files
-├── Manager.ps1              Bootstrap: venv + deps + launch Manager/Agent cluster
-├── Manager.sh               Linux/macOS bootstrap for Manager/Agent cluster
-├── validate_pyiceberg.py    Reference-reader validation (pyiceberg)
-├── docs/                    Documentation (manual, configuration, runbooks)
-│   ├── manual/                 End-to-end operator manual
-│   ├── CONFIGURATION.md         Full configuration manual (PostgreSQL / SQL Server)
-│   ├── DELTA_FORMAT.md          Native Delta output design (TABLE_FORMAT=delta)
-│   └── ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md  Real Oracle/Databricks operations + smoke tests
-├── deploy/
-│   ├── helm/fabric-shortcut-proxy/ Production AKS Helm chart (2.9.3)
-│   └── kubernetes/             Development Kind and validation proofs
-├── infra/fsp-demo/          Parameterized Azure Bicep + PowerShell AKS automation
-├── s3/
-│   ├── router.py            GET / HEAD / ListObjectsV2 endpoints (warehouse + mount routing)
-│   ├── auth.py              AWS SigV4 verification (multi-key resolver; H3)
-│   └── xml_responses.py     S3 XML body builders (+ ListObjectsV2 pagination)
-├── iceberg/
-│   ├── schema.py            Iceberg ↔ PyArrow type mapping
-│   ├── metadata.py          Build metadata.json (+ snapshot history, F2)
-│   ├── manifest.py          Manifest list + manifest file (Avro, + stats F3)
-│   ├── stats.py             Column stats + Iceberg value encoding (F3)
-│   ├── state_store.py       Snapshot/version registry + split descriptors
-│   └── freshness.py         Content-addressed refresh + poller (AUTO_REFRESH)
-├── delta/
-│   └── log.py               Native Delta _delta_log emitter (TABLE_FORMAT=delta)
-├── planner/
-│   ├── split_planner.py     Virtual file path → parameterised SQL
-│   └── dialects.py          Per-dialect SQL: SQLite/Postgres/SQL Server (F6)
-├── db/
-│   ├── executor.py          Async SQL execution (retry, schema validation)
-│   └── reflect.py           Reflect an arbitrary DB (config builder)
-├── parquet/
-│   └── generator.py         SQL rows → Parquet bytes (PyArrow)
-├── cache/
-│   └── lru_cache.py         In-memory + optional disk Parquet cache (F5), split pinning
-├── observability/
-│   ├── logging.py           structlog setup
-│   ├── metrics.py           stdlib Prometheus-style metrics (H1)
-│   ├── endpoints.py         /healthz /readyz /metrics /_admin (H1/H2)
-│   ├── trace.py             Fabric request-timeline ring buffer
-│   ├── querystats.py        Per-request SQL vs Parquet query-lag
-│   └── audit.py             Storage-proxy access audit log (Phase 4)
-├── security/
-│   ├── access_keys.py       Scoped proxy access keys + per-key ACL (Phase 4)
-│   ├── credential_store.py  Encrypted store (DPAPI/Fernet): DB URLs + upstream S3/Azure creds + access keys
-│   └── credentials.py       Secret scrubbing helpers
-├── storage/
-│   ├── mounts.py            Mount registry (local | s3 | azure) + validation
-│   ├── passthrough.py       Read-only S3 passthrough (list / head / ranged get) + audit
-│   ├── s3_store.py          Native S3 / MinIO backend (ranged streaming + pagination)
-│   ├── s3_auth.py           Outbound S3 auth (static / session / assume_role / web_identity / …)
-│   ├── azure_store.py       Native Azure Blob / ADLS Gen2 backend
-│   └── azure_auth.py        Outbound Azure auth (account_key / SAS / AAD / managed_identity / …)
-├── demo/
-│   └── seed_db.py           Seed SQLite with 50k demo sales rows
-├── configbuilder/           Optional config-builder UI (ENABLE_CONFIG_BUILDER)
-│   ├── router.py            /_config API (connect / inspect)
-│   └── index.html           the single-page app
-├── monitor/                 Optional monitoring dashboard (ENABLE_MONITOR)
-│   ├── router.py            /_monitor API (summary / reset)
-│   └── index.html           the dashboard SPA
-└── tests/                   pytest suite (S3 API, storage proxy, auth/ACL, credential store, …)
-    ├── test_s3_api.py           S3 API + Parquet round-trip
-    ├── test_metadata.py         metadata.json / manifest structure
-    ├── test_parquet_gen.py      Parquet generation
-    ├── test_autoschema.py       Reflected-schema type mapping
-    ├── test_config_file.py      split config-file precedence
-    ├── test_config_builder.py   Config-builder API
-    ├── test_hardening.py        Phase 1/2: range reads, config, snapshot
-    ├── test_metrics_health.py   H1/H2 metrics + health
-    ├── test_phase2.py           Robustness: 416, retry→503, schema drift
-    ├── test_auth.py             H3 SigV4 (botocore-signed)
-    ├── test_dialects.py         F6 SQL dialects
-    ├── test_multitable.py       F1 multi-table isolation
-    ├── test_phase5.py           F5 disk cache / F3 stats / F2 time-travel
-    ├── test_freshness.py        AUTO_REFRESH content-addressed snapshots
-    ├── test_pinning.py          Split pinning (no size drift)
-    ├── test_trace.py            Request-timeline classification
-    ├── test_monitor.py          Monitor dashboard API
-    ├── test_delta.py            Native Delta output + refresh diffs
-    ├── test_capabilities.py     Per-flavor capability matrix tests
-    ├── test_executor_sync_fallback.py  Sync-driver query fallback coverage
-    ├── test_integration_oracle_databricks.py  Real Oracle/Databricks smoke (env-gated)
-    ├── test_storage_proxy.py       Storage proxy P1: local mount + passthrough + coexistence
-    ├── test_storage_proxy_s3.py    Storage proxy P2: native S3/MinIO (auth, streaming, pagination)
-    ├── test_storage_proxy_azure.py Storage proxy P3: native Azure Blob/ADLS
-    ├── test_access_control.py      Storage proxy P4: access keys + ACL + audit + mount enforcement
-    └── test_credential_store.py    Encrypted credential store (DPAPI/Fernet)
+src/fabric_shortcut_proxy/   Lite runtime and shared Python libraries
+├── config.py                Configuration registry and validation
+├── main.py                  FastAPI application and lifespan
+├── s3/, storage/, security/ S3 API, storage mounts, and authorization
+├── db/, planner/, parquet/  Source access, query planning, and Parquet generation
+├── iceberg/, delta/         Table metadata and output formats
+├── runtime/, cache/         Materialization, artifact storage, and caching
+├── open_mirror/             OneLake Open Mirroring publisher
+└── observability/, monitor/, configbuilder/
+                             Logging, diagnostics, and optional web interfaces
+enterprise/                  Separately packaged Manager and control plane
+agent-cpp/                   Native serving Agent and publishing tools
+tests/                       Core and Enterprise test suites
+deploy/                      Helm and Kubernetes manifests
+infra/                       Azure infrastructure and deployment automation
+docs/                        Operator guides, architecture, and reference material
+config/examples/             Committed JSON templates for local configuration
+main.py                      Source-checkout launcher kept for existing commands
+Manager.ps1, Manager.sh      Local Manager and Agent bootstrap scripts
 ```
 
   ## Oracle + Databricks Integration Coverage

@@ -196,7 +196,7 @@ async def test_proxy_open_mirror_with_no_agents(proxy_app):
 
 
 async def test_proxy_logs_with_no_agents(proxy_app):
-    from observability.logbuffer import get_buffer
+    from fabric_shortcut_proxy.observability.logbuffer import get_buffer
 
     buf = get_buffer()
     buf.clear()

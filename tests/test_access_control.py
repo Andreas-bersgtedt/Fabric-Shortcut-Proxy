@@ -13,9 +13,9 @@ os.environ.setdefault("DB_URL", f"sqlite+aiosqlite:///{_DB.as_posix()}")
 import httpx
 import pytest
 
-import config
-from s3.auth import verify_signature, SigV4Error
-from security import access_keys as ak
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.s3.auth import verify_signature, SigV4Error
+from fabric_shortcut_proxy.security import access_keys as ak
 
 botocore = pytest.importorskip("botocore")
 from botocore.auth import S3SigV4Auth
@@ -133,7 +133,7 @@ def test_verify_signature_resolver_unknown_key():
 # ---------------------------------------------------------------------------
 
 def test_audit_records_and_scrubs(monkeypatch):
-    from observability import audit
+    from fabric_shortcut_proxy.observability import audit
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
     audit.record(identity="FSPKEY", bucket="secure-nfs", key="a/b.txt", backend="local",
                  method="GET", status=200, bytes_=123)
@@ -148,7 +148,7 @@ def test_audit_records_and_scrubs(monkeypatch):
 @pytest.fixture
 def cb_app(tmp_path, monkeypatch):
     from fastapi import FastAPI
-    from configbuilder.router import router as cb_router
+    from fabric_shortcut_proxy.configbuilder.router import router as cb_router
     monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True, raising=False)
     monkeypatch.setattr(config, "CREDENTIAL_STORE_PATH", str(tmp_path / "credentials.json"), raising=False)
     ak.invalidate_cache()
@@ -162,7 +162,7 @@ def _client(app):
 
 
 async def test_access_key_create_list_rotate_delete(cb_app, tmp_path):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     if not CredentialStore(str(tmp_path / "credentials.json")).available:
         pytest.skip("no encryption backend available on this host")
     async with _client(cb_app) as c:
@@ -183,7 +183,7 @@ async def test_access_key_create_list_rotate_delete(cb_app, tmp_path):
 
 
 async def test_access_key_rejects_invalid(cb_app, tmp_path):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     if not CredentialStore(str(tmp_path / "credentials.json")).available:
         pytest.skip("no encryption backend available on this host")
     async with _client(cb_app) as c:
@@ -198,9 +198,9 @@ async def test_access_key_rejects_invalid(cb_app, tmp_path):
 @pytest.fixture
 def mount_app(tmp_path, monkeypatch):
     (tmp_path / "readme.txt").write_bytes(b"hello world")
-    import storage.mounts as mounts
-    from storage.mounts import Mount
-    from runtime.artifact_store import LocalDirStore
+    import fabric_shortcut_proxy.storage.mounts as mounts
+    from fabric_shortcut_proxy.storage.mounts import Mount
+    from fabric_shortcut_proxy.runtime.artifact_store import LocalDirStore
 
     monkeypatch.setenv("ENABLE_STORAGE_PROXY", "1")
     monkeypatch.setattr(mounts, "MOUNTS", {"secure-nfs": Mount("secure-nfs", "local", str(tmp_path))})
@@ -235,7 +235,7 @@ async def test_mount_forces_auth_and_legacy_key_allowed(mount_app, monkeypatch):
 
 
 async def test_mount_denies_out_of_scope_acl_key(mount_app, tmp_path):
-    from security.credential_store import CredentialStore
+    from fabric_shortcut_proxy.security.credential_store import CredentialStore
     st = CredentialStore(str(tmp_path / "credentials.json"))
     if not st.available:
         pytest.skip("no encryption backend available on this host")

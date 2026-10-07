@@ -21,10 +21,10 @@ os.environ.setdefault("S3_BUCKET", "test-bucket")
 
 import pytest
 
-import config
-from s3.router import _apply_range
-from iceberg.state_store import build_snapshot
-from iceberg.metadata import build_metadata_json
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.s3.router import _apply_range
+from fabric_shortcut_proxy.iceberg.state_store import build_snapshot
+from fabric_shortcut_proxy.iceberg.metadata import build_metadata_json
 
 
 # ---------------------------------------------------------------------------

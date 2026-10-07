@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError
 
-from db.reflect import build_url
+from fabric_shortcut_proxy.db.reflect import build_url
 
 _FIXTURE_ROWS = [
     {"id": 1, "event_ts": datetime(2024, 1, 1, 0, 0), "email": None},

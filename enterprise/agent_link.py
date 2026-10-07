@@ -19,10 +19,10 @@ import platform
 import socket
 from typing import Callable
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.contract import RegisterRequest, HeartbeatRequest, AgentHealth
 from enterprise.control.transport import ControlClient, RestControlClient, StaleLeaseError
-from observability.logging import get_logger
+from fabric_shortcut_proxy.observability.logging import get_logger
 
 try:
     import psutil
@@ -52,7 +52,7 @@ def _os_name() -> str:
 def _serving_state() -> tuple[list[str], dict[str, int]]:
     """Return (tables, {table: epoch}) currently served, from the state store."""
     try:
-        from iceberg.state_store import get_all_snapshots
+        from fabric_shortcut_proxy.iceberg.state_store import get_all_snapshots
         snaps = get_all_snapshots()
         epochs: dict[str, int] = {}
         for s in snaps:

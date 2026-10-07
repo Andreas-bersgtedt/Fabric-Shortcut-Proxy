@@ -13,10 +13,10 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 
 import pyarrow.parquet as pq
 
-import parquet.generator as generator
-from parquet.generator import rows_to_parquet
-import config
-from config import ColumnDef
+import fabric_shortcut_proxy.parquet.generator as generator
+from fabric_shortcut_proxy.parquet.generator import rows_to_parquet
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef
 
 
 def _sample_rows(n: int = 10) -> list[dict]:
@@ -115,7 +115,7 @@ def test_decimal_value_converts_directly_for_stale_string_schema(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streaming_decimal_value_uses_binary_compatibility_path():
-    from parquet.generator import stream_rows_to_parquet
+    from fabric_shortcut_proxy.parquet.generator import stream_rows_to_parquet
 
     columns = [
         ColumnDef(field_id=1, name="weight", iceberg_type="binary", nullable=True)

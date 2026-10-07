@@ -16,10 +16,10 @@ from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import db.reflect as reflect
-from db.reflect import build_url, detect_key_column, UnsupportedDialect
-from configbuilder.router import _clean_error, _conn_fields, _connection_form_fields
-from configbuilder.router import router as cb_router
+import fabric_shortcut_proxy.db.reflect as reflect
+from fabric_shortcut_proxy.db.reflect import build_url, detect_key_column, UnsupportedDialect
+from fabric_shortcut_proxy.configbuilder.router import _clean_error, _conn_fields, _connection_form_fields
+from fabric_shortcut_proxy.configbuilder.router import router as cb_router
 
 _DB = pathlib.Path(__file__).parent / "test_cfgbuilder.db"
 
@@ -29,9 +29,13 @@ _DB = pathlib.Path(__file__).parent / "test_cfgbuilder.db"
 # ---------------------------------------------------------------------------
 
 def test_manager_fleet_probe_runs_only_after_session_authentication():
-    html = (pathlib.Path(__file__).parents[1] / "configbuilder" / "index.html").read_text(
-        encoding="utf-8"
-    )
+    html = (
+        pathlib.Path(__file__).parents[1]
+        / "src"
+        / "fabric_shortcut_proxy"
+        / "configbuilder"
+        / "index.html"
+    ).read_text(encoding="utf-8")
     call_sites = [line.strip() for line in html.splitlines() if "loadManagerFleet();" in line]
     assert call_sites == ["await loadManagerFleet();"]
     assert '<body class="auth-pending">' in html
@@ -45,9 +49,13 @@ def test_manager_fleet_probe_runs_only_after_session_authentication():
 
 
 def test_settings_search_matches_environment_variable_names():
-    html = (pathlib.Path(__file__).parents[1] / "configbuilder" / "index.html").read_text(
-        encoding="utf-8"
-    )
+    html = (
+        pathlib.Path(__file__).parents[1]
+        / "src"
+        / "fabric_shortcut_proxy"
+        / "configbuilder"
+        / "index.html"
+    ).read_text(encoding="utf-8")
     env_search = '(s.env||"").toLowerCase().includes(q)'
     assert html.count(env_search) == 2
 
@@ -210,7 +218,7 @@ def test_build_url_mssql_default_identity():
 
 
 def test_conn_fields_entra_proxy_reuses_service_principal(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     monkeypatch.setattr(config, "AUTH_MODE", "service_principal", raising=False)
     monkeypatch.setattr(config, "AZURE_CLIENT_ID", "proxy-app-id", raising=False)
     monkeypatch.setenv("AZURE_CLIENT_SECRET", "proxy-secret")
@@ -224,7 +232,7 @@ def test_conn_fields_entra_proxy_reuses_service_principal(monkeypatch):
 
 
 def test_conn_fields_entra_proxy_managed_identity(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     monkeypatch.setattr(config, "AUTH_MODE", "managed_identity", raising=False)
     monkeypatch.setattr(config, "AZURE_CLIENT_ID", "mi-client", raising=False)
     out = _conn_fields({"dialect": "mssql", "host": "h", "database": "db",
@@ -234,7 +242,7 @@ def test_conn_fields_entra_proxy_managed_identity(monkeypatch):
 
 
 def test_conn_fields_entra_proxy_default(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     monkeypatch.setattr(config, "AUTH_MODE", "default", raising=False)
     monkeypatch.setattr(config, "AZURE_CLIENT_ID", "", raising=False)
     out = _conn_fields({"dialect": "mssql", "host": "h", "database": "db",
@@ -244,7 +252,7 @@ def test_conn_fields_entra_proxy_default(monkeypatch):
 
 
 def test_conn_fields_entra_proxy_sp_missing_secret_errors(monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
     monkeypatch.setattr(config, "AUTH_MODE", "service_principal", raising=False)
     monkeypatch.setattr(config, "AZURE_CLIENT_ID", "proxy-app-id", raising=False)
     monkeypatch.delenv("AZURE_CLIENT_SECRET", raising=False)
@@ -255,7 +263,7 @@ def test_conn_fields_entra_proxy_sp_missing_secret_errors(monkeypatch):
 
 def test_clean_error_im002_adds_driver_hint(monkeypatch):
     monkeypatch.setattr(
-        "configbuilder.router._installed_sql_server_odbc_drivers",
+        "fabric_shortcut_proxy.configbuilder.router._installed_sql_server_odbc_drivers",
         lambda: ["ODBC Driver 17 for SQL Server"],
     )
     err = Exception(
@@ -421,7 +429,7 @@ async def test_index_serves_html(app):
 
 
 async def test_apply_empty_tables_persists_and_updates_bootstrap(app, tmp_path, monkeypatch):
-    import configbuilder.router as router_module
+    import fabric_shortcut_proxy.configbuilder.router as router_module
 
     monkeypatch.chdir(tmp_path)
     router_module._BUILDER_TABLES_OVERRIDE = None
@@ -441,8 +449,8 @@ async def test_apply_empty_tables_persists_and_updates_bootstrap(app, tmp_path, 
 
 
 async def test_delete_connection_persists_and_removes_credential(app, tmp_path, monkeypatch):
-    import config
-    import configbuilder.router as router_module
+    from fabric_shortcut_proxy import config
+    import fabric_shortcut_proxy.configbuilder.router as router_module
 
     class FakeStore:
         deleted = []
@@ -501,7 +509,7 @@ async def test_delete_connection_rejects_primary_connection(app):
 
 
 def test_settings_catalog_has_defaults():
-    import config
+    from fabric_shortcut_proxy import config
     cat = config.settings_catalog()
     m = {s["key"]: s for s in cat}
     # A representative spread of settings with their built-in defaults.
@@ -544,7 +552,7 @@ async def test_tokenization_key_references_hide_values(app, monkeypatch):
 
 
 async def test_reidentification_mapping_status_is_metadata_only(app, monkeypatch, tmp_path):
-    import configbuilder.router as router_module
+    import fabric_shortcut_proxy.configbuilder.router as router_module
 
     monkeypatch.setenv("FSP_CONFIG_DIR", str(tmp_path))
     monkeypatch.setattr(router_module, "_check_security_permission", lambda *_: None)
@@ -578,7 +586,7 @@ async def test_bootstrap_api_prefills_running_builder_config(app):
 
 
 async def test_bootstrap_api_preserves_column_policies(app, monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
 
     table = config.TableDef(
         name="customers_safe",
@@ -672,7 +680,7 @@ async def test_inspect_reflects_and_detects_key(app, db_path):
     ["databricks://dbc.example", "impala://host:21050/analytics"],
 )
 async def test_key_metadata_does_not_infer_keys_without_pk_reflection(db_url):
-    from configbuilder.router import _split_key_metadata
+    from fabric_shortcut_proxy.configbuilder.router import _split_key_metadata
 
     class ReflectionMustNotRun:
         async def primary_key(self, _source_table):
@@ -693,8 +701,8 @@ async def test_key_metadata_does_not_infer_keys_without_pk_reflection(db_url):
 
 
 async def test_source_catalog_namespaces_database_and_storage(app, db_path, monkeypatch):
-    import config
-    import storage.mounts as mounts
+    from fabric_shortcut_proxy import config
+    import fabric_shortcut_proxy.storage.mounts as mounts
     from types import SimpleNamespace
 
     monkeypatch.setattr(config, "DB_URL", f"sqlite+aiosqlite:///{db_path}")
@@ -714,7 +722,7 @@ async def test_source_catalog_namespaces_database_and_storage(app, db_path, monk
 
 
 async def test_saved_source_discovery_and_inspection(app, db_path, monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
 
     url = f"sqlite+aiosqlite:///{db_path}"
     monkeypatch.setattr(config, "effective_db_url", lambda connection_id="default": url)
@@ -741,7 +749,7 @@ async def test_saved_source_discovery_and_inspection(app, db_path, monkeypatch):
 
 
 async def test_saved_source_validation_uses_effective_url(app, db_path, monkeypatch):
-    import config
+    from fabric_shortcut_proxy import config
 
     url = f"sqlite+aiosqlite:///{db_path}"
     monkeypatch.setattr(config, "effective_db_url", lambda connection_id="default": url)
@@ -769,9 +777,13 @@ async def test_saved_source_validation_rejects_unknown_source(app):
 
 
 def test_builder_has_source_and_table_edit_actions():
-    html = (pathlib.Path(__file__).parents[1] / "configbuilder" / "index.html").read_text(
-        encoding="utf-8"
-    )
+    html = (
+        pathlib.Path(__file__).parents[1]
+        / "src"
+        / "fabric_shortcut_proxy"
+        / "configbuilder"
+        / "index.html"
+    ).read_text(encoding="utf-8")
 
     assert 'edit.textContent = "Edit"' in html
     assert 'validate.textContent = c.validating ? "Validating…" : "Validate"' in html

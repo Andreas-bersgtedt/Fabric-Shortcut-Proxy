@@ -538,8 +538,8 @@ Validate from the Manager pod without printing existing secret values:
 
 ```bash
 kubectl -n fabric-shortcut-proxy exec deployment/fsp-manager -- python - <<'PY'
-from security import keyvault as kv
-import config
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.security import keyvault as kv
 cfg = kv.config_from_settings(config)
 source = kv.KeyVaultSecretSource(cfg)
 print(source.probe())

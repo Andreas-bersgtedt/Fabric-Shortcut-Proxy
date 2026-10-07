@@ -12,9 +12,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.auth import ManagerAuthMiddleware, manager_auth_active
-from security.agent_auth import AgentAuthMiddleware
+from fabric_shortcut_proxy.security.agent_auth import AgentAuthMiddleware
 
 
 def _app() -> FastAPI:
@@ -122,7 +122,7 @@ async def test_entra_enabled_does_not_emit_browser_basic_challenge(_enable_auth,
 
 
 async def test_slow_bearer_auth_does_not_block_health_probe(_enable_auth, monkeypatch):
-    from security.authorization import User
+    from fabric_shortcut_proxy.security.authorization import User
 
     started = threading.Event()
     release = threading.Event()
@@ -132,7 +132,7 @@ async def test_slow_bearer_auth_does_not_block_health_probe(_enable_auth, monkey
         release.wait(timeout=2)
         return User("entra-operator", roles=("monitor_troubleshooter",))
 
-    monkeypatch.setattr("security.identity.authenticate_entra_token", slow_authenticate)
+    monkeypatch.setattr("fabric_shortcut_proxy.security.identity.authenticate_entra_token", slow_authenticate)
     async with _client(_app()) as client:
         protected_task = asyncio.create_task(client.get(
             "/_manager/api/fleet", headers={"Authorization": "Bearer signed-token"}
@@ -155,7 +155,7 @@ async def test_wrong_and_malformed_credentials_rejected(_enable_auth):
 
 
 async def test_operator_auth_denial_is_audited_without_credentials(_enable_auth, monkeypatch):
-    from observability import audit
+    from fabric_shortcut_proxy.observability import audit
 
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True, raising=False)
     async with _client(_app()) as c:
@@ -193,7 +193,7 @@ async def test_standalone_gate_protects_only_operator_routes(_enable_auth):
 
 
 async def test_basic_identity_reaches_rbac_in_composed_stack(_enable_auth):
-    from security.authorization_middleware import AuthorizationMiddleware
+    from fabric_shortcut_proxy.security.authorization_middleware import AuthorizationMiddleware
 
     app = FastAPI()
     app.add_middleware(AuthorizationMiddleware)
@@ -227,8 +227,8 @@ async def test_standalone_incomplete_auth_fails_closed_only_for_operator_routes(
 
 
 async def test_valid_local_session_also_passes_manager_basic_gate(_enable_auth, tmp_path, monkeypatch):
-    from security.authorization import User
-    from security.identity import IdentityProvider, identity_provider
+    from fabric_shortcut_proxy.security.authorization import User
+    from fabric_shortcut_proxy.security.identity import IdentityProvider, identity_provider
 
     identity_path = tmp_path / "identities.json"
     monkeypatch.setenv("FSP_IDENTITY_FILE", str(identity_path))
@@ -244,10 +244,10 @@ async def test_valid_local_session_also_passes_manager_basic_gate(_enable_auth, 
 
 
 async def test_valid_oidc_bearer_also_passes_manager_basic_gate(_enable_auth, monkeypatch):
-    from security.authorization import User
+    from fabric_shortcut_proxy.security.authorization import User
 
     monkeypatch.setattr(
-        "security.identity.authenticate_oidc_token",
+        "fabric_shortcut_proxy.security.identity.authenticate_oidc_token",
         lambda token: User("external-ops", roles=("monitor_troubleshooter",))
         if token == "signed-token" else None,
     )

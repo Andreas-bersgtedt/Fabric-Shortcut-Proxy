@@ -18,16 +18,16 @@ import pyarrow.parquet as pq
 import pytest
 from sqlalchemy import create_engine, text
 
-import config
-from config import ColumnDef
-from db import executor
-from open_mirror import source as om_source
-from open_mirror import target_from_dict
-from open_mirror.changes import RowMarker, compute_changes
-from open_mirror.cleanup import cleanup_target, inspect_cleanup
-from open_mirror.landing_zone import LocalLandingZone
-from open_mirror.publisher import ROW_MARKER_COLUMN, LandingZonePublisher
-from open_mirror.state import (
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef
+from fabric_shortcut_proxy.db import executor
+from fabric_shortcut_proxy.open_mirror import source as om_source
+from fabric_shortcut_proxy.open_mirror import target_from_dict
+from fabric_shortcut_proxy.open_mirror.changes import RowMarker, compute_changes
+from fabric_shortcut_proxy.open_mirror.cleanup import cleanup_target, inspect_cleanup
+from fabric_shortcut_proxy.open_mirror.landing_zone import LocalLandingZone
+from fabric_shortcut_proxy.open_mirror.publisher import ROW_MARKER_COLUMN, LandingZonePublisher
+from fabric_shortcut_proxy.open_mirror.state import (
     CommittedCursor,
     PendingBatch,
     PublishState,
@@ -335,7 +335,7 @@ async def test_incremental_cycle_initial_then_diff(sqlite_src):
     state = load_state(str(tmp_path / "state"), target, table).state
     assert state.published_rows_total == 6
     assert state.last_batch_rows == 3
-    from monitor.router import _landing_zone_rows
+    from fabric_shortcut_proxy.monitor.router import _landing_zone_rows
     assert _landing_zone_rows(target, table) == 6
 
     change_file = landing / "dbo.schema" / "sales" / "00000000000000000002.parquet"
@@ -396,8 +396,8 @@ async def test_scheduler_run_cycle(sqlite_src, monkeypatch):
     tmp_path, db = sqlite_src
     landing = tmp_path / "lz"
     target = _target(landing)
-    monkeypatch.setattr("open_mirror.config.load_targets", lambda *a, **k: [target])
-    from open_mirror.scheduler import run_cycle
+    monkeypatch.setattr("fabric_shortcut_proxy.open_mirror.config.load_targets", lambda *a, **k: [target])
+    from fabric_shortcut_proxy.open_mirror.scheduler import run_cycle
     results = await run_cycle()
     assert results[0].results[0].action == "initial"
     assert (landing / "dbo.schema" / "sales" / "00000000000000000001.parquet").exists()
@@ -407,9 +407,9 @@ async def test_scheduler_run_cycle(sqlite_src, monkeypatch):
 
 import datetime as _dt
 
-from open_mirror.source import _max_watermark, _select_ordered_sql, _select_since_sql
-from open_mirror.state import decode_watermark, encode_watermark
-from planner.dialects import _MSSQL, _ORACLE, _SQLITE
+from fabric_shortcut_proxy.open_mirror.source import _max_watermark, _select_ordered_sql, _select_since_sql
+from fabric_shortcut_proxy.open_mirror.state import decode_watermark, encode_watermark
+from fabric_shortcut_proxy.planner.dialects import _MSSQL, _ORACLE, _SQLITE
 
 
 def test_watermark_encode_decode_roundtrip():

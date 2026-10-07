@@ -10,18 +10,18 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request, Response
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.contract import HeartbeatRequest, RegisterRequest, TaskResult
 from enterprise.control.registry import Registry
 from enterprise.control.server import ControlService
 from enterprise.control.transport import RestControlClient, create_control_router
-from security.agent_auth import (
+from fabric_shortcut_proxy.security.agent_auth import (
     AGENT_ID_HEADER,
     AGENT_TOKEN_HEADER,
     AgentAuthMiddleware,
     AgentTokenProvider,
 )
-from security.operator_auth import ManagerAuthMiddleware
+from fabric_shortcut_proxy.security.operator_auth import ManagerAuthMiddleware
 
 ACTIVE = "a" * 64
 PREVIOUS = "b" * 64
@@ -284,7 +284,7 @@ async def test_concurrent_valid_and_invalid_requests_are_isolated():
 
 
 def test_provider_compares_active_and_previous_candidates(monkeypatch):
-    from security import agent_auth
+    from fabric_shortcut_proxy.security import agent_auth
 
     monkeypatch.setenv("AGENT_TOKEN_PREVIOUS", PREVIOUS)
     monkeypatch.setenv("AGENT_TOKEN_PREVIOUS_VALID_UNTIL", str(int(time.time()) + 60))
@@ -398,7 +398,7 @@ async def test_python_client_authenticates_every_control_call():
 
 
 async def test_failed_auth_audit_contains_reason_not_token(tmp_path, monkeypatch):
-    from observability import audit
+    from fabric_shortcut_proxy.observability import audit
 
     audit_path = tmp_path / "audit.jsonl"
     monkeypatch.setattr(config, "ENABLE_AUDIT_LOG", True)

@@ -15,8 +15,8 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
 import pyarrow.parquet as pq
 import pytest
 
-from config import ColumnDef
-from open_mirror import (
+from fabric_shortcut_proxy.config import ColumnDef
+from fabric_shortcut_proxy.open_mirror import (
     LandingZonePublisher,
     LocalLandingZone,
     build_landing_parquet,
@@ -28,9 +28,9 @@ from open_mirror import (
     table_relative_path,
     target_from_dict,
 )
-from open_mirror.config import load_targets
-from open_mirror.metadata import build_partner_events, build_table_metadata
-from open_mirror.publisher import ROW_MARKER_COLUMN
+from fabric_shortcut_proxy.open_mirror.config import load_targets
+from fabric_shortcut_proxy.open_mirror.metadata import build_partner_events, build_table_metadata
+from fabric_shortcut_proxy.open_mirror.publisher import ROW_MARKER_COLUMN
 
 
 _COLUMNS = [
@@ -117,7 +117,7 @@ def test_is_onelake_uri():
 def test_open_landing_zone_returns_onelake_backend(tmp_path):
     # OneLake URIs resolve to the OneLake ADLS backend (auth reuses the proxy identity);
     # local paths resolve to the filesystem backend.
-    from open_mirror.onelake import OneLakeLandingZone
+    from fabric_shortcut_proxy.open_mirror.onelake import OneLakeLandingZone
     zone = open_landing_zone("https://onelake.dfs.fabric.microsoft.com/ws/db/Files/LandingZone")
     assert isinstance(zone, OneLakeLandingZone)
     assert isinstance(open_landing_zone(str(tmp_path)), LocalLandingZone)

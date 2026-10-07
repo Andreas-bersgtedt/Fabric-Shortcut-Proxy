@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
-import config
+from fabric_shortcut_proxy import config
 from enterprise.control.registry import Registry
 from enterprise.control.contract import RegisterRequest
 from enterprise.control.gateway import Gateway, create_gateway_router, _dial_host

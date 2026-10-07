@@ -200,4 +200,4 @@ fail closed with actionable diagnostics.
 - [TOKENIZATION_MULTI_DIALECT_UAT.md](../TOKENIZATION_MULTI_DIALECT_UAT.md)
 - [TOKENIZATION_OPEN_MIRROR_UAT.md](../TOKENIZATION_OPEN_MIRROR_UAT.md)
 - [UsecasesAndScenarios.md](../UsecasesAndScenarios.md)
-- [Open Mirror configuration](../../config.open_mirror.example.json)
+- [Open Mirror configuration](../../config/examples/config.open_mirror.example.json)

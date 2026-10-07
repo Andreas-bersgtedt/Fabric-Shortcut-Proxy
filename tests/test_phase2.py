@@ -18,13 +18,13 @@ os.environ["S3_BUCKET"] = "p2-bucket"
 
 import pytest
 
-import config
+from fabric_shortcut_proxy import config
 config.DB_URL = f"sqlite+aiosqlite:///{_DB.as_posix()}"
 config.NUM_SPLITS = 4
 config.BUCKET_NAME = "p2-bucket"
 
-from s3.router import _make_object_response, _range_is_unsatisfiable
-from s3.xml_responses import error_response
+from fabric_shortcut_proxy.s3.router import _make_object_response, _range_is_unsatisfiable
+from fabric_shortcut_proxy.s3.xml_responses import error_response
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ def test_validate_config_rejects_zero_concurrency(monkeypatch):
 # ---------------------------------------------------------------------------
 
 async def test_execute_split_query_raises_source_unavailable(monkeypatch):
-    import db.executor as ex
+    import fabric_shortcut_proxy.db.executor as ex
 
     monkeypatch.setattr(config, "DB_RETRY_BACKOFF_SECONDS", 0.0)
 
@@ -104,8 +104,8 @@ async def test_execute_split_query_raises_source_unavailable(monkeypatch):
 
 @pytest.fixture(scope="module")
 async def seeded():
-    from demo.seed_db import seed_demo_database
-    import db.executor as ex
+    from fabric_shortcut_proxy.demo.seed_db import seed_demo_database
+    import fabric_shortcut_proxy.db.executor as ex
 
     ex._engine = None
     await seed_demo_database()
@@ -116,13 +116,13 @@ async def seeded():
 
 
 async def test_validate_source_schema_ok(seeded):
-    from db.executor import validate_source_schema
+    from fabric_shortcut_proxy.db.executor import validate_source_schema
     await validate_source_schema()  # declared columns all present -> no raise
 
 
 async def test_validate_source_schema_missing_column(seeded, monkeypatch):
-    from db.executor import validate_source_schema
-    from config import ColumnDef
+    from fabric_shortcut_proxy.db.executor import validate_source_schema
+    from fabric_shortcut_proxy.config import ColumnDef
 
     bad = list(config.TABLE_SCHEMA) + [
         ColumnDef(field_id=99, name="nonexistent_col", iceberg_type="string")
@@ -134,13 +134,13 @@ async def test_validate_source_schema_missing_column(seeded, monkeypatch):
 
 
 async def test_validate_source_schema_uses_transform_source(monkeypatch):
-    from db.executor import validate_source_schema
-    from config import ColumnDef, ColumnTransform, TableDef
+    from fabric_shortcut_proxy.db.executor import validate_source_schema
+    from fabric_shortcut_proxy.config import ColumnDef, ColumnTransform, TableDef
 
     async def _columns(_table, _connection):
         return ["customer_id", "email"]
 
-    monkeypatch.setattr("db.executor.introspect_columns", _columns)
+    monkeypatch.setattr("fabric_shortcut_proxy.db.executor.introspect_columns", _columns)
     table = TableDef(
         name="customers_safe",
         source_table="dbo.customers",
@@ -162,7 +162,7 @@ async def test_validate_source_schema_uses_transform_source(monkeypatch):
 
 
 def test_token_query_params_are_redacted_for_logs():
-    from db.executor import _params_for_log
+    from fabric_shortcut_proxy.db.executor import _params_for_log
 
     logged = _params_for_log({
         "split_index": 1,

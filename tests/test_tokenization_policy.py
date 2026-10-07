@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import config
+from fabric_shortcut_proxy import config
 import pytest
-from tokenization.policy import (
+from fabric_shortcut_proxy.tokenization.policy import (
     algorithm_specs,
     default_registry_path,
     TokenizationPolicy,
@@ -58,7 +58,7 @@ def test_tokenization_key_resolves_from_encrypted_store(monkeypatch):
 
     monkeypatch.delenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", raising=False)
     monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True)
-    monkeypatch.setattr("security.credential_store.CredentialStore", Store)
+    monkeypatch.setattr("fabric_shortcut_proxy.security.credential_store.CredentialStore", Store)
     assert config.resolve_tokenization_key("customer-pii-v1") == "stored-key"
 
 
@@ -68,7 +68,7 @@ def test_tokenization_key_environment_precedes_store(monkeypatch):
             raise AssertionError("store should not be opened when the environment has a key")
 
     monkeypatch.setenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", "deployment-key")
-    monkeypatch.setattr("security.credential_store.CredentialStore", Store)
+    monkeypatch.setattr("fabric_shortcut_proxy.security.credential_store.CredentialStore", Store)
     assert config.resolve_tokenization_key("customer-pii-v1") == "deployment-key"
 
 
@@ -91,11 +91,11 @@ def test_tokenization_key_reads_through_keyvault_on_local_miss(monkeypatch):
 
     monkeypatch.delenv("FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1", raising=False)
     monkeypatch.setattr(config, "ENABLE_CREDENTIAL_STORE", True)
-    monkeypatch.setattr("security.credential_store.CredentialStore", Store)
-    monkeypatch.setattr("security.keyvault.config_from_settings", lambda _settings: VaultConfig())
-    monkeypatch.setattr("security.keyvault.KeyVaultSecretSource", lambda _config: object())
+    monkeypatch.setattr("fabric_shortcut_proxy.security.credential_store.CredentialStore", Store)
+    monkeypatch.setattr("fabric_shortcut_proxy.security.keyvault.config_from_settings", lambda _settings: VaultConfig())
+    monkeypatch.setattr("fabric_shortcut_proxy.security.keyvault.KeyVaultSecretSource", lambda _config: object())
     monkeypatch.setattr(
-        "security.keyvault.read_through_for",
+        "fabric_shortcut_proxy.security.keyvault.read_through_for",
         lambda _source, _config: lambda kind, key: (
             {"value": "vault-key"}
             if (kind, key) == ("secret", "tokenization:customer-pii-v1") else None
@@ -226,7 +226,7 @@ async def test_config_builder_policy_mutation_uses_fsp_config_dir(tmp_path, monk
     monkeypatch.delenv("TOKENIZATION_POLICY_FILE", raising=False)
     monkeypatch.setenv("FSP_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -264,7 +264,7 @@ async def test_config_builder_policy_catalog_is_secret_free(tmp_path, monkeypatc
             key_ref="customer-pii-v1", domain="customer-email",
         ),
     ]))
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -287,7 +287,7 @@ async def test_config_builder_policy_catalog_reports_malformed_file(tmp_path, mo
     path = tmp_path / "central-policies.json"
     path.write_text("{broken", encoding="utf-8")
     monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -306,7 +306,7 @@ async def test_config_builder_policy_mutation_requires_admin_and_never_stores_se
     path = tmp_path / "central-policies.json"
     monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -338,7 +338,7 @@ async def test_manager_session_can_mutate_policy_without_admin_token(tmp_path, m
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator", raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret", raising=False)
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -372,7 +372,7 @@ async def test_config_builder_policy_disable_is_admin_only_and_retains_metadata(
         ),
     ])
     save_registry(str(path), registry)
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -398,7 +398,7 @@ async def test_config_builder_policy_mutation_rejects_secret_field(tmp_path, mon
     path = tmp_path / "central-policies.json"
     monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)
@@ -421,7 +421,7 @@ async def test_config_builder_supports_multiple_named_policies(tmp_path, monkeyp
     path = tmp_path / "central-policies.json"
     monkeypatch.setenv("TOKENIZATION_POLICY_FILE", str(path))
     monkeypatch.setenv("ADMIN_TOKEN", "admin-test-token")
-    from configbuilder.router import router
+    from fabric_shortcut_proxy.configbuilder.router import router
 
     app = FastAPI()
     app.include_router(router)

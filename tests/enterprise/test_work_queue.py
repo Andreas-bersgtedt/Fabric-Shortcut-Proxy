@@ -37,7 +37,7 @@ from enterprise.control.work_queue import (
     WorkQueueError,
 )
 from enterprise.control.lease import LeaderLease, StaleLeaderError
-from runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 
 
 def _parquet(values: list[int] | None = None) -> bytes:
@@ -184,7 +184,7 @@ def test_queue_records_manager_term_and_rejects_stale_leader():
 
 
 def test_superseded_generation_cannot_publish_completed_request():
-    from runtime.generation import acquire_generation
+    from fabric_shortcut_proxy.runtime.generation import acquire_generation
 
     store = MemoryStore()
     generation = acquire_generation(store, shard_count=1)

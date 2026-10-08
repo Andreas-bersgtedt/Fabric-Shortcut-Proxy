@@ -80,6 +80,9 @@ spec:
   volumeName: fsp-artifacts-pv
   {{- else if .Values.storage.artifacts.storageClassName }}
   storageClassName: {{ .Values.storage.artifacts.storageClassName | quote }}
+  {{- else if .Values.storage.artifacts.existingVolumeName }}
+  {{- /* Static PV binding: an explicit empty class stops the default StorageClass being injected. */}}
+  storageClassName: ""
   {{- end }}
   {{- with .Values.storage.artifacts.existingVolumeName }}
   volumeName: {{ . | quote }}

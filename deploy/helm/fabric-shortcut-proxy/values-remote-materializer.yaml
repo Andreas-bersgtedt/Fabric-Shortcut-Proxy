@@ -9,6 +9,7 @@
 #   helm upgrade --install fsp-remote deploy/helm/fabric-shortcut-proxy \
 #     -f deploy/helm/fabric-shortcut-proxy/values-remote-materializer.yaml \
 #     --set managerUrl=https://<control-host> \
+#     --set siteId=<short-site-id> \
 #     --set materializer.egress.managerCidrs[0]=<control-ingress-ip>/32
 #
 # Uninstall:
@@ -16,6 +17,9 @@
 #   (the fsp-artifacts PVC is kept if its storage class retains volumes)
 
 managerUrl: https://fsp-control.example.com
+
+# Required at remote sites: makes agent ids unique across clusters.
+siteId: site-b
 
 manager:
   enabled: false

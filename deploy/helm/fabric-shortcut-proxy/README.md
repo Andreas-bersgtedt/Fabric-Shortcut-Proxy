@@ -86,6 +86,11 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   Defaults to `http://fsp-manager:9200`, the in-cluster service.
 - `manager.enabled`, `cppAgent.enabled`: turn off components a site does not
   run. A remote materializer site sets both to `false`.
+- `siteId`: short DNS-label prefix for the materializer `AGENT_ID`
+  (`<siteId>-<pod>:9000`). Empty keeps the default `<hostname>:9000`. Set a
+  unique value on every site that registers with a shared Manager. Pod names
+  repeat across clusters, and two agents with the same id fight over one lease
+  and loop on HTTP 409 heartbeats.
 - `agentControlIngress`: optional TLS ingress that exposes only the Agent
   control routes of Manager to remote sites. Requires `host` and Manager.
 - `materializer.egress`: optional egress NetworkPolicy for materializer pods.
@@ -156,8 +161,10 @@ egress addresses of the remote sites. Agent auth still applies. Keep
 [values-remote-materializer.yaml](values-remote-materializer.yaml) disables
 Manager, the C++ Agent, nginx, TLS ingress, and Azure Files. It points
 `managerUrl` at the hub ingress and enables materializer egress. Edit
-`managerUrl`, `materializer.egress.managerCidrs`, and
-`materializer.egress.allowList` for the site, then install:
+`siteId`, `managerUrl`, `materializer.egress.managerCidrs`, and
+`materializer.egress.allowList` for the site, then install. `siteId` must be
+unique per site (for example `neu`), or the site's agent ids collide with the
+hub's:
 
 ```bash
 kubectl create namespace fabric-shortcut-proxy

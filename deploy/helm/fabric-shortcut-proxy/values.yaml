@@ -22,6 +22,12 @@ images:
 # Manager agent-control ingress, e.g. https://fsp-control.example.com
 managerUrl: http://fsp-manager:9200
 
+# Short site identifier. When set, materializers register with the Manager
+# as "<siteId>-<pod-name>:9000" instead of "<hostname>:9000", so StatefulSet
+# pods with the same name at different sites do not collide. Leave empty in
+# the control cluster to keep existing agent ids; set it at every remote site.
+siteId: ""
+
 fsp:
   s3Bucket: fabric-iceberg-poc
   artifactStoreBackend: local

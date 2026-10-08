@@ -81,6 +81,14 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.agentAuth.secretName }}
                   key: {{ .Values.agentAuth.activeTokenKey }}
+            {{- if .Values.siteId }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: AGENT_ID
+              value: {{ printf "%s-$(POD_NAME):9000" .Values.siteId | quote }}
+            {{- end }}
             - name: HOST
               value: 0.0.0.0
             - name: PORT

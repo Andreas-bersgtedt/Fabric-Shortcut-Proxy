@@ -156,6 +156,56 @@ It never exposes `/control/work-queue`, `/_config`, `/_manager`, or
 egress addresses of the remote sites. Agent auth still applies. Keep
 `agentAuth.mode=required` (the default) when the ingress is open.
 
+#### Setup checklist
+
+1. **Prerequisites.** The hub cluster needs ingress-nginx and cert-manager
+   with a ClusterIssuer. The chart can create one through
+   `certManager.clusterIssuer`; otherwise set
+   `agentControlIngress.clusterIssuer` to an existing issuer.
+2. **DNS.** Find the ingress-nginx LoadBalancer address and create an A
+   record for `agentControlIngress.host` that points to it:
+
+   ```bash
+   kubectl -n ingress-nginx get svc ingress-nginx-controller \
+     -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+   ```
+
+3. **Values.** Put the settings in the site values file instead of `--set`:
+
+   ```yaml
+   agentControlIngress:
+     enabled: true
+     host: fsp-control.example.com
+     clusterIssuer: letsencrypt-prod
+   ```
+
+4. **Apply.** Use `helm upgrade` as shown above. If cluster policy blocks
+   Helm, render the template locally and apply it with `kubectl`:
+
+   ```bash
+   helm template fsp deploy/helm/fabric-shortcut-proxy \
+     --namespace fabric-shortcut-proxy -f values-site.yaml \
+     --show-only templates/agent-control-ingress.yaml > agent-control-ingress.yaml
+   kubectl apply -f agent-control-ingress.yaml
+   ```
+
+5. **Verify.** Check that the certificate is issued and that only Agent
+   control routes answer:
+
+   ```bash
+   kubectl -n fabric-shortcut-proxy get secret fsp-agent-control-tls
+   curl -s -o /dev/null -w '%{http_code}\n' https://fsp-control.example.com/control/heartbeat  # 401 without Agent credentials
+   curl -s -o /dev/null -w '%{http_code}\n' https://fsp-control.example.com/_manager           # 404
+   ```
+
+   A 401 on `/control/heartbeat` shows the route reaches Manager and Agent
+   auth is enforced. Any other path should return 404.
+
+`sourceRanges` also applies to the cert-manager HTTP-01 solver. When it is
+set, Let's Encrypt validation requests are rejected and certificate renewal
+fails. Either allow the Let's Encrypt validation traffic or use a DNS-01
+issuer when you restrict source ranges.
+
 ### Remote cluster: materializer-only profile
 
 [values-remote-materializer.yaml](values-remote-materializer.yaml) disables

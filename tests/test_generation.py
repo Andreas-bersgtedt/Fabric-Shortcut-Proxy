@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -211,3 +212,55 @@ def test_failed_plan_is_redacted_and_join_fails_immediately():
     assert failure["error"].count("[REDACTED]") == 2
     with pytest.raises(GenerationError, match="planning failed"):
         join_generation(store, 2, timeout_seconds=0.1)
+
+
+def _expire_lease(store):
+    record = json.loads(store.get(COORDINATOR_KEY))
+    record["expires_at_ms"] = int(time.time() * 1000) - 60_000
+    store.put(COORDINATOR_KEY, json.dumps(record).encode())
+
+
+def _write_build(store, context, state):
+    store.put(
+        BUILD_KEY,
+        json.dumps(
+            {
+                "version": 2,
+                "state": state,
+                "generation_id": context.generation_id,
+                "fence": context.fence,
+                "lease_token": context.lease_token,
+                "plan_sha256": context.plan_sha256,
+            }
+        ).encode(),
+    )
+
+
+def test_late_worker_joins_active_generation_after_lease_expired():
+    store = MemoryStore()
+    acquired = acquire_generation(store, 3)
+    _write_build(store, acquired, "ACTIVE")
+    _expire_lease(store)
+
+    joined = join_generation(store, 3, timeout_seconds=0.1)
+    assert joined.generation_id == acquired.generation_id
+
+
+def test_join_rejects_expired_lease_for_unfinished_build():
+    store = MemoryStore()
+    acquired = acquire_generation(store, 3)
+    _write_build(store, acquired, "STAGING")
+    _expire_lease(store)
+
+    with pytest.raises(TimeoutError):
+        join_generation(store, 3, timeout_seconds=0.3)
+
+
+def test_renewal_with_stale_context_after_external_renewal():
+    store = MemoryStore()
+    acquired = acquire_generation(store, 1)
+    renew_generation(store, acquired, lease_seconds=600)
+
+    renewed = renew_generation(store, acquired, lease_seconds=3600)
+    assert renewed.generation_id == acquired.generation_id
+    assert renewed.expires_at_ms > int(time.time() * 1000) + 3000_000

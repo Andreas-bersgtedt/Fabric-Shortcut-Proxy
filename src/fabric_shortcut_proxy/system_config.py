@@ -377,6 +377,8 @@ AGENT_TOKEN_PREVIOUS_VALID_UNTIL: int = _get_int(
 # dial this agent. Blank advertises the bind HOST (reachable same-box only when
 # HOST is a wildcard like 0.0.0.0). Set to a real address for a multi-host fleet.
 AGENT_ADVERTISE_HOST: str = _get_str("AGENT_ADVERTISE_HOST", "agent_advertise_host", "").strip()
+AGENT_POOL_ID: str = _get_str("AGENT_POOL_ID", "agent_pool_id", "").strip()
+AGENT_LOCATION: str = _get_str("AGENT_LOCATION", "agent_location", "").strip()
 
 # Manager: comma-separated exact hosts or IP networks accepted during registration.
 AGENT_HOST_ALLOWLIST: str = _get_str(

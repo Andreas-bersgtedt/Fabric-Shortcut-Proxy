@@ -82,7 +82,8 @@ def test_snapshot_manifest_roundtrip():
 def test_agent_lifecycle_roundtrip():
     _roundtrip(RegisterRequest, RegisterRequest(
         agent_id="agent-1", host="10.0.0.5", port=9000, os="linux", version="abc123",
-        capacity_hint=8, capabilities=["materializer"]))
+        capacity_hint=8, capabilities=["materializer"], pool_id="erp",
+        location="northeurope"))
     _roundtrip(RegisterResponse, RegisterResponse(lease_id="L1", heartbeat_ms=2000))
     _roundtrip(HeartbeatRequest, HeartbeatRequest(
         agent_id="agent-1", lease_id="L1",
@@ -112,6 +113,19 @@ def test_register_carries_contract_version():
     assert RegisterRequest.from_dict(r.to_dict()).shard_index == 2
 
 
+def test_register_placement_fields_default_for_older_agents():
+    request = RegisterRequest.from_dict({
+        "agent_id": "old-agent",
+        "host": "127.0.0.1",
+        "port": 9000,
+        "os": "linux",
+        "version": "old",
+    })
+    assert request.pool_id == ""
+    assert request.location == ""
+    assert RegisterRequest.from_dict(request.to_dict()) == request
+
+
 def test_version_one_registration_payload_defaults_compatibly():
     request = RegisterRequest.from_dict({
         "agent_id": "old-agent",
@@ -124,6 +138,8 @@ def test_version_one_registration_payload_defaults_compatibly():
 
     assert request.contract_version == "1.0"
     assert request.capabilities == []
+    assert request.pool_id == ""
+    assert request.location == ""
     assert response.contract_version == "1.0"
 
 

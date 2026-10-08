@@ -91,6 +91,10 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   unique value on every site that registers with a shared Manager. Pod names
   repeat across clusters, and two agents with the same id fight over one lease
   and loop on HTTP 409 heartbeats.
+- `agentPoolId` and `agentLocation`: optional values sent with Agent
+  registration. They describe the Agent's declared placement; they do not grant
+  pool membership. The Manager must use its configured identity mapping for
+  authorization.
 - `agentControlIngress`: optional TLS ingress that exposes only the Agent
   control routes of Manager to remote sites. Requires `host` and Manager.
 - `materializer.egress`: optional egress NetworkPolicy for materializer pods.

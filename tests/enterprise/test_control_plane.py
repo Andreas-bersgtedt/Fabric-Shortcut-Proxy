@@ -178,10 +178,22 @@ async def test_rest_assignment_snapshot_taskresult():
 # Agent link (register + heartbeat loop, drain dispatch)
 # ---------------------------------------------------------------------------
 
-async def test_agent_link_registers_and_handles_drain():
+async def test_agent_link_registers_and_handles_drain(monkeypatch):
     from enterprise.agent_link import AgentLink
+    from fabric_shortcut_proxy import config
+
+    monkeypatch.setattr(config, "AGENT_POOL_ID", "erp")
+    monkeypatch.setattr(config, "AGENT_LOCATION", "northeurope")
     reg = Registry(heartbeat_ms=20)
     client = _make(reg, tables=["sales"])
+    registered_requests = []
+    register = client.register
+
+    async def record_registration(request):
+        registered_requests.append(request)
+        return await register(request)
+
+    client.register = record_registration
     drained = asyncio.Event()
     link = AgentLink(client=client, agent_id="a1", heartbeat_ms=20,
                      on_drain=lambda: drained.set())
@@ -189,6 +201,8 @@ async def test_agent_link_registers_and_handles_drain():
     try:
         assert reg.get("a1") is not None          # registered
         assert reg.get("a1").capabilities == ["materializer"]
+        assert registered_requests[0].pool_id == "erp"
+        assert registered_requests[0].location == "northeurope"
         reg.queue_command("a1", ControlCommand(kind="drain", drain=Drain()))
         await asyncio.wait_for(drained.wait(), timeout=2.0)
     finally:

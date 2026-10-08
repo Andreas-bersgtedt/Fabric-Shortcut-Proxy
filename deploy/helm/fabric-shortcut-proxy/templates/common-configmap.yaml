@@ -12,6 +12,8 @@ data:
   ARTIFACT_STORE_SERVING: {{ .Values.fsp.artifactStoreServing | quote }}
   MATERIALIZE_MODE: {{ .Values.fsp.materializeMode | quote }}
   AGENT_SHARD_COUNT: {{ .Values.materializer.replicas | quote }}
+  AGENT_POOL_ID: {{ .Values.agentPoolId | quote }}
+  AGENT_LOCATION: {{ .Values.agentLocation | quote }}
   SHARD_STRATEGY: {{ .Values.fsp.shardStrategy | quote }}
   MATERIALIZE_WAIT_SECONDS: {{ .Values.fsp.materializeWaitSeconds | quote }}
   GENERATION_SOURCE_CONSISTENCY: {{ .Values.fsp.generationSourceConsistency | quote }}

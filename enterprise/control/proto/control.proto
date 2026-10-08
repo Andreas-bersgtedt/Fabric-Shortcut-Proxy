@@ -91,6 +91,8 @@ message RegisterRequest {
   string contract_version = 7;
   string advertise_host = 8;
   repeated string capabilities = 9; // materializer | serving
+  optional string pool_id = 10;
+  optional string location = 11;
 }
 
 message RegisterResponse {

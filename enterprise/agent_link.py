@@ -132,6 +132,8 @@ class AgentLink:
             ),
             advertise_host=config.AGENT_ADVERTISE_HOST,
             capabilities=["materializer"],
+            pool_id=config.AGENT_POOL_ID,
+            location=config.AGENT_LOCATION,
             shard_index=config.AGENT_SHARD_INDEX,
         )
         backoff = 0.5

@@ -85,6 +85,16 @@ spec:
                 configMapKeyRef:
                   name: fsp-common
                   key: MANAGER_URL
+            - name: AGENT_POOL_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: fsp-common
+                  key: AGENT_POOL_ID
+            - name: AGENT_LOCATION
+              valueFrom:
+                configMapKeyRef:
+                  name: fsp-common
+                  key: AGENT_LOCATION
             - name: MATERIALIZE_MODE
               valueFrom:
                 configMapKeyRef:

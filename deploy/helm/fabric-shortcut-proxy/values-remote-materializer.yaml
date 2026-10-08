@@ -1,0 +1,46 @@
+# Phase 0 remote materializer profile (#116).
+#
+# Installs only the materializer pods at a remote site. The Manager, nginx
+# front end and C++ agent run in the control cluster; this site reaches the
+# Manager through its agent-control ingress (see agentControlIngress in the
+# control cluster's values).
+#
+# Install:
+#   helm upgrade --install fsp-remote deploy/helm/fabric-shortcut-proxy \
+#     -f deploy/helm/fabric-shortcut-proxy/values-remote-materializer.yaml \
+#     --set managerUrl=https://<control-host> \
+#     --set materializer.egress.managerCidrs[0]=<control-ingress-ip>/32
+#
+# Uninstall:
+#   helm uninstall fsp-remote -n fabric-shortcut-proxy
+#   (the fsp-artifacts PVC is kept if its storage class retains volumes)
+
+managerUrl: https://fsp-control.example.com
+
+manager:
+  enabled: false
+
+cppAgent:
+  enabled: false
+
+nginx:
+  enabled: false
+
+tls:
+  enabled: false
+
+agentControlIngress:
+  enabled: false
+
+storage:
+  azureFiles:
+    enabled: false
+
+materializer:
+  egress:
+    enabled: true
+    allowLocalManager: false
+    managerCidrs:
+      - 203.0.113.10/32
+    managerPort: 443
+    allowList: []

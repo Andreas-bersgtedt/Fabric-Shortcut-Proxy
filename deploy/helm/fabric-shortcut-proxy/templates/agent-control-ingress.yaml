@@ -1,0 +1,56 @@
+{{- if .Values.agentControlIngress.enabled }}
+{{- if not .Values.manager.enabled }}
+{{- fail "agentControlIngress.enabled requires manager.enabled=true" }}
+{{- end }}
+{{- $ing := .Values.agentControlIngress }}
+{{- $host := required "agentControlIngress.host is required" $ing.host }}
+{{- $issuer := $ing.clusterIssuer | default .Values.tls.clusterIssuer.name }}
+# Exposes only the Manager routes that materializer agents call. Admin,
+# work-queue and data-plane routes are intentionally absent.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fsp-agent-control
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ $issuer | quote }}
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    {{- with $ing.sourceRanges }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join "," . | quote }}
+    {{- end }}
+    {{- with $ing.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $ing.className }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ $ing.tlsSecretName }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          {{- range list "/control/register" "/control/heartbeat" "/control/task-result" "/control/materialize" }}
+          - path: {{ . }}
+            pathType: Exact
+            backend:
+              service:
+                name: fsp-manager
+                port:
+                  name: control
+          {{- end }}
+          {{- range list "/control/assignment/" "/control/snapshot/" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: fsp-manager
+                port:
+                  name: control
+          {{- end }}
+{{- end }}

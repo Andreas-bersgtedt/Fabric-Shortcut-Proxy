@@ -83,3 +83,26 @@ def test_publish_reads_split_bytes_from_shared_store_when_not_cached(monkeypatch
 
     prefix = f"generations/{result['generation_id']}/"
     assert store.get(prefix + split_key) == b"owner-parquet-bytes"
+
+
+def test_publish_uses_lease_seconds_and_reports_renewed_context(monkeypatch):
+    import time
+
+    from fabric_shortcut_proxy.runtime.generation import COORDINATOR_KEY, acquire_generation
+
+    store = MemoryStore()
+    context = acquire_generation(store, 1)
+    import fabric_shortcut_proxy.s3.router as router
+    monkeypatch.setattr(router, "_snapshot_objects",
+                        lambda: {"warehouse/db/sales/metadata/v1.metadata.json": {"data": b"{m}"}},
+                        raising=True)
+    seen = []
+
+    result = serving_image.publish_serving_image(
+        store, context, lease_seconds=1234, on_context=seen.append
+    )
+    assert result["state"] == "ACTIVE"
+    assert seen and seen[-1].generation_id == context.generation_id
+    lease = json.loads(store.get(COORDINATOR_KEY))
+    remaining = lease["expires_at_ms"] - int(time.time() * 1000)
+    assert 1_200_000 < remaining <= 1_234_000

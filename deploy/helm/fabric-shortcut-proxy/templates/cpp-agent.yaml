@@ -1,3 +1,4 @@
+{{- if .Values.cppAgent.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -197,3 +198,4 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: fsp-cpp-agent
+{{- end }}

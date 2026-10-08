@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import os
 import pathlib
 import sys
@@ -632,9 +633,17 @@ async def lifespan(app: FastAPI):
         from fabric_shortcut_proxy.runtime.artifact_store import build_store
         from fabric_shortcut_proxy.runtime.serving_image import publish_serving_image
         _img_store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
+        _ctx_holder: list = []
         await asyncio.get_event_loop().run_in_executor(
-            None, publish_serving_image, _img_store, _generation_context
+            None,
+            functools.partial(
+                publish_serving_image, _img_store, _generation_context,
+                lease_seconds=3600, on_context=_ctx_holder.append,
+            ),
         )
+        # Publication renews the lease per object; keep the renewal loop on the latest context.
+        if _ctx_holder:
+            _generation_context = _ctx_holder[-1]
 
     # Cluster mode (Phase 1): if a Manager is configured, register + heartbeat.
     # Standalone (empty MANAGER_URL) skips this entirely — behavior unchanged.

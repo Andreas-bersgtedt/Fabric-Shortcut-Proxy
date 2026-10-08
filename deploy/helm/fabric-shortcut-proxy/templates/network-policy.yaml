@@ -1,3 +1,5 @@
+{{- if .Values.cppAgent.enabled }}
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -22,6 +24,7 @@ spec:
       ports:
         - protocol: TCP
           port: 9400
+{{- end }}
 {{- if .Values.nginx.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -48,4 +51,58 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+{{- end }}
+{{- if .Values.materializer.egress.enabled }}
+{{- $egress := .Values.materializer.egress }}
+---
+# Materializer egress allow-list. Source credentials stay in the site-local
+# Secret; pods may only reach DNS, the Manager and listed destinations.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-materializer-egress
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-materializer
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if and .Values.manager.enabled $egress.allowLocalManager }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-manager
+      ports:
+        - protocol: TCP
+          port: 9200
+    {{- end }}
+    {{- range $egress.managerCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - protocol: TCP
+          port: {{ $egress.managerPort }}
+    {{- end }}
+    {{- range $egress.allowList }}
+    - to:
+        - ipBlock:
+            cidr: {{ required "materializer.egress.allowList[].cidr is required" .cidr }}
+      {{- with .ports }}
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
 {{- end }}

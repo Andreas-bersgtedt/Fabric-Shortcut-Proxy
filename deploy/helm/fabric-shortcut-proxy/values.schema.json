@@ -17,6 +17,26 @@
     "tls"
   ],
   "properties": {
+    "managerUrl": { "type": "string", "minLength": 1 },
+    "agentControlIngress": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "host": { "type": "string" },
+        "className": { "type": "string", "minLength": 1 },
+        "tlsSecretName": { "type": "string", "minLength": 1 },
+        "clusterIssuer": { "type": "string" },
+        "sourceRanges": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
     "namespace": {
       "type": "object",
       "required": ["create", "name"],
@@ -152,6 +172,7 @@
           "type": "object",
           "required": ["operatorSecretName"],
           "properties": {
+            "enabled": { "type": "boolean" },
             "operatorSecretName": { "type": "string", "minLength": 1 }
           }
         }
@@ -164,6 +185,42 @@
           "type": "object",
           "required": ["autoscaling"],
           "properties": {
+            "egress": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "allowLocalManager": { "type": "boolean" },
+                "managerCidrs": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "managerPort": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "allowList": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["cidr", "ports"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "cidr": { "type": "string", "minLength": 1 },
+                      "ports": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
             "autoscaling": {
               "type": "object",
               "required": [
@@ -208,6 +265,7 @@
             "s3AllowedPrefixes"
           ],
           "properties": {
+            "enabled": { "type": "boolean" },
             "materializeTimeoutMs": {
               "type": "string",
               "pattern": "^[1-9][0-9]*$"

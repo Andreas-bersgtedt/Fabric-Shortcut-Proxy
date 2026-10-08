@@ -288,12 +288,20 @@ def join_generation(store, shard_count: int, *, timeout_seconds: float) -> Gener
                     and build.get("plan_sha256") == context.plan_sha256
                 )
             )
+            # An ACTIVE generation is immutable, so a late joiner may attach to
+            # it even after the coordinator lease lapsed. Builds still in
+            # progress require a live lease.
+            build_active = (
+                build.get("state") == PLAN_ACTIVE
+                and build.get("lease_token") == lease.get("lease_token")
+                and int(build.get("fence", -1)) == context.fence
+            )
             if (
                 context.shard_count == shard_count
                 and context.generation_id == build.get("generation_id")
                 and context.lease_token == lease.get("lease_token")
                 and context.fence == int(lease.get("fence", -1))
-                and context.expires_at_ms > int(time.time() * 1000)
+                and (build_active or context.expires_at_ms > int(time.time() * 1000))
                 and plan_matches
             ):
                 return (
@@ -338,6 +346,18 @@ def assert_generation_identity(
         raise GenerationError("worker generation table plan does not match coordinator")
 
 
+def _same_generation(a: GenerationContext, b: GenerationContext) -> bool:
+    return (
+        a.generation_id == b.generation_id
+        and a.fence == b.fence
+        and a.lease_token == b.lease_token
+        and a.shard_count == b.shard_count
+        and a.version == b.version
+        and a.plan_state == b.plan_state
+        and a.plan_sha256 == b.plan_sha256
+    )
+
+
 def renew_generation(store, context: GenerationContext, *, lease_seconds: int = 300) -> GenerationContext:
     assert_generation_lease(store, context)
     renewed = replace(
@@ -346,7 +366,9 @@ def renew_generation(store, context: GenerationContext, *, lease_seconds: int = 
     )
     record = _record(renewed)
     current_raw, current_record = _read_raw_json(store, COORDINATOR_KEY)
-    if current_record is None or _context(current_record) != context:
+    # Compare identity only: another holder of the same lease (e.g. the serving
+    # image publisher) may legitimately have moved expires_at_ms.
+    if current_record is None or not _same_generation(_context(current_record), context):
         raise GenerationError("generation lease was lost before renewal")
     if not store.compare_and_swap(
         COORDINATOR_KEY,

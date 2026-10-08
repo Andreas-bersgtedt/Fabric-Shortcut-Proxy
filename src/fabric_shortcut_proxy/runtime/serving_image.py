@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from typing import Callable
 
 from fabric_shortcut_proxy.observability.logging import get_logger
 from fabric_shortcut_proxy.runtime.generation import (
@@ -32,6 +33,8 @@ def publish_serving_image(
     context: GenerationContext | None = None,
     *,
     timeout_seconds: float = 900,
+    lease_seconds: int = 300,
+    on_context: Callable[[GenerationContext], None] | None = None,
 ) -> dict:
     """Stage, verify, and atomically activate one immutable serving generation."""
     from fabric_shortcut_proxy.s3.router import _snapshot_objects
@@ -47,7 +50,7 @@ def publish_serving_image(
         for key in sorted(objects):
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"generation publication timed out after {timeout_seconds}s")
-            context = renew_generation(store, context)
+            context = renew_generation(store, context, lease_seconds=lease_seconds)
             data = objects[key].get("data")
             if data is None:
                 data = cache.peek_parquet(key)
@@ -118,6 +121,8 @@ def publish_serving_image(
             pass
         raise
 
+    if on_context is not None:
+        on_context(context)
     log.info("serving_generation_activated", generation_id=context.generation_id,
              fence=context.fence, objects=len(entries))
     return {

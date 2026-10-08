@@ -9,6 +9,7 @@ from enterprise.control.contract import ControlCommand
 from enterprise.control.contract import MaterializeTask
 from enterprise.control.contract import TASK_TERMINAL_STATES
 from enterprise.control.registry import Registry
+from enterprise.control.placement import MaterializerPolicy
 from enterprise.control.work_queue import DurableWorkQueue, WorkQueueConflict
 from fabric_shortcut_proxy.observability.logging import get_logger
 
@@ -85,6 +86,92 @@ class TaskScheduler:
     def _tie_break(task_id: str, agent_id: str) -> str:
         return hashlib.sha256(f"{task_id}|{agent_id}".encode()).hexdigest()
 
+    @staticmethod
+    def _contract_version(agent: dict) -> tuple[int, int]:
+        try:
+            major, minor = str(agent.get("contract_version", "1.0")).split(".", 1)
+            return int(major), int(minor)
+        except (TypeError, ValueError):
+            return 0, 0
+
+    def _dataset_scope(
+        self, connection_id: str, source_table: str
+    ) -> tuple[str, str]:
+        if (connection_id, source_table) in self.registry.placement.tables:
+            return connection_id, source_table
+        return connection_id, ""
+
+    def _placement_eligible(
+        self,
+        candidates: list[tuple[float, str]],
+        *,
+        connection_id: str,
+        source_table: str,
+        policy: MaterializerPolicy,
+        active_dataset_claims: dict[tuple[str, str], int],
+        active_pool_claims: dict[str, int],
+    ) -> list[tuple[float, str]]:
+        placement = self.registry.placement
+        if not placement.enabled:
+            return candidates
+        scope = self._dataset_scope(connection_id, source_table)
+        if (
+            policy.max_concurrency is not None
+            and active_dataset_claims.get(scope, 0) >= policy.max_concurrency
+        ):
+            return []
+        pinning = bool(
+            policy.required_pool
+            or policy.required_location
+            or policy.required_storage_profile
+            or policy.fallback_pools
+        )
+        targets = (
+            ([policy.required_pool] if policy.required_pool else [])
+            + list(policy.fallback_pools)
+        )
+        public_agents = {
+            str(item["agent_id"]): item
+            for item in self.registry.list_public()
+        }
+
+        def matching(candidate: tuple[float, str], target: str = "") -> bool:
+            _score, agent_id = candidate
+            agent = public_agents.get(agent_id, {})
+            if pinning and self._contract_version(agent) < (1, 1):
+                return False
+            pool_id = str(agent.get("pool_id", ""))
+            pool = placement.pools.get(pool_id)
+            if pool is None or (target and pool_id != target):
+                return False
+            if not pool.allows(connection_id, source_table):
+                return False
+            if (
+                policy.required_location
+                and pool.location != policy.required_location
+            ):
+                return False
+            if (
+                policy.required_storage_profile
+                and pool.storage_profile != policy.required_storage_profile
+            ):
+                return False
+            if (
+                pool.max_concurrency is not None
+                and active_pool_claims.get(pool_id, 0) >= pool.max_concurrency
+            ):
+                return False
+            return True
+
+        if targets:
+            for target in targets:
+                eligible = [candidate for candidate in candidates if matching(candidate, target)]
+                if eligible:
+                    return eligible
+            return []
+        eligible = [candidate for candidate in candidates if matching(candidate)]
+        return eligible
+
     def dispatch_once(self) -> int:
         self.queue.expire_claims()
         dispatched = 0
@@ -115,10 +202,39 @@ class TaskScheduler:
             payload = MaterializeTask.from_dict(task["task"])
             if not payload.generation_id or payload.generation_id in memberships:
                 continue
+            generation_payloads = [
+                MaterializeTask.from_dict(current["task"])
+                for current in all_tasks
+                if (
+                    current.get("state") not in TASK_TERMINAL_STATES
+                    and str(
+                        (current.get("task") or {}).get("generation_id", "")
+                    )
+                    == payload.generation_id
+                )
+            ]
+            eligible_workers = []
+            for worker in workers:
+                agent_id = str(worker["agent_id"])
+                if any(
+                    self._placement_eligible(
+                        [(0.0, agent_id)],
+                        connection_id=generation_payload.connection_id,
+                        source_table=generation_payload.source_table,
+                        policy=self.registry.placement.policy_for(
+                            generation_payload.connection_id,
+                            generation_payload.source_table,
+                        ),
+                        active_dataset_claims={},
+                        active_pool_claims={},
+                    )
+                    for generation_payload in generation_payloads
+                ):
+                    eligible_workers.append(worker)
             membership = self.queue.reconcile_membership(
                 payload.generation_id,
                 payload.generation_fence,
-                workers,
+                eligible_workers,
                 policy=self.membership_policy,
             )
             self.queue.reassign_fenced_claims(
@@ -130,12 +246,26 @@ class TaskScheduler:
             ) or membership
         all_tasks = self.queue.list_tasks()
         active_claims: dict[str, int] = {}
+        active_dataset_claims: dict[tuple[str, str], int] = {}
+        active_pool_claims: dict[str, int] = {}
         for current in all_tasks:
             if current["state"] != "CLAIMED":
                 continue
             agent_id = str((current.get("claim") or {}).get("agent_id", ""))
             if agent_id:
                 active_claims[agent_id] = active_claims.get(agent_id, 0) + 1
+                payload = MaterializeTask.from_dict(current["task"])
+                scope = self._dataset_scope(
+                    payload.connection_id, payload.source_table
+                )
+                active_dataset_claims[scope] = (
+                    active_dataset_claims.get(scope, 0) + 1
+                )
+                worker = self.registry.get(agent_id)
+                if worker is not None and worker.pool_id:
+                    active_pool_claims[worker.pool_id] = (
+                        active_pool_claims.get(worker.pool_id, 0) + 1
+                    )
         for task in self.queue.runnable_tasks(
             tasks=all_tasks, expire=False
         ):
@@ -185,8 +315,52 @@ class TaskScheduler:
                 required_owner_shard=required_owner_shard,
                 allowed_workers=active_members,
             )
+            policy = self.registry.placement.policy_for(
+                task_payload.connection_id,
+                task_payload.source_table,
+            )
+            agents = self._placement_eligible(
+                agents,
+                connection_id=task_payload.connection_id,
+                source_table=task_payload.source_table,
+                policy=policy,
+                active_dataset_claims=active_dataset_claims,
+                active_pool_claims=active_pool_claims,
+            )
             if not agents:
-                break
+                if self.queue.set_dispatch_status(
+                    task["task_id"], "no_eligible_materializer"
+                ):
+                    from fabric_shortcut_proxy.observability import metrics
+                    from fabric_shortcut_proxy.observability.audit import (
+                        record_placement_decision,
+                    )
+
+                    metrics.inc_counter(
+                        "materialization_placement_decisions_total",
+                        outcome="no_eligible_materializer",
+                    )
+                    record_placement_decision(
+                        task_id=str(task["task_id"]),
+                        request_id=task_payload.request_id,
+                        dataset=(
+                            f"{task_payload.connection_id}::"
+                            f"{task_payload.source_table}"
+                        ),
+                        pool_id=(
+                            policy.required_pool
+                            or ",".join(policy.fallback_pools)
+                            or "any-authorized-pool"
+                        ),
+                        location=(
+                            policy.required_location
+                            or "any-authorized-location"
+                        ),
+                        outcome="queued",
+                        reason="no_eligible_materializer",
+                        fallback=False,
+                    )
+                continue
             _, agent_id = min(
                 agents,
                 key=lambda item: (
@@ -229,6 +403,41 @@ class TaskScheduler:
                 continue
             dispatched += 1
             active_claims[agent_id] = active_claims.get(agent_id, 0) + 1
+            scope = self._dataset_scope(
+                task_payload.connection_id, task_payload.source_table
+            )
+            active_dataset_claims[scope] = active_dataset_claims.get(scope, 0) + 1
+            worker = self.registry.get(agent_id)
+            actual_pool_id = worker.pool_id if worker is not None else ""
+            if actual_pool_id:
+                active_pool_claims[actual_pool_id] = (
+                    active_pool_claims.get(actual_pool_id, 0) + 1
+                )
+            from fabric_shortcut_proxy.observability import metrics
+            from fabric_shortcut_proxy.observability.audit import (
+                record_placement_decision,
+            )
+
+            metrics.inc_counter(
+                "materialization_placement_decisions_total",
+                outcome="assigned",
+                pool=actual_pool_id or "unmapped",
+            )
+            record_placement_decision(
+                task_id=command_task.task_id,
+                request_id=command_task.request_id,
+                dataset=(
+                    f"{command_task.connection_id}::"
+                    f"{command_task.source_table}"
+                ),
+                pool_id=actual_pool_id,
+                location=worker.location if worker is not None else "",
+                outcome="assigned",
+                fallback=bool(
+                    policy.required_pool
+                    and actual_pool_id != policy.required_pool
+                ),
+            )
             log.info(
                 "materialize_task_claimed",
                 task_id=command_task.task_id,
@@ -276,5 +485,7 @@ class TaskScheduler:
             "manager_owner": self.manager_owner,
             "manager_fence": self.manager_fence,
             "membership_policy": self.membership_policy,
+            "placement_enabled": self.registry.placement.enabled,
+            "placement_pool_count": len(self.registry.placement.pools),
             "checked_at_ms": int(time.time() * 1000),
         }

@@ -68,6 +68,11 @@ schema, remote Helm ownership support, and the existing source Secret before mut
 - `workloadIdentity`: Azure workload identity service account configuration.
 - `agentAuth`: required or one-release compatibility mode plus Secret key
   references. The default is `required`; values never contain token material.
+  `identityTokensSecretName` optionally references a Secret containing the
+  JSON `AGENT_IDENTITY_TOKENS` map for authenticated pool identities.
+- `manager.agentPlacementConfig`: operator-owned pool membership, source access,
+  and connection/table placement rules. The Manager ignores self-reported pool
+  and location values for authorization.
 - `storage`: dynamic storage defaults or static Azure Files NFS volumes.
 - `manager`, `materializer`, `cppAgent`: workload sizing and feature settings.
 - `materializer.autoscaling`: optional HPA for the Python materializer
@@ -93,8 +98,8 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   and loop on HTTP 409 heartbeats.
 - `agentPoolId` and `agentLocation`: optional values sent with Agent
   registration. They describe the Agent's declared placement; they do not grant
-  pool membership. The Manager must use its configured identity mapping for
-  authorization.
+  pool membership. The Manager derives pool membership and location from
+  `manager.agentPlacementConfig`.
 - `agentControlIngress`: optional TLS ingress that exposes only the Agent
   control routes of Manager to remote sites. Requires `host` and Manager.
 - `materializer.egress`: optional egress NetworkPolicy for materializer pods.
@@ -105,6 +110,82 @@ schema, remote Helm ownership support, and the existing source Secret before mut
 The default values render the cluster-private base deployment. The enterprise
 example enables Azure Files, workload identity, nginx, Entra authentication,
 and public TLS ingress.
+
+## Materializer placement policies
+
+Placement is disabled when `manager.agentPlacementConfig` is empty. When
+enabled, configure each materializer pool with its exact registered agent IDs,
+location, optional storage profile, and an explicit `allowed_connection_ids`
+list. An empty list grants no source access. The Manager rejects startup if a
+pool identity has no entry in the identity-token Secret.
+
+For example, configure the hub release with:
+
+```yaml
+manager:
+  agentPlacementConfig:
+    pools:
+      - pool_id: erp-site-a
+        identities:
+          - site-a-materializer-0:9000
+          - site-a-materializer-1:9000
+        location: site-a
+        storage_profile: central-blob
+        allowed_connection_ids:
+          - erp-a
+        allowed_table_patterns:
+          - sales.*
+        max_concurrency: 4
+      - pool_id: erp-site-b
+        identities:
+          - site-b-materializer-0:9000
+        location: site-b
+        storage_profile: central-blob
+        allowed_connection_ids:
+          - erp-a
+    connections:
+      erp-a:
+        required_pool: erp-site-a
+        required_storage_profile: central-blob
+        fallback_pools:
+          - erp-site-b
+        max_concurrency: 8
+    tables:
+      erp-a::sales.orders:
+        required_pool: erp-site-b
+        required_location: site-b
+```
+
+Set `agentAuth.identityTokensSecretName` to a Kubernetes Secret with the
+`AGENT_IDENTITY_TOKENS` key. Its JSON object maps every configured identity to
+a token of at least 32 bytes. A token can be shared by agents in the same pool,
+but tokens must differ between pools and from the Manager's shared
+`AGENT_TOKEN`. For example:
+
+```json
+{
+  "site-a-materializer-0:9000": "site-a-pool-token-with-at-least-32-bytes",
+  "site-a-materializer-1:9000": "site-a-pool-token-with-at-least-32-bytes",
+  "site-b-materializer-0:9000": "site-b-pool-token-with-at-least-32-bytes"
+}
+```
+
+The remote site's `fsp-agent-auth` Secret must use that site's pool token as
+`AGENT_TOKEN`. Keep the shared Manager token separate. Pool credentials bind
+the supplied agent ID to the configured pool; changing `AGENT_POOL_ID` or
+`AGENT_LOCATION` cannot grant access to a different pool.
+Set `manager.auditLogEnabled: "1"` to emit placement decisions to the audit
+ring/file sink and structured Manager logs.
+
+Connection rules are defaults. An exact `connection_id::source_table` entry in
+`tables` replaces its connection policy. A fallback is considered only when no
+eligible agent in the required pool can accept the task. Older contract 1.0
+agents can receive only tasks without a pool, location, storage-profile, or
+fallback pin. If no configured pool can accept a task, it remains queued with
+`no_eligible_materializer`, visible in `/control/work-queue` and the placement
+audit log. Placement audit events contain the task, request, dataset, selected
+pool/location, decision, and fallback flag, but never credentials or claim
+tokens.
 
 The C++ Agent defaults to `trusted-upstream` because the chart's supported
 topology places it behind the authenticated gateway. This mode trusts that

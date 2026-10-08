@@ -32,6 +32,15 @@ siteId: ""
 agentPoolId: ""
 agentLocation: ""
 
+agentAuth:
+  mode: required
+  secretName: fsp-agent-auth
+  activeTokenKey: AGENT_TOKEN
+  previousTokenKey: AGENT_TOKEN_PREVIOUS
+  previousValidUntilKey: AGENT_TOKEN_PREVIOUS_VALID_UNTIL
+  identityTokensSecretName: ""
+  identityTokensKey: AGENT_IDENTITY_TOKENS
+
 fsp:
   s3Bucket: fabric-iceberg-poc
   artifactStoreBackend: local
@@ -57,13 +66,6 @@ fsp:
 
 sourceSecret:
   name: fsp-source
-
-agentAuth:
-  mode: required
-  secretName: fsp-agent-auth
-  activeTokenKey: AGENT_TOKEN
-  previousTokenKey: AGENT_TOKEN_PREVIOUS
-  previousValidUntilKey: AGENT_TOKEN_PREVIOUS_VALID_UNTIL
 
 workloadIdentity:
   enabled: false
@@ -99,6 +101,7 @@ storage:
 manager:
   enabled: true
   replicas: 1
+  agentPlacementConfig: {}
   auditLogEnabled: "0"
   configBuilderEnabled: "0"
   monitorEnabled: "1"

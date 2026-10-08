@@ -103,8 +103,45 @@ class AgentTokenProvider:
     """Verify fleet tokens from the live environment without exposing values."""
 
     @staticmethod
-    def verify(presented: str, *, now: float | None = None) -> AgentTokenResult:
+    def verify(
+        presented: str,
+        *,
+        identity: str = "",
+        now: float | None = None,
+    ) -> AgentTokenResult:
         from fabric_shortcut_proxy import config
+
+        identity_tokens_raw = os.environ.get("AGENT_IDENTITY_TOKENS", "").strip()
+        if identity_tokens_raw:
+            import json
+
+            try:
+                identity_tokens = json.loads(identity_tokens_raw)
+            except json.JSONDecodeError:
+                return AgentTokenResult(False, "misconfigured")
+            if not isinstance(identity_tokens, dict):
+                return AgentTokenResult(False, "misconfigured")
+            if identity in identity_tokens:
+                expected = identity_tokens[identity]
+                if (
+                    not isinstance(expected, str)
+                    or len(expected) < 32
+                    or not expected.isascii()
+                    or any(
+                        ord(char) < 0x21 or ord(char) > 0x7E
+                        for char in expected
+                    )
+                ):
+                    return AgentTokenResult(False, "misconfigured")
+                if not presented:
+                    return AgentTokenResult(False, "missing")
+                try:
+                    presented.encode("ascii")
+                except UnicodeEncodeError:
+                    return AgentTokenResult(False, "malformed")
+                if hmac.compare_digest(presented, expected):
+                    return AgentTokenResult(True, "identity")
+                return AgentTokenResult(False, "invalid")
 
         active = os.environ.get("AGENT_TOKEN", "")
         previous = os.environ.get("AGENT_TOKEN_PREVIOUS", "")
@@ -191,14 +228,24 @@ class AgentAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         identity = _bounded_agent_id(request.headers.get(AGENT_ID_HEADER, ""))
-        result = self._provider.verify(request.headers.get(AGENT_TOKEN_HEADER, ""))
+        result = self._provider.verify(
+            request.headers.get(AGENT_TOKEN_HEADER, ""),
+            identity=identity,
+        )
         from fabric_shortcut_proxy import config
 
         mode = os.environ.get(
             "AGENT_AUTH_MODE", getattr(config, "AGENT_AUTH_MODE", "compatibility")
         ).strip().lower()
         compatibility_basic = False
-        if mode == "compatibility" and not result.accepted:
+        identity_credentials_configured = bool(
+            os.environ.get("AGENT_IDENTITY_TOKENS", "").strip()
+        )
+        if (
+            mode == "compatibility"
+            and not result.accepted
+            and not identity_credentials_configured
+        ):
             from fabric_shortcut_proxy.security.operator_auth import manager_basic_credentials_ok
 
             compatibility_basic = manager_basic_credentials_ok(

@@ -610,6 +610,25 @@ class DurableWorkQueue:
                 runnable.append(task)
         return runnable
 
+    def set_dispatch_status(self, task_id: str, reason: str) -> bool:
+        """Persist the current scheduler outcome for one still-runnable task."""
+        now_ms = _now_ms()
+        with self._lock:
+            task = self.get_task(task_id)
+            if task is None or task["state"] not in {TASK_QUEUED, TASK_RETRY_WAIT}:
+                return False
+            current = str(task.get("dispatch_status", ""))
+            if current == reason:
+                return False
+            if reason:
+                task["dispatch_status"] = reason
+            else:
+                task.pop("dispatch_status", None)
+            task["updated_at_ms"] = now_ms
+            task["revision"] = int(task["revision"]) + 1
+            self._write(_task_key(task_id), task)
+            return True
+
     def recover(self) -> dict[str, int]:
         """Remove incomplete creates and requeue expired durable claims."""
         removed_requests = 0
@@ -713,6 +732,7 @@ class DurableWorkQueue:
                 deadline_ms or now_ms + self.task_lease_seconds * 1000,
             )
             task["state"] = TASK_CLAIMED
+            task.pop("dispatch_status", None)
             task["attempt"] = attempt
             task["claim"] = {
                 "agent_id": agent_id,
@@ -1342,6 +1362,22 @@ class DurableWorkQueue:
             if task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT}
         ]
         now = _now_ms()
+        no_match_tasks = [
+            {
+                "task_id": str(task["task_id"]),
+                "connection_id": str(
+                    (task.get("task") or {}).get("connection_id", "")
+                ),
+                "source_table": str(
+                    (task.get("task") or {}).get("source_table", "")
+                ),
+            }
+            for task in tasks
+            if (
+                task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT}
+                and task.get("dispatch_status") == "no_eligible_materializer"
+            )
+        ]
         memberships = self.list_memberships()
         active_generation_ids = {
             str((task.get("task") or {}).get("generation_id", ""))
@@ -1431,4 +1467,8 @@ class DurableWorkQueue:
             "active_claims": counts.get(TASK_CLAIMED, 0),
             "oldest_queued_age_ms": max(0, now - min(queued)) if queued else 0,
             "membership": membership_status,
+            "placement": {
+                "no_eligible_materializer_count": len(no_match_tasks),
+                "no_eligible_materializer": no_match_tasks,
+            },
         }

@@ -18,6 +18,10 @@ images:
     tag: 1.27-alpine
     digest: sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
 
+# In-cluster default. Remote materializer sites point this at the
+# Manager agent-control ingress, e.g. https://fsp-control.example.com
+managerUrl: http://fsp-manager:9200
+
 fsp:
   s3Bucket: fabric-iceberg-poc
   artifactStoreBackend: local
@@ -83,6 +87,7 @@ storage:
       size: 100Gi
 
 manager:
+  enabled: true
   replicas: 1
   auditLogEnabled: "0"
   configBuilderEnabled: "0"
@@ -127,8 +132,22 @@ materializer:
     limits:
       cpu: "4"
       memory: 4Gi
+  # Egress allow-list for materializer pods. Off by default so existing
+  # deployments keep their current network behaviour.
+  egress:
+    enabled: false
+    # Allow egress to an in-cluster Manager (pod selector, port 9200).
+    allowLocalManager: true
+    # CIDRs of a remote Manager agent-control ingress (port 443).
+    managerCidrs: []
+    managerPort: 443
+    # Extra destinations, e.g. the site-local source storage endpoint:
+    # - cidr: 10.20.0.0/16
+    #   ports: [443]
+    allowList: []
 
 cppAgent:
+  enabled: true
   materializeTimeoutMs: "600000"
   s3AuthMode: trusted-upstream
   s3AuthSecretName: fsp-cpp-s3-auth
@@ -180,3 +199,16 @@ tls:
     email: ""
   ingress:
     className: nginx
+
+# Private TLS ingress that exposes only the agent-control routes of the
+# Manager to remote materializer sites. Admin (/_config, /_manager,
+# /_monitor), work-queue and data routes are never routed by this ingress.
+agentControlIngress:
+  enabled: false
+  host: ""
+  className: nginx
+  tlsSecretName: fsp-agent-control-tls
+  clusterIssuer: ""
+  # Optional source ranges, applied as nginx whitelist-source-range.
+  sourceRanges: []
+  annotations: {}

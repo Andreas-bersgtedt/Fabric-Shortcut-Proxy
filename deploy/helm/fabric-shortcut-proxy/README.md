@@ -82,6 +82,16 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   an empty value allows the whole configured bucket.
 - `nginx`: private and public application proxy configuration.
 - `tls`: cert-manager issuer and ingress hostname configuration.
+- `managerUrl`: URL that Agents and materializers use to reach Manager.
+  Defaults to `http://fsp-manager:9200`, the in-cluster service.
+- `manager.enabled`, `cppAgent.enabled`: turn off components a site does not
+  run. A remote materializer site sets both to `false`.
+- `agentControlIngress`: optional TLS ingress that exposes only the Agent
+  control routes of Manager to remote sites. Requires `host` and Manager.
+- `materializer.egress`: optional egress NetworkPolicy for materializer pods.
+  Allows DNS, the local Manager (`allowLocalManager`), Manager CIDRs on
+  `managerPort`, and extra `allowList` destinations such as the source
+  endpoint.
 
 The default values render the cluster-private base deployment. The enterprise
 example enables Azure Files, workload identity, nginx, Entra authentication,
@@ -109,6 +119,74 @@ Manager restart does not extend the overlap.
 `nginx.enabled` and `tls.enabled` must be enabled or disabled together because nginx always
 mounts the certificate Secret. The values schema also validates image digests, replica counts,
 storage quantities, and required object structure before templates render.
+
+## Phase 0 routed PoC
+
+Phase 0 runs one Manager in a hub cluster and materializers in other
+clusters. Remote materializers call Manager over HTTPS through the Agent
+control ingress. This is a proof of concept for v3.1.0, not the federated
+design.
+
+### Hub cluster: Agent control ingress
+
+Enable the ingress on the release that runs Manager:
+
+```bash
+helm upgrade --install fsp deploy/helm/fabric-shortcut-proxy \
+  --namespace fabric-shortcut-proxy \
+  --set agentControlIngress.enabled=true \
+  --set agentControlIngress.host=fsp-control.example.com \
+  --set agentControlIngress.clusterIssuer=letsencrypt-prod \
+  --set 'agentControlIngress.sourceRanges={198.51.100.0/24}'
+```
+
+The ingress routes only these Agent paths to the `fsp-manager` control port:
+
+- `/control/register`, `/control/heartbeat`, `/control/task-result`,
+  `/control/materialize` (exact match)
+- `/control/assignment/`, `/control/snapshot/` (prefix match)
+
+It never exposes `/control/work-queue`, `/_config`, `/_manager`, or
+`/_monitor`. Operator routes stay cluster-private. Set `sourceRanges` to the
+egress addresses of the remote sites. Agent auth still applies. Keep
+`agentAuth.mode=required` (the default) when the ingress is open.
+
+### Remote cluster: materializer-only profile
+
+[values-remote-materializer.yaml](values-remote-materializer.yaml) disables
+Manager, the C++ Agent, nginx, TLS ingress, and Azure Files. It points
+`managerUrl` at the hub ingress and enables materializer egress. Edit
+`managerUrl`, `materializer.egress.managerCidrs`, and
+`materializer.egress.allowList` for the site, then install:
+
+```bash
+kubectl create namespace fabric-shortcut-proxy
+kubectl -n fabric-shortcut-proxy create secret generic fsp-source --from-env-file=source.env
+kubectl -n fabric-shortcut-proxy create secret generic fsp-agent-auth --from-env-file=agent-auth.env
+helm upgrade --install fsp-remote deploy/helm/fabric-shortcut-proxy \
+  --namespace fabric-shortcut-proxy \
+  -f deploy/helm/fabric-shortcut-proxy/values-remote-materializer.yaml
+```
+
+Uninstall with:
+
+```bash
+helm uninstall fsp-remote --namespace fabric-shortcut-proxy
+```
+
+The `fsp-source` Secret is created in each site and is never copied to the
+hub. Source credentials stay in the site that reads the source. The egress
+policy limits materializer traffic to DNS, Manager, and the listed
+destinations. It needs a CNI that enforces egress NetworkPolicy.
+
+### Shared filesystem
+
+Materializers and Manager exchange data through the `fsp-artifacts` RWX volume.
+Across clusters, Phase 0 mounts the same RWX share (for example one Azure Files
+share) in every site. This is for the PoC only. It adds cross-site latency,
+couples the sites to one storage account, and does not meet data residency
+needs. Later phases replace it with per-site storage and manifest publication
+through Manager.
 
 ## Existing Kustomize deployment
 

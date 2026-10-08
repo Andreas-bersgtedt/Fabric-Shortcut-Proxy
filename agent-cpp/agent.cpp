@@ -254,6 +254,8 @@ struct Config {
     std::string bucket = getenv_str("S3_BUCKET", "fabric-iceberg-poc");
     std::string agent_id = getenv_str("AGENT_ID", "cpp-agent-1");
     std::string advertise_host = getenv_str("AGENT_ADVERTISE_HOST", "");
+    std::string agent_pool_id = getenv_str("AGENT_POOL_ID", "");
+    std::string agent_location = getenv_str("AGENT_LOCATION", "");
     std::string manager_url = getenv_str("MANAGER_URL", "");
     std::string agent_token = getenv_str("AGENT_TOKEN", "");
     std::string s3_auth_mode = getenv_str("S3_AUTH_MODE", "");
@@ -1449,7 +1451,9 @@ static void control_loop() {
 #endif
           << "\",\"version\":\"" << APP_VERSION
           << "\",\"capacity_hint\":0,\"advertise_host\":\"" << CFG.advertise_host
-          << "\",\"contract_version\":\"1.0\",\"capabilities\":[\"serving\"]}";
+          << "\",\"contract_version\":\"1.1\",\"capabilities\":[\"serving\"]"
+          << ",\"pool_id\":\"" << json_escape(CFG.agent_pool_id)
+          << "\",\"location\":\"" << json_escape(CFG.agent_location) << "\"}";
 
         std::string rb;
         int st = http_post(host, port, "/control/register", j.str(), rb);

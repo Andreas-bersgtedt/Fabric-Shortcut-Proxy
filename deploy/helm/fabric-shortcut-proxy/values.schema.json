@@ -19,6 +19,8 @@
   "properties": {
     "managerUrl": { "type": "string", "minLength": 1 },
     "siteId": { "type": "string", "maxLength": 32, "pattern": "^([a-z0-9]([a-z0-9-]*[a-z0-9])?)?$" },
+    "agentPoolId": { "type": "string", "maxLength": 63, "pattern": "^([a-z0-9]([a-z0-9-]*[a-z0-9])?)?$" },
+    "agentLocation": { "type": "string", "maxLength": 63, "pattern": "^([a-z0-9]([a-z0-9-]*[a-z0-9])?)?$" },
     "agentControlIngress": {
       "type": "object",
       "required": ["enabled"],

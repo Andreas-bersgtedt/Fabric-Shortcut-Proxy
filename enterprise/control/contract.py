@@ -265,6 +265,8 @@ class RegisterRequest:
     advertise_host: str = ""     # routable host the LB/gateway should dial (blank = host)
     contract_version: str = CONTRACT_VERSION
     capabilities: list[str] = field(default_factory=list)
+    pool_id: str = ""
+    location: str = ""
     shard_index: int = -1
 
     def to_dict(self) -> dict[str, Any]:
@@ -283,6 +285,8 @@ class RegisterRequest:
             capabilities=sorted({
                 str(value) for value in d.get("capabilities", []) if str(value)
             }),
+            pool_id=str(d.get("pool_id", "")),
+            location=str(d.get("location", "")),
             shard_index=int(d.get("shard_index", -1)),
         )
 

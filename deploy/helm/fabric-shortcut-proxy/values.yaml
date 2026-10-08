@@ -28,6 +28,10 @@ managerUrl: http://fsp-manager:9200
 # the control cluster to keep existing agent ids; set it at every remote site.
 siteId: ""
 
+# Optional placement metadata announced when agents register with the Manager.
+agentPoolId: ""
+agentLocation: ""
+
 fsp:
   s3Bucket: fabric-iceberg-poc
   artifactStoreBackend: local

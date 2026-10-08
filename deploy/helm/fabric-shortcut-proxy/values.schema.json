@@ -111,7 +111,9 @@
         "secretName": { "type": "string", "minLength": 1 },
         "activeTokenKey": { "type": "string", "minLength": 1 },
         "previousTokenKey": { "type": "string", "minLength": 1 },
-        "previousValidUntilKey": { "type": "string", "minLength": 1 }
+        "previousValidUntilKey": { "type": "string", "minLength": 1 },
+        "identityTokensSecretName": { "type": "string" },
+        "identityTokensKey": { "type": "string", "minLength": 1 }
       }
     },
     "workloadIdentity": {
@@ -176,7 +178,11 @@
           "required": ["operatorSecretName"],
           "properties": {
             "enabled": { "type": "boolean" },
-            "operatorSecretName": { "type": "string", "minLength": 1 }
+            "operatorSecretName": { "type": "string", "minLength": 1 },
+            "agentPlacementConfig": {
+              "type": "object",
+              "additionalProperties": true
+            }
           }
         }
       ]

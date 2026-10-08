@@ -63,11 +63,62 @@ def _headers(token: str = ACTIVE, agent_id: str = "agent-1") -> dict[str, str]:
 def _auth_config(monkeypatch):
     monkeypatch.setenv("AGENT_AUTH_MODE", "required")
     monkeypatch.setenv("AGENT_TOKEN", ACTIVE)
+    monkeypatch.delenv("AGENT_IDENTITY_TOKENS", raising=False)
     monkeypatch.delenv("AGENT_TOKEN_PREVIOUS", raising=False)
     monkeypatch.delenv("AGENT_TOKEN_PREVIOUS_VALID_UNTIL", raising=False)
     monkeypatch.setattr(config, "MANAGER_AUTH_ENABLED", True)
     monkeypatch.setattr(config, "MANAGER_AUTH_USERNAME", "operator")
     monkeypatch.setattr(config, "MANAGER_AUTH_PASSWORD", "manager-secret")
+
+
+async def test_identity_token_is_bound_to_authenticated_agent_id(monkeypatch):
+    monkeypatch.setenv(
+        "AGENT_IDENTITY_TOKENS",
+        json.dumps({"agent-a": "c" * 64, "agent-b": "d" * 64}),
+    )
+    registry = Registry()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app(registry)), base_url="http://manager"
+    ) as client:
+        accepted = await client.post(
+            "/control/register",
+            json=_request("agent-a").to_dict(),
+            headers=_headers("c" * 64, "agent-a"),
+        )
+        spoofed = await client.post(
+            "/control/register",
+            json=_request("agent-a").to_dict(),
+            headers=_headers("d" * 64, "agent-a"),
+        )
+
+    assert accepted.status_code == 200
+    assert spoofed.status_code == 401
+    assert registry.count() == 1
+
+
+async def test_identity_token_cannot_be_bypassed_by_compatibility_basic(monkeypatch):
+    monkeypatch.setenv("AGENT_AUTH_MODE", "compatibility")
+    monkeypatch.setenv(
+        "AGENT_IDENTITY_TOKENS",
+        json.dumps({"agent-a": "c" * 64}),
+    )
+    registry = Registry()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app(registry)), base_url="http://manager"
+    ) as client:
+        response = await client.post(
+            "/control/register",
+            json=_request("agent-a").to_dict(),
+            headers={
+                AGENT_ID_HEADER: "agent-a",
+                "Authorization": _basic(),
+            },
+        )
+
+    assert response.status_code == 401
+    assert registry.count() == 0
 
 
 @pytest.mark.parametrize(

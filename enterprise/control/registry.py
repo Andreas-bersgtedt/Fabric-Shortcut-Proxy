@@ -27,6 +27,7 @@ from enterprise.control.contract import (
     ControlCommand,
     contract_compatible,
 )
+from enterprise.control.placement import PlacementConfig
 
 if TYPE_CHECKING:
     from enterprise.control.lease import LeaderLease
@@ -53,6 +54,12 @@ class AgentRecord:
     epochs: dict[str, int] = field(default_factory=dict)
     capabilities: list[str] = field(default_factory=list)
     shard_index: int = -1
+    contract_version: str = "1.0"
+    pool_id: str = ""
+    location: str = ""
+    storage_profile: str = ""
+    allowed_connection_ids: list[str] = field(default_factory=list)
+    allowed_table_patterns: list[str] = field(default_factory=list)
     commands: list[ControlCommand] = field(default_factory=list)
     draining: bool = False
 
@@ -74,6 +81,12 @@ class AgentRecord:
             "epochs": dict(self.epochs),
             "capabilities": list(self.capabilities),
             "shard_index": self.shard_index,
+            "contract_version": self.contract_version,
+            "pool_id": self.pool_id,
+            "location": self.location,
+            "storage_profile": self.storage_profile,
+            "allowed_connection_ids": list(self.allowed_connection_ids),
+            "allowed_table_patterns": list(self.allowed_table_patterns),
             "health": self.health.to_dict(),
             "age_seconds": round(_now() - self.registered_at, 1),
             "seconds_since_heartbeat": round(_now() - self.last_seen, 1),
@@ -92,12 +105,14 @@ class Registry:
     def __init__(
         self, *, heartbeat_ms: int = 2000, miss_limit: int = 3,
         allowed_hosts: tuple[str, ...] | None = None,
+        placement: PlacementConfig | None = None,
     ) -> None:
         self.heartbeat_ms = heartbeat_ms
         self.miss_limit = max(1, miss_limit)
         self._agents: dict[str, AgentRecord] = {}
         self._lock = threading.Lock()
         self._allowed_hosts = tuple(x.strip().lower() for x in (allowed_hosts or ()) if x.strip())
+        self.placement = placement or PlacementConfig()
         self._durable_lease: LeaderLease | None = None
 
     def _snapshot_locked(self) -> dict:
@@ -120,6 +135,12 @@ class Registry:
                 "epochs": dict(record.epochs),
                 "capabilities": list(record.capabilities),
                 "shard_index": record.shard_index,
+                "contract_version": record.contract_version,
+                "pool_id": record.pool_id,
+                "location": record.location,
+                "storage_profile": record.storage_profile,
+                "allowed_connection_ids": list(record.allowed_connection_ids),
+                "allowed_table_patterns": list(record.allowed_table_patterns),
                 "commands": [command.to_dict() for command in record.commands],
                 "draining": record.draining,
             })
@@ -158,6 +179,16 @@ class Registry:
                     {str(item) for item in value.get("capabilities", [])}
                 ),
                 shard_index=int(value.get("shard_index", -1)),
+                contract_version=str(value.get("contract_version", "1.0")),
+                pool_id=str(value.get("pool_id", "")),
+                location=str(value.get("location", "")),
+                storage_profile=str(value.get("storage_profile", "")),
+                allowed_connection_ids=[
+                    str(item) for item in value.get("allowed_connection_ids", [])
+                ],
+                allowed_table_patterns=[
+                    str(item) for item in value.get("allowed_table_patterns", [])
+                ],
                 commands=[
                     ControlCommand.from_dict(item)
                     for item in value.get("commands", [])
@@ -232,6 +263,7 @@ class Registry:
             )
         if not self._host_allowed(req.host) or not self._host_allowed(advertised):
             raise ValueError("agent host is not allowed by AGENT_HOST_ALLOWLIST")
+        pool = self.placement.pool_for_identity(req.agent_id)
         lease = uuid.uuid4().hex
         now = _now()
         with self._lock:
@@ -242,6 +274,16 @@ class Registry:
                 advertise_host=req.advertise_host,
                 capabilities=sorted(set(req.capabilities)),
                 shard_index=req.shard_index,
+                contract_version=req.contract_version,
+                pool_id=pool.pool_id if pool else "",
+                location=pool.location if pool else "",
+                storage_profile=pool.storage_profile if pool else "",
+                allowed_connection_ids=(
+                    sorted(pool.allowed_connection_ids) if pool else []
+                ),
+                allowed_table_patterns=(
+                    list(pool.allowed_table_patterns) if pool else []
+                ),
                 registered_at=now, last_seen=now,
             )
             self._persist_locked(before)

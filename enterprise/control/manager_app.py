@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import pathlib
 import secrets
@@ -33,6 +34,7 @@ from enterprise.control.registry import Registry
 from enterprise.control.server import ControlService
 from enterprise.control.snapshot_provider import DurableSnapshotProvider
 from enterprise.control.task_scheduler import TaskScheduler
+from enterprise.control.placement import PlacementConfig
 from enterprise.control.work_queue import DurableWorkQueue
 from enterprise.control.supervisor import AgentSupervisor
 from enterprise.control.transport import create_control_router
@@ -67,10 +69,13 @@ def _agent_launch_cmd() -> list[str]:
 def _agent_env(agent_id: str, *, port: int, shard_index: int, shard_count: int,
                monitor_token: str) -> dict[str, str]:
     manager_url = f"http://{_agent_host_for_link()}:{config.CONTROL_PORT}"
+    identity_tokens = json.loads(os.environ.get("AGENT_IDENTITY_TOKENS", "{}"))
     return {
         "MANAGER_URL": manager_url,
         "AGENT_ID": agent_id,
-        "AGENT_TOKEN": os.environ.get("AGENT_TOKEN", ""),
+        "AGENT_TOKEN": identity_tokens.get(
+            agent_id, os.environ.get("AGENT_TOKEN", "")
+        ),
         # Each Agent serves the S3 data plane on its own port (PORT + i).
         "PORT": str(port),
         # Phase 2: supervised Agents serve materialized Parquet from the shared
@@ -119,6 +124,14 @@ def _make_supervisor(i: int, count: int, monitor_token: str = "") -> AgentSuperv
 
 
 def create_manager_app() -> FastAPI:
+    placement = PlacementConfig.from_environment()
+    placement.validate_identity_tokens(
+        os.environ.get("AGENT_IDENTITY_TOKENS", ""),
+        (
+            os.environ.get("AGENT_TOKEN", ""),
+            os.environ.get("AGENT_TOKEN_PREVIOUS", ""),
+        ),
+    )
     if config.AGENT_AUTH_MODE == "compatibility":
         log.warning(
             "agent_auth_compatibility_enabled",
@@ -134,6 +147,7 @@ def create_manager_app() -> FastAPI:
         allowed_hosts=tuple(
             item.strip() for item in config.AGENT_HOST_ALLOWLIST.split(",") if item.strip()
         ),
+        placement=placement,
     )
     from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
 

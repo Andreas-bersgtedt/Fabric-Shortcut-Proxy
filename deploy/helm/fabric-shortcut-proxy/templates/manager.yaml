@@ -71,6 +71,15 @@ spec:
                   name: {{ .Values.agentAuth.secretName }}
                   key: {{ .Values.agentAuth.previousValidUntilKey }}
                   optional: true
+            {{- if .Values.agentAuth.identityTokensSecretName }}
+            - name: AGENT_IDENTITY_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentAuth.identityTokensSecretName }}
+                  key: {{ .Values.agentAuth.identityTokensKey }}
+            {{- end }}
+            - name: AGENT_PLACEMENT_CONFIG
+              value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
             - name: CONTROL_HOST
               value: 0.0.0.0
             - name: CONTROL_PORT

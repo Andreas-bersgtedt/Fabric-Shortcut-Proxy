@@ -6,6 +6,27 @@ import os
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Any
+from urllib.parse import urlsplit
+
+
+class ResidencyPolicyViolation(ValueError):
+    code = "residency_policy_violation"
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"{self.code}: {detail}")
+
+
+@dataclass(frozen=True)
+class StoreProfile:
+    location: str
+    provider: str
+
+
+@dataclass(frozen=True)
+class ServingEndpoint:
+    location: str
+    storage_profile: str
+    url: str
 
 
 @dataclass(frozen=True)
@@ -17,6 +38,9 @@ class MaterializerPool:
     allowed_connection_ids: frozenset[str]
     allowed_table_patterns: tuple[str, ...]
     max_concurrency: int | None
+    heartbeat_ms: int | None = None
+    heartbeat_miss_limit: int | None = None
+    claim_lease_seconds: int | None = None
 
     def allows(self, connection_id: str, source_table: str) -> bool:
         if not connection_id or connection_id not in self.allowed_connection_ids:
@@ -34,6 +58,12 @@ class MaterializerPolicy:
     required_storage_profile: str = ""
     fallback_pools: tuple[str, ...] = ()
     max_concurrency: int | None = None
+    residency_locations: tuple[str, ...] = ()
+    staging_storage_profile: str = ""
+    serving_endpoints: tuple[str, ...] = ()
+    replica_storage_profiles: tuple[str, ...] = ()
+    cache_storage_profiles: tuple[str, ...] = ()
+    freshness_target_ms: int | None = None
 
 
 class PlacementConfig:
@@ -44,10 +74,15 @@ class PlacementConfig:
         pools: dict[str, MaterializerPool] | None = None,
         connections: dict[str, MaterializerPolicy] | None = None,
         tables: dict[tuple[str, str], MaterializerPolicy] | None = None,
+        stores: dict[str, StoreProfile] | None = None,
+        serving_endpoints: dict[str, ServingEndpoint] | None = None,
     ) -> None:
         self.pools = pools or {}
         self.connections = connections or {}
         self.tables = tables or {}
+        self.stores = stores or {}
+        self.serving_endpoints = serving_endpoints or {}
+        self.active_storage_profile = ""
         self.identity_pools = {
             identity: pool
             for pool in self.pools.values()
@@ -73,8 +108,9 @@ class PlacementConfig:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "PlacementConfig":
-        if set(value) - {"pools", "connections", "tables"}:
-            unknown = sorted(set(value) - {"pools", "connections", "tables"})
+        allowed_keys = {"pools", "connections", "tables", "stores", "serving_endpoints"}
+        if set(value) - allowed_keys:
+            unknown = sorted(set(value) - allowed_keys)
             raise ValueError(f"unknown placement configuration keys: {unknown}")
         pools: dict[str, MaterializerPool] = {}
         identities: set[str] = set()
@@ -92,6 +128,9 @@ class PlacementConfig:
                 "allowed_connection_ids",
                 "allowed_table_patterns",
                 "max_concurrency",
+                "heartbeat_ms",
+                "heartbeat_miss_limit",
+                "claim_lease_seconds",
             }
             unknown_fields = sorted(set(item) - allowed_fields)
             if unknown_fields:
@@ -122,9 +161,13 @@ class PlacementConfig:
                 allowed_connection_ids=frozenset(allowed_connections),
                 allowed_table_patterns=tuple(table_patterns),
                 max_concurrency=max_concurrency,
+                heartbeat_ms=_positive_limit(item.get("heartbeat_ms"), pool_id, "heartbeat_ms"),
+                heartbeat_miss_limit=_positive_limit(item.get("heartbeat_miss_limit"), pool_id, "heartbeat_miss_limit"),
+                claim_lease_seconds=_positive_limit(item.get("claim_lease_seconds"), pool_id, "claim_lease_seconds"),
             )
 
         connections: dict[str, MaterializerPolicy] = {}
+        connection_definitions: dict[str, Any] = {}
         raw_connections = value.get("connections", {})
         if not isinstance(raw_connections, dict):
             raise ValueError("placement connections must be an object")
@@ -133,6 +176,7 @@ class PlacementConfig:
             if not key:
                 raise ValueError("connection policy keys must be non-empty")
             connections[key] = _policy(raw_policy, pools, f"connection {key!r}")
+            connection_definitions[key] = raw_policy
 
         tables: dict[tuple[str, str], MaterializerPolicy] = {}
         raw_tables = value.get("tables", {})
@@ -145,12 +189,59 @@ class PlacementConfig:
                     "table policy keys must use 'connection_id::source_table'"
                 )
             key = (connection_id.strip(), source_table.strip())
+            parent = connections.get(key[0])
+            if parent is not None and parent.residency_locations:
+                if not isinstance(raw_policy, dict):
+                    raise ValueError("table policy must be an object")
+                raw_policy = {**connection_definitions[key[0]], **raw_policy}
+                locations = _text_list(raw_policy, "residency_locations", required=False)
+                if not locations or not set(locations).issubset(parent.residency_locations):
+                    raise ResidencyPolicyViolation("table override cannot widen connection residency")
             tables[key] = _policy(
                 raw_policy,
                 pools,
                 f"table {key[0]!r}::{key[1]!r}",
             )
-        return cls(pools, connections, tables)
+        stores: dict[str, StoreProfile] = {}
+        raw_stores = value.get("stores", {})
+        if not isinstance(raw_stores, dict):
+            raise ValueError("placement stores must be an object")
+        for name, definition in raw_stores.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("store profile names must be non-empty strings")
+            if not isinstance(definition, dict) or set(definition) != {"location", "provider"}:
+                raise ValueError("store profiles require only location and provider")
+            provider = _required_text(definition, "provider")
+            if provider not in {"azure", "s3", "gcs", "local"}:
+                raise ValueError(f"unsupported store provider: {provider}")
+            stores[name] = StoreProfile(_required_text(definition, "location"), provider)
+        endpoints: dict[str, ServingEndpoint] = {}
+        raw_endpoints = value.get("serving_endpoints", {})
+        if not isinstance(raw_endpoints, dict):
+            raise ValueError("placement serving_endpoints must be an object")
+        for name, definition in raw_endpoints.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("serving endpoint names must be non-empty strings")
+            if not isinstance(definition, dict) or set(definition) != {
+                "location", "storage_profile", "url"
+            }:
+                raise ValueError("serving endpoints require location, storage_profile and url")
+            url = _required_text(definition, "url")
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme != "https" or not parsed.hostname
+                or parsed.username or parsed.password or parsed.query or parsed.fragment
+            ):
+                raise ValueError("serving endpoint URL must use HTTPS without credentials")
+            endpoints[name] = ServingEndpoint(
+                _required_text(definition, "location"),
+                _required_text(definition, "storage_profile"),
+                url,
+            )
+        result = cls(pools, connections, tables, stores, endpoints)
+        for policy in (*connections.values(), *tables.values()):
+            result.validate_residency(policy)
+        return result
 
     def pool_for_identity(self, identity: str) -> MaterializerPool | None:
         return self.identity_pools.get(identity)
@@ -208,10 +299,76 @@ class PlacementConfig:
                 raise ValueError(f"Entra {claim} bindings must be unique across materializer pools")
 
     def policy_for(self, connection_id: str, source_table: str) -> MaterializerPolicy:
-        return self.tables.get(
+        policy = self.tables.get(
             (connection_id, source_table),
             self.connections.get(connection_id, MaterializerPolicy()),
         )
+        return policy
+
+    def validate_residency(self, policy: MaterializerPolicy, *, connection_id: str = "") -> None:
+        parent = self.connections.get(connection_id)
+        if parent is not None and parent.residency_locations:
+            if not policy.residency_locations or not set(policy.residency_locations).issubset(parent.residency_locations):
+                raise ResidencyPolicyViolation("table override cannot widen connection residency")
+        if not policy.residency_locations:
+            if policy.staging_storage_profile or policy.serving_endpoints or policy.replica_storage_profiles or policy.cache_storage_profiles:
+                raise ResidencyPolicyViolation("federated chain requires residency_locations")
+            return
+        allowed = set(policy.residency_locations)
+        if not policy.required_pool or not policy.required_storage_profile or not policy.serving_endpoints:
+            raise ResidencyPolicyViolation("constrained policy requires pool, published store and serving endpoint")
+        if policy.required_location and policy.required_location not in allowed:
+            raise ResidencyPolicyViolation("required location is outside the boundary")
+        profiles = {policy.required_storage_profile}
+        profiles.add(policy.staging_storage_profile or policy.required_storage_profile)
+        profiles.update(policy.replica_storage_profiles)
+        profiles.update(policy.cache_storage_profiles)
+        for pool_id in (policy.required_pool, *policy.fallback_pools):
+            pool = self.pools.get(pool_id)
+            if pool is None or pool.location not in allowed or not pool.storage_profile:
+                raise ResidencyPolicyViolation(f"pool {pool_id!r} is missing or outside the boundary")
+            profiles.add(pool.storage_profile)
+        for endpoint_id in policy.serving_endpoints:
+            endpoint = self.serving_endpoints.get(endpoint_id)
+            if endpoint is None or endpoint.location not in allowed:
+                raise ResidencyPolicyViolation(f"serving endpoint {endpoint_id!r} is missing or outside the boundary")
+            store = self.stores.get(endpoint.storage_profile)
+            if store is None or store.location != endpoint.location:
+                raise ResidencyPolicyViolation("serving endpoint must read a store in its own location")
+            if endpoint.storage_profile not in {
+                policy.required_storage_profile, *policy.replica_storage_profiles
+            }:
+                raise ResidencyPolicyViolation("serving endpoint must read the published store or a configured replica")
+            profiles.add(endpoint.storage_profile)
+        for profile_id in profiles:
+            profile = self.stores.get(profile_id)
+            if profile is None or profile.location not in allowed:
+                raise ResidencyPolicyViolation(f"store {profile_id!r} is missing or outside the boundary")
+
+    def bind_runtime_store(self, profile_id: str, provider: str) -> None:
+        self.active_storage_profile = profile_id
+        if profile_id:
+            profile = self.stores.get(profile_id)
+            if profile is None or profile.provider != provider:
+                raise ResidencyPolicyViolation("active artifact store does not match its declared provider")
+        for policy in (*self.connections.values(), *self.tables.values()):
+            self.validate_dispatch(policy)
+
+    def validate_dispatch(self, policy: MaterializerPolicy, *, connection_id: str = "") -> None:
+        self.validate_residency(policy, connection_id=connection_id)
+        if not policy.residency_locations:
+            return
+        if not self.active_storage_profile:
+            raise ResidencyPolicyViolation("FSP_ARTIFACT_STORE_PROFILE is required for constrained dispatch")
+        if (
+            policy.required_storage_profile != self.active_storage_profile
+            or (policy.staging_storage_profile or policy.required_storage_profile) != self.active_storage_profile
+            or any(
+                self.pools[pool].storage_profile != self.active_storage_profile
+                for pool in (policy.required_pool, *policy.fallback_pools)
+            )
+        ):
+            raise ResidencyPolicyViolation("current work queue supports one staging/published store; cross-store dispatch is not enabled")
 
 
 def _required_text(item: dict[str, Any], key: str) -> str:
@@ -239,11 +396,11 @@ def _text_list(
     return list(dict.fromkeys(entry.strip() for entry in value))
 
 
-def _positive_limit(value: Any, scope: str) -> int | None:
+def _positive_limit(value: Any, scope: str, field: str = "max_concurrency") -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"{scope} max_concurrency must be a positive integer")
+        raise ValueError(f"{scope} {field} must be a positive integer")
     return value
 
 
@@ -258,6 +415,12 @@ def _policy(
         "required_storage_profile",
         "fallback_pools",
         "max_concurrency",
+        "residency_locations",
+        "staging_storage_profile",
+        "serving_endpoints",
+        "replica_storage_profiles",
+        "cache_storage_profiles",
+        "freshness_target_ms",
     }
     if set(raw) - allowed:
         unknown = sorted(set(raw) - allowed)
@@ -280,4 +443,10 @@ def _policy(
         required_storage_profile=required_storage_profile,
         fallback_pools=tuple(fallback_pools),
         max_concurrency=_positive_limit(raw.get("max_concurrency"), scope),
+        residency_locations=tuple(_text_list(raw, "residency_locations", required=False)),
+        staging_storage_profile=_optional_text(raw, "staging_storage_profile"),
+        serving_endpoints=tuple(_text_list(raw, "serving_endpoints", required=False)),
+        replica_storage_profiles=tuple(_text_list(raw, "replica_storage_profiles", required=False)),
+        cache_storage_profiles=tuple(_text_list(raw, "cache_storage_profiles", required=False)),
+        freshness_target_ms=_positive_limit(raw.get("freshness_target_ms"), scope, "freshness_target_ms"),
     )

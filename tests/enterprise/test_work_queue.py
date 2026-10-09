@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 import io
 import threading
 import time
@@ -172,7 +173,9 @@ def test_queue_survives_restart_and_publishes_verified_snapshot():
 
     restarted = DurableWorkQueue(store)
     assert restarted.get_request(request["request_id"])["state"] == TASK_SUCCEEDED
-    assert restarted.get_snapshot("sales", 7) == manifest
+    assert restarted.get_snapshot("sales", 7) == replace(
+        manifest, dataset_id="source::sales", produced_at_ms=request["created_at_ms"],
+    )
     store.put(claimed.output_key, b"corrupt")
     with pytest.raises(WorkQueueError, match="published snapshot output"):
         restarted.get_snapshot("sales", 7)

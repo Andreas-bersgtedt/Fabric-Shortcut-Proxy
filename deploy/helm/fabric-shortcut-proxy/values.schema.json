@@ -280,7 +280,8 @@
             "agentPlacementConfig": {
               "type": "object",
               "additionalProperties": true
-            }
+            },
+            "artifactStoreProfile": { "type": "string" }
           }
         }
       ]

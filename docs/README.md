@@ -20,6 +20,7 @@ connectivity, security, operations, and tutorials.
 | Backup and restore | [BACKUP_RESTORE.md](BACKUP_RESTORE.md) |
 | Delta output | [DELTA_FORMAT.md](DELTA_FORMAT.md) |
 | System architecture | [TechnicalArchitecture.md](TechnicalArchitecture.md) |
+| Phase 4 federation primitives and remaining acceptance work | [FEDERATED_ARTIFACTS.md](FEDERATED_ARTIFACTS.md) |
 | Editable enterprise deployment diagram | [architecture-enterprise-helm.excalidraw](architecture-enterprise-helm.excalidraw) |
 | External load balancing | [EXTERNAL_LB_RUNBOOK.md](EXTERNAL_LB_RUNBOOK.md) |
 | Source-specific operations | [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md) |

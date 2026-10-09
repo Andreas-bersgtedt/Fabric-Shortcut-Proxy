@@ -47,7 +47,9 @@ credential renewal. Keep those distinctions in the final acceptance record.
 
 The Entra rollout repeated primary, delivered drain, fallback, and recovery
 publication, and verified positive/negative authentication at both sites.
-The live projected-credential rotation observation is pending. The actual
+Live projected-credential rotation passed without a Pod restart: 156
+continuous authenticated control/readiness checks, zero failures, and a fresh
+SDK exchange accepted with HTTP 200. The actual
 Azure Identity expiry/file-reload path is covered by
 `test_azure_sdk_renews_expired_token_and_reads_rotated_federation`; its AAD
 client is mocked, so this test is not evidence of a live token exchange.

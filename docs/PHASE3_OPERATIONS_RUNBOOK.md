@@ -229,15 +229,54 @@ references them. The original demo release and its credentials are unchanged.
 
 ### Credential renewal observation
 
-The North Europe Pod is being observed through its normal projected workload
-credential rotation. The monitor checks authenticated control access and
-readiness every 15 seconds, then performs a real Azure Identity exchange using
-the rotated federation file after the SDK's file-cache interval. This check
-remains pending until the monitor records a successful exchange and zero
-failed checks.
+The North Europe Pod passed its normal projected workload credential rotation
+without a Pod restart. Over 41 minutes 31 seconds, the monitor completed 156
+authenticated control/readiness checks with zero failures. After rotation and
+the SDK's file-cache interval, a fresh Azure Identity exchange using the
+rotated federation file was accepted by Manager with HTTP 200.
+
+| Sanitized monitor field | Value |
+| --- | --- |
+| State | `passed` |
+| Observation start / completion, Unix seconds | `1791563215` / `1791565706` |
+| Initial federation issued / expires, Unix seconds | `1791562761` / `1791566361` |
+| Rotated federation issued / expires, Unix seconds | `1791565703` / `1791569303` |
+| Successful / failed checks | `156` / `0` |
+| Fresh exchange accepted | HTTP `200` |
+| Natural access-token expiry observed | `false` |
 
 Observed managed-identity access tokens have approximately 24-hour lifetimes;
 the Kubernetes federation token has a one-hour lifetime. A claims-triggered
 SDK exchange proves the rotated federation credential is usable, not natural
 expiry of the existing access token. The SDK expiry/file-reload unit test
 separately uses controlled time and a mocked AAD client boundary.
+
+### Final committed candidate
+
+After the rotation monitor completed, both sites were upgraded to the clean
+committed runtime revision `8d0d911a18a5237d755c0073a9461d8ee0311e10`.
+There is no runtime overlay in this build. Its image digest is
+`sha256:39b2b01dbf11d99513ca1acffba3aa8696185302e5e7c1078755f12d0d91bc31`.
+The only runtime difference from the rotation candidate is the explicit
+PyJWT algorithm import used for type checking.
+
+Both final pinned profiles passed Helm lint and server-side admission.
+Sweden Central release `fsp` revision 6 and North Europe revision 2 rolled
+out successfully. Both sites again passed the HTTP 200/401 authentication
+matrix, absence of static Agent environment credentials, allowed source/vault
+access, DNS and artifact read/write, and blocked arbitrary internet/unrelated
+SQL checks.
+
+Fresh generation `00000000000000000014-cf1dc4c275c946f2`, request
+`8cd9f179078a47f4fad536d5105fb745c333b327e128eb60e988ede8dd38b851`,
+published one successful primary-owned split with 847 records, 92,314 bytes,
+and one metadata object. Store-backed integrity and durable request/generation
+IDs were verified. The acceptance primary and fallback remain running for
+review; no DNS or original demo workload change was made.
+
+The focused local Phase 3 regression passed 149 tests. All 11 CI checks passed
+at the committed runtime revision, including Lite and Enterprise on Python
+3.11/3.12, chart validation, C++ parity/SigV4, and Kind integration. Windows
+process-startup tests had intermittent 10-second timeouts in earlier runs;
+they passed in the focused rerun and both Linux Enterprise CI jobs. Their
+deadlines and unrelated HA implementation were not changed.

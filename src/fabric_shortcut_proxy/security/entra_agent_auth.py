@@ -30,10 +30,10 @@ def entra_identities() -> dict[str, dict[str, str]]:
 class EntraAgentTokenProvider:
     def __init__(self) -> None:
         try:
-            import jwt
+            from jwt.algorithms import get_default_algorithms
         except ImportError as exc:
             raise ValueError("Entra Agent authentication requires the agent-entra extra") from exc
-        if "RS256" not in jwt.algorithms.get_default_algorithms():
+        if "RS256" not in get_default_algorithms():
             raise ValueError("Entra Agent authentication requires the agent-entra crypto extra")
         self.tenant_id = str(uuid.UUID(os.environ.get("AGENT_ENTRA_TENANT_ID", "")))
         self.audience = str(uuid.UUID(os.environ.get("AGENT_ENTRA_AUDIENCE", "")))

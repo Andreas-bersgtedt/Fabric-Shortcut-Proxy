@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import io
 import json
 import secrets
 import threading
@@ -11,6 +12,7 @@ import time
 from dataclasses import replace
 from typing import Callable
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from fabric_shortcut_proxy import config
@@ -47,10 +49,61 @@ RESULTS_PREFIX = f"{PREFIX}/results"
 SNAPSHOTS_PREFIX = f"{PREFIX}/snapshots"
 IDEMPOTENCY_PREFIX = f"{PREFIX}/idempotency"
 MEMBERSHIP_PREFIX = f"{PREFIX}/memberships"
+STAGING_PREFIX = ".fsp/staging"
 
 
 class WorkQueueError(RuntimeError):
     pass
+
+
+class _ArtifactStoreReader(io.RawIOBase):
+    def __init__(self, store: ArtifactStore, key: str, size: int) -> None:
+        self._store = store
+        self._key = key
+        self._size = size
+        self._position = 0
+        self.read_error: Exception | None = None
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        if whence == io.SEEK_SET:
+            position = offset
+        elif whence == io.SEEK_CUR:
+            position = self._position + offset
+        elif whence == io.SEEK_END:
+            position = self._size + offset
+        else:
+            raise ValueError(f"unsupported seek mode: {whence}")
+        if position < 0:
+            raise ValueError("cannot seek before the start of the artifact")
+        self._position = position
+        return position
+
+    def readinto(self, buffer) -> int:
+        if self._position >= self._size:
+            return 0
+        requested = min(len(buffer), self._size - self._position)
+        try:
+            chunk = self._store.get(
+                self._key,
+                offset=self._position,
+                length=requested,
+            )
+        except Exception as exc:
+            self.read_error = exc
+            raise
+        count = min(len(chunk), requested)
+        buffer[:count] = chunk[:count]
+        self._position += count
+        return count
 
 
 class WorkQueueConflict(WorkQueueError):
@@ -95,6 +148,34 @@ def _idempotency_key(value: str) -> str:
 
 def _membership_key(generation_id: str) -> str:
     return f"{MEMBERSHIP_PREFIX}/{_hash(generation_id)}.json"
+
+
+def _staging_prefix(
+    output_key: str, generation_id: str, task_id: str
+) -> str:
+    return f"{_staging_generation_prefix(output_key, generation_id)}{task_id}/"
+
+
+def _staging_generation_prefix(output_key: str, generation_id: str) -> str:
+    parent = output_key.rpartition("/")[0]
+    table_data_prefix = f"{parent}/" if parent else ""
+    return (
+        f"{table_data_prefix}{STAGING_PREFIX}/"
+        f"{_hash(generation_id)}/"
+    )
+
+
+def _staging_key(
+    output_key: str,
+    generation_id: str,
+    task_id: str,
+    attempt: int,
+    claim_token: str,
+) -> str:
+    return (
+        f"{_staging_prefix(output_key, generation_id, task_id)}"
+        f"{attempt}-{_hash(claim_token)}.parquet"
+    )
 
 
 class DurableWorkQueue:
@@ -731,6 +812,14 @@ class DurableWorkQueue:
                 now_ms + self.task_lease_seconds * 1000,
                 deadline_ms or now_ms + self.task_lease_seconds * 1000,
             )
+            task_payload = MaterializeTask.from_dict(task["task"])
+            staging_key = _staging_key(
+                task_payload.output_key,
+                task_payload.generation_id,
+                task_id,
+                attempt,
+                claim_token,
+            )
             task["state"] = TASK_CLAIMED
             task.pop("dispatch_status", None)
             task["attempt"] = attempt
@@ -744,6 +833,7 @@ class DurableWorkQueue:
                 "manager_fence": int(manager_fence),
                 "membership_version": int(membership_version),
                 "worker_fence": int(worker_fence),
+                "staging_key": staging_key,
             }
             task["updated_at_ms"] = now_ms
             task["revision"] = int(task["revision"]) + 1
@@ -752,7 +842,8 @@ class DurableWorkQueue:
                 "materialization_queue_events_total", event="claimed"
             )
             return replace(
-                MaterializeTask.from_dict(task["task"]),
+                task_payload,
+                output_key=staging_key,
                 claim_token=claim_token,
                 attempt=attempt,
                 claim_expires_at_ms=expires_at,
@@ -856,6 +947,7 @@ class DurableWorkQueue:
                     and int(saved.get("size_bytes", 0)) == result.size_bytes
                     and int(saved.get("record_count", 0)) == result.record_count
                     and str(saved.get("content_hash", "")) == result.content_hash
+                    and str(saved.get("s3_etag", "")) == result.s3_etag
                     and str(saved.get("error_code", "")) == result.error_code
                     and int(saved.get("membership_version", 0))
                     == result.membership_version
@@ -879,6 +971,7 @@ class DurableWorkQueue:
                     accepted.get("content_hash") == result.content_hash
                     and int(accepted.get("size_bytes", -1)) == result.size_bytes
                     and int(accepted.get("record_count", -1)) == result.record_count
+                    and str(accepted.get("s3_etag", "")) == result.s3_etag
                 )
                 return Ack(
                     ok=same,
@@ -976,7 +1069,22 @@ class DurableWorkQueue:
                     reason_code=RESULT_STALE_GENERATION,
                 )
             if result.ok:
-                reason = self._verify_output(task_payload, result)
+                staging_key = str(claim.get("staging_key", ""))
+                expected_staging_key = _staging_key(
+                    task_payload.output_key,
+                    task_payload.generation_id,
+                    result.task_id,
+                    int(task["attempt"]),
+                    str(claim.get("claim_token", "")),
+                )
+                if not staging_key or staging_key != expected_staging_key:
+                    return Ack(
+                        ok=False,
+                        state=TASK_CLAIMED,
+                        reason_code=RESULT_INVALID_OUTPUT,
+                    )
+                staged_task = replace(task_payload, output_key=staging_key)
+                reason = self._verify_output(staged_task, result)
                 if reason:
                     return Ack(
                         ok=False,
@@ -990,6 +1098,8 @@ class DurableWorkQueue:
                     "size_bytes": result.size_bytes,
                     "record_count": result.record_count,
                     "content_hash": result.content_hash,
+                    "s3_etag": result.s3_etag,
+                    "output_key": staging_key,
                     "completed_at_ms": result.completed_at_ms or now_ms,
                     "error_code": "",
                 }
@@ -1048,12 +1158,23 @@ class DurableWorkQueue:
         stat = self.store.head(task.output_key)
         if stat is None or stat.size != result.size_bytes:
             return "size_mismatch"
-        data = self.store.get(task.output_key)
-        if hashlib.sha256(data).hexdigest() != result.content_hash:
-            return "hash_mismatch"
+        if not self.store.verify(
+            task.output_key,
+            size=result.size_bytes,
+            content_hash=result.content_hash,
+        ):
+            return "output_verification_failed"
+        if len(result.s3_etag) != 32 or any(
+            character not in "0123456789abcdefABCDEF"
+            for character in result.s3_etag
+        ):
+            return "invalid_s3_etag"
+        reader = _ArtifactStoreReader(self.store, task.output_key, stat.size)
         try:
-            metadata = pq.read_metadata(__import__("io").BytesIO(data))
-        except Exception:
+            metadata = pq.read_metadata(pa.PythonFile(reader))
+        except (pa.ArrowException, EOFError, OSError, ValueError):
+            if reader.read_error is not None:
+                raise reader.read_error
             return "invalid_parquet"
         if metadata.num_rows != result.record_count:
             return "row_count_mismatch"
@@ -1166,9 +1287,27 @@ class DurableWorkQueue:
                     request is None
                     or request.get("state") not in TASK_TERMINAL_STATES
                     or int(request.get("updated_at_ms", 0)) > cutoff
+                    or (
+                        request.get("state") == TASK_SUCCEEDED
+                        and not request.get("published")
+                    )
                 ):
                     continue
                 for task_id in request.get("task_ids", []):
+                    task = self.get_task(str(task_id))
+                    if (
+                        task is not None
+                        and not request.get("published")
+                        and request.get("state")
+                        in {TASK_FAILED, TASK_CANCELLED, TASK_EXPIRED}
+                    ):
+                        payload = task.get("task") or {}
+                        generation_id = str(payload.get("generation_id", ""))
+                        if generation_id:
+                            self.prune_staging(
+                                generation_id,
+                                [str(payload.get("output_key", ""))],
+                            )
                     for result in self.store.list(f"{RESULTS_PREFIX}/{task_id}/"):
                         self._delete(result.key)
                     self._delete(_task_key(task_id))
@@ -1184,6 +1323,31 @@ class DurableWorkQueue:
                     event="retention_pruned",
                 )
         return pruned
+
+    def prune_staging(
+        self,
+        generation_id: str,
+        output_keys: list[str],
+        *,
+        keep_keys: set[str] | None = None,
+    ) -> int:
+        """Remove claim-specific output objects not referenced by a published snapshot."""
+        from fabric_shortcut_proxy.runtime.split_completion import completion_key
+
+        keep = keep_keys or set()
+        removed = 0
+        prefixes = {
+            _staging_generation_prefix(output_key, generation_id)
+            for output_key in output_keys
+        }
+        for prefix in prefixes:
+            for item in self.store.list(prefix):
+                if item.key in keep:
+                    continue
+                self.store.delete(item.key)
+                self.store.delete(completion_key(item.key, generation_id))
+                removed += 1
+        return removed
 
     def _refresh_requests(self, now_ms: int) -> None:
         for item in self.store.list(f"{REQUESTS_PREFIX}/"):
@@ -1277,10 +1441,10 @@ class DurableWorkQueue:
                     "snapshot generation is no longer active"
                 )
             for split in manifest.splits:
-                data = self.store.get(split.object_key)
-                if (
-                    len(data) != split.size_bytes
-                    or hashlib.sha256(data).hexdigest() != split.content_hash
+                if not self.store.verify(
+                    split.object_key,
+                    size=split.size_bytes,
+                    content_hash=split.content_hash,
                 ):
                     raise WorkQueueConflict(
                         f"snapshot output verification failed: {split.object_key}"
@@ -1331,18 +1495,13 @@ class DurableWorkQueue:
             return None
         manifest = SnapshotManifest.from_dict(record["manifest"])
         for split in manifest.splits:
-            try:
-                data = self.store.get(split.object_key)
-            except ObjectNotFound as exc:
-                raise WorkQueueError(
-                    f"published snapshot output is missing: {split.object_key}"
-                ) from exc
-            if (
-                len(data) != split.size_bytes
-                or hashlib.sha256(data).hexdigest() != split.content_hash
+            if not self.store.verify(
+                split.object_key,
+                size=split.size_bytes,
+                content_hash=split.content_hash,
             ):
                 raise WorkQueueError(
-                    f"published snapshot output is invalid: {split.object_key}"
+                    f"published snapshot output is missing or invalid: {split.object_key}"
                 )
         for metadata_key in manifest.metadata_keys:
             if self.store.head(metadata_key) is None:

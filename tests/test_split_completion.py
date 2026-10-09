@@ -124,6 +124,43 @@ async def test_non_owner_timeout_never_falls_back_to_sql(shared_store, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_queued_retry_reuses_verified_completion_without_source_query(
+    shared_store, monkeypatch
+):
+    import fabric_shortcut_proxy.runtime.materializer as materializer
+
+    context = acquire_generation(shared_store, shard_count=1)
+    split = _split(index=0)
+    split.generation_id = context.generation_id
+    split.generation_fence = context.fence
+    split.generation_token = context.lease_token
+    split.generation_plan_sha256 = context.plan_sha256
+    data = b"completed-output"
+    split.file_size_in_bytes = len(data)
+    split.record_count = 13
+    publish_split_completion(split, data)
+    split.file_size_in_bytes = None
+    split.record_count = None
+
+    monkeypatch.setattr(
+        cache,
+        "warm_parquet",
+        lambda key: pytest.fail(f"retry should use completion metadata: {key}"),
+    )
+    monkeypatch.setattr(
+        materializer,
+        "build_split_query",
+        lambda split: pytest.fail("retry should not query the source"),
+    )
+
+    count = await materializer.materialize_queued_split(split)
+
+    assert count == 13
+    assert split.file_size_in_bytes == len(data)
+    assert split.content_hash == __import__("hashlib").sha256(data).hexdigest()
+
+
+@pytest.mark.asyncio
 async def test_fenced_non_owner_rejoins_current_generation(shared_store, monkeypatch):
     import fabric_shortcut_proxy.runtime.materializer as materializer
 
@@ -172,6 +209,60 @@ def test_completion_rejects_plan_digest_mismatch(shared_store):
     split.generation_plan_sha256 = "different-plan"
     with pytest.raises(GenerationError, match="table plan"):
         read_split_completion(split)
+
+
+def test_expired_generation_cannot_publish_completion_after_upload(
+    shared_store, monkeypatch
+):
+    context = acquire_generation(shared_store, 1)
+    split = _split(index=0)
+    split.generation_id = context.generation_id
+    split.generation_fence = context.fence
+    split.generation_token = context.lease_token
+    split.generation_plan_sha256 = context.plan_sha256
+    data = b"owner-parquet-bytes"
+    split.file_size_in_bytes = len(data)
+    split.record_count = 1
+    original_cas = shared_store.compare_and_swap
+
+    def cas_then_replace_generation(key, expected, value):
+        committed = original_cas(key, expected, value)
+        if key == split.object_key:
+            acquire_generation(shared_store, 1)
+        return committed
+
+    monkeypatch.setattr(
+        shared_store,
+        "compare_and_swap",
+        cas_then_replace_generation,
+    )
+
+    with pytest.raises(GenerationError, match="fenced"):
+        publish_split_completion(split, data)
+
+    assert shared_store.exists(split.object_key)
+    assert not shared_store.exists(
+        f".fsp/generations/{context.generation_id}/split-completions/"
+        f"{__import__('hashlib').sha256(split.object_key.encode()).hexdigest()}.json"
+    )
+
+
+def test_generation_completion_does_not_overwrite_immutable_split(shared_store):
+    context = acquire_generation(shared_store, 1)
+    split = _split(index=0)
+    split.generation_id = context.generation_id
+    split.generation_fence = context.fence
+    split.generation_token = context.lease_token
+    split.generation_plan_sha256 = context.plan_sha256
+    split.file_size_in_bytes = len(b"new-data")
+    split.record_count = 1
+    shared_store.put(split.object_key, b"existing-data")
+
+    with pytest.raises(GenerationError, match="immutable split key"):
+        publish_split_completion(split, b"new-data")
+
+    assert shared_store.get(split.object_key) == b"existing-data"
+    assert read_split_completion(split) is None
 
 
 @pytest.mark.asyncio

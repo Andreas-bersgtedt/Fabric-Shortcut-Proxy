@@ -53,15 +53,27 @@ async def test_worker_materializes_and_reports_verified_identity(monkeypatch):
 
     async def materialize(split):
         store.put(split.object_key, data)
+        split.file_size_in_bytes = len(data)
+        split.content_hash = hashlib.sha256(data).hexdigest()
+        split.s3_etag = hashlib.md5(data, usedforsecurity=False).hexdigest()
         return 2
 
     monkeypatch.setattr(worker, "materialize_queued_split", materialize)
+    original_get = store.get
+
+    def reject_output_readback(key, **kwargs):
+        if key == "warehouse/sales/0.parquet":
+            raise AssertionError("worker must not read back the materialized output")
+        return original_get(key, **kwargs)
+
+    monkeypatch.setattr(store, "get", reject_output_readback)
     result = await execute_task(_task(fingerprint), "agent-1")
 
     assert result.ok
     assert result.record_count == 2
     assert result.size_bytes == len(data)
     assert result.content_hash == hashlib.sha256(data).hexdigest()
+    assert result.s3_etag == hashlib.md5(data, usedforsecurity=False).hexdigest()
     assert result.claim_token == "claim-1"
     assert result.generation_id == "generation-1"
 

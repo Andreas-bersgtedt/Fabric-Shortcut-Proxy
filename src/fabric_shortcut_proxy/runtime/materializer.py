@@ -92,14 +92,16 @@ async def _wait_for_completion(split):
     return None
 
 
-def _apply_bytes(split, data: bytes) -> int:
+def _apply_bytes(split, data: bytes, *, publish_completion: bool = False) -> int:
     split.file_size_in_bytes = len(data)
     split.record_count = pq.read_metadata(io.BytesIO(data)).num_rows
     split.content_hash = hashlib.sha256(data).hexdigest()
     split.s3_etag = hashlib.md5(data, usedforsecurity=False).hexdigest()
     if config.ICEBERG_MANIFEST_STATS:
         split.stats = collect_split_stats(data, split.table.schema)
-    if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
+    if publish_completion or (
+        config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING
+    ):
         publish_split_completion(split, data)
     if _should_pin():
         cache.pin_parquet(split.object_key, data)
@@ -149,7 +151,12 @@ def _apply_arrow_fallback(
     return tokenize_batch(batch, columns).to_pylist()
 
 
-async def _materialize_split_once(split, *, enforce_ownership: bool = True) -> int:
+async def _materialize_split_once(
+    split,
+    *,
+    enforce_ownership: bool = True,
+    publish_completion: bool = False,
+) -> int:
     key = split.object_key
     if enforce_ownership and not _owns_split(split) and config.ARTIFACT_STORE_SERVING:
         completion = await _wait_for_completion(split)
@@ -159,13 +166,17 @@ async def _materialize_split_once(split, *, enforce_ownership: bool = True) -> i
                 f"split={split.split_index}"
             )
         return apply_split_completion(split, completion)
+    if publish_completion:
+        completion = read_split_completion(split)
+        if completion is not None:
+            return apply_split_completion(split, completion)
     warm = cache.warm_parquet(key)
     if warm is not None:
-        return _apply_bytes(split, warm)
+        return _apply_bytes(split, warm, publish_completion=publish_completion)
     async with _sem:
         warm = cache.warm_parquet(key)   # another waiter may have won the race
         if warm is not None:
-            return _apply_bytes(split, warm)
+            return _apply_bytes(split, warm, publish_completion=publish_completion)
         sql, params = build_split_query(split)
         read_session = None
         if config.GENERATION_SOURCE_CONSISTENCY == "snapshot":
@@ -221,7 +232,9 @@ async def _materialize_split_once(split, *, enforce_ownership: bool = True) -> i
         split.s3_etag = hashlib.md5(pq_bytes, usedforsecurity=False).hexdigest()
         if config.ICEBERG_MANIFEST_STATS:
             split.stats = collect_split_stats(pq_bytes, split.table.schema)
-        if config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING:
+        if publish_completion or (
+            config.AGENT_SHARD_COUNT > 1 and config.ARTIFACT_STORE_SERVING
+        ):
             publish_split_completion(split, pq_bytes)
         if _should_pin():
             cache.pin_parquet(key, pq_bytes)
@@ -258,7 +271,11 @@ async def _materialize_split(split) -> int:
 
 async def materialize_queued_split(split) -> int:
     """Materialize a Manager-claimed split on the selected Agent."""
-    return await _materialize_split_once(split, enforce_ownership=False)
+    return await _materialize_split_once(
+        split,
+        enforce_ownership=False,
+        publish_completion=True,
+    )
 
 
 async def ensure_snapshot_materialized(snap: SnapshotState) -> None:

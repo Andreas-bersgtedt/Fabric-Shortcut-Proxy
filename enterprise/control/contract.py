@@ -477,6 +477,7 @@ class TaskResult:
     error_code: str = ""
     membership_version: int = 0
     worker_fence: int = 0
+    s3_etag: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -487,7 +488,9 @@ class TaskResult:
             agent_id=str(d["agent_id"]), table=str(d["table"]), epoch=int(d["epoch"]),
             split_index=int(d["split_index"]), ok=bool(d["ok"]),
             size_bytes=int(d.get("size_bytes", 0)), record_count=int(d.get("record_count", 0)),
-            content_hash=str(d.get("content_hash", "")), error=str(d.get("error", "")),
+            content_hash=str(d.get("content_hash", "")),
+            s3_etag=str(d.get("s3_etag", "")),
+            error=str(d.get("error", "")),
             task_id=str(d.get("task_id", "")),
             request_id=str(d.get("request_id", "")),
             claim_token=str(d.get("claim_token", "")),

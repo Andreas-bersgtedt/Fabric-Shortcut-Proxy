@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from dataclasses import dataclass
 
 from fabric_shortcut_proxy.iceberg.stats import ColumnStats
 from fabric_shortcut_proxy.runtime.artifact_store import ObjectNotFound, get_default_store
-from fabric_shortcut_proxy.runtime.generation import assert_generation_identity
+from fabric_shortcut_proxy.runtime.generation import (
+    COORDINATOR_KEY,
+    GenerationError,
+    assert_generation_identity,
+)
 
 _PREFIX = ".fsp/generations"
 
@@ -74,7 +79,24 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
         assert_generation_identity(
             store, generation_id, fence, lease_token, plan_sha256
         )
-    store.put(split.object_key, parquet_bytes)
+    content_hash = hashlib.sha256(parquet_bytes).hexdigest()
+    if generation_id == "legacy":
+        store.put(split.object_key, parquet_bytes)
+    else:
+        try:
+            store.put_stream_if_absent(
+                split.object_key,
+                io.BytesIO(parquet_bytes),
+                length=len(parquet_bytes),
+            )
+        except Exception as exc:
+            from fabric_shortcut_proxy.runtime.artifact_store import ObjectConflict
+
+            if isinstance(exc, ObjectConflict):
+                raise GenerationError(
+                    "immutable split key already contains different data"
+                ) from exc
+            raise
     completion = SplitCompletion(
         generation_id=generation_id,
         fence=fence,
@@ -82,7 +104,7 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
         object_key=split.object_key,
         file_size_in_bytes=int(split.file_size_in_bytes),
         record_count=int(split.record_count),
-        sha256=hashlib.sha256(parquet_bytes).hexdigest(),
+        sha256=content_hash,
         s3_etag=hashlib.md5(parquet_bytes, usedforsecurity=False).hexdigest(),
         stats=dict(split.stats or {}),
     )
@@ -98,10 +120,21 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
         "s3_etag": completion.s3_etag,
         "stats": _encode_stats(completion.stats),
     }
-    store.put(
+    completion_bytes = json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    if generation_id == "legacy":
+        store.put(completion_key(split.object_key, generation_id), completion_bytes)
+    elif not store.fenced_put(
+        COORDINATOR_KEY,
+        generation_id,
+        fence,
         completion_key(split.object_key, generation_id),
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-    )
+        completion_bytes,
+    ):
+        raise GenerationError(
+            "generation was fenced before split completion publication"
+        )
     return completion
 
 
@@ -150,7 +183,15 @@ def read_split_completion(split) -> SplitCompletion | None:
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"invalid split completion for {split.object_key}: {exc}") from exc
     stat = store.head(split.object_key)
-    if stat is None or stat.size != completion.file_size_in_bytes:
+    if (
+        stat is None
+        or stat.size != completion.file_size_in_bytes
+        or not store.verify(
+            split.object_key,
+            size=completion.file_size_in_bytes,
+            content_hash=completion.sha256,
+        )
+    ):
         raise RuntimeError(f"split completion data mismatch for {split.object_key}")
     return completion
 

@@ -71,6 +71,7 @@ def _result(claimed: MaterializeTask, agent_id: str, data: bytes) -> TaskResult:
         size_bytes=len(data),
         record_count=2,
         content_hash=hashlib.sha256(data).hexdigest(),
+        s3_etag=hashlib.md5(data, usedforsecurity=False).hexdigest(),
         task_id=claimed.task_id,
         request_id=claimed.request_id,
         claim_token=claimed.claim_token,

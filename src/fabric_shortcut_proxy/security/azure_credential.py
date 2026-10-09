@@ -64,7 +64,7 @@ def get_credential(
         return WorkloadIdentityCredential(
             tenant_id=tenant_id,
             client_id=client_id,
-            token_file_path=token_file,
+            token_file_path=token_file or None,
         )
     if m == "default":
         _require_identity()

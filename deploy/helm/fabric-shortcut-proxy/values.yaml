@@ -40,6 +40,10 @@ agentAuth:
   previousValidUntilKey: AGENT_TOKEN_PREVIOUS_VALID_UNTIL
   identityTokensSecretName: ""
   identityTokensKey: AGENT_IDENTITY_TOKENS
+  entra:
+    tenantId: ""
+    audience: ""
+    identities: {}
 
 fsp:
   s3Bucket: fabric-iceberg-poc
@@ -97,9 +101,13 @@ storage:
       - noresvport
       - actimeo=30
     artifacts:
+      pvName: fsp-artifacts-pv
+      subPath: ""
       shareName: artifacts
       volumeHandle: ""
     managerConfig:
+      pvName: fsp-manager-config-pv
+      subPath: ""
       shareName: manager-config
       volumeHandle: ""
       size: 100Gi
@@ -135,6 +143,8 @@ manager:
     postLogoutRedirectUri: ""
 
 materializer:
+  enabled: true
+  agentAuthSecretName: ""
   replicas: 3
   autoscaling:
     enabled: false
@@ -225,9 +235,33 @@ tls:
 agentControlIngress:
   enabled: false
   host: ""
+  pathPrefix: ""
   className: nginx
   tlsSecretName: fsp-agent-control-tls
   clusterIssuer: ""
   # Optional source ranges, applied as nginx whitelist-source-range.
   sourceRanges: []
   annotations: {}
+
+# Opt-in namespace isolation. Role profiles enable this in production examples;
+# egress CIDRs must match private source, Manager, artifact and identity endpoints.
+networkPolicy:
+  enabled: false
+  ingressController:
+    namespaceSelector:
+      kubernetes.io/metadata.name: ingress-nginx
+    podSelector:
+      app.kubernetes.io/name: ingress-nginx
+  metricsScraper:
+    enabled: false
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+    podSelector:
+      app.kubernetes.io/name: prometheus
+  ingressCidrs: []
+  managerEgress:
+    allowList: []
+  servingAgentEgress:
+    managerCidrs: []
+    managerPort: 443
+    allowList: []

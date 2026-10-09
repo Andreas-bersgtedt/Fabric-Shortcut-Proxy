@@ -21,10 +21,12 @@ from enterprise.control.contract import (
     TASK_CLAIMED,
     TASK_RETRY_WAIT,
 )
-from enterprise.control.registry import Registry
 from enterprise.control.lease import LeaderLease
+from enterprise.control.placement import PlacementConfig
+from enterprise.control.registry import Registry
 from enterprise.control.task_scheduler import TaskScheduler
 from enterprise.control.work_queue import DurableWorkQueue
+from fabric_shortcut_proxy.observability import metrics
 from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 
 
@@ -73,11 +75,16 @@ def _successful_result(claimed: MaterializeTask, data: bytes) -> TaskResult:
     )
 
 
-def _queue(task_count: int = 1) -> tuple[DurableWorkQueue, dict]:
+def _queue(
+    task_count: int = 1,
+    *,
+    connection_id: str = "",
+) -> tuple[DurableWorkQueue, dict]:
     queue = DurableWorkQueue(MemoryStore())
     tasks = [
         MaterializeTask(
             table="sales",
+            connection_id=connection_id,
             epoch=1,
             split_index=index,
             source_table="sales",
@@ -127,6 +134,51 @@ def test_scheduler_filters_capabilities_dead_and_draining_agents():
     )
     assert len(commands) == 1 and commands[0].kind == "materialize"
     assert dead.lease_id
+
+
+def test_scheduler_records_location_queue_depth_and_assignment_rejection():
+    metrics.reset()
+    queue, _request = _queue(connection_id="erp")
+    placement = PlacementConfig.from_dict({
+        "pools": [{
+            "pool_id": "site-a-pool",
+            "identities": ["agent-site-a"],
+            "location": "site-a",
+            "allowed_connection_ids": ["erp"],
+        }],
+        "connections": {
+            "erp": {"required_pool": "site-a-pool"},
+        },
+    })
+    registry = Registry(placement=placement)
+    scheduler = TaskScheduler(
+        queue,
+        registry,
+        manager_owner="manager",
+        manager_fence=1,
+    )
+
+    assert scheduler.dispatch_once() == 0
+
+    snapshot = metrics.snapshot()
+    queue_depth = next(
+        sample
+        for sample in snapshot["gauges"]["fsp_materialization_queue_depth"]
+        if sample["labels"]["location"] == "site-a"
+    )
+    assert queue_depth == {
+        "labels": {"location": "site-a"},
+        "value": 1.0,
+    }
+    rejection = snapshot["counters"]["fsp_assignment_rejections_total"][0]
+    assert rejection == {
+        "labels": {
+            "location": "site-a",
+            "reason": "no_eligible_materializer",
+        },
+        "value": 1.0,
+    }
+    metrics.reset()
 
 
 def test_scheduler_stable_tie_break_and_inflight_limit():

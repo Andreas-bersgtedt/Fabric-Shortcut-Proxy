@@ -178,6 +178,13 @@ class RestControlClient(ControlClient):
     ) -> None:
         import httpx
         self._agent_id = agent_id
+        self._entra_credential = None
+        if os.environ.get("AGENT_AUTH_MODE", "").strip().lower() == "entra":
+            from fabric_shortcut_proxy.security.entra_agent_auth import (
+                AgentEntraCredential,
+            )
+
+            self._entra_credential = AgentEntraCredential()
         self._client = httpx.AsyncClient(
             base_url=manager_url.rstrip("/"), timeout=timeout, transport=transport,
         )
@@ -185,13 +192,13 @@ class RestControlClient(ControlClient):
     async def register(self, req: RegisterRequest) -> RegisterResponse:
         self._agent_id = req.agent_id
         r = await self._client.post(f"{CONTROL_PREFIX}/register", json=req.to_dict(),
-                                    headers=self._auth_headers(req.agent_id))
+                                    headers=await self._auth_headers(req.agent_id))
         r.raise_for_status()
         return RegisterResponse.from_dict(r.json())
 
     async def heartbeat(self, req: HeartbeatRequest) -> list[ControlCommand]:
         r = await self._client.post(f"{CONTROL_PREFIX}/heartbeat", json=req.to_dict(),
-                                    headers=self._auth_headers(req.agent_id))
+                                    headers=await self._auth_headers(req.agent_id))
         if r.status_code == 409:
             raise StaleLeaseError(r.json().get("detail", "stale lease"))
         r.raise_for_status()
@@ -199,13 +206,13 @@ class RestControlClient(ControlClient):
 
     async def get_assignment(self, agent_id: str) -> Assignment:
         r = await self._client.get(f"{CONTROL_PREFIX}/assignment/{agent_id}",
-                                   headers=self._auth_headers(agent_id))
+                                   headers=await self._auth_headers(agent_id))
         r.raise_for_status()
         return Assignment.from_dict(r.json())
 
     async def get_snapshot(self, table: str, epoch: int = 0) -> SnapshotManifest | None:
         r = await self._client.get(f"{CONTROL_PREFIX}/snapshot/{table}",
-                                   params={"epoch": epoch}, headers=self._auth_headers())
+                                   params={"epoch": epoch}, headers=await self._auth_headers())
         if r.status_code == 404:
             return None
         r.raise_for_status()
@@ -213,16 +220,23 @@ class RestControlClient(ControlClient):
 
     async def report_task_result(self, res: TaskResult) -> Ack:
         r = await self._client.post(f"{CONTROL_PREFIX}/task-result", json=res.to_dict(),
-                                    headers=self._auth_headers(res.agent_id))
+                                    headers=await self._auth_headers(res.agent_id))
         r.raise_for_status()
         return Ack.from_dict(r.json())
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        try:
+            await self._client.aclose()
+        finally:
+            if self._entra_credential is not None:
+                await self._entra_credential.close()
 
-    def _auth_headers(self, agent_id: str = "") -> dict[str, str]:
+    async def _auth_headers(self, agent_id: str = "") -> dict[str, str]:
         identity = agent_id or self._agent_id
         headers = {AGENT_ID_HEADER: identity} if identity else {}
+        if self._entra_credential is not None:
+            headers["Authorization"] = f"Bearer {await self._entra_credential.token()}"
+            return headers
         token = os.environ.get("AGENT_TOKEN", "")
         if token:
             headers[AGENT_TOKEN_HEADER] = token

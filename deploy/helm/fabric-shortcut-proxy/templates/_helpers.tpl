@@ -38,4 +38,7 @@ default
 {{- if ne .Values.nginx.enabled .Values.tls.enabled -}}
 {{- fail "nginx.enabled and tls.enabled must be enabled or disabled together" -}}
 {{- end -}}
+{{- if and .Values.nginx.enabled (not .Values.materializer.enabled) -}}
+{{- fail "nginx.enabled requires materializer.enabled=true" -}}
+{{- end -}}
 {{- end -}}

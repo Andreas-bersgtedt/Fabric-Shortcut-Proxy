@@ -8,15 +8,16 @@ import hmac
 import json
 import time
 import uuid
+from collections.abc import Iterable
 from datetime import datetime
-from typing import BinaryIO, Iterable
+from typing import BinaryIO
 
 from fabric_shortcut_proxy.runtime.artifact_store import (
+    _STREAM_CHUNK,
     ArtifactStore,
     ObjectConflict,
     ObjectNotFound,
     ObjectStat,
-    _STREAM_CHUNK,
     _input_chunks,
     _normalize_key,
 )
@@ -126,6 +127,7 @@ class AzureBlobArtifactStore(ArtifactStore):
     def put(self, key: str, data: bytes) -> ObjectStat:
         k = _normalize_key(key)
         value = bytes(data)
+        started = time.perf_counter()
         self._blob(k).upload_blob(
             value,
             overwrite=True,
@@ -135,6 +137,11 @@ class AzureBlobArtifactStore(ArtifactStore):
         stat = self.head(k)
         if stat is None:
             raise ObjectNotFound(k)
+        from fabric_shortcut_proxy.observability import metrics
+
+        metrics.record_artifact_upload(
+            len(value), time.perf_counter() - started
+        )
         return stat
 
     def put_stream(
@@ -148,6 +155,7 @@ class AzureBlobArtifactStore(ArtifactStore):
             raise ValueError("length must be >= 0")
         k = _normalize_key(key)
         blob = self._blob(k)
+        started = time.perf_counter()
         digest = hashlib.sha256()
         total = 0
         block_ids = []
@@ -185,6 +193,9 @@ class AzureBlobArtifactStore(ArtifactStore):
         stat = self.head(k)
         if stat is None:
             raise ObjectNotFound(k)
+        from fabric_shortcut_proxy.observability import metrics
+
+        metrics.record_artifact_upload(total, time.perf_counter() - started)
         return stat
 
     def put_stream_if_absent(
@@ -198,6 +209,7 @@ class AzureBlobArtifactStore(ArtifactStore):
             raise ValueError("length must be >= 0")
         k = _normalize_key(key)
         blob = self._blob(k)
+        started = time.perf_counter()
         digest = hashlib.sha256()
         total = 0
         block_ids = []
@@ -258,6 +270,9 @@ class AzureBlobArtifactStore(ArtifactStore):
         stat = self.head(k)
         if stat is None:
             raise ObjectNotFound(k)
+        from fabric_shortcut_proxy.observability import metrics
+
+        metrics.record_artifact_upload(total, time.perf_counter() - started)
         return stat
 
     def get(

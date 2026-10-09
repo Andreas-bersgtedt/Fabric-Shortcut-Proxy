@@ -19,6 +19,10 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: HTTP
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    {{- if $ing.pathPrefix }}
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: "$1"
+    {{- end }}
     {{- with $ing.sourceRanges }}
     nginx.ingress.kubernetes.io/whitelist-source-range: {{ join "," . | quote }}
     {{- end }}
@@ -36,8 +40,13 @@ spec:
       http:
         paths:
           {{- range list "/control/register" "/control/heartbeat" "/control/task-result" "/control/materialize" }}
+          {{- if $ing.pathPrefix }}
+          - path: {{ printf "%s(%s)$" $ing.pathPrefix . | quote }}
+            pathType: ImplementationSpecific
+          {{- else }}
           - path: {{ . }}
             pathType: Exact
+          {{- end }}
             backend:
               service:
                 name: fsp-manager
@@ -45,8 +54,13 @@ spec:
                   name: control
           {{- end }}
           {{- range list "/control/assignment/" "/control/snapshot/" }}
+          {{- if $ing.pathPrefix }}
+          - path: {{ printf "%s(%s.*)" $ing.pathPrefix . | quote }}
+            pathType: ImplementationSpecific
+          {{- else }}
           - path: {{ . }}
             pathType: Prefix
+          {{- end }}
             backend:
               service:
                 name: fsp-manager

@@ -24,6 +24,17 @@ siteId: site-b
 manager:
   enabled: false
 
+materializer:
+  enabled: true
+  egress:
+    enabled: true
+    allowLocalManager: false
+    managerCidrs:
+      - 203.0.113.10/32
+    managerPort: 443
+    # Add the site-local source and private artifact-store endpoint CIDRs.
+    allowList: []
+
 cppAgent:
   enabled: false
 
@@ -36,15 +47,11 @@ tls:
 agentControlIngress:
   enabled: false
 
+networkPolicy:
+  enabled: true
+  metricsScraper:
+    enabled: true
+
 storage:
   azureFiles:
     enabled: false
-
-materializer:
-  egress:
-    enabled: true
-    allowLocalManager: false
-    managerCidrs:
-      - 203.0.113.10/32
-    managerPort: 443
-    allowList: []

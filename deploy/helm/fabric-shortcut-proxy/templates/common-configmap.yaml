@@ -1,3 +1,11 @@
+{{- if eq .Values.agentAuth.mode "entra" }}
+{{- if not .Values.workloadIdentity.enabled }}
+{{- fail "agentAuth.mode=entra requires workloadIdentity.enabled=true" }}
+{{- end }}
+{{- if .Values.cppAgent.enabled }}
+{{- fail "agentAuth.mode=entra currently requires Python control clients; disable cppAgent.enabled" }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,6 +14,13 @@ metadata:
   labels:
     {{- include "fsp.commonLabels" . | nindent 4 }}
 data:
+  AGENT_AUTH_MODE: {{ .Values.agentAuth.mode | quote }}
+  {{- if eq .Values.agentAuth.mode "entra" }}
+  AGENT_ENTRA_TENANT_ID: {{ required "agentAuth.entra.tenantId is required" .Values.agentAuth.entra.tenantId | quote }}
+  AGENT_ENTRA_AUDIENCE: {{ required "agentAuth.entra.audience is required" .Values.agentAuth.entra.audience | quote }}
+  AGENT_ENTRA_SCOPE: {{ printf "api://%s/.default" .Values.agentAuth.entra.audience | quote }}
+  AGENT_ENTRA_IDENTITIES: {{ .Values.agentAuth.entra.identities | toJson | quote }}
+  {{- end }}
   S3_BUCKET: {{ .Values.fsp.s3Bucket | quote }}
   ARTIFACT_STORE_BACKEND: {{ .Values.fsp.artifactStoreBackend | quote }}
   ARTIFACT_STORE_DIR: {{ .Values.fsp.artifactStoreDir | quote }}

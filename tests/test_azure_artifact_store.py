@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import sys
 import threading
@@ -11,8 +11,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from fabric_shortcut_proxy.runtime.azure_artifact_store import AzureBlobArtifactStore
+from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.observability import metrics
 from fabric_shortcut_proxy.runtime.artifact_store import ObjectConflict, ObjectNotFound
+from fabric_shortcut_proxy.runtime.azure_artifact_store import AzureBlobArtifactStore
 
 
 class _AzureError(Exception):
@@ -224,6 +226,23 @@ def test_blob_store_put_head_delete_and_range(container):
     )
     assert store.delete(stat.key)
     assert not store.delete(stat.key)
+
+
+def test_blob_upload_records_location_bytes_and_duration(
+    container, monkeypatch
+):
+    monkeypatch.setattr(config, "AGENT_LOCATION", "site-a", raising=False)
+    metrics.reset()
+
+    _store(container).put("warehouse/sales/data.parquet", b"PAR1payload")
+
+    counters = metrics.snapshot()["counters"]
+    byte_series = counters["fsp_artifact_upload_bytes_total"][0]
+    duration_series = counters["fsp_artifact_upload_duration_seconds_total"][0]
+    assert byte_series["labels"] == {"location": "site-a"}
+    assert byte_series["value"] == len(b"PAR1payload")
+    assert duration_series["labels"] == {"location": "site-a"}
+    assert duration_series["value"] > 0
 
 
 def test_blob_store_stream_upload_does_not_join_before_sdk(container):

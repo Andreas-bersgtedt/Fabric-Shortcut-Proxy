@@ -1,0 +1,30 @@
+# Serving-agent-only profile. The Manager and materializer are deployed in
+# separate releases; private ingress/TLS is configured in the serving estate.
+managerUrl: https://fsp-control.example.com
+
+manager:
+  enabled: false
+
+materializer:
+  enabled: false
+
+cppAgent:
+  enabled: true
+
+nginx:
+  enabled: false
+
+tls:
+  enabled: false
+
+networkPolicy:
+  enabled: true
+  servingAgentEgress:
+    # Replace with the Manager agent-control ingress address.
+    managerCidrs:
+      - 203.0.113.10/32
+    managerPort: 443
+    allowList: []
+
+agentControlIngress:
+  enabled: false

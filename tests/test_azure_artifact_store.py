@@ -193,6 +193,16 @@ def _store(container) -> AzureBlobArtifactStore:
     return AzureBlobArtifactStore(container=container)
 
 
+def _install_match_conditions(monkeypatch, **values):
+    match_conditions = types.SimpleNamespace(**values)
+    azure_core = types.ModuleType("azure.core")
+    setattr(azure_core, "MatchConditions", match_conditions)
+    azure_package = sys.modules.get("azure") or types.ModuleType("azure")
+    monkeypatch.setitem(sys.modules, "azure", azure_package)
+    monkeypatch.setitem(sys.modules, "azure.core", azure_core)
+    return match_conditions
+
+
 def test_blob_store_put_head_delete_and_range(container):
     store = _store(container)
     stat = store.put("warehouse/sales/data.parquet", b"PAR1payload")
@@ -241,8 +251,12 @@ def test_blob_store_stream_length_mismatch_does_not_commit(container):
 
 
 def test_blob_store_immutable_stream_upload_is_idempotent_and_rejects_conflicts(
-    container,
+    container, monkeypatch
 ):
+    _install_match_conditions(
+        monkeypatch,
+        IfMissing=types.SimpleNamespace(name="IfMissing"),
+    )
     store = _store(container)
     key = "immutable.bin"
 
@@ -257,7 +271,13 @@ def test_blob_store_immutable_stream_upload_is_idempotent_and_rejects_conflicts(
     assert container.objects[key] == b"complete-object"
 
 
-def test_concurrent_immutable_publishers_cannot_replace_each_other(container):
+def test_concurrent_immutable_publishers_cannot_replace_each_other(
+    container, monkeypatch
+):
+    _install_match_conditions(
+        monkeypatch,
+        IfMissing=types.SimpleNamespace(name="IfMissing"),
+    )
     store = _store(container)
     key = "concurrent-immutable.bin"
     payloads = (b"publisher-one", b"publisher-two")
@@ -335,7 +355,54 @@ def test_interrupted_immutable_upload_never_exposes_partial_object(
 def test_azure_store_factory_builds_sdk_clients(monkeypatch):
     from fabric_shortcut_proxy import config
     from fabric_shortcut_proxy.runtime.artifact_store import build_store
-    from azure.storage.blob import ContainerClient
+
+    container = _Container()
+    service_options = {}
+    retry_options = {}
+
+    class _RetryPolicy:
+        def __init__(self, *, initial_backoff, increment_base, retry_total):
+            retry_options.update(
+                initial_backoff=initial_backoff,
+                increment_base=increment_base,
+                retry_total=retry_total,
+            )
+            self.initial_backoff = initial_backoff
+            self.increment_base = increment_base
+            self.total_retries = retry_total
+
+    class _BlobServiceClient:
+        def __init__(self, *, account_url, credential, retry_policy):
+            service_options.update(
+                account_url=account_url,
+                credential=credential,
+                retry_policy=retry_policy,
+            )
+            self.account_url = account_url
+            self.credential = credential
+            self.retry_policy = retry_policy
+
+        def get_container_client(self, name):
+            assert name == "artifacts"
+            return container
+
+    azure_blob = types.ModuleType("azure.storage.blob")
+    azure_blob.BlobServiceClient = _BlobServiceClient
+    azure_blob.ExponentialRetry = _RetryPolicy
+    azure_package = sys.modules.get("azure") or types.ModuleType("azure")
+    azure_storage = types.ModuleType("azure.storage")
+    monkeypatch.setitem(sys.modules, "azure", azure_package)
+    monkeypatch.setitem(sys.modules, "azure.storage", azure_storage)
+    monkeypatch.setitem(sys.modules, "azure.storage.blob", azure_blob)
+
+    from fabric_shortcut_proxy.security import azure_credential
+
+    credentials = object()
+    monkeypatch.setattr(
+        azure_credential,
+        "get_credential",
+        lambda mode, **kwargs: credentials,
+    )
 
     monkeypatch.setattr(config, "ARTIFACT_STORE_ACCOUNT_URL", "https://unit.blob.core.windows.net")
     monkeypatch.setattr(config, "ARTIFACT_STORE_CONTAINER", "artifacts")
@@ -347,11 +414,14 @@ def test_azure_store_factory_builds_sdk_clients(monkeypatch):
     store = build_store("azure")
 
     assert isinstance(store, AzureBlobArtifactStore)
-    assert isinstance(store._container, ContainerClient)
-    retry_policy = store._container._config.retry_policy
-    assert retry_policy.total_retries == 4
-    assert retry_policy.initial_backoff == 1
-    assert retry_policy.increment_base == 2
+    assert store._container is container
+    assert service_options["account_url"] == "https://unit.blob.core.windows.net"
+    assert service_options["credential"] is credentials
+    assert retry_options == {
+        "retry_total": 4,
+        "initial_backoff": 1,
+        "increment_base": 2,
+    }
 
 
 def test_blob_store_not_found_and_path_validation(container):
@@ -384,12 +454,10 @@ def test_blob_store_listing_is_sorted_and_delimiter_aware(container):
 
 
 def test_compare_and_swap_uses_etag_match_condition(container, monkeypatch):
-    match_conditions = types.SimpleNamespace(IfNotModified="IfNotModified")
-    azure_core = types.ModuleType("azure.core")
-    setattr(azure_core, "MatchConditions", match_conditions)
-    azure_package = sys.modules.get("azure") or types.ModuleType("azure")
-    monkeypatch.setitem(sys.modules, "azure", azure_package)
-    monkeypatch.setitem(sys.modules, "azure.core", azure_core)
+    _install_match_conditions(
+        monkeypatch,
+        IfNotModified="IfNotModified",
+    )
     store = _store(container)
 
     assert store.compare_and_swap("state.json", None, b"one")

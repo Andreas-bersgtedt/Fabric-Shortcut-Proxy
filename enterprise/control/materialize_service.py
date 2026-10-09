@@ -26,6 +26,7 @@ from enterprise.control.contract import (
     SplitRef,
 )
 from enterprise.control.work_queue import DurableWorkQueue
+from enterprise.control.placement import PlacementConfig, ResidencyPolicyViolation
 from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -33,12 +34,14 @@ log = get_logger(__name__)
 _snapshots_ready = False
 _build_lock = asyncio.Lock()
 _queue: DurableWorkQueue | None = None
+_placement = PlacementConfig()
 _publication_locks: dict[str, asyncio.Lock] = {}
 
 
-def configure(queue: DurableWorkQueue) -> None:
-    global _queue
+def configure(queue: DurableWorkQueue, placement: PlacementConfig | None = None) -> None:
+    global _queue, _placement
     _queue = queue
+    _placement = placement or PlacementConfig()
 
 
 def _publication_lock(request_id: str) -> asyncio.Lock:
@@ -217,6 +220,15 @@ async def materialize_for_key(key: str) -> dict:
     snap = _snapshot_for_key(key)
     if snap is None:
         return {"ok": False, "materialized": False, "reason": "unknown_key"}
+
+    try:
+        _placement.validate_dispatch(
+            _placement.policy_for(snap.table.connection_id, snap.table.source_table),
+            connection_id=snap.table.connection_id,
+        )
+    except ResidencyPolicyViolation as exc:
+        log.error("residency_policy_violation", table=snap.table.name, detail=str(exc))
+        return {"ok": False, "materialized": False, "reason": exc.code}
 
     from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
     from fabric_shortcut_proxy.runtime.generation import current_generation

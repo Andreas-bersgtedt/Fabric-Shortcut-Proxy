@@ -8,7 +8,7 @@ spec:
     - name: fsp.phase3
       rules:
         - alert: FspAgentHeartbeatStale
-          expr: fsp_agent_heartbeat_age_seconds > 6
+          expr: fsp_agent_heartbeat_age_seconds > fsp_agent_heartbeat_timeout_seconds
           for: 30s
           labels:
             severity: critical
@@ -16,7 +16,7 @@ spec:
             summary: FSP Agent heartbeat is stale
             description: >-
               Agent {{ $labels.agent_id }} in {{ $labels.location }} has not
-              sent a heartbeat for more than six seconds.
+              exceeded its configured pool heartbeat timeout.
 
         - alert: FspAssignmentRejected
           expr: sum by (location, reason) (increase(fsp_assignment_rejections_total[5m])) > 0

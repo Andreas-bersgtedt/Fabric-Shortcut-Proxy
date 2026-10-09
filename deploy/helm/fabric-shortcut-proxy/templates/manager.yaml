@@ -86,6 +86,8 @@ spec:
             {{- end }}
             - name: AGENT_PLACEMENT_CONFIG
               value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
+            - name: FSP_ARTIFACT_STORE_PROFILE
+              value: {{ .Values.manager.artifactStoreProfile | quote }}
             - name: CONTROL_HOST
               value: 0.0.0.0
             - name: CONTROL_PORT

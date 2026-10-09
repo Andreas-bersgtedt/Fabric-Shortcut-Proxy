@@ -48,7 +48,8 @@ def test_phase3_operational_metrics_export_by_location(monkeypatch) -> None:
     metrics.record_assignment_rejection("site-b", "no_eligible_materializer")
     metrics.record_artifact_upload(4096, 0.5)
     metrics.record_agent_heartbeat_ages(
-        {("site-b", "site-b-agent-0"): 7.0}
+        {("site-b", "site-b-agent-0"): 7.0},
+        {("site-b", "site-b-agent-0"): 50.0},
     )
 
     snapshot = metrics.snapshot()
@@ -66,6 +67,11 @@ def test_phase3_operational_metrics_export_by_location(monkeypatch) -> None:
         "location": "site-b",
     }
     assert heartbeat["value"] == 7.0
+    timeout = snapshot["gauges"]["fsp_agent_heartbeat_timeout_seconds"][0]
+    assert timeout["labels"] == heartbeat["labels"]
+    assert timeout["value"] == 50.0
+    metrics.record_agent_heartbeat_ages({}, {})
+    assert metrics.snapshot()["gauges"]["fsp_agent_heartbeat_timeout_seconds"] == []
 
     metrics.set_location_gauges("fsp_materialization_queue_depth", {})
     assert metrics.snapshot()["gauges"]["fsp_materialization_queue_depth"] == []

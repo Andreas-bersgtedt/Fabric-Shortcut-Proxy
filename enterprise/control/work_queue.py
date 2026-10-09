@@ -788,7 +788,11 @@ class DurableWorkQueue:
         membership_version: int = 0,
         worker_fence: int = 0,
         now_ms: int | None = None,
+        lease_seconds: int | None = None,
     ) -> MaterializeTask:
+        duration = self.task_lease_seconds if lease_seconds is None else lease_seconds
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1:
+            raise ValueError("claim lease_seconds must be a positive integer")
         now_ms = _now_ms() if now_ms is None else int(now_ms)
         with self._lock:
             task = self.get_task(task_id)
@@ -809,8 +813,8 @@ class DurableWorkQueue:
             claim_token = secrets.token_urlsafe(32)
             deadline_ms = int((task.get("task") or {}).get("deadline_ms", 0))
             expires_at = min(
-                now_ms + self.task_lease_seconds * 1000,
-                deadline_ms or now_ms + self.task_lease_seconds * 1000,
+                now_ms + duration * 1000,
+                deadline_ms or now_ms + duration * 1000,
             )
             task_payload = MaterializeTask.from_dict(task["task"])
             staging_key = _staging_key(
@@ -834,6 +838,7 @@ class DurableWorkQueue:
                 "membership_version": int(membership_version),
                 "worker_fence": int(worker_fence),
                 "staging_key": staging_key,
+                "lease_seconds": duration,
             }
             task["updated_at_ms"] = now_ms
             task["revision"] = int(task["revision"]) + 1
@@ -873,16 +878,18 @@ class DurableWorkQueue:
                 claim = task.get("claim") or {}
                 if (
                     task["state"] == TASK_CLAIMED
+                    and int(claim.get("expires_at_ms", 0)) > now_ms
                     and claim.get("agent_id") == agent_id
                     and hmac.compare_digest(
                         str(claim.get("agent_lease_hash", "")), lease_hash
                     )
                 ):
+                    duration = int(claim.get("lease_seconds", self.task_lease_seconds))
                     claim["expires_at_ms"] = (
                         min(
-                            now_ms + self.task_lease_seconds * 1000,
+                            now_ms + duration * 1000,
                             int((task.get("task") or {}).get("deadline_ms", 0))
-                            or now_ms + self.task_lease_seconds * 1000,
+                            or now_ms + duration * 1000,
                         )
                     )
                     task["updated_at_ms"] = now_ms
@@ -1521,22 +1528,18 @@ class DurableWorkQueue:
             if task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT}
         ]
         now = _now_ms()
-        no_match_tasks = [
-            {
-                "task_id": str(task["task_id"]),
-                "connection_id": str(
-                    (task.get("task") or {}).get("connection_id", "")
-                ),
-                "source_table": str(
-                    (task.get("task") or {}).get("source_table", "")
-                ),
-            }
-            for task in tasks
-            if (
-                task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT}
-                and task.get("dispatch_status") == "no_eligible_materializer"
-            )
-        ]
+        rejections: dict[str, list[dict]] = {
+            "no_eligible_materializer": [],
+            "residency_policy_violation": [],
+        }
+        for task in tasks:
+            reason = str(task.get("dispatch_status", ""))
+            if task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT} and reason in rejections:
+                rejections[reason].append({
+                    "task_id": str(task["task_id"]),
+                    "connection_id": str((task.get("task") or {}).get("connection_id", "")),
+                    "source_table": str((task.get("task") or {}).get("source_table", "")),
+                })
         memberships = self.list_memberships()
         active_generation_ids = {
             str((task.get("task") or {}).get("generation_id", ""))
@@ -1627,7 +1630,9 @@ class DurableWorkQueue:
             "oldest_queued_age_ms": max(0, now - min(queued)) if queued else 0,
             "membership": membership_status,
             "placement": {
-                "no_eligible_materializer_count": len(no_match_tasks),
-                "no_eligible_materializer": no_match_tasks,
+                "no_eligible_materializer_count": len(rejections["no_eligible_materializer"]),
+                "no_eligible_materializer": rejections["no_eligible_materializer"],
+                "residency_policy_violation_count": len(rejections["residency_policy_violation"]),
+                "residency_policy_violation": rejections["residency_policy_violation"],
             },
         }

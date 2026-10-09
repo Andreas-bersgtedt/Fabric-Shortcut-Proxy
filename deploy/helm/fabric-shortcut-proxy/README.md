@@ -252,6 +252,19 @@ audit log. Placement audit events contain the task, request, dataset, selected
 pool/location, decision, and fallback flag, but never credentials or claim
 tokens.
 
+For Phase 4 residency declarations, see
+[Federated artifact primitives](../../../docs/FEDERATED_ARTIFACTS.md).
+Set `manager.artifactStoreProfile` to bind the Manager's configured backend to
+the named profile. A constrained policy requires this binding and currently
+must use that same store for staging and publication.
+
+Pools can also set `heartbeat_ms`, `heartbeat_miss_limit` and
+`claim_lease_seconds` for disconnected/WAN sites. Defaults are unchanged when
+these fields are absent. The heartbeat alert uses each pool's exported timeout.
+For connections with `residency_locations`, exact table policies inherit the
+connection rule and cannot widen or remove that boundary; unconstrained
+connections keep the replacement behavior described above.
+
 The C++ Agent defaults to `trusted-upstream` because the chart's supported
 topology places it behind the authenticated gateway. This mode trusts that
 gateway to authenticate requests. Do not expose the Agent service directly in

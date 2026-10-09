@@ -72,6 +72,11 @@ def test_chart_lints_with_enterprise_example() -> None:
     _helm("lint", str(CHART), "-f", str(EXAMPLE_VALUES))
 
 
+def test_manager_binds_operator_artifact_profile() -> None:
+    rendered = _render("--set", "manager.artifactStoreProfile=eu-published")
+    assert 'name: FSP_ARTIFACT_STORE_PROFILE\n              value: "eu-published"' in rendered
+
+
 def test_base_render_contains_core_fleet_only() -> None:
     rendered = _render()
     counts = _kind_counts(rendered)

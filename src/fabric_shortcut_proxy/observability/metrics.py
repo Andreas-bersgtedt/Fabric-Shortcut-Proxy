@@ -89,6 +89,7 @@ def record_assignment_rejection(location: str, reason: str) -> None:
 
 def record_agent_heartbeat_ages(
     ages_by_agent: dict[tuple[str, str], float],
+    timeouts_by_agent: dict[tuple[str, str], float] | None = None,
 ) -> None:
     with _lock:
         _gauges["fsp_agent_heartbeat_age_seconds"] = {
@@ -97,6 +98,11 @@ def record_agent_heartbeat_ages(
             ): age
             for (location, agent_id), age in ages_by_agent.items()
         }
+        if timeouts_by_agent is not None:
+            _gauges["fsp_agent_heartbeat_timeout_seconds"] = {
+                _label_key({"agent_id": agent_id, "location": location or "unknown"}): timeout
+                for (location, agent_id), timeout in timeouts_by_agent.items()
+            }
 
 
 def record_artifact_upload(size_bytes: int, duration_seconds: float) -> None:

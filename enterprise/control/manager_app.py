@@ -125,6 +125,10 @@ def _make_supervisor(i: int, count: int, monitor_token: str = "") -> AgentSuperv
 
 def create_manager_app() -> FastAPI:
     placement = PlacementConfig.from_environment()
+    placement.bind_runtime_store(
+        os.environ.get("FSP_ARTIFACT_STORE_PROFILE", "").strip(),
+        config.ARTIFACT_STORE_BACKEND,
+    )
     if config.AGENT_AUTH_MODE == "entra":
         from fabric_shortcut_proxy.security.entra_agent_auth import EntraAgentTokenProvider
 
@@ -184,7 +188,7 @@ def create_manager_app() -> FastAPI:
     from enterprise.control import materialize_service
 
     if config.MATERIALIZATION_WORK_QUEUE:
-        materialize_service.configure(queue)
+        materialize_service.configure(queue, placement)
     supervisors = _build_supervisors(monitor_token)
     gateway = None
     if config.ENABLE_GATEWAY:
@@ -444,12 +448,14 @@ def create_manager_app() -> FastAPI:
         from fabric_shortcut_proxy.observability import metrics
 
         heartbeat_ages: dict[tuple[str, str], float] = {}
+        heartbeat_timeouts: dict[tuple[str, str], float] = {}
         for agent in registry.list_public():
             location = str(agent.get("location") or "unknown")
             agent_id = str(agent["agent_id"])
             age = float(agent.get("seconds_since_heartbeat") or 0.0)
             heartbeat_ages[(location, agent_id)] = age
-        metrics.record_agent_heartbeat_ages(heartbeat_ages)
+            heartbeat_timeouts[(location, agent_id)] = registry.heartbeat_timeout_seconds(agent_id)
+        metrics.record_agent_heartbeat_ages(heartbeat_ages, heartbeat_timeouts)
         return PlainTextResponse(
             metrics.render_prometheus(),
             media_type="text/plain; version=0.0.4; charset=utf-8",

@@ -116,6 +116,7 @@ manager:
   enabled: true
   replicas: 1
   agentPlacementConfig: {}
+  artifactStoreProfile: ""
   auditLogEnabled: "0"
   configBuilderEnabled: "0"
   monitorEnabled: "1"

@@ -46,6 +46,12 @@ fsp:
   artifactStoreBackend: local
   artifactStoreDir: /artifacts
   artifactStoreServing: "1"
+  artifactStoreAccountUrl: ""
+  artifactStoreContainer: ""
+  artifactStoreAuthMode: managed_identity
+  artifactStoreClientId: ""
+  artifactStoreTenantId: ""
+  artifactStoreTokenFile: ""
   materializeMode: eager
   shardStrategy: modulo
   materializeWaitSeconds: "600"

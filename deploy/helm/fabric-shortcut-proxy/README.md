@@ -64,7 +64,13 @@ schema, remote Helm ownership support, and the existing source Secret before mut
 - `images`: immutable application image digests and optional pull Secret names.
 - `fsp`: shared runtime configuration. Set `fsp.s3Bucket` explicitly for each environment;
   Helm publishes it as `S3_BUCKET`, which overrides the Config UI's persisted `bucket` value.
-  Keep both values identical. Credentials do not belong here.
+  Keep both values identical. Credentials do not belong here. For the Azure artifact backend,
+  set `fsp.artifactStoreBackend: azure`, `fsp.artifactStoreAccountUrl` to the Blob account
+  endpoint, and `fsp.artifactStoreContainer` to a pre-created container. Set the auth mode to
+  `managed_identity` (default) or `workload_identity`; workload identity also needs
+  `fsp.artifactStoreClientId` and `fsp.artifactStoreTenantId`. Grant the Manager and every
+  materializer identity **Storage Blob Data Contributor** on the container or its storage
+  account. The chart does not configure storage keys or create the container.
 - `workloadIdentity`: Azure workload identity service account configuration.
 - `agentAuth`: required or one-release compatibility mode plus Secret key
   references. The default is `required`; values never contain token material.

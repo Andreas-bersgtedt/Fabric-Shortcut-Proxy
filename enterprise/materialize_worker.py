@@ -122,18 +122,20 @@ async def execute_task(task: MaterializeTask, agent_id: str) -> TaskResult:
     try:
         split = await asyncio.to_thread(_split, task)
         rows = await materialize_queued_split(split)
-        data = await asyncio.to_thread(
-            get_default_store().get, task.output_key
-        )
+        if split.file_size_in_bytes is None or not split.content_hash:
+            raise RuntimeError(
+                "materializer did not record output size and content hash"
+            )
         return TaskResult(
             agent_id=agent_id,
             table=task.table,
             epoch=task.epoch,
             split_index=task.split_index,
             ok=True,
-            size_bytes=len(data),
+            size_bytes=split.file_size_in_bytes,
             record_count=rows,
-            content_hash=hashlib.sha256(data).hexdigest(),
+            content_hash=split.content_hash,
+            s3_etag=split.s3_etag,
             task_id=task.task_id,
             request_id=task.request_id,
             claim_token=task.claim_token,

@@ -50,7 +50,10 @@ from fabric_shortcut_proxy.system_config import (
     AUTH_MODE, KEYVAULT_URI, AZURE_TENANT_ID, AZURE_CLIENT_ID,
     REQUIRE_KEYVAULT, KEYVAULT_REFRESH_SECONDS, KEYVAULT_CACHE_TTL, KEYVAULT_WRITE_BACK,
     # Artifact Store
-    ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_SERVING, PUBLISH_SERVING_IMAGE,
+    ARTIFACT_STORE_BACKEND, ARTIFACT_STORE_DIR, ARTIFACT_STORE_ACCOUNT_URL,
+    ARTIFACT_STORE_CONTAINER, ARTIFACT_STORE_AUTH_MODE, ARTIFACT_STORE_CLIENT_ID,
+    ARTIFACT_STORE_TENANT_ID, ARTIFACT_STORE_TOKEN_FILE, ARTIFACT_STORE_SERVING,
+    PUBLISH_SERVING_IMAGE,
     # Fleet
     AGENT_COUNT, AGENT_SHARD_INDEX, AGENT_SHARD_COUNT, SHARD_STRATEGY, ENABLE_GATEWAY, MATERIALIZE_WAIT_SECONDS,
     MANAGER_SUPERVISION_MODE, GENERATION_SOURCE_CONSISTENCY,
@@ -187,6 +190,14 @@ _register("TABLE_RETRY_SECONDS", "table_retry_seconds", "int", TABLE_RETRY_SECON
 _register("S3_BUCKET", "bucket", "str", BUCKET_NAME)
 _register("S3_ACCESS_KEY_ID", "access_key_id", "str", ACCESS_KEY_ID)
 _register("S3_SECRET_ACCESS_KEY", "secret_access_key", "str", SECRET_ACCESS_KEY)
+_register("ARTIFACT_STORE_BACKEND", "artifact_store_backend", "str", ARTIFACT_STORE_BACKEND)
+_register("ARTIFACT_STORE_DIR", "artifact_store_dir", "str", ARTIFACT_STORE_DIR)
+_register("ARTIFACT_STORE_ACCOUNT_URL", "artifact_store_account_url", "str", ARTIFACT_STORE_ACCOUNT_URL)
+_register("ARTIFACT_STORE_CONTAINER", "artifact_store_container", "str", ARTIFACT_STORE_CONTAINER)
+_register("ARTIFACT_STORE_AUTH_MODE", "artifact_store_auth_mode", "str", ARTIFACT_STORE_AUTH_MODE)
+_register("ARTIFACT_STORE_CLIENT_ID", "artifact_store_client_id", "str", ARTIFACT_STORE_CLIENT_ID)
+_register("ARTIFACT_STORE_TENANT_ID", "artifact_store_tenant_id", "str", ARTIFACT_STORE_TENANT_ID)
+_register("ARTIFACT_STORE_TOKEN_FILE", "artifact_store_token_file", "str", ARTIFACT_STORE_TOKEN_FILE)
 _register("REQUIRE_SIGV4", "require_sigv4", "bool", REQUIRE_SIGV4)
 _register("ENABLE_STORAGE_PROXY", "enable_storage_proxy", "bool", ENABLE_STORAGE_PROXY)
 _register("ENFORCE_MOUNT_AUTH", "enforce_mount_auth", "bool", ENFORCE_MOUNT_AUTH)
@@ -762,8 +773,37 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
         problems.append(f"STREAM_BATCH_ROWS must be >= 1 (got {STREAM_BATCH_ROWS}).")
     if SOURCE_MAX_CONCURRENCY < 0:
         problems.append(f"SOURCE_MAX_CONCURRENCY must be >= 0 (got {SOURCE_MAX_CONCURRENCY}).")
-    if ARTIFACT_STORE_BACKEND not in ("local", "memory"):
-        problems.append(f"ARTIFACT_STORE_BACKEND must be 'local' or 'memory' (got {ARTIFACT_STORE_BACKEND!r}).")
+    if ARTIFACT_STORE_BACKEND not in ("local", "memory", "azure"):
+        problems.append(
+            "ARTIFACT_STORE_BACKEND must be 'local', 'memory', or 'azure' "
+            f"(got {ARTIFACT_STORE_BACKEND!r})."
+        )
+    if ARTIFACT_STORE_BACKEND == "azure":
+        if not ARTIFACT_STORE_ACCOUNT_URL:
+            problems.append(
+                "ARTIFACT_STORE_BACKEND='azure' requires ARTIFACT_STORE_ACCOUNT_URL."
+            )
+        if not ARTIFACT_STORE_CONTAINER:
+            problems.append(
+                "ARTIFACT_STORE_BACKEND='azure' requires ARTIFACT_STORE_CONTAINER."
+            )
+        if ARTIFACT_STORE_AUTH_MODE not in (
+            "managed_identity",
+            "workload_identity",
+            "default",
+        ):
+            problems.append(
+                "ARTIFACT_STORE_AUTH_MODE must be 'managed_identity', "
+                "'workload_identity', or 'default'."
+            )
+        if (
+            ARTIFACT_STORE_AUTH_MODE == "workload_identity"
+            and (not ARTIFACT_STORE_CLIENT_ID or not ARTIFACT_STORE_TENANT_ID)
+        ):
+            problems.append(
+                "workload_identity artifact storage requires "
+                "ARTIFACT_STORE_CLIENT_ID and ARTIFACT_STORE_TENANT_ID."
+            )
     if not (1 <= CONTROL_PORT <= 65535):
         problems.append(f"CONTROL_PORT must be in 1..65535 (got {CONTROL_PORT}).")
     if HEARTBEAT_MS <= 0:
@@ -1153,8 +1193,14 @@ SETTINGS_META: dict[str, dict] = {
     "refresh_allow_full_pull": {"cat": "Data freshness", "help": "In auto, allow full read when the probe is unavailable."},
     "refresh_ttl_seconds": {"cat": "Data freshness", "help": "Window for the ttl strategy (seconds)."},
     # Cluster / scale
-    "artifact_store_backend": {"cat": "Cluster (scale)", "help": "Durable artifact store backend: 'local' (filesystem/NFS/SMB) or 'memory' (ephemeral)."},
+    "artifact_store_backend": {"cat": "Cluster (scale)", "help": "Durable artifact store backend: 'local', 'memory' (ephemeral), or 'azure' (Azure Blob/ADLS Gen2)."},
     "artifact_store_dir": {"cat": "Cluster (scale)", "help": "Root directory for the local artifact store."},
+    "artifact_store_account_url": {"cat": "Cluster (scale)", "help": "Azure Blob account endpoint, for example https://account.blob.core.windows.net."},
+    "artifact_store_container": {"cat": "Cluster (scale)", "help": "Pre-created Azure Blob container for shared artifact and control objects."},
+    "artifact_store_auth_mode": {"cat": "Cluster (scale)", "help": "Azure artifact-store identity mode: managed_identity, workload_identity, or default (local development only).", "choices": ["managed_identity", "workload_identity", "default"]},
+    "artifact_store_client_id": {"cat": "Cluster (scale)", "help": "Optional user-assigned or workload identity client ID for Azure artifact storage."},
+    "artifact_store_tenant_id": {"cat": "Cluster (scale)", "help": "Entra tenant ID required for workload identity artifact storage."},
+    "artifact_store_token_file": {"cat": "Cluster (scale)", "help": "Federated token file path for workload identity artifact storage."},
     "artifact_store_serving": {"cat": "Cluster (scale)", "help": "Serve materialized Parquet from the artifact store (durable, shareable; zero regeneration on restart)."},
     "publish_serving_image": {"cat": "Cluster (scale)", "help": "Publish a complete servable image (data + metadata) to the store at startup."},
     "manager_url": {"cat": "Cluster (scale)", "help": "Agent: Manager control URL to register/heartbeat (blank = standalone, no cluster)."},
@@ -1390,6 +1436,12 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "tls_key_file": "config.system.json",
     "artifact_store_backend": "config.system.json",
     "artifact_store_dir": "config.system.json",
+    "artifact_store_account_url": "config.system.json",
+    "artifact_store_container": "config.system.json",
+    "artifact_store_auth_mode": "config.system.json",
+    "artifact_store_client_id": "config.system.json",
+    "artifact_store_tenant_id": "config.system.json",
+    "artifact_store_token_file": "config.system.json",
     "artifact_store_serving": "config.system.json",
     "publish_serving_image": "config.system.json",
     "agent_count": "config.system.json",

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import io
+import hashlib
 
 import pytest
 
@@ -54,6 +56,26 @@ def test_overwrite_is_idempotent_atomic(store):
     assert store.get(KEY) == BODY
     assert store.head(KEY).size == len(BODY)
 
+
+def test_put_stream_roundtrip(store):
+    stat = store.put_stream(KEY, io.BytesIO(BODY), length=len(BODY))
+
+    assert stat.size == len(BODY)
+    assert store.get(KEY) == BODY
+
+
+def test_put_stream_rejects_length_mismatch(store):
+    with pytest.raises(ValueError, match="length mismatch"):
+        store.put_stream(KEY, io.BytesIO(BODY), length=len(BODY) + 1)
+    assert store.head(KEY) is None
+
+
+def test_verify_checks_size_and_sha256_without_get(store):
+    store.put(KEY, BODY)
+
+    assert store.verify(KEY, size=len(BODY), content_hash=hashlib.sha256(BODY).hexdigest())
+    assert not store.verify(KEY, size=len(BODY) + 1, content_hash=hashlib.sha256(BODY).hexdigest())
+    assert not store.verify(KEY, size=len(BODY), content_hash="0" * 64)
 
 def test_list_prefix_sorted(store):
     store.put("warehouse/db/sales/data/split-1.parquet", b"a")

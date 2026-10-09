@@ -49,6 +49,30 @@ def _publication_lock(request_id: str) -> asyncio.Lock:
     return lock
 
 
+def _prune_generation_staging(
+    generation_id: str, task_ids: list[str]
+) -> int:
+    if _queue is None:
+        raise RuntimeError("materialization work queue is not configured")
+    output_keys: list[str] = []
+    keep_keys: set[str] = set()
+    for task_id in task_ids:
+        record = _queue.get_task(task_id)
+        if record is None:
+            continue
+        task = record.get("task") or {}
+        output_key = str(task.get("output_key", ""))
+        if output_key:
+            output_keys.append(output_key)
+        result = record.get("result") or {}
+        staged_key = str(result.get("output_key", ""))
+        if staged_key:
+            keep_keys.add(staged_key)
+    return _queue.prune_staging(
+        generation_id, output_keys, keep_keys=keep_keys
+    )
+
+
 async def _ensure_snapshots() -> None:
     """Build the table snapshot registry once (deterministic keys) so an object
     key can be resolved to its table. Cheap after the first call."""
@@ -174,6 +198,17 @@ def _task_columns(table) -> list[Column]:
     return columns
 
 
+def _task_range(split) -> KeyRange | None:
+    lo, hi = split.key_lo, split.key_hi
+    if lo is None and hi is None:
+        return None
+    if not isinstance(lo, int) or not isinstance(hi, int):
+        raise ValueError(
+            "distributed materialization requires integer split bounds"
+        )
+    return KeyRange(lo=lo, hi=hi)
+
+
 async def materialize_for_key(key: str) -> dict:
     """Enqueue the key's table and wait for verified durable publication."""
     if _queue is None:
@@ -203,7 +238,7 @@ async def materialize_for_key(key: str) -> dict:
             output_key=split.object_key,
             deadline_ms=int(time.time() * 1000) + 300_000,
             schema=_task_columns(snap.table),
-            range=KeyRange(lo=split.key_lo, hi=split.key_hi),
+            range=_task_range(split),
             connection_id=snap.table.connection_id,
             source_table=snap.table.source_table,
             connection_fingerprint=hashlib.sha256(
@@ -249,6 +284,11 @@ async def materialize_for_key(key: str) -> dict:
             _queue.get_snapshot, snap.table.name, snap.version
         )
         if existing is not None and existing.request_id == terminal["request_id"]:
+            await asyncio.to_thread(
+                _prune_generation_staging,
+                generation.generation_id,
+                terminal["task_ids"],
+            )
             return {
                 "ok": True,
                 "materialized": True,
@@ -256,6 +296,7 @@ async def materialize_for_key(key: str) -> dict:
                 "request_id": terminal["request_id"],
             }
         split_refs = []
+        output_keys = []
         for task_id in terminal["task_ids"]:
             record = await asyncio.to_thread(_queue.get_task, task_id)
             if record is None or not record.get("result"):
@@ -275,18 +316,26 @@ async def materialize_for_key(key: str) -> dict:
                 raise RuntimeError(
                     f"queue result does not match snapshot split: {task_id}"
                 )
-            output_data = await asyncio.to_thread(
-                get_default_store().get, task_payload.output_key
+            output_key = str(result.get("output_key", ""))
+            original_parent = task_payload.output_key.rpartition("/")[0]
+            staging_root = (
+                f"{original_parent + '/' if original_parent else ''}.fsp/staging/"
+                f"{hashlib.sha256(generation.generation_id.encode()).hexdigest()}/"
+                f"{task_id}/"
             )
+            if not output_key.startswith(staging_root):
+                raise RuntimeError(
+                    f"queue result has invalid staged output key: {task_id}"
+                )
+            snap_split.object_key = output_key
+            output_keys.append(task_payload.output_key)
             snap_split.file_size_in_bytes = int(result["size_bytes"])
             snap_split.record_count = int(result["record_count"])
             snap_split.content_hash = str(result["content_hash"])
-            snap_split.s3_etag = hashlib.md5(
-                output_data, usedforsecurity=False
-            ).hexdigest()
+            snap_split.s3_etag = str(result["s3_etag"])
             split_refs.append(
                 SplitRef(
-                    object_key=task_payload.output_key,
+                    object_key=output_key,
                     size_bytes=int(result["size_bytes"]),
                     record_count=int(result["record_count"]),
                     content_hash=str(result["content_hash"]),
@@ -314,6 +363,12 @@ async def materialize_for_key(key: str) -> dict:
         )
         await asyncio.to_thread(
             _queue.publish_snapshot, terminal["request_id"], manifest
+        )
+        await asyncio.to_thread(
+            _queue.prune_staging,
+            generation.generation_id,
+            output_keys,
+            keep_keys={split.object_key for split in split_refs},
         )
     log.info(
         "manager_queue_materialized_for_agent",

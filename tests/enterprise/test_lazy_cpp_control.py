@@ -170,6 +170,7 @@ async def test_control_materialize_endpoint(
                 break
             await asyncio.sleep(0.01)
         assert tasks
+        abandoned_stage_key = None
         for record in tasks:
             claimed = app.state.work_queue.claim_task(
                 record["task_id"],
@@ -179,6 +180,12 @@ async def test_control_materialize_endpoint(
                 manager_fence=1,
             )
             result = await execute_task(claimed, "agent-test")
+            if abandoned_stage_key is None:
+                abandoned_stage_key = (
+                    claimed.output_key.rpartition("/")[0]
+                    + "/abandoned-attempt.parquet"
+                )
+                get_default_store().put(abandoned_stage_key, b"abandoned")
             ack = app.state.work_queue.accept_result(
                 result, agent_lease_id="lease-test"
             )
@@ -193,6 +200,13 @@ async def test_control_materialize_endpoint(
         assert published is not None
         assert all(split.size_bytes > 0 for split in published.splits)
         assert all(split.record_count > 0 for split in published.splits)
+        assert all("/.fsp/staging/" in split.object_key for split in published.splits)
+        assert all(
+            get_default_store().exists(split.object_key)
+            for split in published.splits
+        )
+        assert abandoned_stage_key is not None
+        assert not get_default_store().exists(abandoned_stage_key)
         status = await c.get("/control/work-queue")
         assert status.status_code == 200
         assert status.json()["published_snapshots"] == 1

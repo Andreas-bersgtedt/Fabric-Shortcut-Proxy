@@ -99,6 +99,7 @@ def _result(task: MaterializeTask, data: bytes, **changes) -> TaskResult:
         "size_bytes": len(data),
         "record_count": 3,
         "content_hash": hashlib.sha256(data).hexdigest(),
+        "s3_etag": hashlib.md5(data, usedforsecurity=False).hexdigest(),
         "task_id": task.task_id,
         "request_id": task.request_id,
         "claim_token": task.claim_token,
@@ -113,8 +114,19 @@ def _result(task: MaterializeTask, data: bytes, **changes) -> TaskResult:
     return TaskResult(**values)
 
 
+class _NoOutputReadbackStore(MemoryStore):
+    def get(self, key: str, *, offset: int = 0, length: int | None = None) -> bytes:
+        if (
+            key == "warehouse/sales/data/0.parquet"
+            and offset == 0
+            and length is None
+        ):
+            raise AssertionError("Manager must not read the full output object")
+        return super().get(key, offset=offset, length=length)
+
+
 def test_queue_survives_restart_and_publishes_verified_snapshot():
-    store = MemoryStore()
+    store = _NoOutputReadbackStore()
     queue = DurableWorkQueue(store)
     request, task_id = _create(queue)
     assert _create(queue)[0]["request_id"] == request["request_id"]
@@ -391,20 +403,85 @@ def test_queue_rejects_wrong_claim_generation_and_output():
     assert queue.get_task(task_id)["state"] != TASK_SUCCEEDED
 
 
+def test_retention_removes_failed_staging_but_preserves_canonical_output():
+    store = MemoryStore()
+    queue = DurableWorkQueue(store, task_lease_seconds=1)
+    request, task_id = _create(queue)
+    claimed = _claim(queue, task_id)
+    task_record = queue.get_task(task_id)
+    task_payload = MaterializeTask.from_dict(task_record["task"])
+    store.put(task_payload.output_key, b"canonical")
+    store.put(claimed.output_key, b"orphaned")
+    request["state"] = TASK_FAILED
+    request["updated_at_ms"] = 1
+    task_record["state"] = TASK_FAILED
+    queue._write(f"{TASKS_PREFIX}/{task_id}.json", task_record)
+    queue._write(f"{REQUESTS_PREFIX}/{request['request_id']}.json", request)
+
+    assert queue.prune_terminal(retention_seconds=60, now_ms=120_001) == 1
+    assert store.exists(task_payload.output_key)
+    assert not store.exists(claimed.output_key)
+
+
+def test_each_claim_gets_an_isolated_staging_key():
+    queue = DurableWorkQueue(MemoryStore(), task_lease_seconds=1)
+    _, task_id = _create(queue)
+    first = _claim(queue, task_id)
+    queue.expire_claims(now_ms=first.claim_expires_at_ms + 1)
+    second = _claim(queue, task_id, now_ms=first.claim_expires_at_ms + 1)
+
+    assert first.output_key != second.output_key
+    assert first.output_key.startswith(
+        "warehouse/sales/data/.fsp/staging/"
+    )
+    assert second.output_key.startswith(
+        "warehouse/sales/data/.fsp/staging/"
+    )
+
+
+def test_retention_keeps_succeeded_unpublished_request_for_recovery():
+    store = MemoryStore()
+    queue = DurableWorkQueue(store)
+    request, task_id = _create(queue)
+    task_record = queue.get_task(task_id)
+    task_payload = MaterializeTask.from_dict(task_record["task"])
+    store.put(task_payload.output_key, b"recoverable")
+    request["state"] = TASK_SUCCEEDED
+    request["updated_at_ms"] = 1
+    task_record["state"] = TASK_SUCCEEDED
+    queue._write(f"{TASKS_PREFIX}/{task_id}.json", task_record)
+    queue._write(f"{REQUESTS_PREFIX}/{request['request_id']}.json", request)
+
+    assert queue.prune_terminal(retention_seconds=60, now_ms=120_001) == 0
+    assert store.exists(task_payload.output_key)
+    assert queue.get_task(task_id) is not None
+
+
 def test_queue_retries_expired_and_retryable_claims_and_cancels():
+    store = MemoryStore()
     queue = DurableWorkQueue(
-        MemoryStore(),
+        store,
         task_lease_seconds=1,
         max_attempts=3,
         retry_backoff_seconds=2,
     )
     request, task_id = _create(queue)
     base = int(queue.get_task(task_id)["available_at_ms"])
-    claimed = _claim(queue, task_id, now_ms=base)
+    expired_claim = _claim(queue, task_id, now_ms=base)
+    stale_data = _parquet()
+    store.put(expired_claim.output_key, stale_data)
     assert queue.expire_claims(now_ms=base + 1_001) == 1
     assert queue.get_task(task_id)["state"] == TASK_QUEUED
 
     claimed = _claim(queue, task_id, now_ms=base + 2_000)
+    assert claimed.output_key != expired_claim.output_key
+    stale_ack = queue.accept_result(
+        _result(expired_claim, stale_data),
+        agent_lease_id="lease-1",
+        now_ms=base + 2_050,
+    )
+    assert not stale_ack.ok
+    assert stale_ack.reason_code == RESULT_STALE_CLAIM
     failed = _result(
         claimed,
         b"",

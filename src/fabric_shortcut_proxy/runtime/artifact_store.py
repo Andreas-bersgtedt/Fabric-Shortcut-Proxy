@@ -7,13 +7,12 @@ read and written. Introducing it in Phase 0 lets serving be decoupled from
 generation and later shared across a fleet of stateless Agents — without changing
 the S3 wire protocol.
 
-Backends (Phase 0):
+Backends:
   - :class:`LocalDirStore` — a filesystem directory (single box, or an NFS/SMB
     share for multi‑node). Atomic writes via temp‑file + ``os.replace``.
   - :class:`MemoryStore` — in‑process dict, for tests and ephemeral use.
-
-Future backends (S3/MinIO, Azure Blob/ADLS) implement the same interface with no
-change to serving code.
+  - :class:`AzureBlobArtifactStore` — Azure Blob Storage, loaded lazily when the
+    Azure backend is configured.
 
 **Keys** are POSIX‑style and identical to the S3 object keys the runtime serves,
 e.g. ``warehouse/db/<table>/data/split-0-<hash>.parquet`` or
@@ -34,11 +33,14 @@ from __future__ import annotations
 
 import abc
 import contextlib
+import hashlib
+import hmac
 import json
 import os
 import threading
 import time
 from dataclasses import dataclass
+from typing import BinaryIO, Iterable, Iterator, cast
 
 
 @dataclass(frozen=True)
@@ -47,14 +49,36 @@ class ObjectStat:
     key: str
     size: int
     mtime_ms: int | None = None      # last-modified epoch ms, when the backend knows it
+    etag: str | None = None
 
 
 class ObjectNotFound(KeyError):
     """Raised by :meth:`ArtifactStore.get` when a key does not exist."""
 
 
+class ObjectConflict(RuntimeError):
+    """Raised when an immutable artifact key already contains other content."""
+
+
 # Default streaming chunk size (1 MiB) for get_stream / passthrough serving.
 _STREAM_CHUNK = 1 << 20
+
+
+def _input_chunks(data: BinaryIO | Iterable[bytes]) -> Iterator[bytes]:
+    reader = getattr(data, "read", None)
+    if callable(reader):
+        while True:
+            chunk = reader(_STREAM_CHUNK)
+            if not chunk:
+                return
+            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                raise TypeError("artifact stream must yield bytes")
+            yield bytes(chunk)
+    else:
+        for chunk in cast(Iterable[object], data):
+            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                raise TypeError("artifact stream must yield bytes")
+            yield bytes(chunk)
 
 
 def _normalize_key(key: str) -> str:
@@ -96,6 +120,60 @@ class ArtifactStore(abc.ABC):
     def put(self, key: str, data: bytes) -> ObjectStat:
         """Store ``data`` at ``key`` (atomic overwrite). Returns its stat."""
 
+    def put_stream(
+        self,
+        key: str,
+        data: BinaryIO | Iterable[bytes],
+        *,
+        length: int | None = None,
+    ) -> ObjectStat:
+        """Store a byte stream; streaming-capable backends should override this."""
+        if length is not None and length < 0:
+            raise ValueError("length must be >= 0")
+        value = bytearray()
+        for chunk in _input_chunks(data):
+            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                raise TypeError("artifact stream must yield bytes")
+            value.extend(chunk)
+        if length is not None and len(value) != length:
+            raise ValueError(
+                f"artifact stream length mismatch: expected {length}, received {len(value)}"
+            )
+        return self.put(key, bytes(value))
+
+    def put_stream_if_absent(
+        self,
+        key: str,
+        data: BinaryIO | Iterable[bytes],
+        *,
+        length: int | None = None,
+    ) -> ObjectStat:
+        """Create an immutable object, accepting an identical prior upload."""
+        if length is not None and length < 0:
+            raise ValueError("length must be >= 0")
+        value = bytearray()
+        digest = hashlib.sha256()
+        for chunk in _input_chunks(data):
+            value.extend(chunk)
+            digest.update(chunk)
+        if length is not None and len(value) != length:
+            raise ValueError(
+                f"artifact stream length mismatch: expected {length}, received {len(value)}"
+            )
+        if self.compare_and_swap(key, None, bytes(value)):
+            stat = self.head(key)
+            if stat is None:
+                raise ObjectNotFound(key)
+            return stat
+        stat = self.head(key)
+        if stat is not None and stat.size == len(value) and self.verify(
+            key,
+            size=len(value),
+            content_hash=digest.hexdigest(),
+        ):
+            return stat
+        raise ObjectConflict(f"immutable artifact key already contains other data: {key}")
+
     @abc.abstractmethod
     def get(self, key: str, *, offset: int = 0, length: int | None = None) -> bytes:
         """Return the object bytes (optionally a ``[offset, offset+length)`` slice).
@@ -106,6 +184,21 @@ class ArtifactStore(abc.ABC):
     @abc.abstractmethod
     def head(self, key: str) -> ObjectStat | None:
         """Return the object's stat, or ``None`` if absent."""
+
+    def verify(self, key: str, *, size: int, content_hash: str) -> bool:
+        """Verify size and SHA-256 incrementally without buffering the object."""
+        if size < 0:
+            return False
+        stat = self.head(key)
+        if stat is None or stat.size != size:
+            return False
+        digest = hashlib.sha256()
+        try:
+            for chunk in self.get_stream(key):
+                digest.update(chunk)
+        except ObjectNotFound:
+            return False
+        return hmac.compare_digest(digest.hexdigest(), content_hash)
 
     @abc.abstractmethod
     def exists(self, key: str) -> bool:
@@ -224,6 +317,15 @@ class MemoryStore(ArtifactStore):
             self._data[k] = b
         return ObjectStat(k, len(b))
 
+    def put_stream(
+        self,
+        key: str,
+        data: BinaryIO | Iterable[bytes],
+        *,
+        length: int | None = None,
+    ) -> ObjectStat:
+        return super().put_stream(key, data, length=length)
+
     def get(self, key: str, *, offset: int = 0, length: int | None = None) -> bytes:
         k = _normalize_key(key)
         with self._lock:
@@ -238,6 +340,18 @@ class MemoryStore(ArtifactStore):
         with self._lock:
             b = self._data.get(k)
         return None if b is None else ObjectStat(k, len(b))
+
+    def verify(self, key: str, *, size: int, content_hash: str) -> bool:
+        k = _normalize_key(key)
+        with self._lock:
+            data = self._data.get(k)
+            return (
+                data is not None
+                and len(data) == size
+                and hmac.compare_digest(
+                    hashlib.sha256(data).hexdigest(), content_hash
+                )
+            )
 
     def exists(self, key: str) -> bool:
         k = _normalize_key(key)
@@ -277,13 +391,19 @@ class MemoryStore(ArtifactStore):
             return False
         try:
             record = json.loads(raw.decode("utf-8"))
+            now_ms = int(time.time() * 1000)
             renew_ms = int(record.get("renew_ms", 0))
             ttl_ms = int(record.get("ttl_ms", 0))
+            expires_at_ms = int(record.get("expires_at_ms", 0))
+            live = (
+                renew_ms > 0 and now_ms - renew_ms <= ttl_ms
+                if renew_ms > 0
+                else expires_at_ms > now_ms
+            )
             return (
-                record.get("owner_id") == owner_id
+                record.get("owner_id", record.get("generation_id")) == owner_id
                 and int(record.get("fence", -1)) == int(fence)
-                and renew_ms > 0
-                and int(time.time() * 1000) - renew_ms <= ttl_ms
+                and live
             )
         except (UnicodeDecodeError, ValueError, TypeError):
             return False
@@ -380,6 +500,42 @@ class LocalDirStore(ArtifactStore):
         os.replace(tmp, path)  # atomic on Windows + POSIX
         return ObjectStat(_normalize_key(key), len(data))
 
+    def put_stream(
+        self,
+        key: str,
+        data: BinaryIO | Iterable[bytes],
+        *,
+        length: int | None = None,
+    ) -> ObjectStat:
+        if length is not None and length < 0:
+            raise ValueError("length must be >= 0")
+        normalized = _normalize_key(key)
+        path = self._path(normalized)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        size = 0
+        try:
+            with open(tmp, "wb") as handle:
+                for chunk in _input_chunks(data):
+                    if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                        raise TypeError("artifact stream must yield bytes")
+                    raw = bytes(chunk)
+                    handle.write(raw)
+                    size += len(raw)
+                if length is not None and size != length:
+                    raise ValueError(
+                        f"artifact stream length mismatch: expected {length}, received {size}"
+                    )
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
+        finally:
+            try:
+                os.remove(tmp)
+            except FileNotFoundError:
+                pass
+        return ObjectStat(normalized, size)
+
     @contextlib.contextmanager
     def _cas_lock(self):
         os.makedirs(self.root, exist_ok=True)
@@ -445,14 +601,20 @@ class LocalDirStore(ArtifactStore):
         try:
             with open(self._path(fence_key), "rb") as handle:
                 record = json.loads(handle.read().decode("utf-8"))
-            renew_ms = int(record.get("renew_ms", 0))
-            ttl_ms = int(record.get("ttl_ms", 0))
-            return (
-                record.get("owner_id") == owner_id
-                and int(record.get("fence", -1)) == int(fence)
-                and renew_ms > 0
-                and int(time.time() * 1000) - renew_ms <= ttl_ms
-            )
+                now_ms = int(time.time() * 1000)
+                renew_ms = int(record.get("renew_ms", 0))
+                ttl_ms = int(record.get("ttl_ms", 0))
+                expires_at_ms = int(record.get("expires_at_ms", 0))
+                live = (
+                    renew_ms > 0 and now_ms - renew_ms <= ttl_ms
+                    if renew_ms > 0
+                    else expires_at_ms > now_ms
+                )
+                return (
+                    record.get("owner_id", record.get("generation_id")) == owner_id
+                    and int(record.get("fence", -1)) == int(fence)
+                    and live
+                )
         except (FileNotFoundError, UnicodeDecodeError, ValueError, TypeError):
             return False
 
@@ -634,7 +796,16 @@ def build_store(backend: str, *, local_dir: str = "./.artifacts") -> ArtifactSto
         return LocalDirStore(local_dir)
     if b == "memory":
         return MemoryStore()
-    raise ValueError(f"unknown artifact store backend: {backend!r} (expected 'local' or 'memory')")
+    if b == "azure":
+        from fabric_shortcut_proxy.runtime.azure_artifact_store import (
+            build_azure_artifact_store,
+        )
+
+        return build_azure_artifact_store()
+    raise ValueError(
+        f"unknown artifact store backend: {backend!r} "
+        "(expected 'local', 'memory', or 'azure')"
+    )
 
 
 _default_store: ArtifactStore | None = None

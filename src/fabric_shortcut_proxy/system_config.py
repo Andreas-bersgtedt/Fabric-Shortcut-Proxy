@@ -296,9 +296,27 @@ KEYVAULT_WRITE_BACK: bool = _get_bool("FSP_KEYVAULT_WRITE_BACK", "keyvault_write
 # Artifact Store (cluster seam — Phase 0)
 # ---------------------------------------------------------------------------
 
-# Backends: "local" (filesystem/NFS/SMB) or "memory" (ephemeral/tests)
+# Backends: "local" (filesystem/NFS/SMB), "memory" (ephemeral/tests), or "azure"
 ARTIFACT_STORE_BACKEND: str = _get_str("ARTIFACT_STORE_BACKEND", "artifact_store_backend", "local").strip().lower()
 ARTIFACT_STORE_DIR: str = _get_str("ARTIFACT_STORE_DIR", "artifact_store_dir", "./.artifacts")
+ARTIFACT_STORE_ACCOUNT_URL: str = _get_str(
+    "ARTIFACT_STORE_ACCOUNT_URL", "artifact_store_account_url", ""
+).strip()
+ARTIFACT_STORE_CONTAINER: str = _get_str(
+    "ARTIFACT_STORE_CONTAINER", "artifact_store_container", ""
+).strip()
+ARTIFACT_STORE_AUTH_MODE: str = _get_str(
+    "ARTIFACT_STORE_AUTH_MODE", "artifact_store_auth_mode", "managed_identity"
+).strip().lower()
+ARTIFACT_STORE_CLIENT_ID: str = _get_str(
+    "ARTIFACT_STORE_CLIENT_ID", "artifact_store_client_id", ""
+).strip()
+ARTIFACT_STORE_TENANT_ID: str = _get_str(
+    "ARTIFACT_STORE_TENANT_ID", "artifact_store_tenant_id", ""
+).strip()
+ARTIFACT_STORE_TOKEN_FILE: str = _get_str(
+    "ARTIFACT_STORE_TOKEN_FILE", "artifact_store_token_file", ""
+).strip()
 
 # Serve Parquet from the shared artifact store (durable, shareable; zero regeneration)
 ARTIFACT_STORE_SERVING: bool = _get_bool("ARTIFACT_STORE_SERVING", "artifact_store_serving", False)

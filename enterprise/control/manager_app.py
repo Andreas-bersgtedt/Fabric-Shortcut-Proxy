@@ -456,6 +456,13 @@ def create_manager_app() -> FastAPI:
             heartbeat_ages[(location, agent_id)] = age
             heartbeat_timeouts[(location, agent_id)] = registry.heartbeat_timeout_seconds(agent_id)
         metrics.record_agent_heartbeat_ages(heartbeat_ages, heartbeat_timeouts)
+        from enterprise.control.publication_health import dataset_freshness
+
+        freshness = await asyncio.to_thread(
+            dataset_freshness, queue, placement,
+            [(table.connection_id, table.source_table) for table in config.TABLES],
+        )
+        metrics.record_dataset_freshness(freshness)
         return PlainTextResponse(
             metrics.render_prometheus(),
             media_type="text/plain; version=0.0.4; charset=utf-8",
@@ -610,6 +617,12 @@ def create_manager_app() -> FastAPI:
     @app.get("/control/work-queue")
     async def control_work_queue_status():
         status = await asyncio.to_thread(queue.status)
+        from enterprise.control.publication_health import dataset_freshness
+
+        status["dataset_freshness"] = await asyncio.to_thread(
+            dataset_freshness, queue, placement,
+            [(table.connection_id, table.source_table) for table in config.TABLES],
+        )
         active_scheduler = getattr(app.state, "work_scheduler", None)
         status["scheduler"] = (
             active_scheduler.status() if active_scheduler is not None else None

@@ -61,6 +61,7 @@ A constrained connection/table policy uses:
 | `serving_endpoints` | Assigned regional endpoints. |
 | `replica_storage_profiles` | Stores allowed to hold published replicas. |
 | `cache_storage_profiles` | Declared data-cache stores. |
+| `freshness_target_ms` | Optional positive integer freshness budget for a connection or table, in milliseconds. Unset targets emit no dataset freshness series. |
 
 Pool locations, pool storage profiles, staging, published objects, declared
 caches, replicas and serving locations must all be inside the allowed set.
@@ -141,6 +142,40 @@ claim expiry cannot revive the claim. Existing claim expiration/requeue logic
 then handles reassignment. The heartbeat alert compares age against the
 exported timeout rather than assuming a six-second limit for WAN pools.
 
+The running work-queue publication path now persists `dataset_id` and
+`produced_at_ms` in the durable snapshot manifest object. The production clock
+uses the request's start time, a conservative lower bound on source acquisition,
+not the publication, replication or heartbeat time. Retrying publication cannot
+refresh that timestamp, and supplied timestamps or dataset IDs must match the
+request. These fields describe generation metadata; they do not add provider
+headers to each Parquet object or claim a database-level consistent read point.
+Older manifests still deserialize with absent fields.
+
+On every Prometheus scrape, the Manager reads publication metadata and
+recalculates configured dataset freshness. It does not download source rows or
+Parquet objects. The same status is returned by `GET /control/work-queue` under
+`dataset_freshness`. Metrics are labelled by `dataset_id` and `location`:
+
+- `fsp_dataset_age_seconds`
+- `fsp_dataset_freshness_target_seconds`
+- `fsp_dataset_stale`
+- `fsp_dataset_production_timestamp_known`
+
+A missing, legacy or future-dated production timestamp is explicitly unknown:
+the timestamp-known gauge is zero, the age series is absent and stale is one.
+A known generation becomes stale when its age exceeds the target. Retired
+targets remove their metric series. No target preserves the existing behavior.
+`FspDatasetFreshnessMissed` in the existing observability rule set alerts after
+30 seconds of staleness. Freshness status and alerts never delete, expire or
+invalidate the last published objects. Operators must configure regular
+Prometheus scrapes and apply the rule set.
+
+Tests exercise the actual Manager metrics/status endpoints, restart and late
+republication, the exact freshness threshold, metadata-only monitoring and
+retaining readable published bytes during a simulated site outage. This is not
+a live multi-region site-disconnection drill and does not connect the standalone
+catalog primitives to production serving.
+
 ## Acceptance boundaries
 
 | Issue | Implemented and tested here | Remaining exit evidence or integration |
@@ -151,7 +186,7 @@ exported timeout rather than assuming a six-second limit for WAN pools.
 | #145 | SDK identity-chain factories; existing Phase 3 Entra Agent authentication remains unchanged. | EKS/GKE/Arc federation, issuer-less mTLS fallback, prefix-scoped short-lived on-prem credentials and IAM-negative tests. |
 | #146 | Declared whole-chain validation, inherited constraints and apply/request/dispatch rejection. | Physical serving/cache bindings, multi-store dispatch and live no-row-egress evidence. |
 | #147 | Manifest/object verification, immutable copying and retaining a lagging region's complete generation. | Production asynchronous replication worker, catalog receipt transport and actual Fabric regional reads. |
-| #148 | Per-pool timeout/renewal behavior and catalog freshness without deleting the previous generation. | Production timestamp metadata, periodic freshness metrics/alerts and a live site-disconnection drill. |
+| #148 | Per-pool timeouts/renewal, durable generation production metadata, running Manager freshness metrics/status and alerts, plus catalog staleness without deleting the previous generation. | Deployed alert validation, production catalog/serving integration and a live site-disconnection drill. |
 
 Phase 4 is not at exit criteria. No region-loss RTO is claimed, no EKS/GKE/Arc
 workload has been authenticated, and no Fabric regional-read test has been

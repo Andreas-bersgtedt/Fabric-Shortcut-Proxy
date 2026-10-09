@@ -213,6 +213,8 @@ class SnapshotManifest:
     plan_sha256: str = ""
     published_at_ms: int = 0
     request_id: str = ""
+    dataset_id: str = ""
+    produced_at_ms: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -232,6 +234,10 @@ class SnapshotManifest:
             result["published_at_ms"] = self.published_at_ms
         if self.request_id:
             result["request_id"] = self.request_id
+        if self.dataset_id:
+            result["dataset_id"] = self.dataset_id
+        if self.produced_at_ms:
+            result["produced_at_ms"] = self.produced_at_ms
         return result
 
     @classmethod
@@ -247,6 +253,8 @@ class SnapshotManifest:
             plan_sha256=str(d.get("plan_sha256", "")),
             published_at_ms=int(d.get("published_at_ms", 0)),
             request_id=str(d.get("request_id", "")),
+            dataset_id=str(d.get("dataset_id", "")),
+            produced_at_ms=int(d.get("produced_at_ms", 0)),
         )
 
 

@@ -1463,6 +1463,25 @@ class DurableWorkQueue:
                     )
             key = _snapshot_key(manifest.table, manifest.epoch)
             payload = manifest.to_dict()
+            datasets: set[str] = set()
+            for task_id in request["task_ids"]:
+                task = self.get_task(task_id)
+                if task is None:
+                    raise WorkQueueConflict(f"snapshot task is missing: {task_id}")
+                connection = str(task["task"].get("connection_id", ""))
+                source_table = str(task["task"].get("source_table", ""))
+                if connection and source_table:
+                    datasets.add(f"{connection}::{source_table}")
+            if len(datasets) > 1:
+                raise WorkQueueConflict("snapshot request spans multiple datasets")
+            dataset_id = next(iter(datasets), "")
+            produced_at_ms = int(request["created_at_ms"])
+            if manifest.dataset_id and manifest.dataset_id != dataset_id:
+                raise WorkQueueConflict("snapshot dataset identity does not match request")
+            if manifest.produced_at_ms and manifest.produced_at_ms != produced_at_ms:
+                raise WorkQueueConflict("snapshot production timestamp does not match request")
+            payload["dataset_id"] = dataset_id
+            payload["produced_at_ms"] = produced_at_ms
             request["published"] = True
             request["snapshot_key"] = key
             request["updated_at_ms"] = now_ms
@@ -1482,6 +1501,15 @@ class DurableWorkQueue:
                 "materialization_queue_events_total", event="published"
             )
             return request
+
+    def list_snapshot_manifests(self) -> list[SnapshotManifest]:
+        """Read durable publication metadata without downloading dataset objects."""
+        manifests = []
+        for item in self.store.list(f"{SNAPSHOTS_PREFIX}/"):
+            record = self._read(item.key)
+            if record is not None:
+                manifests.append(SnapshotManifest.from_dict(record["manifest"]))
+        return manifests
 
     def get_snapshot(self, table: str, epoch: int = 0) -> SnapshotManifest | None:
         prefix = f"{SNAPSHOTS_PREFIX}/{_hash(table)}/"

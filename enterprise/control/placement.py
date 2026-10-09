@@ -63,6 +63,7 @@ class MaterializerPolicy:
     serving_endpoints: tuple[str, ...] = ()
     replica_storage_profiles: tuple[str, ...] = ()
     cache_storage_profiles: tuple[str, ...] = ()
+    freshness_target_ms: int | None = None
 
 
 class PlacementConfig:
@@ -419,6 +420,7 @@ def _policy(
         "serving_endpoints",
         "replica_storage_profiles",
         "cache_storage_profiles",
+        "freshness_target_ms",
     }
     if set(raw) - allowed:
         unknown = sorted(set(raw) - allowed)
@@ -446,4 +448,5 @@ def _policy(
         serving_endpoints=tuple(_text_list(raw, "serving_endpoints", required=False)),
         replica_storage_profiles=tuple(_text_list(raw, "replica_storage_profiles", required=False)),
         cache_storage_profiles=tuple(_text_list(raw, "cache_storage_profiles", required=False)),
+        freshness_target_ms=_positive_limit(raw.get("freshness_target_ms"), scope, "freshness_target_ms"),
     )

@@ -15,8 +15,20 @@ spec:
           annotations:
             summary: FSP Agent heartbeat is stale
             description: >-
-              Agent {{ $labels.agent_id }} in {{ $labels.location }} has not
+              Agent {{ $labels.agent_id }} in {{ $labels.location }} has
               exceeded its configured pool heartbeat timeout.
+
+        - alert: FspDatasetFreshnessMissed
+          expr: fsp_dataset_stale == 1
+          for: 30s
+          labels:
+            severity: warning
+          annotations:
+            summary: FSP dataset freshness target is missed
+            description: >-
+              Dataset {{ $labels.dataset_id }} in {{ $labels.location }} has
+              exceeded its freshness target or has no known production timestamp.
+              The last published generation is not expired by this alert.
 
         - alert: FspAssignmentRejected
           expr: sum by (location, reason) (increase(fsp_assignment_rejections_total[5m])) > 0

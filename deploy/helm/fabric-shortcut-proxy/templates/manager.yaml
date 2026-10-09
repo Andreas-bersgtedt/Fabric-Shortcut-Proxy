@@ -14,6 +14,10 @@ spec:
       app.kubernetes.io/name: fsp-manager
   template:
     metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9200"
       labels:
         app.kubernetes.io/name: fsp-manager
         app.kubernetes.io/component: control-plane
@@ -54,6 +58,7 @@ spec:
           env:
             - name: AGENT_AUTH_MODE
               value: {{ .Values.agentAuth.mode | quote }}
+            {{- if ne .Values.agentAuth.mode "entra" }}
             - name: AGENT_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -77,6 +82,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.agentAuth.identityTokensSecretName }}
                   key: {{ .Values.agentAuth.identityTokensKey }}
+            {{- end }}
             {{- end }}
             - name: AGENT_PLACEMENT_CONFIG
               value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
@@ -151,8 +157,14 @@ spec:
             {{- if .Values.storage.azureFiles.enabled }}
             - name: artifacts
               mountPath: /artifacts
+              {{- with .Values.storage.azureFiles.artifacts.subPath }}
+              subPath: {{ . | quote }}
+              {{- end }}
             - name: config
               mountPath: /config
+              {{- with .Values.storage.azureFiles.managerConfig.subPath }}
+              subPath: {{ . | quote }}
+              {{- end }}
             {{- else }}
             - name: artifacts
               mountPath: /config

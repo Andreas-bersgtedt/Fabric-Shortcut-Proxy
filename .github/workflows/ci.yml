@@ -83,10 +83,10 @@ jobs:
       - name: Install Lite + Enterprise packages
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]" -e ./enterprise
+          pip install -e ".[dev,agent-entra]" -e ./enterprise
 
       - name: Run Enterprise tests
-        run: pytest tests/enterprise -v
+        run: pytest tests/enterprise tests/test_entra_agent_auth.py -v
 
   helm-chart:
     name: Helm chart validation

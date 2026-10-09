@@ -67,6 +67,22 @@ def _register(registry: Registry, agent_id: str, contract_version: str = "1.1"):
     ))
 
 
+def test_entra_bindings_require_pool_coverage_and_isolation():
+    placement = _placement_config()
+    bindings = {
+        agent_id: {"client_id": f"client-{agent_id}", "principal_id": f"principal-{agent_id}"}
+        for agent_id in placement.identity_pools
+    }
+    placement.validate_entra_identities(bindings)
+    with pytest.raises(ValueError, match="missing pool identities"):
+        placement.validate_entra_identities({})
+    for claim in ("client_id", "principal_id"):
+        invalid = {agent_id: dict(binding) for agent_id, binding in bindings.items()}
+        invalid["fallback-agent"][claim] = invalid["primary-agent"][claim]
+        with pytest.raises(ValueError, match="unique across materializer pools"):
+            placement.validate_entra_identities(invalid)
+
+
 def _queue(*, table: str = "sales.customers", task_count: int = 1):
     queue = DurableWorkQueue(MemoryStore())
     tasks = [

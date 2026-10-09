@@ -1,0 +1,31 @@
+# Central Manager-only profile. The shared ConfigMap, service account, and
+# artifact PVC are support resources; no materializer or serving pods run here.
+manager:
+  enabled: true
+
+materializer:
+  enabled: false
+
+cppAgent:
+  enabled: false
+
+nginx:
+  enabled: false
+
+tls:
+  enabled: false
+
+networkPolicy:
+  enabled: true
+  metricsScraper:
+    enabled: true
+  managerEgress:
+    allowList:
+      # Replace with the private artifact-store endpoint CIDR.
+      - cidr: 203.0.113.20/32
+        ports: [443]
+
+agentControlIngress:
+  enabled: true
+  host: fsp-control.example.com
+  sourceRanges: []

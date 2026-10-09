@@ -9,7 +9,8 @@ baseline used for the enterprise demo migration.
 
 - Kubernetes 1.25 or later
 - Helm 3.18.6 or later
-- Existing `fsp-source`, `fsp-agent-auth`, and optional `fsp-manager-auth` Secrets
+- Existing `fsp-source` and optional `fsp-manager-auth` Secrets; static Agent
+  modes also require `fsp-agent-auth`
 - cert-manager and ingress-nginx when `tls.enabled` is true
 - Azure Files CSI support when `storage.azureFiles.enabled` is true
 
@@ -72,10 +73,65 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   materializer identity **Storage Blob Data Contributor** on the container or its storage
   account. The chart does not configure storage keys or create the container.
 - `workloadIdentity`: Azure workload identity service account configuration.
-- `agentAuth`: required or one-release compatibility mode plus Secret key
+- `agentAuth`: Entra, required, or one-release compatibility mode plus Secret key
   references. The default is `required`; values never contain token material.
   `identityTokensSecretName` optionally references a Secret containing the
   JSON `AGENT_IDENTITY_TOKENS` map for authenticated pool identities.
+
+## Entra Agent authentication
+
+For Python control clients on AKS, install the image with the `agent-entra`
+extra and set `agentAuth.mode: entra`. This mode rejects static Agent tokens
+and operator Basic credentials on Agent routes. It does not change operator
+authentication on the private admin API.
+
+Register a single-tenant API application with identifier URI `api://<client-id>`,
+`api.requestedAccessTokenVersion: 2`, and an enabled application-only app role
+whose value is `FSP.Agent`. Require app-role assignments on its service
+principal. Assign that role only to the authorized workload managed identities
+using Microsoft Graph app-role assignments, not Azure RBAC assignments.
+Do not create an application secret. See Microsoft's
+[managed identity app-role instructions](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/assign-app-role-managed-identity-powershell).
+
+```yaml
+agentAuth:
+  mode: entra
+  entra:
+    tenantId: "<tenant UUID>"
+    audience: "<API application client UUID>"
+    identities:
+      "site-a-fsp-materializer-0:9000":
+        client_id: "<workload managed-identity client UUID>"
+        principal_id: "<workload managed-identity principal UUID>"
+workloadIdentity:
+  enabled: true
+  clientId: "<workload managed-identity client UUID>"
+cppAgent:
+  enabled: false
+```
+
+The Manager needs bindings for every placement identity and every authorized
+Python serving client. Client and principal IDs cannot be reused across
+materializer pools. Remote materializer releases need the same tenant and
+audience, their own workload identity, and their federation subject. The
+identity map is Manager configuration, not a credential.
+
+The chart omits Agent token Secret references in this mode. Azure Identity
+obtains and renews access tokens from the projected federation credential;
+Manager validates RS256 signatures, issuer, audience, lifetime, tenant,
+application role, client ID, principal ID, and the claimed stable Agent ID.
+JWT key-service failures return HTTP 503; invalid credentials return HTTP 401.
+Permit the tenant's Entra endpoints in the Manager and materializer egress
+rules. Restart workloads after changing identity bindings.
+
+Native C++ control clients do not implement this mode yet. Helm rejects
+`agentAuth.mode=entra` together with `cppAgent.enabled=true`; do not configure
+a C++ serving release against an Entra-only Manager. The default static modes
+remain available for existing deployments, but do not satisfy the no-static-
+Agent-credentials production criterion.
+
+## Placement and workload values
+
 - `manager.agentPlacementConfig`: operator-owned pool membership, source access,
   and connection/table placement rules. The Manager ignores self-reported pool
   and location values for authorization.
@@ -112,6 +168,9 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   Allows DNS, the local Manager (`allowLocalManager`), Manager CIDRs on
   `managerPort`, and extra `allowList` destinations such as the source
   endpoint.
+- `networkPolicy`: opt-in namespace default-deny ingress and egress policies.
+  The role profiles enable it. Configure the ingress-controller selectors,
+  metrics-scraper selectors, and environment-specific CIDRs before install.
 
 The default values render the cluster-private base deployment. The enterprise
 example enables Azure Files, workload identity, nginx, Entra authentication,
@@ -247,6 +306,26 @@ It never exposes `/control/work-queue`, `/_config`, `/_manager`, or
 egress addresses of the remote sites. Agent auth still applies. Keep
 `agentAuth.mode=required` (the default) when the ingress is open.
 
+For an isolated acceptance release sharing an existing control hostname,
+set `agentControlIngress.pathPrefix=/phase3` and append `/phase3` to the
+remote site's `managerUrl`. The ingress strips this prefix and still routes
+only the six Agent paths above. A prefix requires ingress-nginx regex and
+rewrite support; it is empty by default. Operator endpoints remain private.
+
+When two releases use Azure Files in the same cluster, give
+`storage.azureFiles.artifacts.pvName` and
+`storage.azureFiles.managerConfig.pvName` distinct names. Their defaults
+preserve existing deployments. To isolate acceptance data on existing
+shares, set the corresponding `subPath` values to pre-created directories.
+Copy only the required configuration into the isolated config directory;
+never point an acceptance Manager at a live Manager's writable config or
+artifact directory. Use unique CSI volume handles for the additional PVs.
+
+When Manager and a placement-bound materializer share a release, set
+`materializer.agentAuthSecretName` to the pool's token Secret. The default
+uses `agentAuth.secretName` for backwards compatibility. Placement pool
+tokens must differ from the Manager's shared active and previous tokens.
+
 #### Setup checklist
 
 1. **Prerequisites.** The hub cluster needs ingress-nginx and cert-manager
@@ -299,13 +378,12 @@ issuer when you restrict source ranges.
 
 ### Remote cluster: materializer-only profile
 
-[values-remote-materializer.yaml](values-remote-materializer.yaml) disables
-Manager, the C++ Agent, nginx, TLS ingress, and Azure Files. It points
-`managerUrl` at the hub ingress and enables materializer egress. Edit
-`siteId`, `managerUrl`, `materializer.egress.managerCidrs`, and
+[values-remote-materializer.yaml](values-remote-materializer.yaml) installs the
+materializer workload without Manager, the C++ Agent, nginx, TLS ingress, or
+Azure Files. It points `managerUrl` at the hub ingress and enables materializer
+egress. Edit `siteId`, `managerUrl`, `materializer.egress.managerCidrs`, and
 `materializer.egress.allowList` for the site, then install. `siteId` must be
-unique per site (for example `neu`), or the site's agent ids collide with the
-hub's:
+unique per site, or agent ids collide with another cluster's:
 
 ```bash
 kubectl create namespace fabric-shortcut-proxy
@@ -327,14 +405,96 @@ hub. Source credentials stay in the site that reads the source. The egress
 policy limits materializer traffic to DNS, Manager, and the listed
 destinations. It needs a CNI that enforces egress NetworkPolicy.
 
+### Network policy requirements
+
+The `networkPolicy.enabled` option installs namespace-wide default-deny
+policies, then adds only the chart's declared DNS, Manager, materializer,
+serving-agent, nginx, ingress-controller, and optional Prometheus flows.
+Kubernetes must run a NetworkPolicy-enforcing CNI. A cluster API accepting
+`NetworkPolicy` objects does not prove that its network provider enforces them.
+
+Replace every reserved `203.0.113.0/24` example in the profile values before
+installing. Remote materializer sites need the Manager control-ingress IP and
+CIDRs for local source and private artifact endpoints. The Manager-only
+profile needs egress CIDRs for its artifact store and any identity or secret
+endpoints it contacts. NetworkPolicy `ipBlock` rules use IP ranges, not DNS
+hostnames. For changing public service addresses, use a private endpoint with
+a stable private address or an egress firewall that supports service tags.
+
+Set `networkPolicy.ingressController` to the labels on the ingress controller
+Pods that forward HTTPS to Manager. Set `networkPolicy.metricsScraper` to the
+monitoring namespace and scraper Pod labels when scraping is enabled. The
+Manager and materializer Pods carry `prometheus.io/scrape`, `prometheus.io/path`,
+and `prometheus.io/port` annotations; the Prometheus or Azure Monitor scrape
+configuration must honor those annotations. Scrapers need ingress to ports
+9200 (Manager) and 9000 (materializer). The serving-agent profile also needs
+the data-plane client namespace and Pod labels allowed by its ingress policy.
+
+Run `helm lint` and `helm template` with each environment values file before
+installing. Verify DNS, Manager heartbeat, artifact-store access, source
+database access, and data-plane reads after applying the policies. The example
+CIDRs are documentation-only and must not be used as live endpoint addresses.
+
+### Phase 3 telemetry
+
+The Manager exports registered Agent heartbeat age and scheduler queue depth,
+assignment rejections, source query latency, and artifact upload bytes and
+duration at `/metrics`. Heartbeat and scheduler metrics are Manager-process
+metrics. Source-query and upload metrics are emitted by the materializer
+process, so scrape both endpoints for a multi-site view. Labels include
+`location`; heartbeat age also includes `agent_id`.
+
+The Grafana dashboard and Prometheus Operator alert rules are in
+[`deploy/observability/`](../../observability/README.md). Review the queue,
+latency, and throughput thresholds against the site's normal workload before
+enabling paging. The alert file uses the Prometheus Operator `PrometheusRule`
+custom resource.
+
+### Manager-only and serving-agent profiles
+
+Use [values-manager.yaml](values-manager.yaml) for a central Manager release.
+It disables materializer, C++ Agent, nginx, and TLS workloads. Use
+[values-serving-agents.yaml](values-serving-agents.yaml) for the C++ serving
+Agent without Manager or materializer pods:
+
+```bash
+helm upgrade --install fsp-manager deploy/helm/fabric-shortcut-proxy \
+  --namespace fabric-shortcut-proxy \
+  -f deploy/helm/fabric-shortcut-proxy/values-manager.yaml
+
+helm upgrade --install fsp-serving deploy/helm/fabric-shortcut-proxy \
+  --namespace fabric-shortcut-proxy \
+  -f deploy/helm/fabric-shortcut-proxy/values-serving-agents.yaml
+```
+
+Install each profile in its own cluster or namespace. In one cluster, give
+each release a matching Helm namespace and `namespace.name`; for example:
+
+```bash
+helm upgrade --install fsp-manager deploy/helm/fabric-shortcut-proxy \
+  --namespace fabric-shortcut-proxy-manager \
+  --set namespace.name=fabric-shortcut-proxy-manager \
+  -f deploy/helm/fabric-shortcut-proxy/values-manager.yaml
+
+helm upgrade --install fsp-serving deploy/helm/fabric-shortcut-proxy \
+  --namespace fabric-shortcut-proxy-serving \
+  --set namespace.name=fabric-shortcut-proxy-serving \
+  -f deploy/helm/fabric-shortcut-proxy/values-serving-agents.yaml
+```
+
+Each release also creates support resources such as `fsp-common` and
+`fsp-artifacts`. The serving profile exposes the `shortcut-proxy` ClusterIP
+service; private load-balancer and ingress setup is covered by the Phase 3
+networking work. The combined default values remain available for the existing
+single-cluster deployment.
+
 ### Shared filesystem
 
-Materializers and Manager exchange data through the `fsp-artifacts` RWX volume.
-Across clusters, Phase 0 mounts the same RWX share (for example one Azure Files
-share) in every site. This is for the PoC only. It adds cross-site latency,
-couples the sites to one storage account, and does not meet data residency
-needs. Later phases replace it with per-site storage and manifest publication
-through Manager.
+The chart keeps the `fsp-artifacts` PVC for local storage and existing
+deployments. For distributed deployments, configure
+`fsp.artifactStoreBackend: azure` and a shared Blob container instead of
+mounting the same RWX share across clusters. Azure Blob storage uses the
+identity and container settings described under `fsp` in the Values section.
 
 ## Existing Kustomize deployment
 
@@ -344,6 +504,15 @@ created by the retired `enterprise-demo` Kustomize overlay. Review the first
 rendered manifest before running the migration against another environment. The enterprise
 render contains 27 resources. See the
 [migration guide](../../../docs/HELM_MIGRATION_GUIDE.md) for ownership checks and rollback.
+
+Adoption can retain legacy environment entries that are absent from the new
+render. When moving to Entra Agent authentication, inspect the running
+workload's environment variable names and Secret references after rollout.
+If a retired `AGENT_TOKEN`, `AGENT_TOKEN_PREVIOUS`, or `AGENT_IDENTITY_TOKENS`
+entry survives adoption, remove only that entry with a server-side dry run
+followed by `kubectl set env`, then verify readiness and authenticated control
+access. Do not print Secret values. Retain unused Secrets under the existing
+rollback policy until rollback no longer requires them.
 
 ## Release lifecycle
 

@@ -1,3 +1,4 @@
+{{- if .Values.materializer.enabled }}
 {{- if and .Values.materializer.autoscaling.enabled (ne .Values.fsp.materializeMode "lazy") -}}
 {{- fail "materializer autoscaling requires fsp.materializeMode=lazy" -}}
 {{- end -}}
@@ -23,6 +24,10 @@ spec:
       app.kubernetes.io/name: fsp-materializer
   template:
     metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9000"
       labels:
         app.kubernetes.io/name: fsp-materializer
         app.kubernetes.io/component: materializer
@@ -76,11 +81,13 @@ spec:
             - secretRef:
                 name: {{ .Values.sourceSecret.name }}
           env:
+            {{- if ne .Values.agentAuth.mode "entra" }}
             - name: AGENT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.agentAuth.secretName }}
+                  name: {{ .Values.materializer.agentAuthSecretName | default .Values.agentAuth.secretName }}
                   key: {{ .Values.agentAuth.activeTokenKey }}
+            {{- end }}
             {{- if .Values.siteId }}
             - name: POD_NAME
               valueFrom:
@@ -145,10 +152,18 @@ spec:
           volumeMounts:
             - name: artifacts
               mountPath: /artifacts
+              {{- if .Values.storage.azureFiles.enabled }}
+              {{- with .Values.storage.azureFiles.artifacts.subPath }}
+              subPath: {{ . | quote }}
+              {{- end }}
+              {{- end }}
             {{- if .Values.storage.azureFiles.enabled }}
             - name: credential-cache
               mountPath: /config
               readOnly: true
+              {{- with .Values.storage.azureFiles.managerConfig.subPath }}
+              subPath: {{ . | quote }}
+              {{- end }}
             {{- end }}
       volumes:
         - name: artifacts
@@ -222,4 +237,5 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.materializer.autoscaling.targetCpuUtilization }}
+{{- end }}
 {{- end }}

@@ -1,0 +1,63 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fsp-phase3-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: fsp.phase3
+      rules:
+        - alert: FspAgentHeartbeatStale
+          expr: fsp_agent_heartbeat_age_seconds > 6
+          for: 30s
+          labels:
+            severity: critical
+          annotations:
+            summary: FSP Agent heartbeat is stale
+            description: >-
+              Agent {{ $labels.agent_id }} in {{ $labels.location }} has not
+              sent a heartbeat for more than six seconds.
+
+        - alert: FspAssignmentRejected
+          expr: sum by (location, reason) (increase(fsp_assignment_rejections_total[5m])) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: FSP rejected materializer assignments
+            description: >-
+              Assignment rejections in {{ $labels.location }} have increased
+              over the last five minutes. Reason: {{ $labels.reason }}.
+
+        - alert: FspMaterializationQueueBacklog
+          expr: fsp_materialization_queue_depth > 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: FSP materialization queue is backed up
+            description: >-
+              {{ $labels.location }} has more than ten runnable materialization
+              tasks for five minutes.
+
+        - alert: FspSourceQueryLatencyHigh
+          expr: histogram_quantile(0.95, sum by (le, location) (rate(fsp_source_query_duration_seconds_bucket[5m]))) > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: FSP source query latency is high
+            description: >-
+              The p95 source query latency in {{ $labels.location }} exceeded
+              five seconds for five minutes.
+
+        - alert: FspArtifactUploadStalled
+          expr: (sum by (location) (fsp_materialization_queue_depth) > 0) unless on (location) (sum by (location) (increase(fsp_artifact_upload_bytes_total[10m])) > 0)
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: FSP has queued work but no artifact uploads
+            description: >-
+              {{ $labels.location }} has runnable materialization work but
+              recorded no artifact upload bytes during the last ten minutes.

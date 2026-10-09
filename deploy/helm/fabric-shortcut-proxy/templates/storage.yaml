@@ -6,7 +6,7 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: fsp-artifacts-pv
+  name: {{ .Values.storage.azureFiles.artifacts.pvName }}
   annotations:
     helm.sh/resource-policy: keep
   labels:
@@ -34,7 +34,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: fsp-manager-config-pv
+  name: {{ .Values.storage.azureFiles.managerConfig.pvName }}
   annotations:
     helm.sh/resource-policy: keep
   labels:
@@ -77,15 +77,17 @@ spec:
       storage: {{ .Values.storage.artifacts.size }}
   {{- if .Values.storage.azureFiles.enabled }}
   storageClassName: ""
-  volumeName: fsp-artifacts-pv
+  volumeName: {{ .Values.storage.azureFiles.artifacts.pvName }}
   {{- else if .Values.storage.artifacts.storageClassName }}
   storageClassName: {{ .Values.storage.artifacts.storageClassName | quote }}
   {{- else if .Values.storage.artifacts.existingVolumeName }}
   {{- /* Static PV binding: an explicit empty class stops the default StorageClass being injected. */}}
   storageClassName: ""
   {{- end }}
+  {{- if not .Values.storage.azureFiles.enabled }}
   {{- with .Values.storage.artifacts.existingVolumeName }}
   volumeName: {{ . | quote }}
+  {{- end }}
   {{- end }}
 {{- if .Values.storage.azureFiles.enabled }}
 ---
@@ -102,7 +104,7 @@ spec:
   accessModes:
     - ReadWriteMany
   storageClassName: ""
-  volumeName: fsp-manager-config-pv
+  volumeName: {{ .Values.storage.azureFiles.managerConfig.pvName }}
   resources:
     requests:
       storage: {{ .Values.storage.azureFiles.managerConfig.size }}

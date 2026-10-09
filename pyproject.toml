@@ -36,6 +36,7 @@ dev = [
 ]
 # Production operator authentication through an OpenID Connect identity provider.
 oidc = ["PyJWT[crypto]>=2.9"]
+agent-entra = ["PyJWT[crypto]>=2.9", "azure-identity>=1.15"]
 # Backend Microsoft Graph lookup for the Entra user/group role picker.
 entra = ["msal>=1.31"]
 # Built-in optional audited source-side re-identification module. Kept as a

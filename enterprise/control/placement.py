@@ -196,6 +196,17 @@ class PlacementConfig:
                 "identity tokens must differ from AGENT_TOKEN and AGENT_TOKEN_PREVIOUS"
             )
 
+    def validate_entra_identities(self, identities: dict[str, dict[str, str]]) -> None:
+        missing = sorted(set(self.identity_pools) - set(identities))
+        if missing:
+            raise ValueError(f"Entra bindings are missing pool identities: {missing}")
+        for claim in ("client_id", "principal_id"):
+            identity_pools: dict[str, set[str]] = {}
+            for agent_id, pool in self.identity_pools.items():
+                identity_pools.setdefault(identities[agent_id][claim], set()).add(pool.pool_id)
+            if any(len(pools) > 1 for pools in identity_pools.values()):
+                raise ValueError(f"Entra {claim} bindings must be unique across materializer pools")
+
     def policy_for(self, connection_id: str, source_table: str) -> MaterializerPolicy:
         return self.tables.get(
             (connection_id, source_table),

@@ -671,8 +671,8 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
     """Validate required configuration at startup; raise ``ValueError`` on error."""
     problems: list[str] = []
 
-    if AGENT_AUTH_MODE not in ("required", "compatibility"):
-        problems.append("AGENT_AUTH_MODE must be 'required' or 'compatibility'.")
+    if AGENT_AUTH_MODE not in ("required", "compatibility", "entra"):
+        problems.append("AGENT_AUTH_MODE must be 'required', 'compatibility', or 'entra'.")
 
     def _valid_agent_token(token: str) -> bool:
         if not token:
@@ -1230,7 +1230,7 @@ SETTINGS_META: dict[str, dict] = {
     "manager_auth_enabled": {"cat": "Cluster (scale)", "help": "Manager: require HTTP Basic auth on the whole control-plane surface (/_manager, /_config, /_monitor, /agents). /control + health probes stay open. Needs a password set. Restart to apply."},
     "manager_auth_username": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic username (default 'admin'). Restart to apply."},
     "manager_auth_password": {"cat": "Cluster (scale)", "help": "Manager: HTTP Basic password. Blank = auth off even when enabled. Restart to apply.", "secret": True},
-    "agent_auth_mode": {"cat": "Cluster (scale)", "help": "Agent control authentication mode: 'required' accepts only Agent tokens; 'compatibility' temporarily also permits Manager Basic credentials. Restart to apply.", "choices": ["required", "compatibility"]},
+    "agent_auth_mode": {"cat": "Cluster (scale)", "help": "Agent control authentication mode: 'entra' uses short-lived workload identity access tokens; 'required' uses Agent tokens; 'compatibility' also permits Manager Basic credentials. Restart to apply.", "choices": ["required", "compatibility", "entra"]},
     "agent_token_previous_valid_until": {"cat": "Cluster (scale)", "help": "Unix UTC seconds after which AGENT_TOKEN_PREVIOUS is rejected. Configure the token itself through a secret source. Restart to apply."},
     # External operator identity
     "oidc_issuer": {"cat": "Operator identity", "help": "OIDC token issuer. For Entra ID use https://login.microsoftonline.com/<tenant-id>/v2.0. Restart to apply."},

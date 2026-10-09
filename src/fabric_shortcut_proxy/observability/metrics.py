@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import TypedDict
 
 _START = time.time()
 _lock = threading.Lock()
 
 # name -> { label-tuple -> value }
 _counters: dict[str, dict[tuple[tuple[str, str], ...], float]] = {}
+_gauges: dict[str, dict[tuple[tuple[str, str], ...], float]] = {}
 
 # SQL latency histogram state
 _SQL_BUCKETS: tuple[float, ...] = (
@@ -32,6 +34,16 @@ _SQL_BUCKETS: tuple[float, ...] = (
 _sql_count: int = 0
 _sql_sum: float = 0.0
 _sql_bucket_counts: dict[float, int] = {b: 0 for b in _SQL_BUCKETS}
+
+
+class _SourceSqlSeries(TypedDict):
+    count: int
+    sum: float
+    errors: int
+    buckets: dict[float, int]
+
+
+_source_sql: dict[str, _SourceSqlSeries] = {}
 
 
 def _label_key(labels: dict[str, str]) -> tuple[tuple[str, str], ...]:
@@ -44,6 +56,67 @@ def inc_counter(name: str, value: float = 1.0, **labels: str) -> None:
     with _lock:
         series = _counters.setdefault(name, {})
         series[key] = series.get(key, 0.0) + value
+
+
+def set_gauge(name: str, value: float, **labels: str) -> None:
+    """Set a labelled gauge."""
+    with _lock:
+        _gauges.setdefault(name, {})[_label_key(labels)] = value
+
+
+def set_location_gauges(name: str, values: dict[str, float]) -> None:
+    """Replace all location series for a gauge, dropping locations no longer present."""
+    with _lock:
+        _gauges[name] = {
+            _label_key({"location": location or "unknown"}): value
+            for location, value in values.items()
+        }
+
+
+def _agent_location() -> str:
+    from fabric_shortcut_proxy import config
+
+    return str(getattr(config, "AGENT_LOCATION", "") or "unknown")
+
+
+def record_assignment_rejection(location: str, reason: str) -> None:
+    inc_counter(
+        "fsp_assignment_rejections_total",
+        location=location or "unassigned",
+        reason=reason or "unspecified",
+    )
+
+
+def record_agent_heartbeat_ages(
+    ages_by_agent: dict[tuple[str, str], float],
+) -> None:
+    with _lock:
+        _gauges["fsp_agent_heartbeat_age_seconds"] = {
+            _label_key(
+                {"agent_id": agent_id, "location": location or "unknown"}
+            ): age
+            for (location, agent_id), age in ages_by_agent.items()
+        }
+
+
+def record_artifact_upload(size_bytes: int, duration_seconds: float) -> None:
+    if size_bytes <= 0:
+        return
+    inc_counter(
+        "fsp_artifact_upload_bytes_total",
+        float(size_bytes),
+        location=_agent_location(),
+    )
+    if duration_seconds > 0:
+        inc_counter(
+            "fsp_artifact_upload_duration_seconds_total",
+            duration_seconds,
+            location=_agent_location(),
+        )
+        inc_counter(
+            "fsp_artifact_uploads_total",
+            location=_agent_location(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +144,23 @@ def record_sql(latency_seconds: float, *, error: bool = False) -> None:
         for b in _SQL_BUCKETS:
             if latency_seconds <= b:
                 _sql_bucket_counts[b] += 1
+        location = _agent_location()
+        sample = _source_sql.setdefault(
+            location,
+            {
+                "count": 0,
+                "sum": 0.0,
+                "errors": 0,
+                "buckets": {bucket: 0 for bucket in _SQL_BUCKETS},
+            },
+        )
+        sample["count"] += 1
+        sample["sum"] += latency_seconds
+        sample["errors"] += int(error)
+        buckets = sample["buckets"]
+        for bucket in _SQL_BUCKETS:
+            if latency_seconds <= bucket:
+                buckets[bucket] += 1
     if error:
         inc_counter("sql_errors_total")
 
@@ -115,11 +205,27 @@ def snapshot() -> dict:
             name: [{"labels": dict(lk), "value": v} for lk, v in series.items()]
             for name, series in _counters.items()
         }
+        gauges = {
+            name: [{"labels": dict(lk), "value": v} for lk, v in series.items()]
+            for name, series in _gauges.items()
+        }
         sql = {
             "count": _sql_count,
             "sum_seconds": round(_sql_sum, 6),
             "avg_seconds": round(_sql_sum / _sql_count, 6) if _sql_count else 0.0,
             "buckets_le": {str(b): c for b, c in _sql_bucket_counts.items()},
+        }
+        source_sql = {
+            location: {
+                "count": sample["count"],
+                "sum_seconds": round(sample["sum"], 6),
+                "errors": sample["errors"],
+                "buckets_le": {
+                    str(bucket): count
+                    for bucket, count in sample["buckets"].items()
+                },
+            }
+            for location, sample in _source_sql.items()
         }
         hit_ratio = _cache_hit_ratio()
     return {
@@ -127,7 +233,13 @@ def snapshot() -> dict:
         "cache_hit_ratio": hit_ratio,
         "sql_latency": sql,
         "counters": counters,
+        "gauges": gauges,
+        "source_sql_latency": source_sql,
     }
+
+
+def _escape_label(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
 def render_prometheus() -> str:
@@ -138,10 +250,20 @@ def render_prometheus() -> str:
             lines.append(f"# TYPE {name} counter")
             for lk, value in series.items():
                 if lk:
-                    labels = ",".join(f'{k}="{v}"' for k, v in lk)
+                    labels = ",".join(
+                        f'{k}="{_escape_label(v)}"' for k, v in lk
+                    )
                     lines.append(f"{name}{{{labels}}} {value}")
                 else:
                     lines.append(f"{name} {value}")
+
+        for name, series in _gauges.items():
+            lines.append(f"# TYPE {name} gauge")
+            for lk, value in series.items():
+                labels = ",".join(
+                    f'{k}="{_escape_label(v)}"' for k, v in lk
+                )
+                lines.append(f"{name}{{{labels}}} {value}")
 
         lines.append("# TYPE sql_query_duration_seconds histogram")
         for b in _SQL_BUCKETS:
@@ -149,6 +271,29 @@ def render_prometheus() -> str:
         lines.append(f'sql_query_duration_seconds_bucket{{le="+Inf"}} {_sql_count}')
         lines.append(f"sql_query_duration_seconds_sum {round(_sql_sum, 6)}")
         lines.append(f"sql_query_duration_seconds_count {_sql_count}")
+
+        lines.append("# TYPE fsp_source_query_duration_seconds histogram")
+        for location, sample in sorted(_source_sql.items()):
+            buckets = sample["buckets"]
+            for bucket in _SQL_BUCKETS:
+                lines.append(
+                    "fsp_source_query_duration_seconds_bucket"
+                    f'{{location="{_escape_label(location)}",le="{bucket}"}} '
+                    f"{buckets[bucket]}"
+                )
+            lines.append(
+                "fsp_source_query_duration_seconds_bucket"
+                f'{{location="{_escape_label(location)}",le="+Inf"}} '
+                f"{sample['count']}"
+            )
+            lines.append(
+                "fsp_source_query_duration_seconds_sum"
+                f'{{location="{_escape_label(location)}"}} {round(sample["sum"], 6)}'
+            )
+            lines.append(
+                "fsp_source_query_duration_seconds_count"
+                f'{{location="{_escape_label(location)}"}} {sample["count"]}'
+            )
 
     lines.append("# TYPE process_uptime_seconds gauge")
     lines.append(f"process_uptime_seconds {round(time.time() - _START, 3)}")
@@ -160,6 +305,8 @@ def reset() -> None:
     global _sql_count, _sql_sum
     with _lock:
         _counters.clear()
+        _gauges.clear()
+        _source_sql.clear()
         _sql_count = 0
         _sql_sum = 0.0
         for b in _SQL_BUCKETS:

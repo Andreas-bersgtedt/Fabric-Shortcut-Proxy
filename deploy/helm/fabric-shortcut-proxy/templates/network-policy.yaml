@@ -1,3 +1,338 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $namespace := include "fsp.namespace" . }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-default-deny
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-allow-dns
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- if .Values.manager.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-manager-ingress
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressController.namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressController.podSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 9200
+    {{- if .Values.networkPolicy.metricsScraper.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.metricsScraper.namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.metricsScraper.podSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 9200
+    {{- end }}
+    {{- if .Values.materializer.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-materializer
+      ports:
+        - protocol: TCP
+          port: 9200
+    {{- end }}
+{{- end }}
+{{- if .Values.manager.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-manager-egress
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-manager
+  policyTypes:
+    - Egress
+  egress:
+    {{- if .Values.materializer.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-materializer
+      ports:
+        - protocol: TCP
+          port: 9000
+    {{- end }}
+    {{- if .Values.cppAgent.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-cpp-agent
+      ports:
+        - protocol: TCP
+          port: 9400
+    {{- end }}
+    {{- range .Values.networkPolicy.managerEgress.allowList }}
+    - to:
+        - ipBlock:
+            cidr: {{ required "networkPolicy.managerEgress.allowList[].cidr is required" .cidr }}
+      ports:
+        {{- range required "networkPolicy.managerEgress.allowList[].ports is required" .ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- if .Values.materializer.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-materializer-ingress
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-materializer
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- if .Values.manager.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-manager
+      ports:
+        - protocol: TCP
+          port: 9000
+    {{- end }}
+    {{- if .Values.nginx.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-nginx
+      ports:
+        - protocol: TCP
+          port: 9000
+    {{- end }}
+    {{- if $.Values.networkPolicy.metricsScraper.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.metricsScraper.namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.metricsScraper.podSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 9000
+    {{- end }}
+{{- end }}
+{{- if .Values.materializer.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-materializer-egress
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-materializer
+  policyTypes:
+    - Egress
+  egress:
+    {{- if .Values.manager.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-manager
+      ports:
+        - protocol: TCP
+          port: 9200
+    {{- else }}
+    {{- range .Values.materializer.egress.managerCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.materializer.egress.managerPort }}
+    {{- end }}
+    {{- end }}
+    {{- if .Values.materializer.egress.enabled }}
+    {{- range .Values.materializer.egress.allowList }}
+    - to:
+        - ipBlock:
+            cidr: {{ required "materializer.egress.allowList[].cidr is required" .cidr }}
+      {{- with .ports }}
+      ports:
+        {{- range . }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}
+{{- if .Values.cppAgent.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-serving-agent-ingress
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-cpp-agent
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              fabric-shortcut-proxy.io/data-plane-access: "true"
+          podSelector:
+            matchLabels:
+              fabric-shortcut-proxy.io/data-plane-client: "true"
+      ports:
+        - protocol: TCP
+          port: 9400
+    {{- if .Values.nginx.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-nginx
+      ports:
+        - protocol: TCP
+          port: 9400
+    {{- end }}
+{{- end }}
+{{- if .Values.cppAgent.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-serving-agent-egress
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-cpp-agent
+  policyTypes:
+    - Egress
+  egress:
+    {{- if .Values.manager.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fsp-manager
+      ports:
+        - protocol: TCP
+          port: 9200
+    {{- else }}
+    {{- range .Values.networkPolicy.servingAgentEgress.managerCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.servingAgentEgress.managerPort }}
+    {{- end }}
+    {{- end }}
+    {{- range .Values.networkPolicy.servingAgentEgress.allowList }}
+    - to:
+        - ipBlock:
+            cidr: {{ required "networkPolicy.servingAgentEgress.allowList[].cidr is required" .cidr }}
+      ports:
+        {{- range required "networkPolicy.servingAgentEgress.allowList[].ports is required" .ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- if .Values.nginx.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-nginx-ingress
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-nginx
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- range .Values.networkPolicy.ingressCidrs }}
+    - from:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+    {{- end }}
+{{- end }}
+{{- else }}
 {{- if .Values.cppAgent.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -25,7 +360,7 @@ spec:
         - protocol: TCP
           port: 9400
 {{- end }}
-{{- if .Values.nginx.enabled }}
+{{- if and .Values.nginx.enabled .Values.materializer.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -52,7 +387,7 @@ spec:
         - protocol: TCP
           port: 9000
 {{- end }}
-{{- if .Values.materializer.egress.enabled }}
+{{- if and .Values.materializer.enabled .Values.materializer.egress.enabled }}
 {{- $egress := .Values.materializer.egress }}
 ---
 # Materializer egress allow-list. Source credentials stay in the site-local
@@ -105,4 +440,5 @@ spec:
         {{- end }}
       {{- end }}
     {{- end }}
+{{- end }}
 {{- end }}

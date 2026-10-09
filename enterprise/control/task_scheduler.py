@@ -5,11 +5,13 @@ import asyncio
 import hashlib
 import time
 
-from enterprise.control.contract import ControlCommand
-from enterprise.control.contract import MaterializeTask
-from enterprise.control.contract import TASK_TERMINAL_STATES
-from enterprise.control.registry import Registry
+from enterprise.control.contract import (
+    TASK_TERMINAL_STATES,
+    ControlCommand,
+    MaterializeTask,
+)
 from enterprise.control.placement import MaterializerPolicy
+from enterprise.control.registry import Registry
 from enterprise.control.work_queue import DurableWorkQueue, WorkQueueConflict
 from fabric_shortcut_proxy.observability.logging import get_logger
 
@@ -39,6 +41,19 @@ class TaskScheduler:
             raise ValueError("membership_policy must be 'fixed' or 'elastic'")
         self._running = False
         self._task: asyncio.Task | None = None
+
+    def _policy_location(self, policy: MaterializerPolicy) -> str:
+        if policy.required_location:
+            return policy.required_location
+        targets = (
+            ([policy.required_pool] if policy.required_pool else [])
+            + list(policy.fallback_pools)
+        )
+        for pool_id in targets:
+            pool = self.registry.placement.pools.get(pool_id)
+            if pool is not None and pool.location:
+                return pool.location
+        return "unassigned"
 
     def _eligible_agents(
         self,
@@ -266,9 +281,31 @@ class TaskScheduler:
                     active_pool_claims[worker.pool_id] = (
                         active_pool_claims.get(worker.pool_id, 0) + 1
                     )
-        for task in self.queue.runnable_tasks(
+        runnable_tasks = self.queue.runnable_tasks(
             tasks=all_tasks, expire=False
-        ):
+        )
+        from fabric_shortcut_proxy.observability import metrics
+
+        queue_depths: dict[str, float] = {
+            "unassigned": 0.0,
+            **{
+                pool.location: 0.0
+                for pool in self.registry.placement.pools.values()
+                if pool.location
+            },
+        }
+        for queued in runnable_tasks:
+            payload = MaterializeTask.from_dict(queued["task"])
+            policy = self.registry.placement.policy_for(
+                payload.connection_id, payload.source_table
+            )
+            location = self._policy_location(policy)
+            queue_depths[location] = queue_depths.get(location, 0.0) + 1.0
+        metrics.set_location_gauges(
+            "fsp_materialization_queue_depth", queue_depths
+        )
+
+        for task in runnable_tasks:
             from fabric_shortcut_proxy.runtime.generation import current_generation
 
             generation = current_generation(self.queue.store)
@@ -331,11 +368,14 @@ class TaskScheduler:
                 if self.queue.set_dispatch_status(
                     task["task_id"], "no_eligible_materializer"
                 ):
-                    from fabric_shortcut_proxy.observability import metrics
                     from fabric_shortcut_proxy.observability.audit import (
                         record_placement_decision,
                     )
 
+                    metrics.record_assignment_rejection(
+                        self._policy_location(policy),
+                        "no_eligible_materializer",
+                    )
                     metrics.inc_counter(
                         "materialization_placement_decisions_total",
                         outcome="no_eligible_materializer",
@@ -395,6 +435,10 @@ class TaskScheduler:
                 kind="materialize", materialize=command_task
             )
             if not self.registry.queue_command(agent_id, command):
+                metrics.record_assignment_rejection(
+                    record.location or "unassigned",
+                    "agent_unregistered_before_delivery",
+                )
                 self.queue.release_claim(
                     command_task.task_id,
                     command_task.claim_token,

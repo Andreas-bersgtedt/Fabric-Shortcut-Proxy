@@ -222,21 +222,39 @@ class AgentAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, *, provider: AgentTokenProvider | None = None):
         super().__init__(app)
         self._provider = provider or AgentTokenProvider()
+        self._entra_provider = None
 
     async def dispatch(self, request: Request, call_next):
         if not is_agent_route(request.method, request.url.path):
             return await call_next(request)
 
         identity = _bounded_agent_id(request.headers.get(AGENT_ID_HEADER, ""))
-        result = self._provider.verify(
-            request.headers.get(AGENT_TOKEN_HEADER, ""),
-            identity=identity,
-        )
         from fabric_shortcut_proxy import config
 
         mode = os.environ.get(
             "AGENT_AUTH_MODE", getattr(config, "AGENT_AUTH_MODE", "compatibility")
         ).strip().lower()
+        if mode == "entra":
+            from fabric_shortcut_proxy.security.entra_agent_auth import (
+                EntraAgentTokenProvider,
+            )
+
+            try:
+                if self._entra_provider is None:
+                    self._entra_provider = EntraAgentTokenProvider()
+                authorization = request.headers.get("authorization", "")
+                scheme, _, token = authorization.partition(" ")
+                result = await self._entra_provider.verify(
+                    token if scheme.lower() == "bearer" else "",
+                    identity=identity,
+                )
+            except (ValueError, TypeError):
+                result = AgentTokenResult(False, "misconfigured")
+        else:
+            result = self._provider.verify(
+                request.headers.get(AGENT_TOKEN_HEADER, ""),
+                identity=identity,
+            )
         compatibility_basic = False
         identity_credentials_configured = bool(
             os.environ.get("AGENT_IDENTITY_TOKENS", "").strip()
@@ -252,12 +270,12 @@ class AgentAuthMiddleware(BaseHTTPMiddleware):
                 request.headers.get("authorization", "")
             )
 
-        if result.reason == "misconfigured" and mode == "required":
+        if result.reason in {"misconfigured", "unavailable"} and mode in {"required", "entra"}:
             _audit_agent_auth(
                 request,
                 status=503,
                 outcome="failed",
-                reason="misconfigured",
+                reason=result.reason,
                 identity=identity,
             )
             return agent_authentication_unavailable()

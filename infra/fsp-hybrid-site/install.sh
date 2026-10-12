@@ -245,7 +245,7 @@ from azure.storage.blob import BlobServiceClient
 credential = ManagedIdentityCredential(client_id=os.environ["AZURE_CLIENT_ID"])
 try:
     service = BlobServiceClient(
-        account_url=f"https://{os.environ['STORAGE_ACCOUNT']}.blob.core.windows.net",
+        account_url="https://" + os.environ["STORAGE_ACCOUNT"] + ".blob.core.windows.net",
         credential=credential,
     )
     service.get_container_client("fsp-hybrid-staging").get_container_properties()

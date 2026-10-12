@@ -106,6 +106,7 @@ def test_linux_installer_checks_private_readiness_and_async_sqlite():
     assert '[ "$octet1" = "10" ] || {' in installer
     assert 'manager_ready_url="${manager_base}/readyz"' in installer
     assert "ManagedIdentityCredential(client_id=os.environ" in installer
+    assert 'os.environ["STORAGE_ACCOUNT"] + ".blob.core.windows.net"' in installer
     assert 'db_url="sqlite+aiosqlite:////var/lib/fsp/hybrid-site.db"' in installer
     assert "await connection.execute(text(\"SELECT 1\"))" in installer
     assert "agent_registered_ok" in installer

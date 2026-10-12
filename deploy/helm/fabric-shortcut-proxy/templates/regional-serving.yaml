@@ -1,6 +1,22 @@
 {{- if .Values.federation.regionalServing.enabled }}
 {{- $serving := .Values.federation.regionalServing }}
 {{- if not $serving.buckets }}{{ fail "federation.regionalServing.buckets is required" }}{{ end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ required "federation.regionalServing.serviceAccountName is required (read-only Blob identity)" $serving.serviceAccountName }}
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+  annotations:
+    azure.workload.identity/client-id: {{ required "federation.regionalServing.clientId is required" $serving.clientId | quote }}
+{{- with .Values.images.pullSecrets }}
+imagePullSecrets:
+{{- range . }}
+  - name: {{ . | quote }}
+{{- end }}
+{{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

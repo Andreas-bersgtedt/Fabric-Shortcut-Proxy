@@ -333,6 +333,7 @@
             "replicas": { "type": "integer", "minimum": 1 },
             "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "serviceAccountName": { "type": "string" },
+            "clientId": { "type": "string" },
             "readerSecretName": { "type": "string" },
             "artifactStoreAccountUrl": { "type": "string" },
             "artifactStoreContainer": { "type": "string" },

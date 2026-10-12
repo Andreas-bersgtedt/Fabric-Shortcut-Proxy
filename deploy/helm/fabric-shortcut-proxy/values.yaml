@@ -160,6 +160,7 @@ federation:
     replicas: 1
     port: 9401
     serviceAccountName: ""
+    clientId: ""
     readerSecretName: ""
     artifactStoreAccountUrl: ""
     artifactStoreContainer: ""

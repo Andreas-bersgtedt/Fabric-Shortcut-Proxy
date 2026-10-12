@@ -153,7 +153,7 @@ Agent-credentials production criterion.
 - `federation.regionalServing`: optional database-free, SigV4-authenticated S3
   Deployment and ClusterIP Service. Configure `endpointId`, `storageProfile`,
   `buckets`, `artifactStoreAccountUrl`, and `artifactStoreContainer`.
-  `serviceAccountName` must name an existing, annotated workload identity with
+  `serviceAccountName` and `clientId` create an annotated workload identity with
   **Storage Blob Data Reader** on both local publications and catalog records.
   Use a separate identity from the publishing Manager. `readerSecretName` holds
   only `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`, not source credentials.

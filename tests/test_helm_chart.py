@@ -100,6 +100,7 @@ def test_regional_serving_renders_read_only_identity_and_no_source_secret() -> N
         "--set", "federation.regionalServing.storageProfile=neu-replica",
         "--set", "federation.regionalServing.buckets.sales=source::sales",
         "--set", "federation.regionalServing.serviceAccountName=regional-reader",
+        "--set", "federation.regionalServing.clientId=00000000-0000-0000-0000-000000000001",
         "--set", "federation.regionalServing.readerSecretName=reader-sigv4",
         "--set", "federation.regionalServing.artifactStoreAccountUrl=https://replica.blob.core.windows.net",
         "--set", "federation.regionalServing.artifactStoreContainer=published",
@@ -111,6 +112,8 @@ def test_regional_serving_renders_read_only_identity_and_no_source_secret() -> N
         if "# Source: fabric-shortcut-proxy/templates/regional-serving.yaml" in document
     )
     assert "enterprise.regional_serving" in section
+    assert "kind: ServiceAccount" in section
+    assert 'azure.workload.identity/client-id: "00000000-0000-0000-0000-000000000001"' in section
     assert "serviceAccountName: regional-reader" in section
     assert "name: reader-sigv4" in section
     assert "name: fsp-source" not in section

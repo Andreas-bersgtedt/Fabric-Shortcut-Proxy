@@ -55,6 +55,9 @@ class SplitDescriptor:
     # None => modulo planning (or row-number fallback for non-integer keys).
     key_lo: object | None = None
     key_hi: object | None = None
+    # Stable virtual split key retained after federated publication replaces
+    # object_key with a generation-scoped staged object.
+    canonical_object_key: str | None = None
 
 
 @dataclass
@@ -374,11 +377,11 @@ def get_split_by_key(object_key: str) -> SplitDescriptor | None:
 
     for snap in _snapshots.values():
         for split in snap.splits:
-            if split.object_key == object_key:
+            if split.object_key == object_key or split.canonical_object_key == object_key:
                 return split
     for snaps in _history.values():
         for snap in snaps:
             for split in snap.splits:
-                if split.object_key == object_key:
+                if split.object_key == object_key or split.canonical_object_key == object_key:
                     return split
     return None

@@ -281,12 +281,15 @@ async def materialize_for_key(key: str) -> dict:
             "materialized": False,
             "reason": "generation_unavailable",
         }
+    for split in snap.splits:
+        if split.canonical_object_key is None:
+            split.canonical_object_key = split.object_key
     tasks = [
         MaterializeTask(
             table=snap.table.name,
             epoch=snap.version,
             split_index=split.split_index,
-            output_key=split.object_key,
+            output_key=split.canonical_object_key,
             deadline_ms=int(time.time() * 1000) + 300_000,
             schema=_task_columns(snap.table),
             range=_task_range(split),
@@ -359,7 +362,7 @@ async def materialize_for_key(key: str) -> dict:
                     item
                     for item in snap.splits
                     if item.split_index == task_payload.split_index
-                    and item.object_key == task_payload.output_key
+                    and item.canonical_object_key == task_payload.output_key
                 ),
                 None,
             )

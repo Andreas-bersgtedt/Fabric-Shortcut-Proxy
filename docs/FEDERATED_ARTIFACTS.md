@@ -236,14 +236,23 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 | #144 / #171 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Production AWS/GCP integration and live provider conformance are deferred beyond v3.1.0 to #171. Cross-object control mutations are deliberately unsupported. |
 | #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite. | Assign the API app role, attach identity, deploy the Azure-IaaS Agent and capture authentication and negative-scope evidence. Trusted mutual-TLS certificate-to-pool fallback remains unimplemented. |
 | #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch. | Deployed IAM/location/cache and no-row-egress evidence. Multi-store materialization dispatch is not implemented. |
-| #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests and signed regional S3 GET/HEAD/Range/list reads. | Deploy replica/reader identity permissions and TLS endpoints; capture actual Fabric regional reads and replication timing. Portable receipts are needed only if verification moves to an independent worker. |
+| #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, and actual Fabric reads through both regional endpoints. | Capture replication timing under the agreed acceptance load. Portable receipts are needed only if verification moves to an independent worker. |
 | #148 | Per-pool renewal, durable production timestamps, running Manager freshness/status/alerts, catalog-backed serving and tested retention of the prior replica during copy failure. | Deployed alert validation and a live site-disconnection/reconnection drill. |
 
 Phase 4 is not at exit criteria until the Azure resources and workloads above
 are deployed and exercised. No region-loss RTO is claimed, the Azure-IaaS
 simulated on-premises workload has not yet produced live authentication
-evidence, and no Fabric regional-read test has been executed. Production
+evidence, and replication timing has not yet been accepted. Production
 AWS/GCP support is outside Phase 4 and v3.1.0 and is tracked by #171.
+
+On 2026-10-12, Fabric workspace `Demo_Dev`, lakehouse `bronze`, read the same
+92,314-byte Parquet object through `https://fsp-swc.x-dev.online` and
+`https://fsp-neu.x-dev.online`. Both reads matched catalog SHA-256
+`b5e731463c3ea890b692d55c805e3bdaccec9318886d35d16c2b683ed5864dd1`.
+The regional ingress logs recorded Fabric service source `20.240.128.211`
+issuing successful HEAD and GET requests to each endpoint. This completes the
+regional Fabric-read evidence but does not substitute for the remaining
+handover, region-loss, disconnection, or replication-timing drills.
 
 The renewal-startup, expired-owner and immutable Avro retry defects were
 reproduced by failing tests before implementation. Local acceptance tests cover

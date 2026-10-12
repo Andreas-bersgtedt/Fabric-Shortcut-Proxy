@@ -232,17 +232,17 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 | Issue | Implemented and tested here | Remaining exit evidence or integration |
 |---|---|---|
 | #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are implemented and tested locally. | Deploy both regional instances and execute storage failover/recovery evidence. |
-| #143 | Catalog CAS is the sole federated snapshot visibility commit. A concurrent handover denies publication without exposing a local snapshot. Tests cover both owner directions, expiry and post-commit bookkeeping failure. | Deploy the second Manager against the declared primary publication store and execute live bidirectional handover. Physical primary-store relocation is not implemented. |
+| #143 | Catalog CAS is the sole federated snapshot visibility commit. Live bidirectional handover advanced fences 1→2→3, the North Europe owner published generation 6, and its stale renewal and publication authority were rejected after handback. Tests also cover both owner directions, expiry and post-commit bookkeeping failure. | Physical primary-store relocation is not implemented. |
 | #144 / #171 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Production AWS/GCP integration and live provider conformance are deferred beyond v3.1.0 to #171. Cross-object control mutations are deliberately unsupported. |
 | #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite. | Assign the API app role, attach identity, deploy the Azure-IaaS Agent and capture authentication and negative-scope evidence. Trusted mutual-TLS certificate-to-pool fallback remains unimplemented. |
 | #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch. | Deployed IAM/location/cache and no-row-egress evidence. Multi-store materialization dispatch is not implemented. |
-| #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, and actual Fabric reads through both regional endpoints. | Capture replication timing under the agreed acceptance load. Portable receipts are needed only if verification moves to an independent worker. |
+| #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, actual Fabric reads through both regional endpoints, and a measured Sweden-loss recovery read in 23.478 seconds against a five-minute RTO. | Capture sustained replication timing under the agreed acceptance load. Portable receipts are needed only if verification moves to an independent worker. |
 | #148 | Per-pool renewal, durable production timestamps, running Manager freshness/status/alerts, catalog-backed serving and tested retention of the prior replica during copy failure. | Deployed alert validation and a live site-disconnection/reconnection drill. |
 
 Phase 4 is not at exit criteria until the Azure resources and workloads above
-are deployed and exercised. No region-loss RTO is claimed, the Azure-IaaS
-simulated on-premises workload has not yet produced live authentication
-evidence, and replication timing has not yet been accepted. Production
+are deployed and exercised. The Azure-IaaS simulated on-premises workload has
+not yet produced live authentication evidence, and sustained replication
+timing has not yet been accepted. Production
 AWS/GCP support is outside Phase 4 and v3.1.0 and is tracked by #171.
 
 On 2026-10-12, Fabric workspace `Demo_Dev`, lakehouse `bronze`, read the same
@@ -252,7 +252,18 @@ On 2026-10-12, Fabric workspace `Demo_Dev`, lakehouse `bronze`, read the same
 The regional ingress logs recorded Fabric service source `20.240.128.211`
 issuing successful HEAD and GET requests to each endpoint. This completes the
 regional Fabric-read evidence but does not substitute for the remaining
-handover, region-loss, disconnection, or replication-timing drills.
+disconnection and sustained replication-timing drills.
+
+On 2026-10-12, ownership handed Sweden→North Europe in 11.273 seconds,
+North Europe published generation 6, and ownership handed back under fence 3.
+The former North Europe owner was rejected for both lease renewal and
+publication authority. Ownership then moved to North Europe at fence 4 and the
+Sweden AKS cluster was stopped. Fabric read the 92,314-byte generation-6 object
+through the North Europe shortcut after 23.478 seconds, within the agreed
+five-minute RTO. Sweden was restarted, ownership returned at fence 5, both
+replica pointers matched generation 6, and both Fabric shortcuts returned the
+catalog SHA-256. Materializers remain registered with their regional Managers;
+this avoids cross-region dependency on public load-balancer hairpin routing.
 
 The renewal-startup, expired-owner and immutable Avro retry defects were
 reproduced by failing tests before implementation. Local acceptance tests cover
@@ -266,9 +277,10 @@ changes, focused runtime, residency, identity, hybrid automation and Helm
 coverage passed with **102 passed and 1 skipped**. Ruff's `F` checks and
 `git diff --check` passed. Hybrid Bicep compilation, Bash syntax and PowerShell
 parsing passed; Bicep retains a `no-hardcoded-env-urls` warning. No security
-scan of the final infrastructure changes or live acceptance result is claimed.
-The Azure deployment approval prompt received no user response; the local
-infrastructure plan is draft and no live deployment was performed.
+scan of the final infrastructure changes is claimed. Live Azure deployment,
+regional Fabric reads, bidirectional handover and Sweden-loss recovery evidence
+are recorded above; hybrid authentication, negative-scope, disconnection,
+storage failover and sustained replication-timing evidence remain open.
 
 ## Deployment acceptance sequence
 

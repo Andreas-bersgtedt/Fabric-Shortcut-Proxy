@@ -103,6 +103,7 @@ def test_linux_installer_checks_private_readiness_and_async_sqlite():
     assert "Python 3.11 or newer is required." in installer
     assert "Blob DNS did not resolve" in installer
     assert "non-private IPv4 address" in installer
+    assert '[ "$octet1" = "10" ] || {' in installer
     assert 'manager_ready_url="${manager_base}/readyz"' in installer
     assert "ManagedIdentityCredential(client_id=os.environ" in installer
     assert 'db_url="sqlite+aiosqlite:////var/lib/fsp/hybrid-site.db"' in installer

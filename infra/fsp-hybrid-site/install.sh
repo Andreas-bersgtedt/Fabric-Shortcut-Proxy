@@ -80,7 +80,9 @@ blob_addresses="$(getent ahostsv4 "$blob_host" | awk '{print $1}' | sort -u)"
   fail "Blob DNS did not resolve. Verify the private DNS zone link and VNet peering."
 while IFS= read -r address; do
   IFS=. read -r octet1 octet2 _ <<< "$address"
-  if [ "$octet1" = "10" ] || [ "$octet1" = "192" ] && [ "$octet2" = "168" ]; then
+  if [ "$octet1" = "10" ] || {
+    [ "$octet1" = "192" ] && [ "$octet2" = "168" ]
+  }; then
     continue
   fi
   if [ "$octet1" = "172" ] && [ "$octet2" -ge 16 ] && [ "$octet2" -le 31 ]; then

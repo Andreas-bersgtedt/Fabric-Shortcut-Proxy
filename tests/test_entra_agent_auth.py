@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from urllib.parse import quote
 
 import httpx
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 from fastapi import FastAPI, Request
 
 from fabric_shortcut_proxy.security import identity
-from fabric_shortcut_proxy.security.agent_auth import AgentAuthMiddleware
+from fabric_shortcut_proxy.security.agent_auth import AgentAuthMiddleware, AgentMtlsProvider
 from fabric_shortcut_proxy.security.entra_agent_auth import EntraAgentTokenProvider
 
 jwt = pytest.importorskip("jwt")
@@ -127,6 +132,85 @@ async def test_entra_middleware_rejects_static_and_basic_credentials(signed_toke
             auth=("admin", "password"),
         )
         assert response.status_code == 401
+
+
+def _mtls_certificate(tmp_path, monkeypatch):
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "FSP test CA")])
+    now = datetime.now(timezone.utc)
+    ca = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    client_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client_name = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, "site-a-worker")]
+    )
+    client = (
+        x509.CertificateBuilder()
+        .subject_name(client_name)
+        .issuer_name(ca.subject)
+        .public_key(client_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(hours=1))
+        .sign(ca_key, hashes.SHA256())
+    )
+    ca_file = tmp_path / "ca.crt"
+    ca_file.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
+    fingerprint = client.fingerprint(hashes.SHA256()).hex()
+    monkeypatch.setenv("AGENT_MTLS_CA_FILE", str(ca_file))
+    monkeypatch.setenv(
+        "AGENT_MTLS_IDENTITIES", json.dumps({fingerprint: AGENT})
+    )
+    return quote(
+        client.public_bytes(serialization.Encoding.PEM).decode("ascii"),
+        safe="",
+    )
+
+
+def test_mtls_provider_verifies_ca_fingerprint_and_agent_binding(
+    tmp_path, monkeypatch
+):
+    certificate = _mtls_certificate(tmp_path, monkeypatch)
+    provider = AgentMtlsProvider()
+    accepted = provider.verify(certificate, "SUCCESS", identity=AGENT)
+    assert accepted.accepted and accepted.reason == "mtls"
+    assert not provider.verify(certificate, "SUCCESS", identity="other-agent").accepted
+    assert not provider.verify(certificate, "FAILED", identity=AGENT).accepted
+
+
+async def test_entra_middleware_uses_verified_mtls_fallback(
+    signed_token, tmp_path, monkeypatch
+):
+    certificate = _mtls_certificate(tmp_path, monkeypatch)
+    app = FastAPI()
+    app.add_middleware(AgentAuthMiddleware)
+
+    @app.post("/control/materialize")
+    async def materialize(request: Request):
+        return {"identity": request.state.agent_id, "auth": request.state.agent_auth}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/control/materialize",
+            headers={
+                "X-FSP-Agent-ID": AGENT,
+                "ssl-client-verify": "SUCCESS",
+                "ssl-client-cert": certificate,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == {"identity": AGENT, "auth": "mtls"}
 
 
 async def test_entra_control_client_uses_refreshed_tokens(monkeypatch):

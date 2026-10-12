@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import unquote
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -16,6 +20,8 @@ AGENT_ID_HEADER = "X-FSP-Agent-ID"
 AGENT_AUTH_CHALLENGE = "FSP-Agent"
 _MAX_AGENT_ID_LENGTH = 128
 _DUMMY_TOKEN = "0" * 64
+_MTLS_VERIFY_HEADER = "ssl-client-verify"
+_MTLS_CERT_HEADER = "ssl-client-cert"
 
 _AGENT_EXACT_ROUTES = frozenset({
     ("POST", "/control/register"),
@@ -142,7 +148,6 @@ class AgentTokenProvider:
                 if hmac.compare_digest(presented, expected):
                     return AgentTokenResult(True, "identity")
                 return AgentTokenResult(False, "invalid")
-
         active = os.environ.get("AGENT_TOKEN", "")
         previous = os.environ.get("AGENT_TOKEN_PREVIOUS", "")
         deadline_raw = os.environ.get(
@@ -186,6 +191,90 @@ class AgentTokenProvider:
         return AgentTokenResult(False, "invalid")
 
 
+def mtls_identities() -> dict[str, str]:
+    raw = os.environ.get("AGENT_MTLS_IDENTITIES", "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("AGENT_MTLS_IDENTITIES must be valid JSON") from exc
+    if not isinstance(value, dict) or not value or any(
+        not isinstance(fingerprint, str)
+        or len(fingerprint) != 64
+        or any(char not in "0123456789abcdefABCDEF" for char in fingerprint)
+        or not _bounded_agent_id(agent_id)
+        for fingerprint, agent_id in value.items()
+    ):
+        raise ValueError(
+            "AGENT_MTLS_IDENTITIES must map SHA-256 certificate fingerprints "
+            "to valid Agent IDs"
+        )
+    return {fingerprint.lower(): agent_id for fingerprint, agent_id in value.items()}
+
+
+class AgentMtlsProvider:
+    """Verify an ingress-forwarded client certificate against the configured CA."""
+
+    def __init__(self) -> None:
+        from cryptography import x509
+
+        self.identities = mtls_identities()
+        ca_file = os.environ.get("AGENT_MTLS_CA_FILE", "").strip()
+        if not self.identities or not ca_file:
+            raise ValueError("mTLS Agent authentication is not configured")
+        self.ca = x509.load_pem_x509_certificate(Path(ca_file).read_bytes())
+
+    def verify(
+        self, certificate_header: str, verified_header: str, *, identity: str
+    ) -> AgentTokenResult:
+        if verified_header.strip().upper() != "SUCCESS" or not certificate_header:
+            return AgentTokenResult(False, "missing")
+        try:
+            from cryptography import x509
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+
+            certificate = x509.load_pem_x509_certificate(
+                unquote(certificate_header).encode("ascii")
+            )
+            if certificate.issuer != self.ca.subject:
+                return AgentTokenResult(False, "invalid")
+            public_key = self.ca.public_key()
+            if isinstance(public_key, rsa.RSAPublicKey):
+                public_key.verify(
+                    certificate.signature,
+                    certificate.tbs_certificate_bytes,
+                    padding.PKCS1v15(),
+                    certificate.signature_hash_algorithm,
+                )
+            elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                public_key.verify(
+                    certificate.signature,
+                    certificate.tbs_certificate_bytes,
+                    ec.ECDSA(certificate.signature_hash_algorithm),
+                )
+            else:
+                return AgentTokenResult(False, "invalid")
+            now = datetime.now(timezone.utc)
+            if (
+                certificate.not_valid_before_utc > now
+                or certificate.not_valid_after_utc <= now
+            ):
+                return AgentTokenResult(False, "invalid")
+            fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
+        except (ValueError, TypeError, UnicodeError):
+            return AgentTokenResult(False, "invalid")
+        except Exception:
+            return AgentTokenResult(False, "invalid")
+        mapped_identity = self.identities.get(fingerprint)
+        if mapped_identity is None:
+            return AgentTokenResult(False, "invalid")
+        if mapped_identity != identity:
+            return AgentTokenResult(False, "identity_mismatch")
+        return AgentTokenResult(True, "mtls")
+
+
 def _bounded_agent_id(value: str) -> str:
     identity = (value or "").strip()
     if not identity or len(identity) > _MAX_AGENT_ID_LENGTH:
@@ -223,6 +312,7 @@ class AgentAuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._provider = provider or AgentTokenProvider()
         self._entra_provider = None
+        self._mtls_provider = None
 
     async def dispatch(self, request: Request, call_next):
         if not is_agent_route(request.method, request.url.path):
@@ -250,6 +340,19 @@ class AgentAuthMiddleware(BaseHTTPMiddleware):
                 )
             except (ValueError, TypeError):
                 result = AgentTokenResult(False, "misconfigured")
+            if not result.accepted and os.environ.get(
+                "AGENT_MTLS_IDENTITIES", ""
+            ).strip():
+                try:
+                    if self._mtls_provider is None:
+                        self._mtls_provider = AgentMtlsProvider()
+                    result = self._mtls_provider.verify(
+                        request.headers.get(_MTLS_CERT_HEADER, ""),
+                        request.headers.get(_MTLS_VERIFY_HEADER, ""),
+                        identity=identity,
+                    )
+                except (OSError, ValueError, TypeError):
+                    result = AgentTokenResult(False, "misconfigured")
         else:
             result = self._provider.verify(
                 request.headers.get(AGENT_TOKEN_HEADER, ""),

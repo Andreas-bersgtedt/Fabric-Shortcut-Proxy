@@ -130,6 +130,14 @@ a C++ serving release against an Entra-only Manager. The default static modes
 remain available for existing deployments, but do not satisfy the no-static-
 Agent-credentials production criterion.
 
+For on-premises fallback, `agentAuth.mtls.enabled` keeps Entra as the preferred
+Agent authentication path and accepts a verified client certificate only when
+its SHA-256 fingerprint maps to the presented Agent ID. `caSecretName` must
+contain `ca.crt`; ingress-nginx verifies the certificate and Manager verifies
+it again against the mounted CA. Every mapped Agent ID must belong to exactly
+one configured placement pool. Unknown certificates, certificate/Agent-ID
+mismatches and unmapped identities fail closed.
+
 ## Placement and workload values
 
 - `manager.agentPlacementConfig`: operator-owned pool membership, source access,

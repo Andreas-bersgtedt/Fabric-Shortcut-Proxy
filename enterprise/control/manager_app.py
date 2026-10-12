@@ -134,6 +134,10 @@ def create_manager_app() -> FastAPI:
         from fabric_shortcut_proxy.security.entra_agent_auth import EntraAgentTokenProvider
 
         placement.validate_entra_identities(EntraAgentTokenProvider().identities)
+        if os.environ.get("AGENT_MTLS_IDENTITIES", "").strip():
+            from fabric_shortcut_proxy.security.agent_auth import mtls_identities
+
+            placement.validate_mtls_identities(mtls_identities())
     else:
         placement.validate_identity_tokens(
             os.environ.get("AGENT_IDENTITY_TOKENS", ""),

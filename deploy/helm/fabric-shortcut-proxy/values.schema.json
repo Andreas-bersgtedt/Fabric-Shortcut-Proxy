@@ -212,6 +212,20 @@
               }
             }
           }
+        },
+        "mtls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "caSecretName", "identities"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "caSecretName": { "type": "string" },
+            "identities": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[0-9A-Fa-f]{64}$" },
+              "additionalProperties": { "type": "string", "minLength": 1 }
+            }
+          }
         }
       }
     },

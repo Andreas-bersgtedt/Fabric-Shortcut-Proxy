@@ -19,6 +19,11 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: HTTP
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    {{- if .Values.agentAuth.mtls.enabled }}
+    nginx.ingress.kubernetes.io/auth-tls-secret: {{ printf "%s/%s" (include "fsp.namespace" .) (required "agentAuth.mtls.caSecretName is required" .Values.agentAuth.mtls.caSecretName) | quote }}
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "optional"
+    nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+    {{- end }}
     {{- if $ing.pathPrefix }}
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: "$1"

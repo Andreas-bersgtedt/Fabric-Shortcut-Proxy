@@ -58,6 +58,12 @@ spec:
           env:
             - name: AGENT_AUTH_MODE
               value: {{ .Values.agentAuth.mode | quote }}
+            {{- if .Values.agentAuth.mtls.enabled }}
+            - name: AGENT_MTLS_IDENTITIES
+              value: {{ required "agentAuth.mtls.identities is required" .Values.agentAuth.mtls.identities | toJson | quote }}
+            - name: AGENT_MTLS_CA_FILE
+              value: /etc/fsp-mtls/ca.crt
+            {{- end }}
             {{- if ne .Values.agentAuth.mode "entra" }}
             - name: AGENT_TOKEN
               valueFrom:
@@ -197,6 +203,11 @@ spec:
             - name: artifacts
               mountPath: /config
             {{- end }}
+            {{- if .Values.agentAuth.mtls.enabled }}
+            - name: agent-mtls-ca
+              mountPath: /etc/fsp-mtls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: artifacts
           persistentVolumeClaim:
@@ -205,6 +216,14 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: fsp-manager-config
+        {{- end }}
+        {{- if .Values.agentAuth.mtls.enabled }}
+        - name: agent-mtls-ca
+          secret:
+            secretName: {{ required "agentAuth.mtls.caSecretName is required" .Values.agentAuth.mtls.caSecretName }}
+            items:
+              - key: ca.crt
+                path: ca.crt
         {{- end }}
 ---
 apiVersion: v1

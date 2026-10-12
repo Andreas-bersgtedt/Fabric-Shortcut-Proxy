@@ -57,6 +57,13 @@ def test_whole_chain_and_legacy_defaults():
     assert placement.serving_endpoints["secondary"].storage_profile == "replica"
 
 
+def test_mtls_identity_must_map_to_one_configured_pool():
+    placement = PlacementConfig.from_dict(_config())
+    placement.validate_mtls_identities({"fingerprint": "eu-agent"})
+    with pytest.raises(ValueError, match="unmapped Agent identities"):
+        placement.validate_mtls_identities({"fingerprint": "unknown-agent"})
+
+
 @pytest.mark.parametrize("store", ["published", "staging", "replica", "cache"])
 def test_outside_store_is_rejected_at_apply(store):
     value = _config()

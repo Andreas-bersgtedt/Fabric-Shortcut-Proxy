@@ -298,6 +298,13 @@ class PlacementConfig:
             if any(len(pools) > 1 for pools in identity_pools.values()):
                 raise ValueError(f"Entra {claim} bindings must be unique across materializer pools")
 
+    def validate_mtls_identities(self, identities: dict[str, str]) -> None:
+        unexpected = sorted(set(identities.values()) - set(self.identity_pools))
+        if unexpected:
+            raise ValueError(
+                f"mTLS bindings contain unmapped Agent identities: {unexpected}"
+            )
+
     def policy_for(self, connection_id: str, source_table: str) -> MaterializerPolicy:
         policy = self.tables.get(
             (connection_id, source_table),

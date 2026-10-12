@@ -200,6 +200,29 @@ def test_entra_render_uses_workload_identity_without_agent_secrets() -> None:
     assert 'azure.workload.identity/use: "true"' in rendered
 
 
+def test_mtls_agent_fallback_renders_ca_and_ingress_verification() -> None:
+    fingerprint = "a" * 64
+    rendered = _render(
+        "--set", "agentAuth.mtls.enabled=true",
+        "--set", "agentAuth.mtls.caSecretName=fsp-agent-ca",
+        "--set-string", f"agentAuth.mtls.identities.{fingerprint}=hybrid-site-01",
+        "--set", "agentControlIngress.enabled=true",
+        "--set", "agentControlIngress.host=control.example.com",
+    )
+    assert "name: AGENT_MTLS_IDENTITIES" in rendered
+    assert "name: AGENT_MTLS_CA_FILE" in rendered
+    assert "secretName: fsp-agent-ca" in rendered
+    assert (
+        'nginx.ingress.kubernetes.io/auth-tls-secret: '
+        '"fabric-shortcut-proxy/fsp-agent-ca"' in rendered
+    )
+    assert 'nginx.ingress.kubernetes.io/auth-tls-verify-client: "optional"' in rendered
+    assert (
+        'nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"'
+        in rendered
+    )
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

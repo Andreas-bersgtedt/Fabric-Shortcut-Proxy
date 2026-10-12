@@ -74,6 +74,8 @@ def test_snapshot_manifest_roundtrip():
         plan_sha256="a" * 64,
         published_at_ms=1000,
         request_id="request-7",
+        dataset_id="erp::Customer",
+        produced_at_ms=900,
     )
     _roundtrip(SnapshotManifest, m)
     assert m.to_dict()["table_format"] == "delta"

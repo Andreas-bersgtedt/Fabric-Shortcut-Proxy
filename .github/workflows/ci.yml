@@ -88,6 +88,26 @@ jobs:
       - name: Run Enterprise tests
         run: pytest tests/enterprise tests/test_entra_agent_auth.py -v
 
+  cloud-artifact-conformance:
+    name: cloud artifact conformance (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install cloud artifact SDKs
+        run: pip install -e ".[dev,azureblob,s3-artifacts,gcs-artifacts]"
+      - name: Run shared artifact conformance and SDK contracts
+        env:
+          REQUIRE_SIGV4: "0"
+        run: pytest tests/test_cloud_artifact_conformance.py tests/test_azure_artifact_store.py tests/test_artifact_store.py -v
+
   helm-chart:
     name: Helm chart validation
     runs-on: ubuntu-latest

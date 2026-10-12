@@ -1,4 +1,5 @@
 {{- if .Values.manager.enabled }}
+{{- $mtls := .Values.agentAuth.mtls | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -58,6 +59,12 @@ spec:
           env:
             - name: AGENT_AUTH_MODE
               value: {{ .Values.agentAuth.mode | quote }}
+            {{- if ($mtls.enabled | default false) }}
+            - name: AGENT_MTLS_IDENTITIES
+              value: {{ required "agentAuth.mtls.identities is required" $mtls.identities | toJson | quote }}
+            - name: AGENT_MTLS_CA_FILE
+              value: /etc/fsp-mtls/ca.crt
+            {{- end }}
             {{- if ne .Values.agentAuth.mode "entra" }}
             - name: AGENT_TOKEN
               valueFrom:
@@ -86,6 +93,34 @@ spec:
             {{- end }}
             - name: AGENT_PLACEMENT_CONFIG
               value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
+            - name: FSP_ARTIFACT_STORE_PROFILE
+              value: {{ .Values.manager.artifactStoreProfile | quote }}
+            {{- if .Values.federation.enabled }}
+            - name: FSP_FEDERATION_ENABLED
+              value: "1"
+            - name: FSP_REGIONAL_MANAGER_ID
+              value: {{ required "federation.managerId is required" .Values.federation.managerId | quote }}
+            - name: FSP_REGIONAL_MANAGER_LOCATION
+              value: {{ required "federation.managerLocation is required" .Values.federation.managerLocation | quote }}
+            - name: FSP_CATALOG_OWNER_LEASE_MS
+              value: {{ .Values.federation.ownerLeaseMs | quote }}
+            - name: FSP_CATALOG_RENEW_INTERVAL_SECONDS
+              value: {{ .Values.federation.renewIntervalSeconds | quote }}
+            - name: FSP_FEDERATION_REPLICA_STORES
+              value: {{ .Values.federation.replicaStores | toJson | quote }}
+            - name: FSP_CATALOG_STORE_ACCOUNT_URL
+              value: {{ required "federation.catalog.artifactStoreAccountUrl is required" .Values.federation.catalog.artifactStoreAccountUrl | quote }}
+            - name: FSP_CATALOG_STORE_CONTAINER
+              value: {{ .Values.federation.catalog.artifactStoreContainer | quote }}
+            - name: FSP_CATALOG_STORE_AUTH_MODE
+              value: {{ .Values.federation.catalog.artifactStoreAuthMode | quote }}
+            - name: FSP_CATALOG_STORE_CLIENT_ID
+              value: {{ .Values.federation.catalog.artifactStoreClientId | quote }}
+            - name: FSP_CATALOG_STORE_TENANT_ID
+              value: {{ .Values.federation.catalog.artifactStoreTenantId | quote }}
+            - name: FSP_CATALOG_STORE_TOKEN_FILE
+              value: {{ .Values.federation.catalog.artifactStoreTokenFile | quote }}
+            {{- end }}
             - name: CONTROL_HOST
               value: 0.0.0.0
             - name: CONTROL_PORT
@@ -169,6 +204,11 @@ spec:
             - name: artifacts
               mountPath: /config
             {{- end }}
+            {{- if ($mtls.enabled | default false) }}
+            - name: agent-mtls-ca
+              mountPath: /etc/fsp-mtls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: artifacts
           persistentVolumeClaim:
@@ -177,6 +217,14 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: fsp-manager-config
+        {{- end }}
+        {{- if ($mtls.enabled | default false) }}
+        - name: agent-mtls-ca
+          secret:
+            secretName: {{ required "agentAuth.mtls.caSecretName is required" $mtls.caSecretName }}
+            items:
+              - key: ca.crt
+                path: ca.crt
         {{- end }}
 ---
 apiVersion: v1

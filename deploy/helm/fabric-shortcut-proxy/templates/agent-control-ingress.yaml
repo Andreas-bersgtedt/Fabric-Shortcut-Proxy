@@ -5,6 +5,7 @@
 {{- $ing := .Values.agentControlIngress }}
 {{- $host := required "agentControlIngress.host is required" $ing.host }}
 {{- $issuer := $ing.clusterIssuer | default .Values.tls.clusterIssuer.name }}
+{{- $mtls := .Values.agentAuth.mtls | default dict }}
 # Exposes only the Manager routes that materializer agents call. Admin,
 # work-queue and data-plane routes are intentionally absent.
 apiVersion: networking.k8s.io/v1
@@ -19,6 +20,11 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: HTTP
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    {{- if ($mtls.enabled | default false) }}
+    nginx.ingress.kubernetes.io/auth-tls-secret: {{ printf "%s/%s" (include "fsp.namespace" .) (required "agentAuth.mtls.caSecretName is required" $mtls.caSecretName) | quote }}
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "optional"
+    nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+    {{- end }}
     {{- if $ing.pathPrefix }}
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: "$1"
@@ -39,7 +45,7 @@ spec:
     - host: {{ $host | quote }}
       http:
         paths:
-          {{- range list "/control/register" "/control/heartbeat" "/control/task-result" "/control/materialize" }}
+          {{- range list "/readyz" "/control/register" "/control/heartbeat" "/control/task-result" "/control/materialize" }}
           {{- if $ing.pathPrefix }}
           - path: {{ printf "%s(%s)$" $ing.pathPrefix . | quote }}
             pathType: ImplementationSpecific

@@ -130,6 +130,14 @@ a C++ serving release against an Entra-only Manager. The default static modes
 remain available for existing deployments, but do not satisfy the no-static-
 Agent-credentials production criterion.
 
+For on-premises fallback, `agentAuth.mtls.enabled` keeps Entra as the preferred
+Agent authentication path and accepts a verified client certificate only when
+its SHA-256 fingerprint maps to the presented Agent ID. `caSecretName` must
+contain `ca.crt`; ingress-nginx verifies the certificate and Manager verifies
+it again against the mounted CA. Every mapped Agent ID must belong to exactly
+one configured placement pool. Unknown certificates, certificate/Agent-ID
+mismatches and unmapped identities fail closed.
+
 ## Placement and workload values
 
 - `manager.agentPlacementConfig`: operator-owned pool membership, source access,
@@ -137,6 +145,36 @@ Agent-credentials production criterion.
   and location values for authorization.
 - `storage`: dynamic storage defaults or static Azure Files NFS volumes.
 - `manager`, `materializer`, `cppAgent`: workload sizing and feature settings.
+- `federation`: opt-in Phase 4 catalog and regional ownership settings.
+  Set `enabled`, a stable `managerId`, the cloud-qualified
+  `managerLocation`, and `manager.artifactStoreProfile` on every regional
+  Manager. Set `deployCatalog` in the primary release to add the authenticated
+  `fsp-global-catalog` service. `ownerLeaseMs` must exceed the renewal interval
+  by enough time to tolerate transient storage failures. Catalog egress is
+  default-denied when network policies are enabled; add only the private Blob
+  endpoint CIDR and port 443 to `catalog.egressAllowList`.
+- `federation.replicaStores`: Manager-only map of declared replica profiles to
+  Azure Blob `account_url`, `container_name`, `auth_mode`, and optional identity
+  settings. Add private replica Blob and identity endpoint egress explicitly.
+  The Manager reconciles catalog pointers on its renewal cadence; interrupted
+  copies resume by immutable create-if-absent after restart.
+- `federation.regionalServing`: optional database-free, SigV4-authenticated S3
+  Deployment and ClusterIP Service. Configure `endpointId`, `storageProfile`,
+  `buckets`, `artifactStoreAccountUrl`, and `artifactStoreContainer`.
+  `serviceAccountName` and `clientId` create an annotated workload identity with
+  **Storage Blob Data Reader** on both local publications and catalog records.
+  Set `regionalServing.ingress.enabled`, `hostname`, and issuer settings to
+  expose only the regional S3 reader through TLS ingress.
+  Use a separate identity from the publishing Manager. `readerSecretName` holds
+  only `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`, not source credentials.
+  The workload uses `CONTROL_PORT` (default chart port 9401), a read-only root
+  filesystem, and no source Secret. Add private Blob and identity egress to
+  `egressAllowList`; ingress permits the configured ingress-controller selectors.
+  Publish TLS ingress separately at the exact HTTPS URL declared in placement.
+  Each bucket selects one dataset's current complete regional descriptor.
+  Object keys are immutable publication paths, not legacy mutable table aliases.
+  Point a Fabric shortcut at the returned publication root, and validate both
+  Iceberg metadata references and Delta absolute S3 paths with Fabric before exit.
 - `materializer.autoscaling`: optional HPA for the Python materializer
   StatefulSet. It requires `fsp.materializeMode=lazy` and
   `fsp.generationMembershipPolicy=elastic`; Helm rejects unsafe combinations.
@@ -175,6 +213,12 @@ Agent-credentials production criterion.
 The default values render the cluster-private base deployment. The enterprise
 example enables Azure Files, workload identity, nginx, Entra authentication,
 and public TLS ingress.
+
+The catalog reuses the Manager operator authentication Secret for its
+administrative API and uses the configured Azure artifact backend for durable
+CAS records. Production values should point it at the dedicated private
+catalog container created by `infra/fsp-federation`, with shared-key access
+disabled and workload identity enabled.
 
 ## Materializer placement policies
 
@@ -251,6 +295,19 @@ fallback pin. If no configured pool can accept a task, it remains queued with
 audit log. Placement audit events contain the task, request, dataset, selected
 pool/location, decision, and fallback flag, but never credentials or claim
 tokens.
+
+For Phase 4 residency declarations, see
+[Federated artifact primitives](../../../docs/FEDERATED_ARTIFACTS.md).
+Set `manager.artifactStoreProfile` to bind the Manager's configured backend to
+the named profile. A constrained policy requires this binding and currently
+must use that same store for staging and publication.
+
+Pools can also set `heartbeat_ms`, `heartbeat_miss_limit` and
+`claim_lease_seconds` for disconnected/WAN sites. Defaults are unchanged when
+these fields are absent. The heartbeat alert uses each pool's exported timeout.
+For connections with `residency_locations`, exact table policies inherit the
+connection rule and cannot widen or remove that boundary; unconstrained
+connections keep the replacement behavior described above.
 
 The C++ Agent defaults to `trusted-upstream` because the chart's supported
 topology places it behind the authenticated gateway. This mode trusts that

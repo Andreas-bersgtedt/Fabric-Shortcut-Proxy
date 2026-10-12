@@ -39,6 +39,7 @@ from enterprise.control.contract import (
     RESULT_WRONG_OWNER,
 )
 from enterprise.control.lease import LEASE_KEY, StaleLeaderError
+from enterprise.control.federation import FederatedPublicationCoordinator
 from fabric_shortcut_proxy.runtime.artifact_store import ArtifactStore, ObjectNotFound
 from fabric_shortcut_proxy.observability import metrics
 
@@ -200,6 +201,16 @@ class DurableWorkQueue:
         )
         self._lock = threading.RLock()
         self._leadership_check = leadership_check
+        self._federation: FederatedPublicationCoordinator | None = None
+        self._federated_tables: dict[str, str] = {}
+
+    def configure_federation(
+        self, coordinator: FederatedPublicationCoordinator, tables: dict[str, str]
+    ) -> None:
+        if not isinstance(coordinator, FederatedPublicationCoordinator):
+            raise TypeError("federated queue requires a publication coordinator")
+        self._federation = coordinator
+        self._federated_tables = dict(tables)
 
     def _read(self, key: str) -> dict | None:
         try:
@@ -231,8 +242,12 @@ class DurableWorkQueue:
                 raise StaleLeaderError("Manager leadership changed before queue write")
         else:
             self.store.put(key, _json_bytes(value))
-        if self._read(key) != value:
-            raise WorkQueueError(f"queue record verification failed: {key}")
+        for attempt in range(5):
+            if self._read(key) == value:
+                return
+            if attempt < 4:
+                time.sleep(0.05)
+        raise WorkQueueError(f"queue record verification failed: {key}")
 
     def _delete(self, key: str) -> bool:
         if self._leadership_check is None:
@@ -552,6 +567,14 @@ class DurableWorkQueue:
             created_at = _now_ms()
             task_ids = []
             task_records = []
+            datasets = {
+                f"{task.connection_id}::{task.source_table}"
+                for task in tasks
+                if task.connection_id and task.source_table
+            }
+            if len(datasets) > 1:
+                raise WorkQueueConflict("materialization request spans multiple datasets")
+            dataset_id = next(iter(datasets), "")
             for task in tasks:
                 task_id = _hash(f"{request_id}|{task.split_index}|{task.output_key}")
                 task_ids.append(task_id)
@@ -589,6 +612,7 @@ class DurableWorkQueue:
                 "table": table,
                 "epoch": int(epoch),
                 "table_format": table_format,
+                "dataset_id": dataset_id,
                 "generation_id": generation_id,
                 "generation_fence": int(generation_fence),
                 "plan_sha256": plan_sha256,
@@ -788,7 +812,11 @@ class DurableWorkQueue:
         membership_version: int = 0,
         worker_fence: int = 0,
         now_ms: int | None = None,
+        lease_seconds: int | None = None,
     ) -> MaterializeTask:
+        duration = self.task_lease_seconds if lease_seconds is None else lease_seconds
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1:
+            raise ValueError("claim lease_seconds must be a positive integer")
         now_ms = _now_ms() if now_ms is None else int(now_ms)
         with self._lock:
             task = self.get_task(task_id)
@@ -809,8 +837,8 @@ class DurableWorkQueue:
             claim_token = secrets.token_urlsafe(32)
             deadline_ms = int((task.get("task") or {}).get("deadline_ms", 0))
             expires_at = min(
-                now_ms + self.task_lease_seconds * 1000,
-                deadline_ms or now_ms + self.task_lease_seconds * 1000,
+                now_ms + duration * 1000,
+                deadline_ms or now_ms + duration * 1000,
             )
             task_payload = MaterializeTask.from_dict(task["task"])
             staging_key = _staging_key(
@@ -834,6 +862,7 @@ class DurableWorkQueue:
                 "membership_version": int(membership_version),
                 "worker_fence": int(worker_fence),
                 "staging_key": staging_key,
+                "lease_seconds": duration,
             }
             task["updated_at_ms"] = now_ms
             task["revision"] = int(task["revision"]) + 1
@@ -873,16 +902,18 @@ class DurableWorkQueue:
                 claim = task.get("claim") or {}
                 if (
                     task["state"] == TASK_CLAIMED
+                    and int(claim.get("expires_at_ms", 0)) > now_ms
                     and claim.get("agent_id") == agent_id
                     and hmac.compare_digest(
                         str(claim.get("agent_lease_hash", "")), lease_hash
                     )
                 ):
+                    duration = int(claim.get("lease_seconds", self.task_lease_seconds))
                     claim["expires_at_ms"] = (
                         min(
-                            now_ms + self.task_lease_seconds * 1000,
+                            now_ms + duration * 1000,
                             int((task.get("task") or {}).get("deadline_ms", 0))
-                            or now_ms + self.task_lease_seconds * 1000,
+                            or now_ms + duration * 1000,
                         )
                     )
                     task["updated_at_ms"] = now_ms
@@ -1334,6 +1365,9 @@ class DurableWorkQueue:
         """Remove claim-specific output objects not referenced by a published snapshot."""
         from fabric_shortcut_proxy.runtime.split_completion import completion_key
 
+        if self._federation is not None:
+            # Other regions can still serve prior generations after this owner advances.
+            return 0
         keep = keep_keys or set()
         removed = 0
         prefixes = {
@@ -1456,6 +1490,35 @@ class DurableWorkQueue:
                     )
             key = _snapshot_key(manifest.table, manifest.epoch)
             payload = manifest.to_dict()
+            datasets: set[str] = set()
+            for task_id in request["task_ids"]:
+                task = self.get_task(task_id)
+                if task is None:
+                    raise WorkQueueConflict(f"snapshot task is missing: {task_id}")
+                connection = str(task["task"].get("connection_id", ""))
+                source_table = str(task["task"].get("source_table", ""))
+                if connection and source_table:
+                    datasets.add(f"{connection}::{source_table}")
+            if len(datasets) > 1:
+                raise WorkQueueConflict("snapshot request spans multiple datasets")
+            dataset_id = next(iter(datasets), "")
+            produced_at_ms = int(request["created_at_ms"])
+            if manifest.dataset_id and manifest.dataset_id != dataset_id:
+                raise WorkQueueConflict("snapshot dataset identity does not match request")
+            if manifest.produced_at_ms and manifest.produced_at_ms != produced_at_ms:
+                raise WorkQueueConflict("snapshot production timestamp does not match request")
+            payload["dataset_id"] = dataset_id
+            payload["produced_at_ms"] = produced_at_ms
+            if self._federation is not None:
+                # The catalog CAS is the only visibility commit across regional stores.
+                self._federation.publish(SnapshotManifest.from_dict(payload))
+                request["published"] = True
+                request["updated_at_ms"] = now_ms
+                self._write(_request_key(request_id), request)
+                metrics.inc_counter(
+                    "materialization_queue_events_total", event="published"
+                )
+                return request
             request["published"] = True
             request["snapshot_key"] = key
             request["updated_at_ms"] = now_ms
@@ -1476,7 +1539,27 @@ class DurableWorkQueue:
             )
             return request
 
+    def list_snapshot_manifests(self) -> list[SnapshotManifest]:
+        """Read durable publication metadata without downloading dataset objects."""
+        if self._federation is not None:
+            return [
+                manifest
+                for table, dataset_id in self._federated_tables.items()
+                if (manifest := self._federation.snapshot(dataset_id, table)) is not None
+            ]
+        manifests = []
+        for item in self.store.list(f"{SNAPSHOTS_PREFIX}/"):
+            record = self._read(item.key)
+            if record is not None:
+                manifests.append(SnapshotManifest.from_dict(record["manifest"]))
+        return manifests
+
     def get_snapshot(self, table: str, epoch: int = 0) -> SnapshotManifest | None:
+        if self._federation is not None:
+            dataset_id = self._federated_tables.get(table)
+            if dataset_id is None:
+                return None
+            return self._federation.snapshot(dataset_id, table, epoch)
         prefix = f"{SNAPSHOTS_PREFIX}/{_hash(table)}/"
         records = self.store.list(prefix)
         if not records:
@@ -1521,22 +1604,18 @@ class DurableWorkQueue:
             if task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT}
         ]
         now = _now_ms()
-        no_match_tasks = [
-            {
-                "task_id": str(task["task_id"]),
-                "connection_id": str(
-                    (task.get("task") or {}).get("connection_id", "")
-                ),
-                "source_table": str(
-                    (task.get("task") or {}).get("source_table", "")
-                ),
-            }
-            for task in tasks
-            if (
-                task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT}
-                and task.get("dispatch_status") == "no_eligible_materializer"
-            )
-        ]
+        rejections: dict[str, list[dict]] = {
+            "no_eligible_materializer": [],
+            "residency_policy_violation": [],
+        }
+        for task in tasks:
+            reason = str(task.get("dispatch_status", ""))
+            if task["state"] in {TASK_QUEUED, TASK_RETRY_WAIT} and reason in rejections:
+                rejections[reason].append({
+                    "task_id": str(task["task_id"]),
+                    "connection_id": str((task.get("task") or {}).get("connection_id", "")),
+                    "source_table": str((task.get("task") or {}).get("source_table", "")),
+                })
         memberships = self.list_memberships()
         active_generation_ids = {
             str((task.get("task") or {}).get("generation_id", ""))
@@ -1627,7 +1706,9 @@ class DurableWorkQueue:
             "oldest_queued_age_ms": max(0, now - min(queued)) if queued else 0,
             "membership": membership_status,
             "placement": {
-                "no_eligible_materializer_count": len(no_match_tasks),
-                "no_eligible_materializer": no_match_tasks,
+                "no_eligible_materializer_count": len(rejections["no_eligible_materializer"]),
+                "no_eligible_materializer": rejections["no_eligible_materializer"],
+                "residency_policy_violation_count": len(rejections["residency_policy_violation"]),
+                "residency_policy_violation": rejections["residency_policy_violation"],
             },
         }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 import io
 import threading
 import time
@@ -38,6 +39,7 @@ from enterprise.control.work_queue import (
 )
 from enterprise.control.lease import LeaderLease, StaleLeaderError
 from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy.runtime.artifact_store import ObjectNotFound
 
 
 def _parquet(values: list[int] | None = None) -> bytes:
@@ -87,6 +89,38 @@ def _claim(
         manager_fence=3,
         now_ms=now_ms,
     )
+
+
+def test_queue_write_retries_transient_stale_read():
+    class StaleReadStore(MemoryStore):
+        def __init__(self):
+            super().__init__()
+            self._stale: dict[str, bytes | None] = {}
+
+        def put(self, key, data):
+            try:
+                previous = super().get(key)
+            except ObjectNotFound:
+                previous = None
+            result = super().put(key, data)
+            self._stale[key] = previous
+            return result
+
+        def get(self, key, *, offset=0, length=None):
+            if key in self._stale:
+                previous = self._stale.pop(key)
+                if previous is None:
+                    raise ObjectNotFound(key)
+                end = len(previous) if length is None else offset + length
+                return previous[offset:end]
+            return super().get(key, offset=offset, length=length)
+
+    queue = DurableWorkQueue(StaleReadStore())
+
+    request, task_id = _create(queue)
+
+    assert queue.get_request(request["request_id"]) is not None
+    assert queue.get_task(task_id) is not None
 
 
 def _result(task: MaterializeTask, data: bytes, **changes) -> TaskResult:
@@ -172,7 +206,9 @@ def test_queue_survives_restart_and_publishes_verified_snapshot():
 
     restarted = DurableWorkQueue(store)
     assert restarted.get_request(request["request_id"])["state"] == TASK_SUCCEEDED
-    assert restarted.get_snapshot("sales", 7) == manifest
+    assert restarted.get_snapshot("sales", 7) == replace(
+        manifest, dataset_id="source::sales", produced_at_ms=request["created_at_ms"],
+    )
     store.put(claimed.output_key, b"corrupt")
     with pytest.raises(WorkQueueError, match="published snapshot output"):
         restarted.get_snapshot("sales", 7)

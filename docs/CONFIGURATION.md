@@ -647,6 +647,15 @@ Create one Fabric shortcut per table.
 | `MATERIALIZATION_WORK_QUEUE` | `1` | Dispatch lazy materialization to Python Agents through the durable Manager queue. Set to `0` only for compatibility rollback |
 | `WORK_QUEUE_RETENTION_SECONDS` | `604800` | Retain terminal queue records for seven days. Published manifests and artifacts are not removed |
 | `WORK_QUEUE_REQUEST_TIMEOUT_SECONDS` | `600` | End-to-end deadline for one queued table materialization request |
+| `FSP_FEDERATION_ENABLED` | `0` | Enable catalog-fenced regional publication in Manager |
+| `FSP_REGIONAL_MANAGER_ID` | *(empty)* | Stable regional Manager identity used by catalog ownership records |
+| `FSP_REGIONAL_MANAGER_LOCATION` | *(empty)* | Cloud-qualified Manager location, for example `azure:swedencentral` |
+| `FSP_CATALOG_OWNER_LEASE_MS` | `60000` | Dataset owner lease renewed by its regional Manager |
+| `FSP_CATALOG_RENEW_INTERVAL_SECONDS` | `20` | Finite, positive renewal interval shorter than the owner lease; invalid values prevent Manager startup when federation is enabled. Keep well below the lease to allow for storage latency |
+| `FSP_ARTIFACT_STORE_PROFILE` | *(empty)* | Placement store profile bound to the configured artifact backend and used for verified catalog advertisement |
+| `FSP_FEDERATION_REPLICA_STORES` | `{}` | Manager-only JSON map of declared replica profile IDs to Azure Blob settings: `account_url`, `container_name`, `auth_mode`, and optional `client_id`, `tenant_id`, `token_file`. Identity auth only; configures durable reconciliation on the renewal cadence |
+| `FSP_REGIONAL_SERVING_ENDPOINT_ID` | *(empty)* | Assigned placement endpoint for `python -m enterprise.regional_serving`; the local store must match its provider and location |
+| `FSP_REGIONAL_SERVING_BUCKETS` | `{}` | Regional reader JSON map of S3 bucket names to `connection_id::source_table`; no remote replica stores or database access are needed |
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |

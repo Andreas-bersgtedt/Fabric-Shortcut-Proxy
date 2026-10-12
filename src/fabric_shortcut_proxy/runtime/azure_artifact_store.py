@@ -243,13 +243,10 @@ class AzureBlobArtifactStore(ArtifactStore):
         content_hash = digest.hexdigest()
         try:
             if block_ids:
-                from azure.core import MatchConditions
-
                 blob.commit_block_list(
                     block_ids,
                     metadata={"sha256": content_hash},
-                    etag="*",
-                    match_condition=MatchConditions.IfMissing,
+                    if_none_match="*",
                 )
             else:
                 blob.upload_blob(
@@ -300,7 +297,7 @@ class AzureBlobArtifactStore(ArtifactStore):
             raise ValueError("chunk_size must be >= 1")
         k = _normalize_key(key)
         options = {}
-        if offset:
+        if offset or length is not None:
             options["offset"] = offset
         if length is not None:
             options["length"] = length
@@ -431,14 +428,11 @@ class AzureBlobArtifactStore(ArtifactStore):
                         metadata={"sha256": hashlib.sha256(data).hexdigest()},
                     )
                 else:
-                    from azure.core import MatchConditions
-
                     props = blob.get_blob_properties()
                     blob.upload_blob(
                         bytes(data),
                         overwrite=True,
-                        etag=props.etag,
-                        match_condition=MatchConditions.IfNotModified,
+                        if_match=props.etag,
                         metadata={"sha256": hashlib.sha256(data).hexdigest()},
                     )
             except Exception as exc:
@@ -506,25 +500,32 @@ class AzureBlobArtifactStore(ArtifactStore):
             return True
 
 
-def build_azure_artifact_store() -> AzureBlobArtifactStore:
-    """Build the configured writable Azure Blob store with identity credentials."""
+def build_azure_store(
+    *,
+    account_url: str,
+    container_name: str,
+    auth_mode: str,
+    tenant_id: str = "",
+    client_id: str = "",
+    token_file: str = "",
+) -> AzureBlobArtifactStore:
+    """Build one Azure Blob store from explicit identity-based settings."""
     from azure.storage.blob import BlobServiceClient, ExponentialRetry
 
-    from fabric_shortcut_proxy import config
     from fabric_shortcut_proxy.security.azure_credential import get_credential
 
-    account_url = config.ARTIFACT_STORE_ACCOUNT_URL.rstrip("/")
-    container_name = config.ARTIFACT_STORE_CONTAINER.strip()
+    account_url = account_url.rstrip("/")
+    container_name = container_name.strip()
     if not account_url or not container_name:
         raise ValueError(
             "Azure artifact store requires ARTIFACT_STORE_ACCOUNT_URL and "
             "ARTIFACT_STORE_CONTAINER"
         )
     credential = get_credential(
-        config.ARTIFACT_STORE_AUTH_MODE,
-        tenant_id=config.ARTIFACT_STORE_TENANT_ID,
-        client_id=config.ARTIFACT_STORE_CLIENT_ID,
-        token_file=config.ARTIFACT_STORE_TOKEN_FILE,
+        auth_mode,
+        tenant_id=tenant_id,
+        client_id=client_id,
+        token_file=token_file,
     )
     service = BlobServiceClient(
         account_url=account_url,
@@ -537,4 +538,18 @@ def build_azure_artifact_store() -> AzureBlobArtifactStore:
     )
     return AzureBlobArtifactStore(
         container=service.get_container_client(container_name)
+    )
+
+
+def build_azure_artifact_store() -> AzureBlobArtifactStore:
+    """Build the configured writable Azure Blob store with identity credentials."""
+    from fabric_shortcut_proxy import config
+
+    return build_azure_store(
+        account_url=config.ARTIFACT_STORE_ACCOUNT_URL,
+        container_name=config.ARTIFACT_STORE_CONTAINER,
+        auth_mode=config.ARTIFACT_STORE_AUTH_MODE,
+        tenant_id=config.ARTIFACT_STORE_TENANT_ID,
+        client_id=config.ARTIFACT_STORE_CLIENT_ID,
+        token_file=config.ARTIFACT_STORE_TOKEN_FILE,
     )

@@ -60,11 +60,12 @@ def get_credential(
         return ManagedIdentityCredential(client_id=client_id or None)
     if m == "workload_identity":
         _require_identity()
+        import os
         from azure.identity import WorkloadIdentityCredential
         return WorkloadIdentityCredential(
-            tenant_id=tenant_id,
-            client_id=client_id,
-            token_file_path=token_file or None,
+            tenant_id=tenant_id or os.environ.get("AZURE_TENANT_ID"),
+            client_id=client_id or os.environ.get("AZURE_CLIENT_ID"),
+            token_file_path=token_file or os.environ.get("AZURE_FEDERATED_TOKEN_FILE"),
         )
     if m == "default":
         _require_identity()

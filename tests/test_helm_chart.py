@@ -72,6 +72,86 @@ def test_chart_lints_with_enterprise_example() -> None:
     _helm("lint", str(CHART), "-f", str(EXAMPLE_VALUES))
 
 
+def test_manager_binds_operator_artifact_profile() -> None:
+    rendered = _render("--set", "manager.artifactStoreProfile=eu-published")
+    assert 'name: FSP_ARTIFACT_STORE_PROFILE\n              value: "eu-published"' in rendered
+
+
+def test_federation_renders_catalog_and_regional_manager_identity() -> None:
+    rendered = _render(
+        "--set", "federation.enabled=true",
+        "--set", "federation.deployCatalog=true",
+        "--set", "federation.managerId=manager-swc",
+        "--set", "federation.managerLocation=azure:swedencentral",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "manager.artifactStoreProfile=swc-published",
+    )
+    assert "name: fsp-global-catalog" in rendered
+    assert "python\n            - -m\n            - enterprise.catalog" in rendered
+    assert 'name: FSP_REGIONAL_MANAGER_ID\n              value: "manager-swc"' in rendered
+    assert 'name: FSP_CATALOG_OWNER_LEASE_MS\n              value: "60000"' in rendered
+    assert 'name: FSP_CATALOG_STORE_CONTAINER\n              value: "catalog"' in rendered
+
+
+def test_regional_serving_renders_read_only_identity_and_no_source_secret() -> None:
+    rendered = _render(
+        "--set", "federation.regionalServing.enabled=true",
+        "--set", "federation.regionalServing.endpointId=neu",
+        "--set", "federation.regionalServing.storageProfile=neu-replica",
+        "--set", "federation.regionalServing.buckets.sales=source::sales",
+        "--set", "federation.regionalServing.serviceAccountName=regional-reader",
+        "--set", "federation.regionalServing.clientId=00000000-0000-0000-0000-000000000001",
+        "--set", "federation.regionalServing.readerSecretName=reader-sigv4",
+        "--set", "federation.regionalServing.artifactStoreAccountUrl=https://replica.blob.core.windows.net",
+        "--set", "federation.regionalServing.artifactStoreContainer=published",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "networkPolicy.enabled=true",
+    )
+    section = "\n".join(
+        document for document in rendered.split("\n---")
+        if "# Source: fabric-shortcut-proxy/templates/regional-serving.yaml" in document
+    )
+    assert "enterprise.regional_serving" in section
+    assert "kind: ServiceAccount" in section
+    assert 'azure.workload.identity/client-id: "00000000-0000-0000-0000-000000000001"' in section
+    assert "serviceAccountName: regional-reader" in section
+    assert "name: reader-sigv4" in section
+    assert "name: fsp-source" not in section
+    assert "name: FSP_REGIONAL_SERVING_ENDPOINT_ID" in section
+    assert "readOnlyRootFilesystem: true" in section
+    assert "fsp-regional-serving" in _network_policy_names(rendered)
+
+
+def test_regional_serving_rejects_unassigned_buckets() -> None:
+    result = _helm("template", "fsp", str(CHART), "--set",
+                   "federation.regionalServing.enabled=true", expect_success=False)
+    assert "federation.regionalServing.buckets is required" in result.stderr
+
+
+def test_regional_serving_tls_ingress_is_scoped_to_reader_service() -> None:
+    rendered = _render(
+        "--set", "federation.regionalServing.enabled=true",
+        "--set", "federation.regionalServing.endpointId=primary",
+        "--set", "federation.regionalServing.storageProfile=published",
+        "--set", "federation.regionalServing.buckets.sales=source::sales",
+        "--set", "federation.regionalServing.serviceAccountName=regional-reader",
+        "--set", "federation.regionalServing.clientId=00000000-0000-0000-0000-000000000001",
+        "--set", "federation.regionalServing.readerSecretName=reader-sigv4",
+        "--set", "federation.regionalServing.artifactStoreAccountUrl=https://published.blob.core.windows.net",
+        "--set", "federation.regionalServing.artifactStoreContainer=published",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "federation.regionalServing.ingress.enabled=true",
+        "--set", "federation.regionalServing.ingress.hostname=regional.example.test",
+        "--set", "networkPolicy.enabled=true",
+    )
+    assert "name: fsp-regional-serving-tls" in rendered
+    assert 'host: "regional.example.test"' in rendered
+    assert "name: fsp-regional-serving\n                port:\n                  name: s3" in rendered
+    assert "name: fsp-acme-http-solver" in rendered
+    assert 'acme.cert-manager.io/http01-solver: "true"' in rendered
+    assert "port: 8089" in rendered
+
+
 def test_base_render_contains_core_fleet_only() -> None:
     rendered = _render()
     counts = _kind_counts(rendered)
@@ -118,6 +198,29 @@ def test_entra_render_uses_workload_identity_without_agent_secrets() -> None:
     assert "name: AGENT_IDENTITY_TOKENS" not in rendered
     assert "key: AGENT_TOKEN" not in rendered
     assert 'azure.workload.identity/use: "true"' in rendered
+
+
+def test_mtls_agent_fallback_renders_ca_and_ingress_verification() -> None:
+    fingerprint = "a" * 64
+    rendered = _render(
+        "--set", "agentAuth.mtls.enabled=true",
+        "--set", "agentAuth.mtls.caSecretName=fsp-agent-ca",
+        "--set-string", f"agentAuth.mtls.identities.{fingerprint}=hybrid-site-01",
+        "--set", "agentControlIngress.enabled=true",
+        "--set", "agentControlIngress.host=control.example.com",
+    )
+    assert "name: AGENT_MTLS_IDENTITIES" in rendered
+    assert "name: AGENT_MTLS_CA_FILE" in rendered
+    assert "secretName: fsp-agent-ca" in rendered
+    assert (
+        'nginx.ingress.kubernetes.io/auth-tls-secret: '
+        '"fabric-shortcut-proxy/fsp-agent-ca"' in rendered
+    )
+    assert 'nginx.ingress.kubernetes.io/auth-tls-verify-client: "optional"' in rendered
+    assert (
+        'nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"'
+        in rendered
+    )
 
 
 @pytest.mark.parametrize(
@@ -337,10 +440,10 @@ def test_control_ingress_prefix_preserves_agent_route_allowlist() -> None:
         "--set", "agentControlIngress.pathPrefix=/phase3",
     )
     paths = re.findall(r'^\s+- path: "([^"]+)"$', rendered, re.MULTILINE)
-    assert len(paths) == 6
+    assert len(paths) == 7
     assert 'nginx.ingress.kubernetes.io/rewrite-target: "$1"' in rendered
     for route in (
-        "/control/register", "/control/heartbeat", "/control/task-result",
+        "/readyz", "/control/register", "/control/heartbeat", "/control/task-result",
         "/control/materialize", "/control/assignment/site-a-agent",
         "/control/snapshot/customer",
     ):

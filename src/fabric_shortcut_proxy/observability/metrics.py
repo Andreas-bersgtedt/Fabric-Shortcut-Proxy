@@ -46,6 +46,37 @@ class _SourceSqlSeries(TypedDict):
 _source_sql: dict[str, _SourceSqlSeries] = {}
 
 
+class DatasetFreshnessSample(TypedDict):
+    dataset_id: str
+    location: str
+    produced_at_ms: int | None
+    age_seconds: float | None
+    target_seconds: float
+    stale: bool
+
+
+def record_dataset_freshness(samples: list[DatasetFreshnessSample]) -> None:
+    gauges: dict[str, dict[tuple[tuple[str, str], ...], float]] = {
+        "fsp_dataset_age_seconds": {},
+        "fsp_dataset_freshness_target_seconds": {},
+        "fsp_dataset_stale": {},
+        "fsp_dataset_production_timestamp_known": {},
+    }
+    for sample in samples:
+        labels = _label_key({
+            "dataset_id": sample["dataset_id"],
+            "location": sample["location"],
+        })
+        age = sample["age_seconds"]
+        if age is not None:
+            gauges["fsp_dataset_age_seconds"][labels] = age
+        gauges["fsp_dataset_freshness_target_seconds"][labels] = sample["target_seconds"]
+        gauges["fsp_dataset_stale"][labels] = float(sample["stale"])
+        gauges["fsp_dataset_production_timestamp_known"][labels] = float(age is not None)
+    with _lock:
+        _gauges.update(gauges)
+
+
 def _label_key(labels: dict[str, str]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(labels.items()))
 
@@ -89,6 +120,7 @@ def record_assignment_rejection(location: str, reason: str) -> None:
 
 def record_agent_heartbeat_ages(
     ages_by_agent: dict[tuple[str, str], float],
+    timeouts_by_agent: dict[tuple[str, str], float] | None = None,
 ) -> None:
     with _lock:
         _gauges["fsp_agent_heartbeat_age_seconds"] = {
@@ -97,6 +129,11 @@ def record_agent_heartbeat_ages(
             ): age
             for (location, agent_id), age in ages_by_agent.items()
         }
+        if timeouts_by_agent is not None:
+            _gauges["fsp_agent_heartbeat_timeout_seconds"] = {
+                _label_key({"agent_id": agent_id, "location": location or "unknown"}): timeout
+                for (location, agent_id), timeout in timeouts_by_agent.items()
+            }
 
 
 def record_artifact_upload(size_bytes: int, duration_seconds: float) -> None:

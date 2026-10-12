@@ -289,7 +289,7 @@ class Registry:
             self._persist_locked(before)
         return RegisterResponse(
             lease_id=lease,
-            heartbeat_ms=self.heartbeat_ms,
+            heartbeat_ms=(pool.heartbeat_ms if pool and pool.heartbeat_ms else self.heartbeat_ms),
             contract_version=CONTRACT_VERSION,
         )
 
@@ -344,8 +344,13 @@ class Registry:
     # -- liveness / introspection -------------------------------------------
 
     def _is_alive(self, rec: AgentRecord, now: float) -> bool:
-        deadline = (self.heartbeat_ms / 1000.0) * self.miss_limit
-        return (now - rec.last_seen) <= deadline
+        return (now - rec.last_seen) <= self.heartbeat_timeout_seconds(rec.agent_id)
+
+    def heartbeat_timeout_seconds(self, agent_id: str) -> float:
+        pool = self.placement.pool_for_identity(agent_id)
+        heartbeat_ms = pool.heartbeat_ms if pool and pool.heartbeat_ms else self.heartbeat_ms
+        miss_limit = pool.heartbeat_miss_limit if pool and pool.heartbeat_miss_limit else self.miss_limit
+        return (heartbeat_ms / 1000.0) * miss_limit
 
     def is_alive(self, agent_id: str) -> bool:
         with self._lock:

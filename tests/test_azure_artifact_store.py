@@ -64,6 +64,8 @@ class _Blob:
         overwrite=False,
         etag=None,
         match_condition=None,
+        if_match=None,
+        if_none_match=None,
         length=None,
         metadata=None,
         **kwargs,
@@ -72,7 +74,11 @@ class _Blob:
         current = self._container.objects.get(self._key)
         if not overwrite and current is not None:
             raise _AzureError(409)
-        if etag is not None and etag != self._container.etags[self._key]:
+        if (etag is not None and etag != self._container.etags[self._key]) or (
+            if_match is not None and if_match != self._container.etags[self._key]
+        ):
+            raise _AzureError(412)
+        if if_none_match == "*" and current is not None:
             raise _AzureError(412)
         if hasattr(data, "read"):
             value = data.read()
@@ -87,6 +93,8 @@ class _Blob:
         self._container.next_etag += 1
         self._container.etags[self._key] = f'"{self._container.next_etag}"'
         self._container.last_match_condition = match_condition
+        self._container.last_if_match = if_match
+        self._container.last_if_none_match = if_none_match
 
     def get_blob_properties(self):
         try:
@@ -101,6 +109,8 @@ class _Blob:
         )
 
     def download_blob(self, *, offset=None, length=None):
+        if length is not None and offset is None:
+            raise ValueError("Offset value must not be None if length is set.")
         try:
             data = self._container.objects[self._key]
         except KeyError:
@@ -122,16 +132,18 @@ class _Blob:
         self._container.uncommitted.setdefault(self._key, {})[block_id] = bytes(data)
 
     def commit_block_list(
-        self, block_ids, *, metadata=None, etag=None, match_condition=None
+        self, block_ids, *, metadata=None, etag=None, match_condition=None,
+        if_none_match=None,
     ):
         if self._container.commit_barrier is not None:
             self._container.commit_barrier.wait(timeout=5)
         with self._container.commit_lock:
             self._container.last_match_condition = match_condition
+            self._container.last_if_none_match = if_none_match
             if (
                 getattr(match_condition, "name", "") == "IfMissing"
                 and self._key in self._container.objects
-            ):
+            ) or (if_none_match == "*" and self._key in self._container.objects):
                 raise _AzureError(409)
             blocks = self._container.uncommitted.pop(self._key)
             self._container.objects[self._key] = b"".join(
@@ -159,6 +171,8 @@ class _Container:
         self.lease_active = False
         self.lease_releases = 0
         self.last_match_condition = None
+        self.last_if_match = None
+        self.last_if_none_match = None
         self.commit_lock = threading.Lock()
         self.commit_barrier = None
 
@@ -272,10 +286,6 @@ def test_blob_store_stream_length_mismatch_does_not_commit(container):
 def test_blob_store_immutable_stream_upload_is_idempotent_and_rejects_conflicts(
     container, monkeypatch
 ):
-    _install_match_conditions(
-        monkeypatch,
-        IfMissing=types.SimpleNamespace(name="IfMissing"),
-    )
     store = _store(container)
     key = "immutable.bin"
 
@@ -283,7 +293,7 @@ def test_blob_store_immutable_stream_upload_is_idempotent_and_rejects_conflicts(
     retry = store.put_stream_if_absent(key, io.BytesIO(b"complete-object"))
 
     assert retry.etag == first.etag
-    assert container.last_match_condition.name == "IfMissing"
+    assert container.last_if_none_match == "*"
     assert container.objects[key] == b"complete-object"
     with pytest.raises(ObjectConflict, match="immutable artifact key"):
         store.put_stream_if_absent(key, io.BytesIO(b"different-object"))
@@ -293,10 +303,6 @@ def test_blob_store_immutable_stream_upload_is_idempotent_and_rejects_conflicts(
 def test_concurrent_immutable_publishers_cannot_replace_each_other(
     container, monkeypatch
 ):
-    _install_match_conditions(
-        monkeypatch,
-        IfMissing=types.SimpleNamespace(name="IfMissing"),
-    )
     store = _store(container)
     key = "concurrent-immutable.bin"
     payloads = (b"publisher-one", b"publisher-two")
@@ -472,18 +478,14 @@ def test_blob_store_listing_is_sorted_and_delimiter_aware(container):
     ]
 
 
-def test_compare_and_swap_uses_etag_match_condition(container, monkeypatch):
-    _install_match_conditions(
-        monkeypatch,
-        IfNotModified="IfNotModified",
-    )
+def test_compare_and_swap_uses_if_match_condition(container):
     store = _store(container)
 
     assert store.compare_and_swap("state.json", None, b"one")
     assert not store.compare_and_swap("state.json", None, b"two")
     assert not store.compare_and_swap("state.json", b"wrong", b"two")
     assert store.compare_and_swap("state.json", b"one", b"two")
-    assert container.last_match_condition == "IfNotModified"
+    assert container.last_if_match == '"2"'
     assert container.lease_releases == 4
 
 

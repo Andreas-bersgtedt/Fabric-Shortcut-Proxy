@@ -11,6 +11,8 @@ Reference schemas: https://iceberg.apache.org/spec/#manifests
 from __future__ import annotations
 
 import io
+import hashlib
+import json
 
 import fastavro
 
@@ -166,7 +168,13 @@ def _s3_url(object_key: str) -> str:
 def _avro_bytes(schema: dict, records: list[dict]) -> bytes:
     buf = io.BytesIO()
     parsed = fastavro.parse_schema(schema)
-    fastavro.writer(buf, parsed, records)
+    encoded = io.BytesIO()
+    for record in records:
+        fastavro.schemaless_writer(encoded, parsed, record)
+    digest = hashlib.sha256(json.dumps(schema, sort_keys=True).encode())
+    digest.update(encoded.getvalue())
+    # Retries of immutable publications must not get random Avro sync markers.
+    fastavro.writer(buf, parsed, records, sync_marker=digest.digest()[:16])
     return buf.getvalue()
 
 

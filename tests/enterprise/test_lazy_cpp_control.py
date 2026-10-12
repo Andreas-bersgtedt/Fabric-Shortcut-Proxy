@@ -205,6 +205,42 @@ async def test_control_materialize_endpoint(
             get_default_store().exists(split.object_key)
             for split in published.splits
         )
+        first_generation_keys = [split.object_key for split in published.splits]
+        acquire_generation(get_default_store(), shard_count=1)
+        second_request = asyncio.create_task(
+            c.post("/control/materialize", json={"key": snap.metadata_key})
+        )
+        for _ in range(100):
+            second_tasks = app.state.work_queue.runnable_tasks()
+            if second_tasks:
+                break
+            await asyncio.sleep(0.01)
+        assert second_tasks
+        assert all(
+            "/.fsp/staging/" not in record["task"]["output_key"]
+            for record in second_tasks
+        )
+        for record in second_tasks:
+            claimed = app.state.work_queue.claim_task(
+                record["task_id"],
+                agent_id="agent-test",
+                agent_lease_id="lease-test",
+                manager_owner="manager-test",
+                manager_fence=1,
+            )
+            result = await execute_task(claimed, "agent-test")
+            assert app.state.work_queue.accept_result(
+                result, agent_lease_id="lease-test"
+            ).ok
+        second = await asyncio.wait_for(second_request, timeout=10)
+        assert second.status_code == 200 and second.json()["ok"] is True
+        republished = app.state.work_queue.get_snapshot("sales", snap.version)
+        assert republished is not None
+        assert all(
+            split.object_key.count("/.fsp/staging/") == 1
+            for split in republished.splits
+        )
+        assert [split.object_key for split in republished.splits] != first_generation_keys
         assert abandoned_stage_key is not None
         assert not get_default_store().exists(abandoned_stage_key)
         status = await c.get("/control/work-queue")

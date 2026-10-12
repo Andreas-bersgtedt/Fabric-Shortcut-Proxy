@@ -13,7 +13,7 @@ from fabric_shortcut_proxy.iceberg.schema import iceberg_schema_dict
 from fabric_shortcut_proxy.iceberg.state_store import SnapshotState
 
 
-def build_metadata_json(snap: SnapshotState) -> bytes:
+def build_metadata_json(snap: SnapshotState, *, include_history: bool = True) -> bytes:
     """Return serialised metadata.json bytes. Result is cached on snap."""
     if snap.metadata_bytes is not None:
         return snap.metadata_bytes
@@ -32,7 +32,7 @@ def build_metadata_json(snap: SnapshotState) -> bytes:
     # include every snapshot up to and including this one, plus a snapshot-log
     # and a metadata-log referencing the earlier metadata files. Without history
     # it's a single snapshot (the known-good Fabric path).
-    if config.ICEBERG_SNAPSHOT_HISTORY:
+    if include_history and config.ICEBERG_SNAPSHOT_HISTORY:
         from fabric_shortcut_proxy.iceberg.state_store import get_snapshot_history
         history = [s for s in get_snapshot_history(snap.table.name) if s.version <= snap.version]
         if not history:

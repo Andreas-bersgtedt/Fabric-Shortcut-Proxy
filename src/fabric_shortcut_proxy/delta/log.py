@@ -145,6 +145,22 @@ def _commit_info_action(snap, operation: str) -> dict:
 def _commit_text(actions: list[dict]) -> str:
     return "".join(json.dumps(a, separators=(",", ":")) + "\n" for a in actions)
 
+def build_snapshot_commit(snap) -> bytes:
+    """Build a standalone immutable Delta table, without process-local log history."""
+    from fabric_shortcut_proxy import config
+
+    actions = [
+        _commit_info_action(snap, "CREATE TABLE"),
+        {"protocol": {"minReaderVersion": 1, "minWriterVersion": 2}},
+        _metadata_action(snap),
+    ]
+    for split in snap.splits:
+        actions.append(_add_action(
+            f"s3://{config.BUCKET_NAME}/{split.object_key}",
+            split.file_size_in_bytes or 0, split.record_count or 0, snap.watermark_ms,
+        ))
+    return _commit_text(actions).encode()
+
 
 def _register(snap) -> None:
     """Append the commit for one snapshot version (must be called in order)."""

@@ -142,10 +142,14 @@ def test_regional_serving_tls_ingress_is_scoped_to_reader_service() -> None:
         "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
         "--set", "federation.regionalServing.ingress.enabled=true",
         "--set", "federation.regionalServing.ingress.hostname=regional.example.test",
+        "--set", "networkPolicy.enabled=true",
     )
     assert "name: fsp-regional-serving-tls" in rendered
     assert 'host: "regional.example.test"' in rendered
     assert "name: fsp-regional-serving\n                port:\n                  name: s3" in rendered
+    assert "name: fsp-acme-http-solver" in rendered
+    assert 'acme.cert-manager.io/http01-solver: "true"' in rendered
+    assert "port: 8089" in rendered
 
 
 def test_base_render_contains_core_fleet_only() -> None:

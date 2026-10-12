@@ -130,7 +130,9 @@ module secondaryIngressEdge './modules/regional-ingress-edge.bicep' = {
   params: {
     location: 'northeurope'
     publicIpName: 'pip-fsp-phase4-neu'
+    domainNameLabel: 'fsp-phase4-neu-anbergst'
     aksName: secondaryAksName
+    aksSubnetNsgName: 'vnet-fspdemo-xdev-neu-snet-aks-nsg-northeurope'
     tags: tags
   }
 }

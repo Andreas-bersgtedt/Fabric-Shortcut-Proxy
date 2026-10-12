@@ -52,6 +52,10 @@ def test_federation_adds_regional_publication_storage_and_reader_identities():
     assert "pip-fsp-phase4-neu" in template
     assert "Microsoft.Network/publicIPAddresses@2024-07-01" in ingress_edge
     assert "'1'" in ingress_edge and "'2'" in ingress_edge and "'3'" in ingress_edge
+    assert "AllowFspRegionalPublicIngress" in ingress_edge
+    assert "sourceAddressPrefix: 'Internet'" in ingress_edge
+    assert "'80'" in ingress_edge and "'443'" in ingress_edge
+    assert "domainNameLabel: domainNameLabel" in ingress_edge
 
 
 def test_catalog_storage_reuses_blob_dns_and_links_hybrid_vnet():

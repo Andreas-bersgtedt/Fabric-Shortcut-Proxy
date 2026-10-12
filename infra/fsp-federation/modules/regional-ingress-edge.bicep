@@ -2,7 +2,9 @@ targetScope = 'resourceGroup'
 
 param location string
 param publicIpName string
+param domainNameLabel string
 param aksName string
+param aksSubnetNsgName string
 param tags object
 
 var networkContributorRoleId = subscriptionResourceId(
@@ -32,6 +34,9 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2024-07-01' = {
     publicIPAddressVersion: 'IPv4'
     idleTimeoutInMinutes: 4
     deleteOption: 'Detach'
+    dnsSettings: {
+      domainNameLabel: domainNameLabel
+    }
   }
 }
 
@@ -42,6 +47,28 @@ resource ingressNetworkContributor 'Microsoft.Authorization/roleAssignments@2022
     roleDefinitionId: networkContributorRoleId
     principalId: aks.identity.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+resource aksSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-07-01' existing = {
+  name: aksSubnetNsgName
+}
+
+resource publicHttpsIngress 'Microsoft.Network/networkSecurityGroups/securityRules@2024-07-01' = {
+  parent: aksSubnetNsg
+  name: 'AllowFspRegionalPublicIngress'
+  properties: {
+    access: 'Allow'
+    direction: 'Inbound'
+    priority: 500
+    protocol: 'Tcp'
+    sourceAddressPrefix: 'Internet'
+    sourcePortRange: '*'
+    destinationAddressPrefix: '*'
+    destinationPortRanges: [
+      '80'
+      '443'
+    ]
   }
 }
 

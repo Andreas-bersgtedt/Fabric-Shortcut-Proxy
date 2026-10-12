@@ -28,6 +28,12 @@ The regional Managers receive Blob Contributor only on the `catalog`,
 `published`, and `replica` containers. Each regional serving identity receives
 Blob Reader on `catalog` and its local `published` or `replica` container.
 
+The North Europe edge uses the Azure-managed hostname
+`fsp-phase4-neu-anbergst.northeurope.cloudapp.azure.com`. The existing Sweden
+public IP is retained and carries
+`fsp-phase4-swc-anbergst.swedencentral.cloudapp.azure.com`; preserve that DNS
+label when updating `pip-fspdemo-nginx`.
+
 Validate and preview from the repository root:
 
 ```powershell

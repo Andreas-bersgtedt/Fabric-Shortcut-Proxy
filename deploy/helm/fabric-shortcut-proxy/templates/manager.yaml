@@ -1,4 +1,5 @@
 {{- if .Values.manager.enabled }}
+{{- $mtls := .Values.agentAuth.mtls | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -58,9 +59,9 @@ spec:
           env:
             - name: AGENT_AUTH_MODE
               value: {{ .Values.agentAuth.mode | quote }}
-            {{- if .Values.agentAuth.mtls.enabled }}
+            {{- if ($mtls.enabled | default false) }}
             - name: AGENT_MTLS_IDENTITIES
-              value: {{ required "agentAuth.mtls.identities is required" .Values.agentAuth.mtls.identities | toJson | quote }}
+              value: {{ required "agentAuth.mtls.identities is required" $mtls.identities | toJson | quote }}
             - name: AGENT_MTLS_CA_FILE
               value: /etc/fsp-mtls/ca.crt
             {{- end }}
@@ -203,7 +204,7 @@ spec:
             - name: artifacts
               mountPath: /config
             {{- end }}
-            {{- if .Values.agentAuth.mtls.enabled }}
+            {{- if ($mtls.enabled | default false) }}
             - name: agent-mtls-ca
               mountPath: /etc/fsp-mtls
               readOnly: true
@@ -217,10 +218,10 @@ spec:
           persistentVolumeClaim:
             claimName: fsp-manager-config
         {{- end }}
-        {{- if .Values.agentAuth.mtls.enabled }}
+        {{- if ($mtls.enabled | default false) }}
         - name: agent-mtls-ca
           secret:
-            secretName: {{ required "agentAuth.mtls.caSecretName is required" .Values.agentAuth.mtls.caSecretName }}
+            secretName: {{ required "agentAuth.mtls.caSecretName is required" $mtls.caSecretName }}
             items:
               - key: ca.crt
                 path: ca.crt

@@ -234,14 +234,14 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 | #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are implemented and tested locally. | Deploy both regional instances and execute storage failover/recovery evidence. |
 | #143 | Catalog CAS is the sole federated snapshot visibility commit. Live bidirectional handover advanced fences 1→2→3, the North Europe owner published generation 6, and its stale renewal and publication authority were rejected after handback. Tests also cover both owner directions, expiry and post-commit bookkeeping failure. | Physical primary-store relocation is not implemented. |
 | #144 / #171 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Production AWS/GCP integration and live provider conformance are deferred beyond v3.1.0 to #171. Cross-object control mutations are deliberately unsupported. |
-| #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite. | Assign the API app role, attach identity, deploy the Azure-IaaS Agent and capture authentication and negative-scope evidence. Trusted mutual-TLS certificate-to-pool fallback remains unimplemented. |
-| #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch. | Deployed IAM/location/cache and no-row-egress evidence. Multi-store materialization dispatch is not implemented. |
+| #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite; deployed Azure-IaaS Agent authenticated with the `FSP.Agent` app role and no static shared secret; and live proof that its identity can write/delete only in `fsp-hybrid-staging` while catalog, published and replica writes return 403. | Trusted mutual-TLS certificate-to-pool fallback remains unimplemented. |
+| #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch; actual regional reader identities can read assigned objects/catalog but receive 403 on writes; catalog and reader workloads mount minimized Secrets with no `DB_URL`; NetworkPolicies expose no SQL egress; catalog storage contains JSON metadata plus an empty lease-lock blob and no Parquet; and a live out-of-boundary replica policy returns `residency_policy_violation`. | Multi-store materialization dispatch is not implemented, but it is outside the current single-primary routing contract. |
 | #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, actual Fabric reads through both regional endpoints, a measured Sweden-loss recovery read in 23.478 seconds, and live proof that a lagging replica serves the older complete generation while the unadvertised generation returns 404. | Capture sustained replication timing under the agreed acceptance load. Portable receipts are needed only if verification moves to an independent worker. |
 | #148 | Per-pool renewal, durable production timestamps, running Manager freshness/status/alerts, catalog-backed serving, retained last-good reads during live replica disconnection, a deployed Prometheus alert firing after the configured threshold and hold, 0.720-second reconciliation catch-up after reconnect, a fresh recovery generation, and alert resolution. | Acceptance criteria complete; production monitoring ownership and alert routing remain an operational rollout decision. |
 
 Phase 4 is not at exit criteria until the Azure resources and workloads above
 are deployed and exercised. The Azure-IaaS simulated on-premises workload has not yet produced live
-authentication evidence, and sustained replication timing under acceptance
+mutual-TLS fallback evidence, and sustained replication timing under acceptance
 load has not yet been accepted. Production
 AWS/GCP support is outside Phase 4 and v3.1.0 and is tracked by #171.
 
@@ -278,6 +278,25 @@ Fabric read it through North Europe, and the alert resolved to inactive. The
 temporary Prometheus/Alertmanager release, copied auth Secret and monitoring
 namespace were removed; the 300-second target and replica egress were restored.
 
+On 2026-10-12, the deployed Sweden and North Europe reader identities read
+their assigned generation-10 object and catalog record, then received Azure
+403 responses for attempted writes. Their broad `fsp-source` mounts were
+replaced with S3-only reader Secrets; the catalog uses an operator-auth-only
+Secret. Neither workload contains `DB_URL`, and their egress policies permit
+only private Blob endpoints and Entra HTTPS ranges, not SQL. The catalog held
+one 12,478-byte JSON dataset record plus the empty artifact-store lease lock,
+with no Parquet bytes. Mutating the deployed policy model so the replica moved
+to `aws:us-east-1` raised `residency_policy_violation`.
+
+The private Azure-IaaS VM identity received the `FSP.Agent` application role
+and registered `hybrid-site-01` into exactly the `hybrid-site` pool through
+Entra. Its service environment contains no Agent token, client secret or S3
+static credential. Using an IMDS token, it listed, wrote and deleted an object
+in `fsp-hybrid-staging` (200/201/202) while writes to catalog, published and
+replica returned 403. Credentials exposed during validation were rotated in
+both clusters and both encrypted Fabric gateway connections; both Fabric
+shortcuts were revalidated after rotation.
+
 The renewal-startup, expired-owner and immutable Avro retry defects were
 reproduced by failing tests before implementation. Local acceptance tests cover
 CAS handover races, queue restart, post-commit bookkeeping failure, retained
@@ -293,8 +312,8 @@ parsing passed; Bicep retains a `no-hardcoded-env-urls` warning. No security
 scan of the final infrastructure changes is claimed. Live Azure deployment,
 regional Fabric reads, bidirectional handover and Sweden-loss recovery evidence
 are recorded above; hybrid authentication, negative-scope, disconnection,
-storage failover and sustained replication-timing-under-load evidence remain
-open.
+storage failover, mutual-TLS fallback and sustained
+replication-timing-under-load evidence remain open.
 
 ## Deployment acceptance sequence
 

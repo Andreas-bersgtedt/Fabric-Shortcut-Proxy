@@ -231,7 +231,7 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 
 | Issue | Implemented and tested here | Remaining exit evidence or integration |
 |---|---|---|
-| #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are implemented and tested locally. | Deploy both regional instances and execute storage failover/recovery evidence. |
+| #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are deployed. A planned Sweden Central→Sweden South failover and planned failback preserved the exact 12,478-byte catalog hash, generation pointers and fencing. Private Endpoints were recreated after each swap, both Fabric shortcuts were verified, RA-GZRS was restored in Sweden Central, and stale-owner renewal/publication remained rejected at fence 6. | Acceptance criteria complete. |
 | #143 | Catalog CAS is the sole federated snapshot visibility commit. Live bidirectional handover advanced fences 1→2→3, the North Europe owner published generation 6, and its stale renewal and publication authority were rejected after handback. Tests also cover both owner directions, expiry and post-commit bookkeeping failure. | Physical primary-store relocation is not implemented. |
 | #144 / #171 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Production AWS/GCP integration and live provider conformance are deferred beyond v3.1.0 to #171. Cross-object control mutations are deliberately unsupported. |
 | #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite; deployed Azure-IaaS Agent authenticated with the `FSP.Agent` app role and no static shared secret; live proof that its identity can write/delete only in `fsp-hybrid-staging` while catalog, published and replica writes return 403; and a deployed mTLS fallback that re-verifies the CA-signed certificate at Manager, maps its SHA-256 fingerprint to `hybrid-site-01` and exactly the `hybrid-site` pool, while rejecting missing, unknown and Agent-mismatched certificates. | Acceptance criteria complete. |
@@ -240,8 +240,8 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 | #148 | Per-pool renewal, durable production timestamps, running Manager freshness/status/alerts, catalog-backed serving, retained last-good reads during live replica disconnection, a deployed Prometheus alert firing after the configured threshold and hold, 0.720-second reconciliation catch-up after reconnect, a fresh recovery generation, and alert resolution. | Acceptance criteria complete; production monitoring ownership and alert routing remain an operational rollout decision. |
 
 Phase 4 is not at exit criteria until the Azure resources and workloads above
-are deployed and exercised. Storage failover and sustained replication timing under acceptance load have
-not yet been accepted. Production
+are deployed and exercised. Sustained replication timing under acceptance load has not yet been accepted.
+Production
 AWS/GCP support is outside Phase 4 and v3.1.0 and is tracked by #171.
 
 On 2026-10-12, Fabric workspace `Demo_Dev`, lakehouse `bronze`, read the same
@@ -309,6 +309,21 @@ unknown CA-signed certificate each returned 401. The normal Entra service
 remained active with 200 heartbeats. Local CA private and unknown-client key
 material were deleted after the drill.
 
+On 2026-10-12, both Managers were quiesced and Azure last-sync advanced 43.521
+seconds beyond the final write. Planned failover moved the RA-GZRS account from
+Sweden Central to Sweden South in 1,037.050 seconds. The storage control plane
+remained healthy, but Private Endpoints had to be recreated against the new
+primary; end-to-end reader/Fabric recovery took 1,392.891 seconds. The catalog
+hash remained
+`cb758c7ecbb03beebcc28364e0889af424701e911ce29a7c4832c9c7e6610e4b`.
+Planned failback completed in 794.844 seconds, and Private Endpoint recreation
+restored both regional readers after 1,261.414 seconds. The account returned to
+`Standard_RAGZRS` with Sweden Central primary and Sweden South secondary,
+both regions available and failover-ready. Managers resumed with
+`manager-swc` as the single owner at fence 6; the stale North Europe owner was
+rejected for renewal and publication, and both Fabric shortcuts returned the
+generation-10 object hash.
+
 The renewal-startup, expired-owner and immutable Avro retry defects were
 reproduced by failing tests before implementation. Local acceptance tests cover
 CAS handover races, queue restart, post-commit bookkeeping failure, retained
@@ -324,8 +339,7 @@ parsing passed; Bicep retains a `no-hardcoded-env-urls` warning. No security
 scan of the final infrastructure changes is claimed. Live Azure deployment,
 regional Fabric reads, bidirectional handover and Sweden-loss recovery evidence
 are recorded above; hybrid authentication, negative-scope, disconnection,
-storage failover and sustained replication-timing-under-load evidence remain
-open.
+sustained replication-timing-under-load evidence remains open.
 
 ## Deployment acceptance sequence
 

@@ -124,6 +124,17 @@ module secondaryReaderIdentity './modules/regional-reader-identity.bicep' = {
   }
 }
 
+module secondaryIngressEdge './modules/regional-ingress-edge.bicep' = {
+  name: 'fsp-phase4-regional-ingress-secondary'
+  scope: resourceGroup(targetSubscriptionId, secondaryResourceGroupName)
+  params: {
+    location: 'northeurope'
+    publicIpName: 'pip-fsp-phase4-neu'
+    aksName: secondaryAksName
+    tags: tags
+  }
+}
+
 module catalogStorage './modules/catalog-storage.bicep' = {
   name: 'fsp-phase4-catalog-storage'
   scope: resourceGroup(targetSubscriptionId, primaryResourceGroupName)
@@ -281,6 +292,8 @@ output replicaStorageAccountName string = replicaStorage.outputs.storageAccountN
 output replicaContainerId string = replicaStorage.outputs.replicaContainerId
 output primaryReaderClientId string = primaryReaderIdentity.outputs.clientId
 output secondaryReaderClientId string = secondaryReaderIdentity.outputs.clientId
+output secondaryIngressPublicIpName string = secondaryIngressEdge.outputs.publicIpName
+output secondaryIngressPublicIpAddress string = secondaryIngressEdge.outputs.ipAddress
 output hybridVmVnetId string = hybridVmVnetId
 output primaryPrivateEndpointId string = primaryPrivateEndpoint.outputs.privateEndpointId
 output secondaryPrivateEndpointId string = secondaryPrivateEndpoint.outputs.privateEndpointId

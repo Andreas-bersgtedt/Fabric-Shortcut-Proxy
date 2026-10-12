@@ -165,6 +165,17 @@ federation:
     artifactStoreAccountUrl: ""
     artifactStoreContainer: ""
     egressAllowList: []
+    ingress:
+      enabled: false
+      className: nginx
+      hostname: ""
+      tlsSecretName: fsp-regional-serving-tls
+      annotations: {}
+      clusterIssuer:
+        name: letsencrypt-prod
+        create: false
+        email: ""
+        server: https://acme-v02.api.letsencrypt.org/directory
     resources:
       requests:
         cpu: 100m

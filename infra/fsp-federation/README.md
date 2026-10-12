@@ -10,6 +10,8 @@ Phase 4 catalog without recreating either AKS cluster or VNet:
   Managers, read-only regional serving identities, and the hybrid-site identity;
 - workload-identity federation for a dedicated `fsp-regional-reader` service
   account in each AKS cluster;
+- a zone-redundant North Europe public IP with Network Contributor scoped to
+  that IP for the existing AKS control-plane identity;
 - Blob private endpoints in Sweden Central and North Europe;
 - links from both existing AKS VNets and the hybrid VM VNet to the existing
   `privatelink.blob.core.windows.net` zone in `fabricproxy`; and

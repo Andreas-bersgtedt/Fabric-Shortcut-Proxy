@@ -36,6 +36,7 @@ def test_federation_adds_regional_publication_storage_and_reader_identities():
     catalog = read("infra/fsp-federation/modules/catalog-storage.bicep")
     replica = read("infra/fsp-federation/modules/replica-storage.bicep")
     reader_identity = read("infra/fsp-federation/modules/regional-reader-identity.bicep")
+    ingress_edge = read("infra/fsp-federation/modules/regional-ingress-edge.bicep")
 
     assert "name: 'published'" in catalog
     assert "name: 'replica'" in replica
@@ -48,6 +49,9 @@ def test_federation_adds_regional_publication_storage_and_reader_identities():
     assert "regionalReaderServiceAccountName" in template
     assert "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1" in catalog
     assert "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1" in replica
+    assert "pip-fsp-phase4-neu" in template
+    assert "Microsoft.Network/publicIPAddresses@2024-07-01" in ingress_edge
+    assert "'1'" in ingress_edge and "'2'" in ingress_edge and "'3'" in ingress_edge
 
 
 def test_catalog_storage_reuses_blob_dns_and_links_hybrid_vnet():

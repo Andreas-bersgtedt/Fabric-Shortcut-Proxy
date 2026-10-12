@@ -128,6 +128,26 @@ def test_regional_serving_rejects_unassigned_buckets() -> None:
     assert "federation.regionalServing.buckets is required" in result.stderr
 
 
+def test_regional_serving_tls_ingress_is_scoped_to_reader_service() -> None:
+    rendered = _render(
+        "--set", "federation.regionalServing.enabled=true",
+        "--set", "federation.regionalServing.endpointId=primary",
+        "--set", "federation.regionalServing.storageProfile=published",
+        "--set", "federation.regionalServing.buckets.sales=source::sales",
+        "--set", "federation.regionalServing.serviceAccountName=regional-reader",
+        "--set", "federation.regionalServing.clientId=00000000-0000-0000-0000-000000000001",
+        "--set", "federation.regionalServing.readerSecretName=reader-sigv4",
+        "--set", "federation.regionalServing.artifactStoreAccountUrl=https://published.blob.core.windows.net",
+        "--set", "federation.regionalServing.artifactStoreContainer=published",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "federation.regionalServing.ingress.enabled=true",
+        "--set", "federation.regionalServing.ingress.hostname=regional.example.test",
+    )
+    assert "name: fsp-regional-serving-tls" in rendered
+    assert 'host: "regional.example.test"' in rendered
+    assert "name: fsp-regional-serving\n                port:\n                  name: s3" in rendered
+
+
 def test_base_render_contains_core_fleet_only() -> None:
     rendered = _render()
     counts = _kind_counts(rendered)

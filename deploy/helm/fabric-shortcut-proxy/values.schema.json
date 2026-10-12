@@ -337,6 +337,7 @@
             "readerSecretName": { "type": "string" },
             "artifactStoreAccountUrl": { "type": "string" },
             "artifactStoreContainer": { "type": "string" },
+            "ingress": { "type": "object" },
             "egressAllowList": { "$ref": "#/properties/federation/properties/catalog/properties/egressAllowList" },
             "resources": { "$ref": "#/definitions/resources" }
           }

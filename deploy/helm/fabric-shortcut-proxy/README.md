@@ -155,6 +155,8 @@ Agent-credentials production criterion.
   `buckets`, `artifactStoreAccountUrl`, and `artifactStoreContainer`.
   `serviceAccountName` and `clientId` create an annotated workload identity with
   **Storage Blob Data Reader** on both local publications and catalog records.
+  Set `regionalServing.ingress.enabled`, `hostname`, and issuer settings to
+  expose only the regional S3 reader through TLS ingress.
   Use a separate identity from the publishing Manager. `readerSecretName` holds
   only `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`, not source credentials.
   The workload uses `CONTROL_PORT` (default chart port 9401), a read-only root

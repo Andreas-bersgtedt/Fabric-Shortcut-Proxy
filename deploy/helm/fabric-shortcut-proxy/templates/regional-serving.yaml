@@ -126,6 +126,72 @@ spec:
     - name: s3
       port: {{ $serving.port }}
       targetPort: s3
+{{- if $serving.ingress.enabled }}
+{{- $ingress := $serving.ingress }}
+{{- if $ingress.clusterIssuer.create }}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ $ingress.clusterIssuer.name }}
+spec:
+  acme:
+    email: {{ required "federation.regionalServing.ingress.clusterIssuer.email is required" $ingress.clusterIssuer.email | quote }}
+    server: {{ $ingress.clusterIssuer.server | quote }}
+    privateKeySecretRef:
+      name: {{ printf "%s-account-key" $ingress.clusterIssuer.name }}
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ $ingress.className }}
+{{- end }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fsp-regional-serving-tls
+  namespace: {{ include "fsp.namespace" . }}
+spec:
+  secretName: {{ $ingress.tlsSecretName }}
+  privateKey:
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ $ingress.clusterIssuer.name }}
+    kind: ClusterIssuer
+  dnsNames:
+    - {{ required "federation.regionalServing.ingress.hostname is required" $ingress.hostname | quote }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fsp-regional-serving
+  namespace: {{ include "fsp.namespace" . }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ $ingress.clusterIssuer.name | quote }}
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    {{- with $ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $ingress.className }}
+  tls:
+    - hosts:
+        - {{ $ingress.hostname | quote }}
+      secretName: {{ $ingress.tlsSecretName }}
+  rules:
+    - host: {{ $ingress.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fsp-regional-serving
+                port:
+                  name: s3
+{{- end }}
 {{- if .Values.networkPolicy.enabled }}
 ---
 apiVersion: networking.k8s.io/v1

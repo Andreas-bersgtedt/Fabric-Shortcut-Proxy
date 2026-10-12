@@ -108,6 +108,7 @@ def test_linux_installer_checks_private_readiness_and_async_sqlite():
     assert "ManagedIdentityCredential(client_id=os.environ" in installer
     assert 'os.environ["STORAGE_ACCOUNT"] + ".blob.core.windows.net"' in installer
     assert 'db_url="sqlite+aiosqlite:////var/lib/fsp/hybrid-site.db"' in installer
+    assert "REQUIRE_SIGV4=0" in installer
     assert "await connection.execute(text(\"SELECT 1\"))" in installer
     assert "agent_registered_ok" in installer
     assert "FSP_HYBRID_INSTALL_READY agent_id=" in installer

@@ -109,6 +109,8 @@ class _Blob:
         )
 
     def download_blob(self, *, offset=None, length=None):
+        if length is not None and offset is None:
+            raise ValueError("Offset value must not be None if length is set.")
         try:
             data = self._container.objects[self._key]
         except KeyError:

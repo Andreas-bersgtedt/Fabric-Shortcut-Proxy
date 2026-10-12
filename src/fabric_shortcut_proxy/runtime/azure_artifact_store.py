@@ -297,7 +297,7 @@ class AzureBlobArtifactStore(ArtifactStore):
             raise ValueError("chunk_size must be >= 1")
         k = _normalize_key(key)
         options = {}
-        if offset:
+        if offset or length is not None:
             options["offset"] = offset
         if length is not None:
             options["length"] = length

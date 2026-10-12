@@ -1,9 +1,9 @@
 # Federated publication runtime
 
 Phase 4 is tracked by #141. Catalog-backed publication, verified replication
-and regional S3 serving are opt-in runtime paths. They have local acceptance
-coverage, but the Azure/Fabric production topology has not been deployed or
-accepted. Existing non-federated behavior remains the default.
+and regional S3 serving are opt-in runtime paths. The Azure/Fabric acceptance
+topology was deployed and exercised on 2026-10-12. Existing non-federated
+behavior remains the default.
 
 ## Data stores and control stores
 
@@ -236,13 +236,12 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 | #144 / #171 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Production AWS/GCP integration and live provider conformance are deferred beyond v3.1.0 to #171. Cross-object control mutations are deliberately unsupported. |
 | #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite; deployed Azure-IaaS Agent authenticated with the `FSP.Agent` app role and no static shared secret; live proof that its identity can write/delete only in `fsp-hybrid-staging` while catalog, published and replica writes return 403; and a deployed mTLS fallback that re-verifies the CA-signed certificate at Manager, maps its SHA-256 fingerprint to `hybrid-site-01` and exactly the `hybrid-site` pool, while rejecting missing, unknown and Agent-mismatched certificates. | Acceptance criteria complete. |
 | #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch; actual regional reader identities can read assigned objects/catalog but receive 403 on writes; catalog and reader workloads mount minimized Secrets with no `DB_URL`; NetworkPolicies expose no SQL egress; catalog storage contains JSON metadata plus an empty lease-lock blob and no Parquet; and a live out-of-boundary replica policy returns `residency_policy_violation`. | Multi-store materialization dispatch is not implemented, but it is outside the current single-primary routing contract. |
-| #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, actual Fabric reads through both regional endpoints, a measured Sweden-loss recovery read in 23.478 seconds, and live proof that a lagging replica serves the older complete generation while the unadvertised generation returns 404. | Capture sustained replication timing under the agreed acceptance load. Portable receipts are needed only if verification moves to an independent worker. |
+| #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, actual Fabric reads through both regional endpoints, a measured Sweden-loss recovery read in 23.478 seconds, and live proof that a lagging replica serves the older complete generation while the unadvertised generation returns 404. A 15-generation SQL-backed run completed with zero failures, verified every advertised object and manifest, exposed no intermediate pointer, and recorded a 15.310-second maximum against the 60-second SLO. | Acceptance criteria complete. Portable receipts are needed only if verification moves to an independent worker. |
 | #148 | Per-pool renewal, durable production timestamps, running Manager freshness/status/alerts, catalog-backed serving, retained last-good reads during live replica disconnection, a deployed Prometheus alert firing after the configured threshold and hold, 0.720-second reconciliation catch-up after reconnect, a fresh recovery generation, and alert resolution. | Acceptance criteria complete; production monitoring ownership and alert routing remain an operational rollout decision. |
 
-Phase 4 is not at exit criteria until the Azure resources and workloads above
-are deployed and exercised. Sustained replication timing under acceptance load has not yet been accepted.
-Production
-AWS/GCP support is outside Phase 4 and v3.1.0 and is tracked by #171.
+The deployed Azure/Fabric topology meets the Phase 4 exit criteria listed
+above. Production AWS/GCP support is outside Phase 4 and v3.1.0 and is tracked
+by #171.
 
 On 2026-10-12, Fabric workspace `Demo_Dev`, lakehouse `bronze`, read the same
 92,314-byte Parquet object through `https://fsp-swc.x-dev.online` and
@@ -324,22 +323,41 @@ both regions available and failover-ready. Managers resumed with
 rejected for renewal and publication, and both Fabric shortcuts returned the
 generation-10 object hash.
 
+On 2026-10-12, the sustained replication run published 15 consecutive
+SQL-backed generations in 316.657 seconds, or 2.842 generations per minute.
+Replication latency was 2.065 seconds minimum, 11.338 seconds median, 15.310
+seconds p95 and 15.310 seconds maximum against a 60-second SLO. Every replica
+pointer advance was followed by streaming SHA-256 and size verification of
+all three advertised objects plus exact manifest verification. The run
+recorded zero failures and zero unexpected intermediate pointers. Two defects
+found by earlier load attempts were fixed before the accepted run: publication
+now retains each split's canonical object key instead of nesting prior staging
+paths, and queue read-after-write verification retries transient stale reads
+for up to 200 milliseconds. Both regional workloads ran image digest
+`sha256:3bfc303585f57e7b7e904573ae65a043f5cd493893c3cbb70245c2385d36ccc5`.
+After the run, both Fabric shortcuts returned the current generation-39
+92,314-byte Parquet object with SHA-256
+`b5e731463c3ea890b692d55c805e3bdaccec9318886d35d16c2b683ed5864dd1`.
+The hybrid Agent remained active with an 8.0-second heartbeat age, and ACR
+public network access was disabled with the default network action set to
+deny.
+
 The renewal-startup, expired-owner and immutable Avro retry defects were
 reproduced by failing tests before implementation. Local acceptance tests cover
 CAS handover races, queue restart, post-commit bookkeeping failure, retained
 staging, verified replication recovery, immutable Iceberg/Delta references,
 signed S3 reads, corrupt-replica rejection and Helm rendering. These results
 are local evidence, not deployed acceptance.
-The integrated full regression passed with **1,527 passed and 53 skipped**.
+The final integrated regression passed with **1,535 passed and 53 skipped**.
 After the final reader workload-identity fallback and lifecycle ordering
 changes, focused runtime, residency, identity, hybrid automation and Helm
 coverage passed with **102 passed and 1 skipped**. Ruff's `F` checks and
 `git diff --check` passed. Hybrid Bicep compilation, Bash syntax and PowerShell
 parsing passed; Bicep retains a `no-hardcoded-env-urls` warning. No security
-scan of the final infrastructure changes is claimed. Live Azure deployment,
-regional Fabric reads, bidirectional handover and Sweden-loss recovery evidence
-are recorded above; hybrid authentication, negative-scope, disconnection,
-sustained replication-timing-under-load evidence remains open.
+scan of the final infrastructure changes is claimed. CI-equivalent Ruff `F` checks and both regional Helm lints also passed. Live
+Azure deployment, regional Fabric reads, bidirectional handover, Sweden-loss
+recovery, hybrid authentication, negative-scope, disconnection and sustained
+replication timing evidence are recorded above.
 
 ## Deployment acceptance sequence
 

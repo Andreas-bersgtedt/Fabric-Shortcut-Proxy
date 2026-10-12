@@ -234,15 +234,14 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 | #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are implemented and tested locally. | Deploy both regional instances and execute storage failover/recovery evidence. |
 | #143 | Catalog CAS is the sole federated snapshot visibility commit. Live bidirectional handover advanced fences 1→2→3, the North Europe owner published generation 6, and its stale renewal and publication authority were rejected after handback. Tests also cover both owner directions, expiry and post-commit bookkeeping failure. | Physical primary-store relocation is not implemented. |
 | #144 / #171 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Production AWS/GCP integration and live provider conformance are deferred beyond v3.1.0 to #171. Cross-object control mutations are deliberately unsupported. |
-| #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite; deployed Azure-IaaS Agent authenticated with the `FSP.Agent` app role and no static shared secret; and live proof that its identity can write/delete only in `fsp-hybrid-staging` while catalog, published and replica writes return 403. | Trusted mutual-TLS certificate-to-pool fallback remains unimplemented. |
+| #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite; deployed Azure-IaaS Agent authenticated with the `FSP.Agent` app role and no static shared secret; live proof that its identity can write/delete only in `fsp-hybrid-staging` while catalog, published and replica writes return 403; and a deployed mTLS fallback that re-verifies the CA-signed certificate at Manager, maps its SHA-256 fingerprint to `hybrid-site-01` and exactly the `hybrid-site` pool, while rejecting missing, unknown and Agent-mismatched certificates. | Acceptance criteria complete. |
 | #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch; actual regional reader identities can read assigned objects/catalog but receive 403 on writes; catalog and reader workloads mount minimized Secrets with no `DB_URL`; NetworkPolicies expose no SQL egress; catalog storage contains JSON metadata plus an empty lease-lock blob and no Parquet; and a live out-of-boundary replica policy returns `residency_policy_violation`. | Multi-store materialization dispatch is not implemented, but it is outside the current single-primary routing contract. |
 | #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, actual Fabric reads through both regional endpoints, a measured Sweden-loss recovery read in 23.478 seconds, and live proof that a lagging replica serves the older complete generation while the unadvertised generation returns 404. | Capture sustained replication timing under the agreed acceptance load. Portable receipts are needed only if verification moves to an independent worker. |
 | #148 | Per-pool renewal, durable production timestamps, running Manager freshness/status/alerts, catalog-backed serving, retained last-good reads during live replica disconnection, a deployed Prometheus alert firing after the configured threshold and hold, 0.720-second reconciliation catch-up after reconnect, a fresh recovery generation, and alert resolution. | Acceptance criteria complete; production monitoring ownership and alert routing remain an operational rollout decision. |
 
 Phase 4 is not at exit criteria until the Azure resources and workloads above
-are deployed and exercised. The Azure-IaaS simulated on-premises workload has not yet produced live
-mutual-TLS fallback evidence, and sustained replication timing under acceptance
-load has not yet been accepted. Production
+are deployed and exercised. Storage failover and sustained replication timing under acceptance load have
+not yet been accepted. Production
 AWS/GCP support is outside Phase 4 and v3.1.0 and is tracked by #171.
 
 On 2026-10-12, Fabric workspace `Demo_Dev`, lakehouse `bronze`, read the same
@@ -297,6 +296,19 @@ replica returned 403. Credentials exposed during validation were rotated in
 both clusters and both encrypted Fabric gateway connections; both Fabric
 shortcuts were revalidated after rotation.
 
+The same hybrid site also exercised the optional mTLS fallback while Entra
+remained the preferred, continuously heartbeating path. ingress-nginx validated
+a short-lived client certificate against `fsp-agent-client-ca` and forwarded
+it to Manager; Manager independently revalidated its CA signature and validity,
+computed fingerprint
+`a96f55870e5f24e09f8355712755fc40b4958f2fd2f5ce338731b5757894bead`,
+and mapped it to `hybrid-site-01`. A mapped certificate with matching Agent ID
+reached the materialization handler (404 for the deliberately unknown key).
+No certificate, the mapped certificate with a different Agent ID, and an
+unknown CA-signed certificate each returned 401. The normal Entra service
+remained active with 200 heartbeats. Local CA private and unknown-client key
+material were deleted after the drill.
+
 The renewal-startup, expired-owner and immutable Avro retry defects were
 reproduced by failing tests before implementation. Local acceptance tests cover
 CAS handover races, queue restart, post-commit bookkeeping failure, retained
@@ -312,8 +324,8 @@ parsing passed; Bicep retains a `no-hardcoded-env-urls` warning. No security
 scan of the final infrastructure changes is claimed. Live Azure deployment,
 regional Fabric reads, bidirectional handover and Sweden-loss recovery evidence
 are recorded above; hybrid authentication, negative-scope, disconnection,
-storage failover, mutual-TLS fallback and sustained
-replication-timing-under-load evidence remain open.
+storage failover and sustained replication-timing-under-load evidence remain
+open.
 
 ## Deployment acceptance sequence
 

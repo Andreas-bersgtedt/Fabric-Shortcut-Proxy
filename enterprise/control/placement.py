@@ -354,6 +354,19 @@ class PlacementConfig:
         for policy in (*self.connections.values(), *self.tables.values()):
             self.validate_dispatch(policy)
 
+    def bind_serving_store(self, profile_id: str, provider: str, endpoint_id: str) -> None:
+        profile = self.stores.get(profile_id)
+        endpoint = self.serving_endpoints.get(endpoint_id)
+        if (
+            profile is None or profile.provider != provider
+            or endpoint is None or endpoint.storage_profile != profile_id
+            or endpoint.location != profile.location
+        ):
+            raise ResidencyPolicyViolation("serving store must match its declared provider and endpoint")
+        for connection_id, policy in self.connections.items():
+            self.validate_residency(policy, connection_id=connection_id)
+        self.active_storage_profile = profile_id
+
     def validate_dispatch(self, policy: MaterializerPolicy, *, connection_id: str = "") -> None:
         self.validate_residency(policy, connection_id=connection_id)
         if not policy.residency_locations:

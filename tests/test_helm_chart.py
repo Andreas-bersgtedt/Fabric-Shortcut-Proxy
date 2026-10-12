@@ -77,6 +77,54 @@ def test_manager_binds_operator_artifact_profile() -> None:
     assert 'name: FSP_ARTIFACT_STORE_PROFILE\n              value: "eu-published"' in rendered
 
 
+def test_federation_renders_catalog_and_regional_manager_identity() -> None:
+    rendered = _render(
+        "--set", "federation.enabled=true",
+        "--set", "federation.deployCatalog=true",
+        "--set", "federation.managerId=manager-swc",
+        "--set", "federation.managerLocation=azure:swedencentral",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "manager.artifactStoreProfile=swc-published",
+    )
+    assert "name: fsp-global-catalog" in rendered
+    assert "python\n            - -m\n            - enterprise.catalog" in rendered
+    assert 'name: FSP_REGIONAL_MANAGER_ID\n              value: "manager-swc"' in rendered
+    assert 'name: FSP_CATALOG_OWNER_LEASE_MS\n              value: "60000"' in rendered
+    assert 'name: FSP_CATALOG_STORE_CONTAINER\n              value: "catalog"' in rendered
+
+
+def test_regional_serving_renders_read_only_identity_and_no_source_secret() -> None:
+    rendered = _render(
+        "--set", "federation.regionalServing.enabled=true",
+        "--set", "federation.regionalServing.endpointId=neu",
+        "--set", "federation.regionalServing.storageProfile=neu-replica",
+        "--set", "federation.regionalServing.buckets.sales=source::sales",
+        "--set", "federation.regionalServing.serviceAccountName=regional-reader",
+        "--set", "federation.regionalServing.readerSecretName=reader-sigv4",
+        "--set", "federation.regionalServing.artifactStoreAccountUrl=https://replica.blob.core.windows.net",
+        "--set", "federation.regionalServing.artifactStoreContainer=published",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "networkPolicy.enabled=true",
+    )
+    section = "\n".join(
+        document for document in rendered.split("\n---")
+        if "# Source: fabric-shortcut-proxy/templates/regional-serving.yaml" in document
+    )
+    assert "enterprise.regional_serving" in section
+    assert "serviceAccountName: regional-reader" in section
+    assert "name: reader-sigv4" in section
+    assert "name: fsp-source" not in section
+    assert "name: FSP_REGIONAL_SERVING_ENDPOINT_ID" in section
+    assert "readOnlyRootFilesystem: true" in section
+    assert "fsp-regional-serving" in _network_policy_names(rendered)
+
+
+def test_regional_serving_rejects_unassigned_buckets() -> None:
+    result = _helm("template", "fsp", str(CHART), "--set",
+                   "federation.regionalServing.enabled=true", expect_success=False)
+    assert "federation.regionalServing.buckets is required" in result.stderr
+
+
 def test_base_render_contains_core_fleet_only() -> None:
     rendered = _render()
     counts = _kind_counts(rendered)

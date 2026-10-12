@@ -11,6 +11,7 @@
     "workloadIdentity",
     "storage",
     "manager",
+    "federation",
     "materializer",
     "cppAgent",
     "nginx",
@@ -286,6 +287,109 @@
         }
       ]
     },
+    "federation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "deployCatalog",
+        "managerId",
+        "managerLocation",
+        "ownerLeaseMs",
+        "renewIntervalSeconds",
+        "catalog"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "deployCatalog": { "type": "boolean" },
+        "managerId": { "type": "string", "maxLength": 128 },
+        "managerLocation": { "type": "string", "maxLength": 128 },
+        "ownerLeaseMs": { "type": "integer", "minimum": 1000 },
+        "renewIntervalSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "replicaStores": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["account_url", "container_name", "auth_mode"],
+            "properties": {
+              "account_url": { "type": "string", "pattern": "^https://" },
+              "container_name": { "type": "string", "minLength": 1 },
+              "auth_mode": { "enum": ["managed_identity", "workload_identity"] },
+              "client_id": { "type": "string" },
+              "tenant_id": { "type": "string" },
+              "token_file": { "type": "string" }
+            }
+          }
+        },
+        "regionalServing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "endpointId": { "type": "string" },
+            "storageProfile": { "type": "string" },
+            "buckets": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } },
+            "replicas": { "type": "integer", "minimum": 1 },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "serviceAccountName": { "type": "string" },
+            "readerSecretName": { "type": "string" },
+            "artifactStoreAccountUrl": { "type": "string" },
+            "artifactStoreContainer": { "type": "string" },
+            "egressAllowList": { "$ref": "#/properties/federation/properties/catalog/properties/egressAllowList" },
+            "resources": { "$ref": "#/definitions/resources" }
+          }
+        },
+        "catalog": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "replicas",
+            "port",
+            "artifactStoreAccountUrl",
+            "artifactStoreContainer",
+            "artifactStoreAuthMode",
+            "artifactStoreClientId",
+            "artifactStoreTenantId",
+            "artifactStoreTokenFile",
+            "egressAllowList",
+            "resources"
+          ],
+          "properties": {
+            "replicas": { "type": "integer", "minimum": 1 },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "artifactStoreAccountUrl": { "type": "string" },
+            "artifactStoreContainer": { "type": "string", "minLength": 1 },
+            "artifactStoreAuthMode": {
+              "enum": ["managed_identity", "workload_identity", "default"]
+            },
+            "artifactStoreClientId": { "type": "string" },
+            "artifactStoreTenantId": { "type": "string" },
+            "artifactStoreTokenFile": { "type": "string" },
+            "egressAllowList": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["cidr", "ports"],
+                "properties": {
+                  "cidr": { "type": "string", "minLength": 1 },
+                  "ports": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    }
+                  }
+                }
+              }
+            },
+            "resources": { "$ref": "#/definitions/resources" }
+          }
+        }
+      }
+    },
     "materializer": {
       "allOf": [
         { "$ref": "#/definitions/workload" },
@@ -477,19 +581,20 @@
         "volumeHandle": { "type": "string" }
       }
     },
+    "resources": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "type": "object" },
+        "limits": { "type": "object" }
+      }
+    },
     "workload": {
       "type": "object",
       "required": ["replicas", "resources"],
       "properties": {
         "replicas": { "type": "integer", "minimum": 1 },
-        "resources": {
-          "type": "object",
-          "required": ["requests", "limits"],
-          "properties": {
-            "requests": { "type": "object" },
-            "limits": { "type": "object" }
-          }
-        }
+        "resources": { "$ref": "#/definitions/resources" }
       }
     }
   }

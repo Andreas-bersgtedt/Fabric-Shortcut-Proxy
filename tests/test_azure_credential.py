@@ -74,6 +74,19 @@ def test_workload_identity_uses_federated_token_file(monkeypatch):
     )
     assert credential.args == ("tenant", "client", "/var/run/token")
 
+def test_workload_identity_uses_injected_pod_identity_when_settings_empty(monkeypatch):
+    _install_fake_identity(monkeypatch)
+    monkeypatch.setenv("AZURE_TENANT_ID", "pod-tenant")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "reader-client")
+    monkeypatch.setenv("AZURE_FEDERATED_TOKEN_FILE", "/pod/token")
+    credential = azure_credential.get_credential("workload_identity")
+    assert credential.args == ("pod-tenant", "reader-client", "/pod/token")
+    explicit = azure_credential.get_credential(
+        "workload_identity", tenant_id="explicit-tenant", client_id="explicit-client",
+        token_file="/explicit/token",
+    )
+    assert explicit.args == ("explicit-tenant", "explicit-client", "/explicit/token")
+
 
 def test_case_insensitive_and_whitespace(monkeypatch):
     _install_fake_identity(monkeypatch)

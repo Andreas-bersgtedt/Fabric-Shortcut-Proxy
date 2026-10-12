@@ -1,8 +1,9 @@
-# Federated artifact primitives
+# Federated publication runtime
 
-These are the first implementation pieces for Phase 4, tracked by #141.
-They do not enable the federated production topology. The existing Manager,
-work queue and serving path remain the default.
+Phase 4 is tracked by #141. Catalog-backed publication, verified replication
+and regional S3 serving are opt-in runtime paths. They have local acceptance
+coverage, but the Azure/Fabric production topology has not been deployed or
+accepted. Existing non-federated behavior remains the default.
 
 ## Data stores and control stores
 
@@ -86,14 +87,38 @@ placement audit events, without claiming the task.
 
 These checks validate operator declarations and existing queue routing.
 They do not provision regional endpoints, enforce cloud IAM, discover the
-physical location of a volume, or relocate an Agent's cache. Those deployment
-and serving integrations remain required for #146.
+physical location of a volume, or relocate an Agent's cache. Physical Azure IAM and deployed no-row-egress evidence remain required for #146.
 
 ## Catalog and regional verification
 
 [federation.py](../enterprise/control/federation.py) separates a metadata-only
-`GlobalCatalog` from the `RegionalReplicaVerifier`. Neither is mounted as a
-production HTTP service or attached to the default publication path yet.
+`GlobalCatalog` from the `RegionalReplicaVerifier`.
+[catalog_app.py](../enterprise/control/catalog_app.py) mounts authenticated
+create, inspect, handover, takeover, renewal and resolution routes. The Helm
+chart can deploy this service with `federation.deployCatalog`.
+
+When `FSP_FEDERATION_ENABLED=1`, the regional Manager builds a
+`FederatedPublicationCoordinator`. Durable snapshots are converted to exact
+generation descriptors, verified from streamed bytes, and advertised using
+the current catalog owner fence. A Manager whose ownership or location changed
+can still finish local staging, but cannot advertise that generation. Owner
+leases are renewed by the running Manager.
+
+Federation requires the durable materialization queue. It does not write the
+legacy local visible snapshot record: the dataset catalog CAS is the sole
+visibility commit. Each descriptor includes an immutable snapshot document,
+which queue readers load through that region's committed catalog pointer.
+If local request bookkeeping fails after CAS, restart still finds the committed
+snapshot and replication still finds its durable work item. A handover that
+wins CAS prevents the former owner from exposing a snapshot.
+
+Iceberg metadata, manifests and version hints use request-scoped immutable
+publication paths. Metadata includes only the current snapshot, so historical
+references cannot escape the descriptor's verified object set. Avro sync
+markers are deterministic to preserve identical immutable retries. Delta
+publications are standalone version-zero logs with absolute S3 references to
+the verified data files, rather than relocated relative paths into old logs.
+These paths need actual Fabric compatibility evidence before exit.
 
 The catalog keeps one CAS record per dataset. Owner ID, owner location,
 monotonically increasing fence, expiry, generation identities and complete
@@ -110,13 +135,37 @@ must describe exactly the descriptor's objects. Replication copies immutable
 objects first and the manifest last, then verifies the destination. A failed
 copy does not change the catalog's previous pointer.
 
+`FSP_FEDERATION_REPLICA_STORES` wires the Manager's reconciliation loop to
+declared Azure replica profiles with managed/workload identity. The catalog's
+primary and replica pointers are the durable work list; restart re-verifies
+immutable copies and advances only complete replicas under the original owner
+fence. The loop logs storage failures and retries on the renewal cadence.
+HA standby Managers do not initiate reconciliation or owner renewal.
+Managers still publish to the policy's one primary staging/published store.
+Changing that physical primary during handover is not implemented.
+
+`python -m enterprise.regional_serving` runs a database-free S3 reader. Its
+bucket-to-dataset assignments and endpoint/store binding are checked at startup
+without relaxing work-queue dispatch restrictions. GET, HEAD, Range and listing
+read one catalog-selected regional descriptor per request; unadvertised objects
+are not exposed. SigV4 and the existing access-key scope checks are required.
+The serving workload has no source Secret and needs a separate Blob Data Reader
+identity for local publications and catalog records. The Helm workload and
+network policy are disabled by default. TLS ingress must be configured separately.
+
+Reads verify the committed object's size and SHA-256 before serving. This
+currently incurs a full integrity read even for Range and HEAD, followed by the
+requested read; account for that Blob traffic before production rollout.
+Federated staging pruning is disabled because a lagging region can still need
+an older generation. Retention/garbage collection requires a catalog-aware
+reference policy; do not remove prior publication objects manually during drills.
+
 The catalog receives only names, sizes, digests, generation timestamps and
-verification receipts, never the source rows or table-metadata body. Receipts
-are sealed with a process-local ephemeral key to reject accidental construction
-or modification without verification. They are not portable between processes
-or restarts and are not a cross-cloud identity protocol. Authenticated,
-pool-bound receipt transport must be implemented before splitting the regional
-verifier and catalog into independently deployed services.
+verification receipts, never the source rows or table-metadata body. Receipts are sealed with a process-local ephemeral key to reject accidental
+construction or modification without verification. Verification and
+advertisement intentionally run in the same regional Manager process; receipts
+are not transported to the catalog HTTP service. A future independently
+deployed replication worker still needs authenticated portable receipts.
 
 `resolve` requires an assigned endpoint and returns that endpoint's last
 complete generation. A lagging region does not borrow a newer generation from
@@ -125,9 +174,11 @@ and the dataset freshness target, not the replication time or owner lease.
 Expiry does not delete the last published objects.
 
 Object keys must remain immutable and store identities must not be reassigned
-to different physical stores. Catalog state needs a separately selected
-geo-redundant deployment and recovery model. Merely constructing the catalog
-with a local store does not provide regional disaster recovery.
+to different physical stores. The Phase 4 infrastructure plan adds a private
+RA-GZRS StorageV2 account and Blob container for catalog records, with private
+endpoints in both Manager VNets and identity-based container access. This
+provides geo-redundant recovery, not active-active Blob writes; storage failover
+and its RPO must be included in the regional recovery runbook.
 
 ## Disconnected pools
 
@@ -173,21 +224,62 @@ Prometheus scrapes and apply the rule set.
 Tests exercise the actual Manager metrics/status endpoints, restart and late
 republication, the exact freshness threshold, metadata-only monitoring and
 retaining readable published bytes during a simulated site outage. This is not
-a live multi-region site-disconnection drill and does not connect the standalone
-catalog primitives to production serving.
+a live multi-region site-disconnection drill. Additional signed regional S3
+tests exercise last-good reads, replication catch-up and corruption rejection.
 
 ## Acceptance boundaries
 
 | Issue | Implemented and tested here | Remaining exit evidence or integration |
 |---|---|---|
-| #142 | Metadata-only CAS catalog record and one-owner publication races. | Catalog service, authenticated API and geo-redundant deployment/recovery. |
-| #143 | Catalog handover in both directions and expired-owner takeover, with stale-fence rejection. | Regional Manager/queue publication integration, second regional Manager and live bidirectional handover. |
-| #144 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Live provider conformance and integration with regional store profiles. Cross-object control mutations are deliberately unsupported. |
-| #145 | SDK identity-chain factories; existing Phase 3 Entra Agent authentication remains unchanged. | EKS/GKE/Arc federation, issuer-less mTLS fallback, prefix-scoped short-lived on-prem credentials and IAM-negative tests. |
-| #146 | Declared whole-chain validation, inherited constraints and apply/request/dispatch rejection. | Physical serving/cache bindings, multi-store dispatch and live no-row-egress evidence. |
-| #147 | Manifest/object verification, immutable copying and retaining a lagging region's complete generation. | Production asynchronous replication worker, catalog receipt transport and actual Fabric regional reads. |
-| #148 | Per-pool timeouts/renewal, durable generation production metadata, running Manager freshness metrics/status and alerts, plus catalog staleness without deleting the previous generation. | Deployed alert validation, production catalog/serving integration and a live site-disconnection drill. |
+| #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are implemented and tested locally. | Deploy both regional instances and execute storage failover/recovery evidence. |
+| #143 | Catalog CAS is the sole federated snapshot visibility commit. A concurrent handover denies publication without exposing a local snapshot. Tests cover both owner directions, expiry and post-commit bookkeeping failure. | Deploy the second Manager against the declared primary publication store and execute live bidirectional handover. Physical primary-store relocation is not implemented. |
+| #144 / #171 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Production AWS/GCP integration and live provider conformance are deferred beyond v3.1.0 to #171. Cross-object control mutations are deliberately unsupported. |
+| #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite. | Assign the API app role, attach identity, deploy the Azure-IaaS Agent and capture authentication and negative-scope evidence. Trusted mutual-TLS certificate-to-pool fallback remains unimplemented. |
+| #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch. | Deployed IAM/location/cache and no-row-egress evidence. Multi-store materialization dispatch is not implemented. |
+| #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests and signed regional S3 GET/HEAD/Range/list reads. | Deploy replica/reader identity permissions and TLS endpoints; capture actual Fabric regional reads and replication timing. Portable receipts are needed only if verification moves to an independent worker. |
+| #148 | Per-pool renewal, durable production timestamps, running Manager freshness/status/alerts, catalog-backed serving and tested retention of the prior replica during copy failure. | Deployed alert validation and a live site-disconnection/reconnection drill. |
 
-Phase 4 is not at exit criteria. No region-loss RTO is claimed, no EKS/GKE/Arc
-workload has been authenticated, and no Fabric regional-read test has been
-executed by this change. The existing Phase 3 AKS workloads and DNS are unchanged.
+Phase 4 is not at exit criteria until the Azure resources and workloads above
+are deployed and exercised. No region-loss RTO is claimed, the Azure-IaaS
+simulated on-premises workload has not yet produced live authentication
+evidence, and no Fabric regional-read test has been executed. Production
+AWS/GCP support is outside Phase 4 and v3.1.0 and is tracked by #171.
+
+The renewal-startup, expired-owner and immutable Avro retry defects were
+reproduced by failing tests before implementation. Local acceptance tests cover
+CAS handover races, queue restart, post-commit bookkeeping failure, retained
+staging, verified replication recovery, immutable Iceberg/Delta references,
+signed S3 reads, corrupt-replica rejection and Helm rendering. These results
+are local evidence, not deployed acceptance.
+The integrated full regression passed with **1,527 passed and 53 skipped**.
+After the final reader workload-identity fallback and lifecycle ordering
+changes, focused runtime, residency, identity, hybrid automation and Helm
+coverage passed with **102 passed and 1 skipped**. Ruff's `F` checks and
+`git diff --check` passed. Hybrid Bicep compilation, Bash syntax and PowerShell
+parsing passed; Bicep retains a `no-hardcoded-env-urls` warning. No security
+scan of the final infrastructure changes or live acceptance result is claimed.
+The Azure deployment approval prompt received no user response; the local
+infrastructure plan is draft and no live deployment was performed.
+
+## Deployment acceptance sequence
+
+1. Review the additive infrastructure what-if and acknowledge deployment risks.
+   Apply private catalog/VM connectivity and container-scoped identities.
+2. Assign `FSP.Agent` to the hybrid managed identity and attach it to the existing
+   VM. Package this checkout with the hybrid installer; unpushed code is not
+   assumed to exist at a Git ref. Require private Blob DNS and Manager registration.
+3. Deploy both Managers, each configured with the declared primary published
+   profile, and the replica store map. Deploy each reader with its own local
+   profile and read-only identity. Verify unexpected source/store access is denied.
+4. Publish a generation, record descriptor hashes and both replica pointers,
+   and issue real Fabric reads through each assigned HTTPS endpoint. Do not
+   substitute a signed test-client request for Fabric evidence.
+5. Handover in both directions while publication is in flight. Confirm the old
+   owner cannot advance any visible pointer and time recovery to the agreed RTO.
+6. Disconnect the hybrid site, then the replica writer. Confirm the last complete
+   regional generation remains readable, the exact freshness budget is exceeded,
+   and `FspDatasetFreshnessMissed` fires after its configured 30-second hold.
+   Restore connectivity and measure catch-up without moving a pointer backwards.
+7. Restart catalog/Managers during interrupted copying, then exercise catalog
+   geo-recovery. Record measured RPO/RTO and integrity checks, not assumed RA-GZRS
+   guarantees. Capture mutual-TLS fallback evidence once that path is implemented.

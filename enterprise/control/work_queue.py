@@ -39,6 +39,7 @@ from enterprise.control.contract import (
     RESULT_WRONG_OWNER,
 )
 from enterprise.control.lease import LEASE_KEY, StaleLeaderError
+from enterprise.control.federation import FederatedPublicationCoordinator
 from fabric_shortcut_proxy.runtime.artifact_store import ArtifactStore, ObjectNotFound
 from fabric_shortcut_proxy.observability import metrics
 
@@ -200,6 +201,16 @@ class DurableWorkQueue:
         )
         self._lock = threading.RLock()
         self._leadership_check = leadership_check
+        self._federation: FederatedPublicationCoordinator | None = None
+        self._federated_tables: dict[str, str] = {}
+
+    def configure_federation(
+        self, coordinator: FederatedPublicationCoordinator, tables: dict[str, str]
+    ) -> None:
+        if not isinstance(coordinator, FederatedPublicationCoordinator):
+            raise TypeError("federated queue requires a publication coordinator")
+        self._federation = coordinator
+        self._federated_tables = dict(tables)
 
     def _read(self, key: str) -> dict | None:
         try:
@@ -552,6 +563,14 @@ class DurableWorkQueue:
             created_at = _now_ms()
             task_ids = []
             task_records = []
+            datasets = {
+                f"{task.connection_id}::{task.source_table}"
+                for task in tasks
+                if task.connection_id and task.source_table
+            }
+            if len(datasets) > 1:
+                raise WorkQueueConflict("materialization request spans multiple datasets")
+            dataset_id = next(iter(datasets), "")
             for task in tasks:
                 task_id = _hash(f"{request_id}|{task.split_index}|{task.output_key}")
                 task_ids.append(task_id)
@@ -589,6 +608,7 @@ class DurableWorkQueue:
                 "table": table,
                 "epoch": int(epoch),
                 "table_format": table_format,
+                "dataset_id": dataset_id,
                 "generation_id": generation_id,
                 "generation_fence": int(generation_fence),
                 "plan_sha256": plan_sha256,
@@ -1341,6 +1361,9 @@ class DurableWorkQueue:
         """Remove claim-specific output objects not referenced by a published snapshot."""
         from fabric_shortcut_proxy.runtime.split_completion import completion_key
 
+        if self._federation is not None:
+            # Other regions can still serve prior generations after this owner advances.
+            return 0
         keep = keep_keys or set()
         removed = 0
         prefixes = {
@@ -1482,6 +1505,16 @@ class DurableWorkQueue:
                 raise WorkQueueConflict("snapshot production timestamp does not match request")
             payload["dataset_id"] = dataset_id
             payload["produced_at_ms"] = produced_at_ms
+            if self._federation is not None:
+                # The catalog CAS is the only visibility commit across regional stores.
+                self._federation.publish(SnapshotManifest.from_dict(payload))
+                request["published"] = True
+                request["updated_at_ms"] = now_ms
+                self._write(_request_key(request_id), request)
+                metrics.inc_counter(
+                    "materialization_queue_events_total", event="published"
+                )
+                return request
             request["published"] = True
             request["snapshot_key"] = key
             request["updated_at_ms"] = now_ms
@@ -1504,6 +1537,12 @@ class DurableWorkQueue:
 
     def list_snapshot_manifests(self) -> list[SnapshotManifest]:
         """Read durable publication metadata without downloading dataset objects."""
+        if self._federation is not None:
+            return [
+                manifest
+                for table, dataset_id in self._federated_tables.items()
+                if (manifest := self._federation.snapshot(dataset_id, table)) is not None
+            ]
         manifests = []
         for item in self.store.list(f"{SNAPSHOTS_PREFIX}/"):
             record = self._read(item.key)
@@ -1512,6 +1551,11 @@ class DurableWorkQueue:
         return manifests
 
     def get_snapshot(self, table: str, epoch: int = 0) -> SnapshotManifest | None:
+        if self._federation is not None:
+            dataset_id = self._federated_tables.get(table)
+            if dataset_id is None:
+                return None
+            return self._federation.snapshot(dataset_id, table, epoch)
         prefix = f"{SNAPSHOTS_PREFIX}/{_hash(table)}/"
         records = self.store.list(prefix)
         if not records:

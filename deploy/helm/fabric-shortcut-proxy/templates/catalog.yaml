@@ -1,0 +1,107 @@
+{{- if and .Values.federation.enabled .Values.federation.deployCatalog }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-global-catalog
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    app.kubernetes.io/name: fsp-global-catalog
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.federation.catalog.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-global-catalog
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsp-global-catalog
+        app.kubernetes.io/component: global-control-plane
+        {{- include "fsp.commonLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "fsp.serviceAccountName" . }}
+      {{- include "fsp.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: catalog
+          image: {{ include "fsp.image" .Values.images.python | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - python
+            - -m
+            - enterprise.catalog
+          envFrom:
+            - configMapRef:
+                name: fsp-common
+            - secretRef:
+                name: {{ .Values.manager.operatorSecretName }}
+          env:
+            - name: CONTROL_HOST
+              value: 0.0.0.0
+            - name: CONTROL_PORT
+              value: {{ .Values.federation.catalog.port | quote }}
+            - name: AGENT_PLACEMENT_CONFIG
+              value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
+            - name: FSP_ARTIFACT_STORE_PROFILE
+              value: {{ required "manager.artifactStoreProfile is required" .Values.manager.artifactStoreProfile | quote }}
+            - name: ARTIFACT_STORE_BACKEND
+              value: azure
+            - name: ARTIFACT_STORE_ACCOUNT_URL
+              value: {{ required "federation.catalog.artifactStoreAccountUrl is required" .Values.federation.catalog.artifactStoreAccountUrl | quote }}
+            - name: ARTIFACT_STORE_CONTAINER
+              value: {{ .Values.federation.catalog.artifactStoreContainer | quote }}
+            - name: ARTIFACT_STORE_AUTH_MODE
+              value: {{ .Values.federation.catalog.artifactStoreAuthMode | quote }}
+            - name: ARTIFACT_STORE_CLIENT_ID
+              value: {{ .Values.federation.catalog.artifactStoreClientId | quote }}
+            - name: ARTIFACT_STORE_TENANT_ID
+              value: {{ .Values.federation.catalog.artifactStoreTenantId | quote }}
+            - name: ARTIFACT_STORE_TOKEN_FILE
+              value: {{ .Values.federation.catalog.artifactStoreTokenFile | quote }}
+          ports:
+            - name: catalog
+              containerPort: {{ .Values.federation.catalog.port }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: catalog
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: catalog
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.federation.catalog.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsp-global-catalog
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    app.kubernetes.io/name: fsp-global-catalog
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fsp-global-catalog
+  ports:
+    - name: catalog
+      port: {{ .Values.federation.catalog.port }}
+      targetPort: catalog
+{{- end }}

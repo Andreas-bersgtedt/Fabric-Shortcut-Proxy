@@ -1,0 +1,148 @@
+{{- if .Values.federation.regionalServing.enabled }}
+{{- $serving := .Values.federation.regionalServing }}
+{{- if not $serving.buckets }}{{ fail "federation.regionalServing.buckets is required" }}{{ end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsp-regional-serving
+  namespace: {{ include "fsp.namespace" . }}
+  labels:
+    {{- include "fsp.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ $serving.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-regional-serving
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsp-regional-serving
+        {{- include "fsp.commonLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ required "federation.regionalServing.serviceAccountName is required (read-only Blob identity)" $serving.serviceAccountName }}
+      {{- include "fsp.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: serving
+          image: {{ include "fsp.image" .Values.images.python | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - python
+            - -m
+            - enterprise.regional_serving
+          envFrom:
+            - configMapRef:
+                name: fsp-common
+            - secretRef:
+                name: {{ required "federation.regionalServing.readerSecretName is required" $serving.readerSecretName }}
+          env:
+            - name: CONTROL_HOST
+              value: 0.0.0.0
+            - name: CONTROL_PORT
+              value: {{ $serving.port | quote }}
+            - name: AGENT_PLACEMENT_CONFIG
+              value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
+            - name: FSP_ARTIFACT_STORE_PROFILE
+              value: {{ required "federation.regionalServing.storageProfile is required" $serving.storageProfile | quote }}
+            - name: FSP_REGIONAL_SERVING_ENDPOINT_ID
+              value: {{ required "federation.regionalServing.endpointId is required" $serving.endpointId | quote }}
+            - name: FSP_REGIONAL_SERVING_BUCKETS
+              value: {{ $serving.buckets | toJson | quote }}
+            - name: ARTIFACT_STORE_BACKEND
+              value: azure
+            - name: ARTIFACT_STORE_ACCOUNT_URL
+              value: {{ required "federation.regionalServing.artifactStoreAccountUrl is required" $serving.artifactStoreAccountUrl | quote }}
+            - name: ARTIFACT_STORE_CONTAINER
+              value: {{ required "federation.regionalServing.artifactStoreContainer is required" $serving.artifactStoreContainer | quote }}
+            - name: ARTIFACT_STORE_AUTH_MODE
+              value: workload_identity
+            - name: ARTIFACT_STORE_CLIENT_ID
+              value: ""
+            - name: ARTIFACT_STORE_TENANT_ID
+              value: ""
+            - name: ARTIFACT_STORE_TOKEN_FILE
+              value: ""
+            - name: FSP_CATALOG_STORE_ACCOUNT_URL
+              value: {{ required "federation.catalog.artifactStoreAccountUrl is required" .Values.federation.catalog.artifactStoreAccountUrl | quote }}
+            - name: FSP_CATALOG_STORE_CONTAINER
+              value: {{ .Values.federation.catalog.artifactStoreContainer | quote }}
+            - name: FSP_CATALOG_STORE_AUTH_MODE
+              value: workload_identity
+            - name: ENABLE_CREDENTIAL_STORE
+              value: "0"
+          ports:
+            - name: s3
+              containerPort: {{ $serving.port }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: s3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: s3
+          resources:
+            {{- toYaml $serving.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsp-regional-serving
+  namespace: {{ include "fsp.namespace" . }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fsp-regional-serving
+  ports:
+    - name: s3
+      port: {{ $serving.port }}
+      targetPort: s3
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fsp-regional-serving
+  namespace: {{ include "fsp.namespace" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fsp-regional-serving
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressController.namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressController.podSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ $serving.port }}
+  egress:
+    {{- range $serving.egressAllowList }}
+    - to:
+        - ipBlock:
+            cidr: {{ required "regional serving egress CIDR is required" .cidr }}
+      ports:
+        {{- range required "regional serving egress ports are required" .ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

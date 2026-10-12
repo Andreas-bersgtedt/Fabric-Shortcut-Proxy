@@ -14,6 +14,7 @@ Agents use. Materialization is idempotent and per-table locked in the materializ
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import time
 
@@ -27,6 +28,7 @@ from enterprise.control.contract import (
 )
 from enterprise.control.work_queue import DurableWorkQueue
 from enterprise.control.placement import PlacementConfig, ResidencyPolicyViolation
+from enterprise.control.federation import FederatedPublicationCoordinator
 from fabric_shortcut_proxy.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -35,13 +37,24 @@ _snapshots_ready = False
 _build_lock = asyncio.Lock()
 _queue: DurableWorkQueue | None = None
 _placement = PlacementConfig()
+_federation: FederatedPublicationCoordinator | None = None
 _publication_locks: dict[str, asyncio.Lock] = {}
 
 
-def configure(queue: DurableWorkQueue, placement: PlacementConfig | None = None) -> None:
-    global _queue, _placement
+def configure(
+    queue: DurableWorkQueue,
+    placement: PlacementConfig | None = None,
+    federation: FederatedPublicationCoordinator | None = None,
+) -> None:
+    global _queue, _placement, _federation
     _queue = queue
     _placement = placement or PlacementConfig()
+    _federation = federation
+    if federation is not None:
+        queue.configure_federation(
+            federation,
+            {table.name: f"{table.connection_id}::{table.source_table}" for table in config.TABLES},
+        )
 
 
 def _publication_lock(request_id: str) -> asyncio.Lock:
@@ -116,7 +129,7 @@ def _snapshot_for_key(key: str):
     return None
 
 
-def _publish_snapshot_objects(snap) -> tuple[int, list[str]]:
+def _publish_snapshot_objects(snap, publication_id: str = "") -> tuple[int, list[str]]:
     """Write the snapshot's data splits and metadata objects to the shared store
     so a stateless Agent can serve them. Idempotent (overwrites with identical
     bytes). Data splits are pinned in memory by the materializer; here we persist
@@ -125,29 +138,50 @@ def _publish_snapshot_objects(snap) -> tuple[int, list[str]]:
     from fabric_shortcut_proxy.runtime.artifact_store import build_store
 
     store = build_store(config.ARTIFACT_STORE_BACKEND, local_dir=config.ARTIFACT_STORE_DIR)
+    prefix = ""
+    if publication_id:
+        snap = copy.deepcopy(snap)
+        prefix = f"{snap.table_path}/.fsp/publications/{hashlib.sha256(publication_id.encode()).hexdigest()}"
+        for attr in ("metadata_key", "manifest_list_key", "manifest_file_key", "version_hint_key"):
+            key = getattr(snap, attr)
+            setattr(snap, attr, f"{prefix}/{key.rsplit('/', 1)[-1]}")
+        snap.metadata_bytes = None
+        snap.manifest_list_bytes = None
+        snap.manifest_file_bytes = None
+
+    def write(key: str, data: bytes) -> None:
+        if publication_id:
+            store.put_stream_if_absent(key, [data], length=len(data))
+        else:
+            store.put(key, data)
+
     written = 0
     metadata_keys = []
     for s in snap.splits:
         data = cache.peek_parquet(s.object_key)
         if data is not None:
-            store.put(s.object_key, data)
+            write(s.object_key, data)
             written += 1
 
     if config.TABLE_FORMAT == "delta":
         from fabric_shortcut_proxy.delta import log as delta_log
+        if publication_id:
+            key = f"{prefix}/_delta_log/00000000000000000000.json"
+            write(key, delta_log.build_snapshot_commit(snap))
+            return written + 1, [key]
         for k, meta in delta_log.delta_log_objects().items():
             if k.startswith(snap.table_path + "/") and meta.get("data") is not None:
-                store.put(k, meta["data"])
+                write(k, meta["data"])
                 metadata_keys.append(k)
                 written += 1
     else:
         from fabric_shortcut_proxy.iceberg.metadata import build_metadata_json
         from fabric_shortcut_proxy.iceberg.manifest import build_manifest_file, build_manifest_list
 
-        store.put(snap.metadata_key, build_metadata_json(snap))
-        store.put(snap.manifest_list_key, build_manifest_list(snap))
-        store.put(snap.manifest_file_key, build_manifest_file(snap))
-        store.put(snap.version_hint_key, str(snap.version).encode())
+        write(snap.metadata_key, build_metadata_json(snap, include_history=not bool(publication_id)))
+        write(snap.manifest_list_key, build_manifest_list(snap))
+        write(snap.manifest_file_key, build_manifest_file(snap))
+        write(snap.version_hint_key, str(snap.version).encode())
         metadata_keys.extend([
             snap.metadata_key,
             snap.manifest_list_key,
@@ -229,6 +263,11 @@ async def materialize_for_key(key: str) -> dict:
     except ResidencyPolicyViolation as exc:
         log.error("residency_policy_violation", table=snap.table.name, detail=str(exc))
         return {"ok": False, "materialized": False, "reason": exc.code}
+    if _federation is not None:
+        await asyncio.to_thread(
+            _federation.require_owner,
+            f"{snap.table.connection_id}::{snap.table.source_table}",
+        )
 
     from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
     from fabric_shortcut_proxy.runtime.generation import current_generation
@@ -359,7 +398,8 @@ async def materialize_for_key(key: str) -> dict:
 
             delta_log.invalidate_table(snap.table.name)
         published, metadata_keys = await asyncio.to_thread(
-            _publish_snapshot_objects, snap
+            _publish_snapshot_objects, snap,
+            terminal["request_id"] if _federation is not None else "",
         )
         manifest = SnapshotManifest(
             table=snap.table.name,
@@ -372,6 +412,8 @@ async def materialize_for_key(key: str) -> dict:
             plan_sha256=generation.plan_sha256,
             request_id=terminal["request_id"],
             published_at_ms=int(time.time() * 1000),
+            dataset_id=str(terminal.get("dataset_id", "")),
+            produced_at_ms=int(terminal["created_at_ms"]),
         )
         await asyncio.to_thread(
             _queue.publish_snapshot, terminal["request_id"], manifest
@@ -401,6 +443,7 @@ def reset() -> None:
     """Test hook: forget the built-snapshots flag so a fresh registry is built."""
     global _snapshots_ready
     _snapshots_ready = False
-    global _queue
+    global _queue, _federation
     _queue = None
+    _federation = None
     _publication_locks.clear()

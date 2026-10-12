@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import os
 import pathlib
 import secrets
@@ -185,10 +186,6 @@ def create_manager_app() -> FastAPI:
         work_queue=queue,
         leadership_check=_require_active_leader,
     )
-    from enterprise.control import materialize_service
-
-    if config.MATERIALIZATION_WORK_QUEUE:
-        materialize_service.configure(queue, placement)
     supervisors = _build_supervisors(monitor_token)
     gateway = None
     if config.ENABLE_GATEWAY:
@@ -198,6 +195,36 @@ def create_manager_app() -> FastAPI:
     # Phase 5 HA: a leader lease over the shared artifact store. Only the primary
     # supervises Agents and mutates durable control-plane state.
     manager_owner = lease.owner_id if lease is not None else f"manager:{os.getpid()}"
+    federation = None
+    federation_renewal_interval = 20.0
+    if os.environ.get("FSP_FEDERATION_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        from enterprise.control.federation import FederatedPublicationCoordinator
+
+        if not config.MATERIALIZATION_WORK_QUEUE:
+            raise ValueError("federation requires MATERIALIZATION_WORK_QUEUE")
+        federation = FederatedPublicationCoordinator.from_environment(store, placement)
+        try:
+            federation_renewal_interval = float(
+                os.environ.get("FSP_CATALOG_RENEW_INTERVAL_SECONDS", "20")
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "FSP_CATALOG_RENEW_INTERVAL_SECONDS must be numeric"
+            ) from exc
+        if (
+            not math.isfinite(federation_renewal_interval)
+            or not 0 < federation_renewal_interval < federation.lease_ms / 1000
+        ):
+            raise ValueError(
+                "FSP_CATALOG_RENEW_INTERVAL_SECONDS must be finite, positive "
+                "and shorter than FSP_CATALOG_OWNER_LEASE_MS"
+            )
+    from enterprise.control import materialize_service
+
+    if config.MATERIALIZATION_WORK_QUEUE:
+        materialize_service.configure(queue, placement, federation)
     scheduler: TaskScheduler | None = None
     om_scheduler = None
 
@@ -298,6 +325,34 @@ def create_manager_app() -> FastAPI:
             om_scheduler = None
             app.state.open_mirror_scheduler = None
 
+    async def _federation_renewal_loop():
+        assert federation is not None
+        while True:
+            try:
+                if lease is None or getattr(app.state, "primary_ready", False):
+                    await asyncio.to_thread(_require_active_leader)
+                    await asyncio.to_thread(federation.renew_owned)
+            except Exception:
+                log.exception(
+                    "federated_catalog_renewal_failed",
+                    manager_id=federation.owner_id,
+                )
+            await asyncio.sleep(federation_renewal_interval)
+
+    async def _federation_replication_loop():
+        assert federation is not None
+        while True:
+            try:
+                if lease is None or getattr(app.state, "primary_ready", False):
+                    await asyncio.to_thread(_require_active_leader)
+                    await asyncio.to_thread(federation.replicate_owned)
+            except Exception:
+                log.exception(
+                    "federated_replication_failed",
+                    manager_id=federation.owner_id,
+                )
+            await asyncio.sleep(federation_renewal_interval)
+
     async def _leadership_loop():
         """Acquire/renew the lease; supervise only while primary (Phase 5 HA)."""
         supervising = False
@@ -397,9 +452,32 @@ def create_manager_app() -> FastAPI:
             if supervisors:
                 await _start_all()
             await _start_open_mirror()
+        federation_task = (
+            asyncio.create_task(
+                _federation_renewal_loop(),
+                name="federated-catalog-renewal",
+            )
+            if federation is not None
+            else None
+        )
+        replication_task = (
+            asyncio.create_task(
+                _federation_replication_loop(), name="federated-replication"
+            )
+            if federation is not None and os.environ.get("FSP_FEDERATION_REPLICA_STORES", "").strip() not in {"", "{}"}
+            else None
+        )
         app.state.open_mirror_scheduler = om_scheduler
         yield
         log.info("manager_shutdown")
+        if federation_task is not None:
+            federation_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await federation_task
+        if replication_task is not None:
+            replication_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await replication_task
         if ha_task is not None:
             ha_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -424,6 +502,7 @@ def create_manager_app() -> FastAPI:
     app.state.is_leader = not config.MANAGER_HA
     app.state.primary_ready = not config.MANAGER_HA
     app.state.open_mirror_scheduler = None
+    app.state.federation = federation
     # Standalone HTTP Basic gate over the operator surface. Health probes remain
     # open; authenticated Agent credentials are sent for internal control calls.
     app.add_middleware(AuthorizationMiddleware)
@@ -439,7 +518,8 @@ def create_manager_app() -> FastAPI:
                 "is_leader": getattr(app.state, "is_leader", True),
                 "manager_ha": config.MANAGER_HA,
                 "ha": ha_status,
-                "agents_supervised": len(supervisors), "agents_registered": registry.count()}
+                "agents_supervised": len(supervisors), "agents_registered": registry.count(),
+                "regional_manager_id": federation.owner_id if federation is not None else None}
 
     @app.get("/metrics")
     async def manager_metrics():

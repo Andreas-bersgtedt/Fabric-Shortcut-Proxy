@@ -15,6 +15,7 @@ import secrets
 import time
 from typing import Mapping
 
+from enterprise.control.contract import SnapshotManifest
 from enterprise.control.placement import PlacementConfig, ResidencyPolicyViolation
 from fabric_shortcut_proxy.runtime.artifact_store import ArtifactStore, ObjectNotFound, _normalize_key
 
@@ -54,6 +55,13 @@ class ObjectReference:
             "size_bytes": self.size_bytes, "sha256": self.sha256,
         }
 
+    @classmethod
+    def from_dict(cls, value: dict) -> "ObjectReference":
+        return cls(
+            value["store_profile"], value["key"],
+            value["size_bytes"], value["sha256"],
+        )
+
 
 @dataclass(frozen=True)
 class GenerationDescriptor:
@@ -63,6 +71,7 @@ class GenerationDescriptor:
     produced_at_ms: int
     objects: tuple[ObjectReference, ...]
     manifest: ObjectReference
+    snapshot_key: str = ""
 
     def __post_init__(self):
         if not self.dataset_id or not self.generation_id or not self.objects:
@@ -74,13 +83,15 @@ class GenerationDescriptor:
             raise ValueError("generation descriptor repeats an object key")
         if self.manifest.key in {ref.key for ref in self.objects}:
             raise ValueError("generation manifest cannot reference itself")
+        if self.snapshot_key and self.snapshot_key not in {ref.key for ref in self.objects}:
+            raise ValueError("snapshot must be one of the verified generation objects")
 
     @property
     def all_objects(self) -> tuple[ObjectReference, ...]:
         return (*self.objects, self.manifest)
 
     def manifest_document(self) -> dict:
-        return {
+        value = {
             "version": 1, "dataset_id": self.dataset_id,
             "generation_id": self.generation_id, "sequence": self.sequence,
             "produced_at_ms": self.produced_at_ms,
@@ -89,14 +100,30 @@ class GenerationDescriptor:
                 for ref in self.objects
             ],
         }
+        if self.snapshot_key:
+            value["snapshot_key"] = self.snapshot_key
+        return value
 
     def to_dict(self) -> dict:
-        return {
+        value = {
             "dataset_id": self.dataset_id, "generation_id": self.generation_id,
             "sequence": self.sequence, "produced_at_ms": self.produced_at_ms,
             "objects": [ref.to_dict() for ref in self.objects],
             "manifest": self.manifest.to_dict(),
         }
+        if self.snapshot_key:
+            value["snapshot_key"] = self.snapshot_key
+        return value
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "GenerationDescriptor":
+        return cls(
+            value["dataset_id"], value["generation_id"],
+            value["sequence"], value["produced_at_ms"],
+            tuple(ObjectReference.from_dict(ref) for ref in value["objects"]),
+            ObjectReference.from_dict(value["manifest"]),
+            value.get("snapshot_key", ""),
+        )
 
 
 @dataclass(frozen=True)
@@ -195,6 +222,7 @@ class RegionalReplicaVerifier:
             GenerationDescriptor(
                 descriptor.dataset_id, descriptor.generation_id, descriptor.sequence,
                 descriptor.produced_at_ms, tuple(refs[:-1]), refs[-1],
+                descriptor.snapshot_key,
             ),
             storage_profile,
         )
@@ -220,6 +248,27 @@ class GlobalCatalog:
         if not isinstance(record, dict) or record.get("version") != 1 or record.get("dataset_id") != dataset_id:
             raise ValueError("invalid durable catalog record")
         return raw, record
+
+    def get(self, dataset_id: str) -> dict:
+        """Return one validated durable catalog record."""
+        _, record = self._read(dataset_id)
+        return record
+
+    def list_records(self) -> list[dict]:
+        """Return all validated catalog records without reading dataset objects."""
+        prefix = "_control/federation/datasets/"
+        records = []
+        for item in self.store.list(prefix):
+            raw = self.store.get(item.key)
+            record = json.loads(raw)
+            if (
+                not isinstance(record, dict)
+                or record.get("version") != 1
+                or not isinstance(record.get("dataset_id"), str)
+            ):
+                raise ValueError("invalid durable catalog record")
+            records.append(record)
+        return sorted(records, key=lambda record: record["dataset_id"])
 
     def _policy(self, dataset_id: str):
         connection, separator, table = dataset_id.partition("::")
@@ -376,3 +425,276 @@ class GlobalCatalog:
             "stale": now - replica["produced_at_ms"] > record["freshness_target_ms"],
             "freshness_target_ms": record["freshness_target_ms"],
         }
+
+
+class FederatedPublicationCoordinator:
+    """Verify regional bytes and advertise only while this Manager owns the dataset."""
+
+    def __init__(
+        self,
+        catalog: GlobalCatalog,
+        verifier: RegionalReplicaVerifier,
+        store: ArtifactStore,
+        *,
+        owner_id: str,
+        owner_location: str,
+        storage_profile: str,
+        lease_ms: int,
+    ):
+        if not owner_id or not owner_location or not storage_profile:
+            raise ValueError(
+                "federation requires Manager, location and storage profile identifiers"
+            )
+        GlobalCatalog._positive(lease_ms, "lease_ms")
+        self.catalog = catalog
+        self.verifier = verifier
+        self.store = store
+        self.owner_id = owner_id
+        self.owner_location = owner_location
+        self.storage_profile = storage_profile
+        self.lease_ms = lease_ms
+
+    @classmethod
+    def from_environment(
+        cls, store: ArtifactStore, placement: PlacementConfig, *, serving_endpoint_id: str = ""
+    ) -> "FederatedPublicationCoordinator":
+        import os
+
+        owner_id = os.environ.get("FSP_REGIONAL_MANAGER_ID", "").strip()
+        owner_location = os.environ.get("FSP_REGIONAL_MANAGER_LOCATION", "").strip()
+        storage_profile = os.environ.get("FSP_ARTIFACT_STORE_PROFILE", "").strip()
+        if serving_endpoint_id:
+            endpoint = placement.serving_endpoints[serving_endpoint_id]
+            owner_id = f"serving:{serving_endpoint_id}"
+            owner_location = endpoint.location
+        try:
+            lease_ms = int(os.environ.get("FSP_CATALOG_OWNER_LEASE_MS", "60000"))
+        except ValueError as exc:
+            raise ValueError("FSP_CATALOG_OWNER_LEASE_MS must be an integer") from exc
+        catalog_store = store
+        catalog_account_url = os.environ.get(
+            "FSP_CATALOG_STORE_ACCOUNT_URL", ""
+        ).strip()
+        catalog_container = os.environ.get(
+            "FSP_CATALOG_STORE_CONTAINER", ""
+        ).strip()
+        if bool(catalog_account_url) != bool(catalog_container):
+            raise ValueError(
+                "FSP_CATALOG_STORE_ACCOUNT_URL and FSP_CATALOG_STORE_CONTAINER "
+                "must be configured together"
+            )
+        if catalog_account_url:
+            from fabric_shortcut_proxy.runtime.azure_artifact_store import (
+                build_azure_store,
+            )
+
+            catalog_store = build_azure_store(
+                account_url=catalog_account_url,
+                container_name=catalog_container,
+                auth_mode=os.environ.get(
+                    "FSP_CATALOG_STORE_AUTH_MODE", "managed_identity"
+                ),
+                tenant_id=os.environ.get("FSP_CATALOG_STORE_TENANT_ID", ""),
+                client_id=os.environ.get("FSP_CATALOG_STORE_CLIENT_ID", ""),
+                token_file=os.environ.get("FSP_CATALOG_STORE_TOKEN_FILE", ""),
+            )
+        stores = {storage_profile: store}
+        replica_settings = json.loads(
+            os.environ.get("FSP_FEDERATION_REPLICA_STORES", "{}")
+        )
+        if not isinstance(replica_settings, dict):
+            raise ValueError("FSP_FEDERATION_REPLICA_STORES must be an object")
+        if serving_endpoint_id and replica_settings:
+            raise ValueError("regional serving must not configure remote replica stores")
+        for profile, settings in replica_settings.items():
+            declared = placement.stores.get(profile)
+            if profile == storage_profile or declared is None or declared.provider != "azure":
+                raise ValueError("replica stores must be distinct declared Azure profiles")
+            if not isinstance(settings, dict) or not settings.get("account_url") or not settings.get("container_name"):
+                raise ValueError("replica store requires account_url and container_name")
+            if settings.get("auth_mode", "managed_identity") not in {"managed_identity", "workload_identity"}:
+                raise ValueError("replica stores require managed or workload identity")
+            from fabric_shortcut_proxy.runtime.azure_artifact_store import build_azure_store
+
+            stores[profile] = build_azure_store(**settings)
+        return cls(
+            GlobalCatalog(catalog_store, placement),
+            RegionalReplicaVerifier(placement, stores),
+            store,
+            owner_id=owner_id,
+            owner_location=owner_location,
+            storage_profile=storage_profile,
+            lease_ms=lease_ms,
+        )
+
+    def _object_reference(self, key: str) -> ObjectReference:
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with closing(self.store.get_stream(key)) as stream:
+                for chunk in stream:
+                    size += len(chunk)
+                    digest.update(chunk)
+        except ObjectNotFound as exc:
+            raise CatalogConflict(f"published object is missing: {key}") from exc
+        return ObjectReference(
+            self.storage_profile, key, size, digest.hexdigest()
+        )
+
+    def _descriptor(self, manifest: SnapshotManifest) -> GenerationDescriptor:
+        if (
+            not manifest.dataset_id
+            or not manifest.generation_id
+            or manifest.published_at_ms < 1
+            or manifest.produced_at_ms < 1
+        ):
+            raise ValueError("federated publication requires durable generation metadata")
+        dataset_hash = hashlib.sha256(manifest.dataset_id.encode()).hexdigest()
+        generation_hash = hashlib.sha256(manifest.generation_id.encode()).hexdigest()
+        snapshot_bytes = _encode(manifest.to_dict())
+        snapshot_hash = hashlib.sha256(snapshot_bytes).hexdigest()
+        snapshot_key = (
+            f"_control/federation/snapshots/{dataset_hash}/{snapshot_hash}.json"
+        )
+        self.store.put_stream_if_absent(
+            snapshot_key, [snapshot_bytes], length=len(snapshot_bytes)
+        )
+        objects = tuple(
+            [
+                ObjectReference(
+                    self.storage_profile,
+                    split.object_key,
+                    split.size_bytes,
+                    split.content_hash,
+                )
+                for split in manifest.splits
+            ]
+            + [self._object_reference(key) for key in manifest.metadata_keys]
+            + [ObjectReference(
+                self.storage_profile, snapshot_key,
+                len(snapshot_bytes), snapshot_hash,
+            )]
+        )
+        manifest_key = (
+            f"_control/federation/manifests/{dataset_hash}/{generation_hash}/{snapshot_hash}.json"
+        )
+        placeholder = ObjectReference(
+            self.storage_profile, manifest_key, 0, "0" * 64
+        )
+        descriptor = GenerationDescriptor(
+            manifest.dataset_id,
+            manifest.generation_id,
+            manifest.published_at_ms,
+            manifest.produced_at_ms,
+            objects,
+            placeholder,
+            snapshot_key,
+        )
+        manifest_bytes = _encode(descriptor.manifest_document())
+        self.store.put_stream_if_absent(
+            manifest_key, [manifest_bytes], length=len(manifest_bytes)
+        )
+        return GenerationDescriptor(
+            descriptor.dataset_id,
+            descriptor.generation_id,
+            descriptor.sequence,
+            descriptor.produced_at_ms,
+            descriptor.objects,
+            ObjectReference(
+                self.storage_profile,
+                manifest_key,
+                len(manifest_bytes),
+                hashlib.sha256(manifest_bytes).hexdigest(),
+            ),
+            snapshot_key,
+        )
+
+    def require_owner(self, dataset_id: str) -> dict:
+        record = self.catalog.get(dataset_id)
+        if (
+            record["owner_id"] != self.owner_id
+            or record["owner_location"] != self.owner_location
+        ):
+            raise CatalogConflict("dataset is owned by another regional Manager")
+        self.catalog._require_owner(
+            record, self.owner_id, int(record["fence"]), _now_ms()
+        )
+        return record
+
+    def publish(self, manifest: SnapshotManifest) -> dict:
+        record = self.require_owner(manifest.dataset_id)
+        descriptor = self._descriptor(manifest)
+        receipt = self.verifier.verify(descriptor, self.storage_profile)
+        return self.catalog.advertise(
+            receipt,
+            owner_id=self.owner_id,
+            fence=int(record["fence"]),
+        )
+
+    def snapshot(self, dataset_id: str, table: str, epoch: int = 0) -> SnapshotManifest | None:
+        record = self.catalog.get(dataset_id)
+        value = record["replicas"].get(self.storage_profile)
+        if value is None:
+            return None
+        descriptor = GenerationDescriptor.from_dict(value)
+        if not descriptor.snapshot_key:
+            raise CatalogConflict("regional generation has no serving snapshot")
+        ref = next(ref for ref in descriptor.objects if ref.key == descriptor.snapshot_key)
+        if ref.store_profile != self.storage_profile:
+            raise ResidencyPolicyViolation("snapshot belongs to another regional store")
+        if ref.size_bytes > 4 * 1024 * 1024:
+            raise ValueError("serving snapshot exceeds the 4 MiB metadata limit")
+        raw = self.store.get(ref.key, length=ref.size_bytes + 1)
+        if len(raw) != ref.size_bytes or hashlib.sha256(raw).hexdigest() != ref.sha256:
+            raise CatalogConflict("regional serving snapshot verification failed")
+        manifest = SnapshotManifest.from_dict(json.loads(raw))
+        if (
+            manifest.dataset_id != dataset_id
+            or manifest.table != table
+            or manifest.generation_id != descriptor.generation_id
+            or manifest.produced_at_ms != descriptor.produced_at_ms
+        ):
+            raise CatalogConflict("regional serving snapshot identity differs")
+        if epoch and manifest.epoch != epoch:
+            return None
+        return manifest
+
+    def replicate_owned(self) -> int:
+        """Reconcile advertised primary generations; catalog state is the durable work list."""
+        completed = 0
+        for record in self.catalog.list_records():
+            if record["owner_id"] != self.owner_id or record["owner_location"] != self.owner_location:
+                continue
+            policy = self.catalog._policy(record["dataset_id"])
+            source = record["replicas"].get(policy.required_storage_profile)
+            if source is None:
+                continue
+            descriptor = GenerationDescriptor.from_dict(source)
+            for target in policy.replica_storage_profiles:
+                current = record["replicas"].get(target)
+                if current is not None and current["sequence"] >= descriptor.sequence:
+                    continue
+                receipt = self.verifier.replicate(descriptor, target)
+                self.catalog.advertise(
+                    receipt, owner_id=self.owner_id, fence=int(record["fence"])
+                )
+                completed += 1
+        return completed
+
+    def renew_owned(self) -> list[dict]:
+        renewed = []
+        for record in self.catalog.list_records():
+            if (
+                record["owner_id"] != self.owner_id
+                or record["owner_location"] != self.owner_location
+            ):
+                continue
+            renewed.append(
+                self.catalog.renew(
+                    record["dataset_id"],
+                    owner_id=self.owner_id,
+                    fence=int(record["fence"]),
+                    lease_ms=self.lease_ms,
+                )
+            )
+        return renewed

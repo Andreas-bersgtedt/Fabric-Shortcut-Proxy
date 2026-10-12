@@ -143,6 +143,52 @@ manager:
     redirectUri: ""
     postLogoutRedirectUri: ""
 
+federation:
+  enabled: false
+  deployCatalog: false
+  managerId: ""
+  managerLocation: ""
+  ownerLeaseMs: 60000
+  renewIntervalSeconds: 20
+  # Azure store settings keyed by declared replica profile; empty disables reconciliation.
+  replicaStores: {}
+  regionalServing:
+    enabled: false
+    endpointId: ""
+    storageProfile: ""
+    buckets: {}
+    replicas: 1
+    port: 9401
+    serviceAccountName: ""
+    readerSecretName: ""
+    artifactStoreAccountUrl: ""
+    artifactStoreContainer: ""
+    egressAllowList: []
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
+  catalog:
+    replicas: 1
+    port: 9300
+    artifactStoreAccountUrl: ""
+    artifactStoreContainer: catalog
+    artifactStoreAuthMode: workload_identity
+    artifactStoreClientId: ""
+    artifactStoreTenantId: ""
+    artifactStoreTokenFile: /var/run/secrets/azure/tokens/azure-identity-token
+    egressAllowList: []
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
+
 materializer:
   enabled: true
   agentAuthSecretName: ""

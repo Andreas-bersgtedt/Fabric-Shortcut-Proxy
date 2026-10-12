@@ -17,7 +17,7 @@ from fabric_shortcut_proxy.runtime.artifact_store import (
 )
 from fabric_shortcut_proxy.observability.logging import get_logger
 from fabric_shortcut_proxy.s3.auth import SigV4Error, verify_signature
-from fabric_shortcut_proxy.s3.xml_responses import error_response
+from fabric_shortcut_proxy.s3.xml_responses import error_response, list_buckets_response
 from fabric_shortcut_proxy.security import access_keys
 from fabric_shortcut_proxy.storage.mounts import Mount
 from fabric_shortcut_proxy.storage import passthrough
@@ -137,6 +137,18 @@ def create_regional_serving_app(
         for dataset_id in buckets.values():
             coordinator.catalog.resolve(dataset_id, endpoint_id)
         return {"status": "ready"}
+
+    @app.api_route("/", methods=["GET", "HEAD"])
+    def list_buckets(request: Request):
+        names = sorted(buckets)
+        body = list_buckets_response(
+            names[0], extra_buckets=names[1:]
+        ) if names else list_buckets_response("")
+        return Response(
+            content=b"" if request.method == "HEAD" else body,
+            headers={"Content-Length": str(len(body))},
+            media_type="application/xml",
+        )
 
     def assigned_store(bucket: str) -> RegionalServingStore | None:
         dataset_id = buckets.get(bucket)

@@ -33,6 +33,11 @@ def test_assigned_regional_s3_reads_stay_on_complete_replica(monkeypatch):
     with TestClient(app) as client:
         assert client.get("/readyz").status_code == 200
         assert client.get("/sales/published/1/part.parquet").status_code == 403
+        root = client.get("/", headers=_sign("GET", "/"))
+        assert root.status_code == 200
+        assert b"ListAllMyBucketsResult" in root.content
+        assert b"<Name>sales</Name>" in root.content
+        assert client.head("/", headers=_sign("HEAD", "/")).status_code == 200
         path = "/sales/published/1/part.parquet"
         assert client.get(path, headers=_sign("GET", path)).content == b"generation-1"
         response = client.get(

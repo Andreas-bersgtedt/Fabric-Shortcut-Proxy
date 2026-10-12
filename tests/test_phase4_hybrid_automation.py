@@ -12,6 +12,7 @@ def read(relative_path: str) -> str:
 
 def test_federation_networking_references_existing_vm_and_adds_peerings():
     template = read("infra/fsp-federation/main.bicep")
+    peering_module = read("infra/modules/hybrid-vnet-peering.bicep")
     local_params = read("infra/fsp-federation/main.local.bicepparam")
 
     assert "param hybridVmVnetName string" in template
@@ -25,6 +26,7 @@ def test_federation_networking_references_existing_vm_and_adds_peerings():
     assert template.count("remoteVirtualNetworkResourceId: secondaryVnetId") == 1
     assert "Microsoft.Compute/virtualMachines" not in template
     assert "Microsoft.Network/virtualNetworks@" not in template
+    assert "name: 'fsp-${peeringName}'" in peering_module
 
 
 def test_catalog_storage_reuses_blob_dns_and_links_hybrid_vnet():

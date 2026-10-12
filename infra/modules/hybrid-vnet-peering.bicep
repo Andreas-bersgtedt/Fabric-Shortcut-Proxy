@@ -14,7 +14,7 @@ resource localVnet 'Microsoft.Network/virtualNetworks@2024-07-01' existing = {
 }
 
 module peering 'br/public:avm/res/network/virtual-network/virtual-network-peering:0.2.0' = {
-  name: 'fsp-hybrid-vnet-peering'
+  name: 'fsp-${peeringName}'
   params: {
     localVnetName: localVnet.name
     remoteVirtualNetworkResourceId: remoteVirtualNetworkResourceId

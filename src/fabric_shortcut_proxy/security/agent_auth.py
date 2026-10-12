@@ -232,6 +232,7 @@ class AgentMtlsProvider:
             return AgentTokenResult(False, "missing")
         try:
             from cryptography import x509
+            from cryptography.exceptions import InvalidSignature
             from cryptography.hazmat.primitives import hashes
             from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 
@@ -263,9 +264,7 @@ class AgentMtlsProvider:
             ):
                 return AgentTokenResult(False, "invalid")
             fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
-        except (ValueError, TypeError, UnicodeError):
-            return AgentTokenResult(False, "invalid")
-        except Exception:
+        except (InvalidSignature, ValueError, TypeError, UnicodeError):
             return AgentTokenResult(False, "invalid")
         mapped_identity = self.identities.get(fingerprint)
         if mapped_identity is None:

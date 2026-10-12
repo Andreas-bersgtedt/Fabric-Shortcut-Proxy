@@ -242,8 +242,12 @@ class DurableWorkQueue:
                 raise StaleLeaderError("Manager leadership changed before queue write")
         else:
             self.store.put(key, _json_bytes(value))
-        if self._read(key) != value:
-            raise WorkQueueError(f"queue record verification failed: {key}")
+        for attempt in range(5):
+            if self._read(key) == value:
+                return
+            if attempt < 4:
+                time.sleep(0.05)
+        raise WorkQueueError(f"queue record verification failed: {key}")
 
     def _delete(self, key: str) -> bool:
         if self._leadership_check is None:

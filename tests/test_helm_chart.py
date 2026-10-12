@@ -417,10 +417,10 @@ def test_control_ingress_prefix_preserves_agent_route_allowlist() -> None:
         "--set", "agentControlIngress.pathPrefix=/phase3",
     )
     paths = re.findall(r'^\s+- path: "([^"]+)"$', rendered, re.MULTILINE)
-    assert len(paths) == 6
+    assert len(paths) == 7
     assert 'nginx.ingress.kubernetes.io/rewrite-target: "$1"' in rendered
     for route in (
-        "/control/register", "/control/heartbeat", "/control/task-result",
+        "/readyz", "/control/register", "/control/heartbeat", "/control/task-result",
         "/control/materialize", "/control/assignment/site-a-agent",
         "/control/snapshot/customer",
     ):

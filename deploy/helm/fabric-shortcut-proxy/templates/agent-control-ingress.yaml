@@ -39,7 +39,7 @@ spec:
     - host: {{ $host | quote }}
       http:
         paths:
-          {{- range list "/control/register" "/control/heartbeat" "/control/task-result" "/control/materialize" }}
+          {{- range list "/readyz" "/control/register" "/control/heartbeat" "/control/task-result" "/control/materialize" }}
           {{- if $ing.pathPrefix }}
           - path: {{ printf "%s(%s)$" $ing.pathPrefix . | quote }}
             pathType: ImplementationSpecific

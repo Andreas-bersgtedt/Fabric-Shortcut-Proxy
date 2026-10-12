@@ -7,6 +7,8 @@ param location string
 param storageAccountName string
 param primaryManagerPrincipalId string
 param secondaryManagerPrincipalId string
+param primaryReaderPrincipalId string
+param secondaryReaderPrincipalId string
 param primaryVnetId string
 param secondaryVnetId string
 param hybridVmVnetId string
@@ -17,6 +19,10 @@ param tags object
 var blobDataContributorRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+)
+var blobDataReaderRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 )
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -66,6 +72,14 @@ resource catalogContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
   }
 }
 
+resource publishedContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'published'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 resource hybridStagingContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobService
   name: 'fsp-hybrid-staging'
@@ -90,6 +104,56 @@ resource secondaryCatalogWriter 'Microsoft.Authorization/roleAssignments@2022-04
   properties: {
     roleDefinitionId: blobDataContributorRoleId
     principalId: secondaryManagerPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource primaryPublicationWriter 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(publishedContainer.id, primaryManagerPrincipalId, blobDataContributorRoleId)
+  scope: publishedContainer
+  properties: {
+    roleDefinitionId: blobDataContributorRoleId
+    principalId: primaryManagerPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource secondaryPublicationWriter 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(publishedContainer.id, secondaryManagerPrincipalId, blobDataContributorRoleId)
+  scope: publishedContainer
+  properties: {
+    roleDefinitionId: blobDataContributorRoleId
+    principalId: secondaryManagerPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource primaryCatalogReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(catalogContainer.id, primaryReaderPrincipalId, blobDataReaderRoleId)
+  scope: catalogContainer
+  properties: {
+    roleDefinitionId: blobDataReaderRoleId
+    principalId: primaryReaderPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource secondaryCatalogReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(catalogContainer.id, secondaryReaderPrincipalId, blobDataReaderRoleId)
+  scope: catalogContainer
+  properties: {
+    roleDefinitionId: blobDataReaderRoleId
+    principalId: secondaryReaderPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource primaryPublicationReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(publishedContainer.id, primaryReaderPrincipalId, blobDataReaderRoleId)
+  scope: publishedContainer
+  properties: {
+    roleDefinitionId: blobDataReaderRoleId
+    principalId: primaryReaderPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -138,5 +202,6 @@ module hybridVmDnsLink 'br/public:avm/res/network/private-dns-zone/virtual-netwo
 output storageAccountName string = storageAccount.name
 output storageAccountId string = storageAccount.id
 output catalogContainerId string = catalogContainer.id
+output publishedContainerId string = publishedContainer.id
 output hybridStagingContainerId string = hybridStagingContainer.id
 output privateDnsZoneId string = blobPrivateDnsZone.id

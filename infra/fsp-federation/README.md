@@ -4,19 +4,27 @@ This subscription-scope Bicep deployment adds the resources required by the
 Phase 4 catalog without recreating either AKS cluster or VNet:
 
 - a private `StorageV2` account using `Standard_RAGZRS`;
-- separate `catalog` and `fsp-hybrid-staging` Blob containers;
+- separate `catalog`, `published`, and `fsp-hybrid-staging` Blob containers;
+- a private North Europe `Standard_ZRS` replica account and `replica` container;
 - container-scoped managed-identity role assignments for both regional
-  Managers and the hybrid-site identity;
+  Managers, read-only regional serving identities, and the hybrid-site identity;
+- workload-identity federation for a dedicated `fsp-regional-reader` service
+  account in each AKS cluster;
 - Blob private endpoints in Sweden Central and North Europe;
 - links from both existing AKS VNets and the hybrid VM VNet to the existing
   `privatelink.blob.core.windows.net` zone in `fabricproxy`; and
 - reciprocal VNet peerings from the existing hybrid VM VNet to both endpoint
-  VNets, so either regional private endpoint address is routable.
+  VNets and between the regional VNets, so every advertised private endpoint
+  address is routable from either Manager.
 
 All VNets and identities are referenced as existing resources. The template
 does not create or update the VM, NIC, VNet, subnet, AKS cluster, or private DNS
 zone. It adds peering resources, a DNS-zone link, Blob data access for the
 hybrid identity, and the catalog resources.
+
+The regional Managers receive Blob Contributor only on the `catalog`,
+`published`, and `replica` containers. Each regional serving identity receives
+Blob Reader on `catalog` and its local `published` or `replica` container.
 
 Validate and preview from the repository root:
 

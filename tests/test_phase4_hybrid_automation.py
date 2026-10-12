@@ -22,11 +22,32 @@ def test_federation_networking_references_existing_vm_and_adds_peerings():
     assert "param hybridVmVnetName = 'fsp-linux-test-vnet'" in local_params
     assert "../modules/hybrid-vnet-peering.bicep" in template
     assert template.count("remoteVirtualNetworkResourceId: hybridVmVnetId") == 2
-    assert template.count("remoteVirtualNetworkResourceId: primaryVnetId") == 1
-    assert template.count("remoteVirtualNetworkResourceId: secondaryVnetId") == 1
+    assert template.count("remoteVirtualNetworkResourceId: primaryVnetId") == 2
+    assert template.count("remoteVirtualNetworkResourceId: secondaryVnetId") == 2
+    assert "peeringName: 'peer-swc-to-neu'" in template
+    assert "peeringName: 'peer-neu-to-swc'" in template
     assert "Microsoft.Compute/virtualMachines" not in template
     assert "Microsoft.Network/virtualNetworks@" not in template
     assert "name: 'fsp-${peeringName}'" in peering_module
+
+
+def test_federation_adds_regional_publication_storage_and_reader_identities():
+    template = read("infra/fsp-federation/main.bicep")
+    catalog = read("infra/fsp-federation/modules/catalog-storage.bicep")
+    replica = read("infra/fsp-federation/modules/replica-storage.bicep")
+    reader_identity = read("infra/fsp-federation/modules/regional-reader-identity.bicep")
+
+    assert "name: 'published'" in catalog
+    assert "name: 'replica'" in replica
+    assert "name: 'Standard_ZRS'" in replica
+    assert "publicNetworkAccess: 'Disabled'" in replica
+    assert "allowSharedKeyAccess: false" in replica
+    assert "id-fsp-phase4-reader-swc" in template
+    assert "id-fsp-phase4-reader-neu" in template
+    assert "federatedIdentityCredentials@2024-11-30" in reader_identity
+    assert "regionalReaderServiceAccountName" in template
+    assert "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1" in catalog
+    assert "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1" in replica
 
 
 def test_catalog_storage_reuses_blob_dns_and_links_hybrid_vnet():

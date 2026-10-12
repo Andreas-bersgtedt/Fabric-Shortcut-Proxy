@@ -42,6 +42,18 @@ param primaryManagerIdentityName string = 'id-fspdemo-workload'
 @description('Secondary AKS workload identity name.')
 param secondaryManagerIdentityName string = 'id-fspdemo-xdev-neu'
 
+@description('Primary AKS cluster name.')
+param primaryAksName string = 'aks-fspdemo-xdev-swc'
+
+@description('Secondary AKS cluster name.')
+param secondaryAksName string = 'aks-fspdemo-xdev-neu'
+
+@description('Namespace used by the federated regional serving workloads.')
+param federationNamespace string = 'fsp-phase3'
+
+@description('Service account used by the read-only regional serving workloads.')
+param regionalReaderServiceAccountName string = 'fsp-regional-reader'
+
 @description('Tags applied to new Phase 4 resources.')
 param tags object = {
   Application: 'Fabric-Shortcut-Proxy'
@@ -51,6 +63,7 @@ param tags object = {
 }
 
 var storageAccountName = 'stfspcat${take(uniqueString(targetSubscriptionId, 'phase4-catalog'), 13)}'
+var replicaStorageAccountName = 'stfsprep${take(uniqueString(targetSubscriptionId, 'phase4-replica'), 13)}'
 var primaryVnetId = resourceId(
   targetSubscriptionId,
   primaryResourceGroupName,
@@ -85,6 +98,32 @@ resource hybridSiteIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@20
   name: hybridSiteIdentityName
 }
 
+module primaryReaderIdentity './modules/regional-reader-identity.bicep' = {
+  name: 'fsp-phase4-reader-identity-primary'
+  scope: resourceGroup(targetSubscriptionId, primaryResourceGroupName)
+  params: {
+    location: primaryLocation
+    identityName: 'id-fsp-phase4-reader-swc'
+    aksName: primaryAksName
+    namespace: federationNamespace
+    serviceAccountName: regionalReaderServiceAccountName
+    tags: tags
+  }
+}
+
+module secondaryReaderIdentity './modules/regional-reader-identity.bicep' = {
+  name: 'fsp-phase4-reader-identity-secondary'
+  scope: resourceGroup(targetSubscriptionId, secondaryResourceGroupName)
+  params: {
+    location: 'northeurope'
+    identityName: 'id-fsp-phase4-reader-neu'
+    aksName: secondaryAksName
+    namespace: federationNamespace
+    serviceAccountName: regionalReaderServiceAccountName
+    tags: tags
+  }
+}
+
 module catalogStorage './modules/catalog-storage.bicep' = {
   name: 'fsp-phase4-catalog-storage'
   scope: resourceGroup(targetSubscriptionId, primaryResourceGroupName)
@@ -94,11 +133,26 @@ module catalogStorage './modules/catalog-storage.bicep' = {
     storageAccountName: storageAccountName
     primaryManagerPrincipalId: primaryManagerIdentity.properties.principalId
     secondaryManagerPrincipalId: secondaryManagerIdentity.properties.principalId
+    primaryReaderPrincipalId: primaryReaderIdentity.outputs.principalId
+    secondaryReaderPrincipalId: secondaryReaderIdentity.outputs.principalId
     primaryVnetId: primaryVnetId
     secondaryVnetId: secondaryVnetId
     hybridVmVnetId: hybridVmVnetId
     blobPrivateDnsZoneResourceGroupName: blobPrivateDnsZoneResourceGroupName
     blobPrivateDnsZoneName: blobPrivateDnsZoneName
+    tags: tags
+  }
+}
+
+module replicaStorage './modules/replica-storage.bicep' = {
+  name: 'fsp-phase4-replica-storage'
+  scope: resourceGroup(targetSubscriptionId, secondaryResourceGroupName)
+  params: {
+    location: 'northeurope'
+    storageAccountName: replicaStorageAccountName
+    primaryManagerPrincipalId: primaryManagerIdentity.properties.principalId
+    secondaryManagerPrincipalId: secondaryManagerIdentity.properties.principalId
+    secondaryReaderPrincipalId: secondaryReaderIdentity.outputs.principalId
     tags: tags
   }
 }
@@ -156,6 +210,26 @@ module secondaryToHybridVm '../modules/hybrid-vnet-peering.bicep' = {
   }
 }
 
+module primaryToSecondary '../modules/hybrid-vnet-peering.bicep' = {
+  name: 'fsp-phase4-swc-to-neu'
+  scope: resourceGroup(targetSubscriptionId, primaryResourceGroupName)
+  params: {
+    localVnetName: primaryVnetName
+    remoteVirtualNetworkResourceId: secondaryVnetId
+    peeringName: 'peer-swc-to-neu'
+  }
+}
+
+module secondaryToPrimary '../modules/hybrid-vnet-peering.bicep' = {
+  name: 'fsp-phase4-neu-to-swc'
+  scope: resourceGroup(targetSubscriptionId, secondaryResourceGroupName)
+  params: {
+    localVnetName: secondaryVnetName
+    remoteVirtualNetworkResourceId: primaryVnetId
+    peeringName: 'peer-neu-to-swc'
+  }
+}
+
 module primaryPrivateEndpoint './modules/catalog-private-endpoint.bicep' = {
   name: 'fsp-phase4-catalog-pe-primary'
   scope: resourceGroup(targetSubscriptionId, primaryResourceGroupName)
@@ -184,10 +258,30 @@ module secondaryPrivateEndpoint './modules/catalog-private-endpoint.bicep' = {
   }
 }
 
+module replicaPrivateEndpoint './modules/catalog-private-endpoint.bicep' = {
+  name: 'fsp-phase4-replica-pe-secondary'
+  scope: resourceGroup(targetSubscriptionId, secondaryResourceGroupName)
+  params: {
+    location: 'northeurope'
+    name: 'pe-${replicaStorageAccountName}-blob-neu'
+    storageAccountId: replicaStorage.outputs.storageAccountId
+    privateDnsZoneId: catalogStorage.outputs.privateDnsZoneId
+    vnetName: secondaryVnetName
+    subnetName: privateEndpointSubnetName
+    tags: tags
+  }
+}
+
 output storageAccountName string = catalogStorage.outputs.storageAccountName
 output storageAccountId string = catalogStorage.outputs.storageAccountId
 output catalogContainerId string = catalogStorage.outputs.catalogContainerId
+output publishedContainerId string = catalogStorage.outputs.publishedContainerId
 output hybridStagingContainerId string = catalogStorage.outputs.hybridStagingContainerId
+output replicaStorageAccountName string = replicaStorage.outputs.storageAccountName
+output replicaContainerId string = replicaStorage.outputs.replicaContainerId
+output primaryReaderClientId string = primaryReaderIdentity.outputs.clientId
+output secondaryReaderClientId string = secondaryReaderIdentity.outputs.clientId
 output hybridVmVnetId string = hybridVmVnetId
 output primaryPrivateEndpointId string = primaryPrivateEndpoint.outputs.privateEndpointId
 output secondaryPrivateEndpointId string = secondaryPrivateEndpoint.outputs.privateEndpointId
+output replicaPrivateEndpointId string = replicaPrivateEndpoint.outputs.privateEndpointId

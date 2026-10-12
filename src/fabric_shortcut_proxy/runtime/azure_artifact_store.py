@@ -243,13 +243,10 @@ class AzureBlobArtifactStore(ArtifactStore):
         content_hash = digest.hexdigest()
         try:
             if block_ids:
-                from azure.core import MatchConditions
-
                 blob.commit_block_list(
                     block_ids,
                     metadata={"sha256": content_hash},
-                    etag="*",
-                    match_condition=MatchConditions.IfMissing,
+                    if_none_match="*",
                 )
             else:
                 blob.upload_blob(
@@ -431,14 +428,11 @@ class AzureBlobArtifactStore(ArtifactStore):
                         metadata={"sha256": hashlib.sha256(data).hexdigest()},
                     )
                 else:
-                    from azure.core import MatchConditions
-
                     props = blob.get_blob_properties()
                     blob.upload_blob(
                         bytes(data),
                         overwrite=True,
-                        etag=props.etag,
-                        match_condition=MatchConditions.IfNotModified,
+                        if_match=props.etag,
                         metadata={"sha256": hashlib.sha256(data).hexdigest()},
                     )
             except Exception as exc:

@@ -262,7 +262,14 @@ async def lifespan(app: FastAPI):
             app.state.snapshot_preparation = _snapshot_preparation
         else:
             # Dynamic split-count selection from row-target planning.
-            if any(t.effective_split_target_rows > 0 for t in runtime_tables):
+            if any(
+                t.effective_split_target_rows > 0
+                or (
+                    t.effective_split_target_bytes > 0
+                    and t.effective_split_estimated_bytes_per_row > 0
+                )
+                for t in runtime_tables
+            ):
                 from fabric_shortcut_proxy.planner.split_planner import choose_table_num_splits
                 for t in runtime_tables:
                     t.num_splits = await choose_table_num_splits(t)

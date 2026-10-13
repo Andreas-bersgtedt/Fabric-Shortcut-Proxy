@@ -51,6 +51,9 @@ data:
   MANAGER_URL: {{ .Values.managerUrl | default "http://fsp-manager:9200" }}
   STREAMING_PARQUET: {{ .Values.fsp.streamingParquet | quote }}
   STREAM_BATCH_ROWS: {{ .Values.fsp.streamBatchRows | quote }}
+  SPLIT_TARGET_ROWS: {{ .Values.fsp.splitTargetRows | quote }}
+  SPLIT_TARGET_BYTES: {{ .Values.fsp.splitTargetBytes | quote }}
+  SPLIT_ESTIMATED_BYTES_PER_ROW: {{ .Values.fsp.splitEstimatedBytesPerRow | quote }}
   SOURCE_MAX_CONCURRENCY: {{ .Values.fsp.sourceMaxConcurrency | quote }}
   MAX_CONCURRENT_GENERATIONS: {{ .Values.fsp.maxConcurrentGenerations | quote }}
   PIN_MATERIALIZED_SPLITS: {{ .Values.fsp.pinMaterializedSplits | quote }}

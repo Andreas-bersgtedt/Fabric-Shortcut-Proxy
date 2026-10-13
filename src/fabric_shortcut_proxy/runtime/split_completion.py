@@ -97,6 +97,53 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
                     "immutable split key already contains different data"
                 ) from exc
             raise
+    return publish_split_completion_record(
+        split,
+        content_hash=content_hash,
+        s3_etag=hashlib.md5(
+            parquet_bytes,
+            usedforsecurity=False,
+        ).hexdigest(),
+    )
+
+
+def publish_split_completion_record(
+    split,
+    *,
+    content_hash: str,
+    s3_etag: str,
+) -> SplitCompletion:
+    """Publish completion metadata for an object already streamed to the store."""
+    if split.file_size_in_bytes is None or split.record_count is None:
+        raise ValueError("split metadata must be populated before completion")
+    if (
+        len(content_hash) != 64
+        or any(character not in "0123456789abcdef" for character in content_hash)
+    ):
+        raise ValueError("split content_hash must be lowercase SHA-256")
+    if (
+        len(s3_etag) != 32
+        or any(character not in "0123456789abcdef" for character in s3_etag)
+    ):
+        raise ValueError("split s3_etag must be lowercase MD5")
+    store = get_default_store()
+    generation_id = str(getattr(split, "generation_id", "legacy"))
+    fence = int(getattr(split, "generation_fence", 0))
+    lease_token = str(getattr(split, "generation_token", ""))
+    plan_sha256 = str(getattr(split, "generation_plan_sha256", ""))
+    if generation_id != "legacy":
+        assert_generation_identity(
+            store,
+            generation_id,
+            fence,
+            lease_token,
+            plan_sha256,
+        )
+    stat = store.head(split.object_key)
+    if stat is None or stat.size != int(split.file_size_in_bytes):
+        raise RuntimeError(
+            f"streamed split size mismatch for {split.object_key}"
+        )
     completion = SplitCompletion(
         generation_id=generation_id,
         fence=fence,
@@ -105,7 +152,7 @@ def publish_split_completion(split, parquet_bytes: bytes) -> SplitCompletion:
         file_size_in_bytes=int(split.file_size_in_bytes),
         record_count=int(split.record_count),
         sha256=content_hash,
-        s3_etag=hashlib.md5(parquet_bytes, usedforsecurity=False).hexdigest(),
+        s3_etag=s3_etag,
         stats=dict(split.stats or {}),
     )
     payload = {

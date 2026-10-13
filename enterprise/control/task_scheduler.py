@@ -128,6 +128,7 @@ class TaskScheduler:
         tenant_id: str,
         policy: MaterializerPolicy,
         active_dataset_claims: dict[tuple[str, str], int],
+        active_source_claims: dict[str, int],
         active_pool_claims: dict[str, int],
     ) -> list[tuple[float, str]]:
         placement = self.registry.placement
@@ -159,6 +160,12 @@ class TaskScheduler:
             return []
         if not placement.enabled:
             return candidates
+        if (
+            policy.source_max_concurrency is not None
+            and active_source_claims.get(connection_id, 0)
+            >= policy.source_max_concurrency
+        ):
+            return []
         scope = self._dataset_scope(connection_id, source_table)
         if (
             policy.max_concurrency is not None
@@ -267,6 +274,7 @@ class TaskScheduler:
                             generation_payload.source_table,
                         ),
                         active_dataset_claims={},
+                        active_source_claims={},
                         active_pool_claims={},
                     )
                     for generation_payload in generation_payloads
@@ -288,6 +296,7 @@ class TaskScheduler:
         all_tasks = self.queue.list_tasks()
         active_claims: dict[str, int] = {}
         active_dataset_claims: dict[tuple[str, str], int] = {}
+        active_source_claims: dict[str, int] = {}
         active_pool_claims: dict[str, int] = {}
         for current in all_tasks:
             if current["state"] != "CLAIMED":
@@ -301,6 +310,10 @@ class TaskScheduler:
                 )
                 active_dataset_claims[scope] = (
                     active_dataset_claims.get(scope, 0) + 1
+                )
+                active_source_claims[payload.connection_id] = (
+                    active_source_claims.get(payload.connection_id, 0)
+                    + 1
                 )
                 worker = self.registry.get(agent_id)
                 if worker is not None and worker.pool_id:
@@ -329,6 +342,40 @@ class TaskScheduler:
             queue_depths[location] = queue_depths.get(location, 0.0) + 1.0
         metrics.set_location_gauges(
             "fsp_materialization_queue_depth", queue_depths
+        )
+        metrics.set_dimension_gauges(
+            "fsp_materialization_source_active_claims",
+            "source",
+            {
+                source: float(active_source_claims.get(source, 0))
+                for source in self.registry.placement.connections
+            },
+        )
+        metrics.set_dimension_gauges(
+            "fsp_materialization_source_concurrency_limit",
+            "source",
+            {
+                source: float(policy.source_max_concurrency or 0)
+                for source, policy
+                in self.registry.placement.connections.items()
+            },
+        )
+        metrics.set_dimension_gauges(
+            "fsp_materialization_pool_active_claims",
+            "pool",
+            {
+                pool_id: float(active_pool_claims.get(pool_id, 0))
+                for pool_id in self.registry.placement.pools
+            },
+        )
+        metrics.set_dimension_gauges(
+            "fsp_materialization_pool_concurrency_limit",
+            "pool",
+            {
+                pool_id: float(pool.max_concurrency or 0)
+                for pool_id, pool
+                in self.registry.placement.pools.items()
+            },
         )
 
         for task in runnable_tasks:
@@ -436,6 +483,7 @@ class TaskScheduler:
                 tenant_id=task_payload.tenant_id,
                 policy=policy,
                 active_dataset_claims=active_dataset_claims,
+                active_source_claims=active_source_claims,
                 active_pool_claims=active_pool_claims,
             )
             if not agents:
@@ -528,6 +576,13 @@ class TaskScheduler:
                 task_payload.connection_id, task_payload.source_table
             )
             active_dataset_claims[scope] = active_dataset_claims.get(scope, 0) + 1
+            active_source_claims[task_payload.connection_id] = (
+                active_source_claims.get(
+                    task_payload.connection_id,
+                    0,
+                )
+                + 1
+            )
             worker = self.registry.get(agent_id)
             actual_pool_id = worker.pool_id if worker is not None else ""
             if actual_pool_id:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import os
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite:///:memory:")
@@ -14,7 +15,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from fabric_shortcut_proxy import config
 from fabric_shortcut_proxy.config import ColumnDef
-from fabric_shortcut_proxy.parquet.generator import rows_to_parquet, stream_rows_to_parquet
+from fabric_shortcut_proxy.parquet.generator import (
+    rows_to_parquet,
+    stream_rows_to_parquet,
+    stream_rows_to_parquet_sink,
+)
 
 _COLS = [
     ColumnDef(field_id=1, name="id", iceberg_type="long", nullable=False),
@@ -60,6 +65,24 @@ async def test_stream_skips_empty_batches():
     streamed, n = await stream_rows_to_parquet(_abatches(batches), split_index=0, columns=_COLS)
     assert n == 2
     assert _read(streamed) == (2, [1, 2])
+
+
+async def test_stream_sink_writes_seekable_file_without_returning_bytes():
+    rows = [{"id": i, "val": f"v{i}"} for i in range(1, 21)]
+    with tempfile.TemporaryFile(mode="w+b") as sink:
+        count = await stream_rows_to_parquet_sink(
+            _abatches([rows[:7], rows[7:14], rows[14:]]),
+            sink,
+            split_index=0,
+            columns=_COLS,
+        )
+        size = sink.tell()
+        sink.seek(0)
+        data = sink.read()
+
+    assert count == 20
+    assert size == len(data)
+    assert _read(data) == (20, list(range(1, 21)))
 
 
 # ---------------------------------------------------------------------------

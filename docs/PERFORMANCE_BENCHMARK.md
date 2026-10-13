@@ -1,0 +1,176 @@
+# Distributed topology performance benchmark
+
+This document records the #156 acceptance run on 2026-10-13. Machine-readable
+results are in
+[`benchmarks/results/phase3-topology-2026-10-13.json`](../benchmarks/results/phase3-topology-2026-10-13.json).
+
+## Environment
+
+- Source: `Sales_DW::SalesLT.Customer`, 847 rows.
+- Central topology: materializer, SQL source, and published Blob account in
+  Sweden Central.
+- Distributed topology: materializer in North Europe with the SQL source and
+  published Blob account in Sweden Central.
+- Image:
+  `sha256:1e2b6c5513e0772a344033a0b8d183f56d055473cc566d96fa41741462c4f9e0`.
+- Signed policy revision 2.
+- Row target: 250,000.
+- Compressed byte target: 134,217,728.
+- Estimated compressed bytes per row: 100.
+- Source and pool concurrency limits: 4.
+
+The distributed trial deliberately crosses the regional boundary twice:
+source rows travel Sweden Central to North Europe and Parquet travels North
+Europe to Sweden Central. It tests the cost of incorrect placement for this
+dataset; it does not represent a source-local North Europe database.
+
+## Materialization scenarios
+
+The benchmark runner records source wait, estimated source bytes, encoding CPU
+and wall time, Parquet bytes, upload time, failed bytes, and total duration.
+Published rows per second uses rows divided by scenario wall time.
+
+| Scenario | Sweden Central wall | Sweden rows/s | North Europe wall | North Europe rows/s |
+| --- | ---: | ---: | ---: | ---: |
+| One split, concurrency 1 | 2.098 s | 403.8 | 2.423 s | 349.6 |
+| Four splits, intended concurrency 4 | 3.665 s | 231.1 | 2.901 s | 292.0 |
+| Two logical datasets in different pools | 2.982 s | 284.0 | 3.783 s | 223.9 |
+| Eight splits, pool saturated at 4; peer idle | 2.871 s | 295.1 | 5.039 s | 168.1 |
+
+The two-pool scenario ran both regional commands concurrently. It used two
+logical benchmark dataset labels over the same table, projection, snapshot,
+and object store so differences reflect pool location rather than source data.
+Combined throughput was 447.8 rows/s.
+
+The four-split output was 140,633 Parquet bytes from an estimated 338,625
+source-result bytes, a 2.408:1 ratio. For the distributed topology, estimated
+cross-region traffic was 479,258 bytes per refresh: 338,625 source bytes plus
+140,633 Parquet bytes. The central topology crossed no regional boundary for
+these stages.
+
+## Worker failure and retry
+
+The transport failure cases used a deterministic 16 MiB upload payload after
+the Parquet encoding stage. This is large enough to cross Azure's 4 MiB block
+boundary. The 25% and 75% values below come from Azure's remote uncommitted
+block list, not producer-side yielded bytes. Each retry uploaded the complete
+16 MiB payload.
+
+| Failure point | Remotely staged failed bytes | Retried bytes | Sweden wall | North Europe wall |
+| --- | ---: | ---: | ---: | ---: |
+| 25% of upload | 4,194,304 | 16,777,216 | 2.811 s | 2.994 s |
+| 75% of upload | 12,582,912 | 16,777,216 | 2.889 s | 3.581 s |
+| After upload completion | 0 | 16,777,216 | 3.203 s | 3.239 s |
+
+The post-upload case committed the immutable object, simulated loss of the
+result acknowledgement, then retried `put_stream_if_absent` against the
+existing object. The test records retry cost rather than claiming these
+timings predict production failure recovery.
+
+## Private-link artifact throughput
+
+Each location ran three verified 64 MiB uploads and downloads against the
+published Blob account.
+
+| Materializer location | Upload p50 | Upload p95 | Download p50 | Download p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Sweden Central | 97.34 MB/s | 105.32 MB/s | 130.85 MB/s | 134.10 MB/s |
+| North Europe | 31.31 MB/s | 31.85 MB/s | 17.01 MB/s | 19.21 MB/s |
+
+All six upload/download trials succeeded. Azure Storage metrics for the
+one-hour measurement window contained 386,071 successful transactions and 191
+`ClientOtherError` transactions from total account activity. No
+`ClientThrottlingError` or `ServerBusyError` series appeared.
+
+These measurements support a source limit of 4 and pool limit of 4 for this
+acceptance workload. Production-sized tables need a new run before raising
+either limit.
+
+## Fabric serving scenario
+
+Both regional readers were restarted before the cold probe. Ten warm requests
+per method then ran through the existing OneLake shortcuts.
+
+| Shortcut | Cold HEAD | Cold full GET | Cold 64 KiB range | Warm range p50 | Warm range p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sweden Central | 6,146 ms | 3,866 ms | 3,459 ms | 2,420 ms | 3,479 ms |
+| North Europe | 4,596 ms | 3,862 ms | 1,105 ms | 3,211 ms | 3,583 ms |
+
+Every full GET returned 92,314 bytes and every range returned 65,536 bytes.
+The serving measurements include OneLake/Fabric shortcut overhead and are not
+direct S3 endpoint latency.
+
+## Product-path verification
+
+After the benchmark, the normal Manager queue created generation 57 with the
+new streaming path. Materializer logged `parquet_streamed_to_store` for 92,314
+bytes and 847 rows. Publication completed with zero failures and zero
+intermediate pointer exposure; North Europe replication completed in 13.294
+seconds against the 60-second SLO.
+
+## Production decision
+
+Keep `Sales_DW::SalesLT.Customer` materialization in Sweden Central. Its source
+and published store are both there, so North Europe adds two WAN transfers.
+The 64 MiB North Europe upload p50 was 31.31 MB/s versus 97.34 MB/s in Sweden
+Central.
+
+Use these accepted settings for the current workload:
+
+- `source_max_concurrency: 4`;
+- pool `max_concurrency: 4`;
+- `SPLIT_TARGET_ROWS=250000`;
+- `SPLIT_TARGET_BYTES=134217728`;
+- `SPLIT_ESTIMATED_BYTES_PER_ROW=100`.
+
+The source table is small. Absolute throughput and Fabric latency must be
+remeasured on production-sized data before capacity planning.
+
+## Larger-table rerun: dbo.PBICleanedAuditlogs
+
+The benchmark was rerun against `dbo.PBICleanedAuditlogs`, which contains
+10,000,000 rows, 18 columns, and integer primary key `AuditLogId`.
+Machine-readable results are in
+[`benchmarks/results/phase3-topology-pbicleanedauditlogs-2026-10-13.json`](../benchmarks/results/phase3-topology-pbicleanedauditlogs-2026-10-13.json).
+
+The materialization sample covered 1,000,000 rows in each topology. Sweden ran
+with its existing workload identity and SQL private endpoint. North Europe used
+a temporary pod with the same authorized identity and a `hostAliases` entry for
+the Sweden SQL private endpoint. The pod, service account, federated credential,
+role assignment, and temporary Key Vault secret were removed after the run.
+No production connection or DNS configuration changed.
+
+| Scenario | Sweden wall | Sweden rows/s | North Europe wall | North Europe rows/s |
+| --- | ---: | ---: | ---: | ---: |
+| One split, warm source | 27.357 s | 36,554 | 33.424 s | 29,918 |
+| Four modulo splits, concurrency 4 | 83.844 s | 11,927 | 62.110 s | 16,100 |
+| Eight modulo splits, concurrency 4 | 82.946 s | 12,056 | 61.321 s | 16,308 |
+| Four range splits, concurrency 4 | 89.589 s | 11,162 | 62.081 s | 16,108 |
+
+Running both four-split pools concurrently processed 2,000,000 logical rows in
+83.757 seconds, or 23,878 rows/s combined. That is below the sum of the two
+single-stream rates and increased source contention.
+
+The one-split sample produced 48,287,647 Parquet bytes from an estimated
+443,847,325 source-result bytes, a 9.192:1 ratio. North Europe therefore moved
+an estimated 492,134,972 bytes across regions for the sample: source rows to
+North Europe plus Parquet back to Sweden.
+
+On the current 1-vCPU materializer limits, concurrency 4 is slower than one
+stream for this wide table. Modulo and range predicates performed similarly at
+concurrency 4 because source wait and encoding contention dominated the run.
+
+For `dbo.PBICleanedAuditlogs`:
+
+- keep materialization in Sweden Central;
+- use table `max_concurrency: 1` on the current worker size;
+- use range partitioning for full-table coverage, executed sequentially until
+  a higher-CPU worker benchmark proves a safe increase;
+- keep `SPLIT_TARGET_ROWS=250000`;
+- keep `SPLIT_TARGET_BYTES=134217728`;
+- use an observed compressed estimate of about 48.3 bytes per row.
+
+The run sampled 1,000,000 of 10,000,000 rows. It does not claim a measured
+full-table refresh duration. Fabric HEAD/GET/range results remain those of the
+published Customer acceptance object because the audit table was not added to
+the production catalog or Fabric shortcuts.

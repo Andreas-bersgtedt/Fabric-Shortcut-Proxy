@@ -11,7 +11,12 @@ from fabric_shortcut_proxy.runtime.artifact_store import (
 )
 from fabric_shortcut_proxy.runtime.azure_artifact_store import AzureBlobArtifactStore
 from fabric_shortcut_proxy.runtime.cloud_artifact_store import GCSArtifactStore, S3ArtifactStore
-from tests.cloud_artifact_fakes import CloudError, FakeGCSBucket, FakeS3
+from tests.cloud_artifact_fakes import (
+    CloudError,
+    FakeGCSBlob,
+    FakeGCSBucket,
+    FakeS3,
+)
 from tests.test_azure_artifact_store import _Container
 
 
@@ -48,6 +53,42 @@ def test_shared_stream_range_digest_and_metadata(store):
     assert store.verify(stat.key, size=len(body), content_hash=digest)
     assert not store.verify(stat.key, size=len(body), content_hash="0" * 64)
     assert not store.verify(stat.key, size=len(body) + 1, content_hash=digest)
+
+
+@pytest.mark.parametrize("provider", ["s3", "gcs"])
+def test_cloud_verification_uses_properties_without_object_download(
+    provider,
+    monkeypatch,
+):
+    body = b"property-verified"
+    digest = hashlib.sha256(body).hexdigest()
+    if provider == "s3":
+        client = FakeS3()
+        store = S3ArtifactStore(bucket="b", client=client)
+        store.put("g/data", body)
+        monkeypatch.setattr(
+            client,
+            "get_object",
+            lambda **_kwargs: pytest.fail(
+                "verification downloaded the S3 object"
+            ),
+        )
+    else:
+        store = GCSArtifactStore(bucket=FakeGCSBucket())
+        store.put("g/data", body)
+        monkeypatch.setattr(
+            FakeGCSBlob,
+            "download_as_bytes",
+            lambda *_args, **_kwargs: pytest.fail(
+                "verification downloaded the GCS object"
+            ),
+        )
+
+    assert store.verify(
+        "g/data",
+        size=len(body),
+        content_hash=digest,
+    )
 
 
 def test_shared_immutable_put_and_conflict(store):

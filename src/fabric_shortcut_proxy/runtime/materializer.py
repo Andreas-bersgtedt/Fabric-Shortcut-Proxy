@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import tempfile
 
 import pyarrow.parquet as pq
 import pyarrow as pa
@@ -26,9 +27,16 @@ import pyarrow as pa
 from fabric_shortcut_proxy import config
 import fabric_shortcut_proxy.cache.lru_cache as cache
 from fabric_shortcut_proxy.db.executor import execute_split_query, stream_split_query
-from fabric_shortcut_proxy.parquet.generator import rows_to_parquet, stream_rows_to_parquet
+from fabric_shortcut_proxy.parquet.generator import (
+    rows_to_parquet,
+    stream_rows_to_parquet,
+    stream_rows_to_parquet_sink,
+)
 from fabric_shortcut_proxy.planner.split_planner import arrow_fallback_columns, build_split_query
-from fabric_shortcut_proxy.iceberg.stats import collect_split_stats
+from fabric_shortcut_proxy.iceberg.stats import (
+    collect_split_stats,
+    collect_split_stats_stream,
+)
 from fabric_shortcut_proxy.iceberg.state_store import SnapshotState
 from fabric_shortcut_proxy.observability.logging import get_logger
 from fabric_shortcut_proxy.observability.tokenization import record_arrow_fallback
@@ -36,6 +44,7 @@ from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
 from fabric_shortcut_proxy.runtime.split_completion import (
     apply_split_completion,
     publish_split_completion,
+    publish_split_completion_record,
     read_split_completion,
 )
 from fabric_shortcut_proxy.runtime.generation import GenerationError, join_generation
@@ -151,6 +160,79 @@ def _apply_arrow_fallback(
     return tokenize_batch(batch, columns).to_pylist()
 
 
+async def _stream_queued_parquet(row_batches, split) -> int:
+    """Spool Parquet locally, then stream it once to the immutable object key."""
+    store = get_default_store()
+    with tempfile.TemporaryFile(mode="w+b") as output:
+        row_count = await stream_rows_to_parquet_sink(
+            row_batches,
+            output,
+            split_index=split.split_index,
+            columns=split.table.schema,
+        )
+        output.flush()
+        size = output.tell()
+        stats = (
+            collect_split_stats_stream(output, split.table.schema)
+            if config.ICEBERG_MANIFEST_STATS
+            else {}
+        )
+        output.seek(0)
+        sha256 = hashlib.sha256()
+        md5 = hashlib.md5(usedforsecurity=False)
+        streamed = 0
+
+        def chunks():
+            nonlocal streamed
+            while True:
+                chunk = output.read(1 << 20)
+                if not chunk:
+                    return
+                streamed += len(chunk)
+                sha256.update(chunk)
+                md5.update(chunk)
+                yield chunk
+
+        try:
+            stat = store.put_stream_if_absent(
+                split.object_key,
+                chunks(),
+                length=size,
+            )
+        except Exception as exc:
+            from fabric_shortcut_proxy.runtime.artifact_store import (
+                ObjectConflict,
+            )
+
+            if isinstance(exc, ObjectConflict):
+                raise GenerationError(
+                    "immutable split key already contains different data"
+                ) from exc
+            raise
+        if streamed != size or stat.size != size:
+            raise RuntimeError(
+                f"streamed Parquet length mismatch for {split.object_key}"
+            )
+        split.record_count = row_count
+        split.file_size_in_bytes = size
+        split.content_hash = sha256.hexdigest()
+        split.s3_etag = md5.hexdigest()
+        split.stats = stats
+        publish_split_completion_record(
+            split,
+            content_hash=split.content_hash,
+            s3_etag=split.s3_etag,
+        )
+        log.info(
+            "parquet_streamed_to_store",
+            table=split.table.name,
+            split_index=split.split_index,
+            rows=row_count,
+            bytes=size,
+        )
+        return row_count
+
+
 async def _materialize_split_once(
     split,
     *,
@@ -207,6 +289,11 @@ async def _materialize_split_once(
                 async for batch in batches:
                     yield _apply_arrow_fallback(batch, split, announced_fallbacks)
 
+            if publish_completion:
+                return await _stream_queued_parquet(
+                    transformed_batches(),
+                    split,
+                )
             pq_bytes, nrows = await stream_rows_to_parquet(
                 transformed_batches(), split_index=split.split_index, columns=split.table.schema
             )

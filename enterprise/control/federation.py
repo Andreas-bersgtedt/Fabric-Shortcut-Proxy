@@ -151,18 +151,15 @@ class RegionalReplicaVerifier:
 
     @staticmethod
     def _verify_bytes(store: ArtifactStore, ref: ObjectReference) -> None:
-        digest = hashlib.sha256()
-        size = 0
         try:
-            with closing(store.get_stream(ref.key)) as stream:
-                for chunk in stream:
-                    size += len(chunk)
-                    if size > ref.size_bytes:
-                        raise CatalogConflict(f"replica object verification failed: {ref.key}")
-                    digest.update(chunk)
+            verified = store.verify(
+                ref.key,
+                size=ref.size_bytes,
+                content_hash=ref.sha256,
+            )
         except ObjectNotFound as exc:
             raise CatalogConflict(f"replica object verification failed: {ref.key}") from exc
-        if size != ref.size_bytes or digest.hexdigest() != ref.sha256:
+        if not verified:
             raise CatalogConflict(f"replica object verification failed: {ref.key}")
 
     def verify(

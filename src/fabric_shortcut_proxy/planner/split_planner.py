@@ -314,27 +314,43 @@ def compute_split_count(
     *,
     estimated_rows: int | None,
     target_rows: int,
+    target_bytes: int = 0,
+    estimated_bytes_per_row: int = 0,
     min_splits: int,
     max_splits: int,
     default_splits: int,
 ) -> int:
-    """Return split count from row-target planning with guardrails."""
-    if target_rows <= 0 or estimated_rows is None or estimated_rows <= 0:
+    """Return a guarded count satisfying configured row and byte targets."""
+    if estimated_rows is None or estimated_rows <= 0:
         return max(min_splits, min(max_splits, default_splits))
-    proposed = int(math.ceil(estimated_rows / target_rows))
+    proposals = []
+    if target_rows > 0:
+        proposals.append(int(math.ceil(estimated_rows / target_rows)))
+    if target_bytes > 0 and estimated_bytes_per_row > 0:
+        estimated_bytes = estimated_rows * estimated_bytes_per_row
+        proposals.append(int(math.ceil(estimated_bytes / target_bytes)))
+    if not proposals:
+        return max(min_splits, min(max_splits, default_splits))
+    proposed = max(proposals)
     return max(min_splits, min(max_splits, proposed))
 
 
 async def choose_table_num_splits(
     table: TableDef, read_session: ReadSession | None = None
 ) -> int:
-    """Choose a table split count using SPLIT_TARGET_ROWS guardrails.
+    """Choose split count using row and compressed-byte targets.
 
     Returns the existing ``table.num_splits`` when dynamic planning is disabled
     or when row estimation fails.
     """
     target_rows = table.effective_split_target_rows
-    if target_rows <= 0:
+    target_bytes = table.effective_split_target_bytes
+    estimated_bytes_per_row = (
+        table.effective_split_estimated_bytes_per_row
+    )
+    if target_rows <= 0 and (
+        target_bytes <= 0 or estimated_bytes_per_row <= 0
+    ):
         return table.num_splits
 
     session = read_session or BestEffortReadSession(table.connection_id)
@@ -353,6 +369,8 @@ async def choose_table_num_splits(
     chosen = compute_split_count(
         estimated_rows=est,
         target_rows=target_rows,
+        target_bytes=target_bytes,
+        estimated_bytes_per_row=estimated_bytes_per_row,
         min_splits=config.SPLIT_COUNT_MIN,
         max_splits=config.SPLIT_COUNT_MAX,
         default_splits=table.num_splits,
@@ -362,6 +380,8 @@ async def choose_table_num_splits(
         table=table.name,
         estimated_rows=est,
         target_rows=target_rows,
+        target_bytes=target_bytes,
+        estimated_bytes_per_row=estimated_bytes_per_row,
         min_splits=config.SPLIT_COUNT_MIN,
         max_splits=config.SPLIT_COUNT_MAX,
         chosen_splits=chosen,

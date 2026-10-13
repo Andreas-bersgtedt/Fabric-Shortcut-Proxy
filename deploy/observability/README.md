@@ -35,6 +35,10 @@ materializers.
 | `fsp_artifact_upload_bytes_total` | Counter | `location` | Bytes from successful Azure Blob artifact writes. |
 | `fsp_artifact_upload_duration_seconds_total` | Counter | `location` | Elapsed seconds spent in those successful writes. |
 | `fsp_agent_heartbeat_age_seconds` | Gauge | `location`, `agent_id` | Age of each registered Agent's latest heartbeat, in seconds. |
+| `fsp_materialization_source_active_claims` | Gauge | `source` | Active claims across all tables for one source connection. |
+| `fsp_materialization_source_concurrency_limit` | Gauge | `source` | Configured connection-wide source limit; `0` means unlimited. |
+| `fsp_materialization_pool_active_claims` | Gauge | `pool` | Active claims assigned to one materializer pool. |
+| `fsp_materialization_pool_concurrency_limit` | Gauge | `pool` | Configured pool limit; `0` means unlimited. |
 
 Artifact throughput in the dashboard is calculated as the rate of successful
 upload bytes divided by the rate of successful upload duration. It represents

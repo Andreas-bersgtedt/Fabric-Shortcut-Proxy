@@ -16,6 +16,7 @@ import datetime
 import io
 import struct
 from dataclasses import dataclass
+from typing import BinaryIO
 
 import pyarrow.parquet as pq
 
@@ -88,6 +89,20 @@ def _encode_decimal(value) -> bytes:
 def collect_split_stats(parquet_bytes: bytes, columns: list[ColumnDef]) -> dict[int, ColumnStats]:
     """Aggregate per-column stats from a generated Parquet file's metadata."""
     md = pq.ParquetFile(io.BytesIO(parquet_bytes)).metadata
+    return _collect_metadata_stats(md, columns)
+
+
+def collect_split_stats_stream(
+    parquet_stream: BinaryIO,
+    columns: list[ColumnDef],
+) -> dict[int, ColumnStats]:
+    """Aggregate stats from a seekable Parquet stream without loading it whole."""
+    parquet_stream.seek(0)
+    md = pq.ParquetFile(parquet_stream).metadata
+    return _collect_metadata_stats(md, columns)
+
+
+def _collect_metadata_stats(md, columns: list[ColumnDef]) -> dict[int, ColumnStats]:
     name_to_col = {c.name: c for c in columns}
     result: dict[int, ColumnStats] = {}
 

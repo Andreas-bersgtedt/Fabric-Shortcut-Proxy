@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0]: 2026-10-13
+
+### Added
+
+- Added the Azure multi-region federation runtime: metadata-only global
+  catalog, fenced regional ownership, verified replica advertisement,
+  regional S3-compatible readers, workload identities, private storage, and
+  planned failover/failback support.
+- Added the Azure-IaaS hybrid-site installer with Entra workload identity,
+  container-scoped staging access, private DNS/network preflight, and an
+  independently verified mTLS fallback.
+- Added signed, versioned placement policy bundles with private Azure Blob
+  delivery, Ed25519 verification, monotonic revisions, and persistent
+  last-known-good operation during global-layer outages.
+- Added tenant boundaries across pools, sources, stores, datasets, durable
+  tasks, catalog records, serving endpoints, and audit export.
+- Added measured cross-boundary byte reports with optional operator-supplied
+  per-GiB pricing, plus N/N-1 Agent release enforcement and ordered rollout
+  rings.
+- Added reusable topology and artifact-throughput benchmark runners and
+  published central/distributed results for `SalesLT.Customer` and the
+  10-million-row `dbo.PBICleanedAuditlogs` source.
+
+### Changed
+
+- Queued Parquet materialization now writes to a bounded local spool and
+  streams once to immutable object storage while computing size, SHA-256, and
+  S3-compatible MD5. Complete output bytes are not retained in Agent memory.
+- Azure Blob, S3, and GCS publication verification now uses object size and
+  SHA-256 properties instead of full-object reads; bounded generation
+  manifests remain content-verified.
+- Split planning can enforce row and compressed-byte targets together.
+  Scheduler limits now cover a complete source connection and each
+  materializer pool, with active/limit Prometheus gauges.
+- The supported Azure acceptance topology now includes two AKS regions,
+  regional HTTPS endpoints used by Fabric shortcuts, geo-redundant catalog
+  storage, verified replication, and the simulated hybrid site.
+
+### Fixed
+
+- Fixed Azure conditional writes and bounded reads, catalog peering deployment
+  naming, regional root bucket listing, and hybrid installer shell/identity
+  preflight defects found during live acceptance.
+- Prevented recursive generation staging paths during repeated publication and
+  tolerated bounded transient Blob read lag during queue write verification.
+- Preserved upgrade compatibility for Helm releases created before mTLS,
+  policy bundles, and egress pricing values existed.
+- Made replication egress accounting durable before catalog advertisement and
+  classified retryable private-Blob failures as signed-policy source outages.
+
+### Validation
+
+- Completed planned catalog failover/failback with the catalog hash preserved,
+  Sweden-to-North-Europe ownership and region-loss drills, replica disconnect
+  and alert recovery, tenant/version negative checks, signed-policy global
+  outage recovery, and exact Fabric reads through both regional shortcuts.
+- Passed the final local regression with 1,585 tests and 53 skips. The merged
+  CI matrix passed Lite, Enterprise, cloud-store, Helm/Bicep, PyIceberg, C++,
+  and Kind hybrid-fleet gates.
+
 ## [3.0.1]: 2026-10-06
 
 ### Changed
@@ -748,7 +808,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.1...HEAD
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.1.0...HEAD
+[3.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.1...3.1.0
 [3.0.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.0...3.0.1
 [3.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.10.0...3.0.0
 [2.10.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.9.6...2.10.0

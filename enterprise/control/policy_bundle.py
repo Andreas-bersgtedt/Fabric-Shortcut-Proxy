@@ -340,6 +340,29 @@ def load_policy_bundle_from_store(
             return store.get(object_key)
         except (ObjectNotFound, OSError) as exc:
             raise _RemoteUnavailable(str(exc)) from exc
+        except Exception as exc:
+            try:
+                from azure.core.exceptions import (
+                    HttpResponseError,
+                    ServiceRequestError,
+                    ServiceResponseError,
+                )
+            except ImportError:
+                raise
+            if isinstance(
+                exc,
+                (ServiceRequestError, ServiceResponseError),
+            ):
+                raise _RemoteUnavailable(str(exc)) from exc
+            if isinstance(exc, HttpResponseError) and (
+                exc.status_code in {408, 429}
+                or (
+                    exc.status_code is not None
+                    and 500 <= exc.status_code <= 599
+                )
+            ):
+                raise _RemoteUnavailable(str(exc)) from exc
+            raise
 
     return load_policy_bundle(
         source_url=f"artifact-store:{object_key}",

@@ -193,6 +193,38 @@ def test_replication_disconnect_retains_old_snapshot_then_recovers(monkeypatch):
     assert snapshot is not None and snapshot.generation_id == "generation-2"
 
 
+def test_replica_is_not_advertised_until_egress_event_is_durable(
+    monkeypatch,
+):
+    catalog, _, stores, primary, secondary = _runtime()
+    primary.publish(
+        replace(
+            _snapshot(stores["published"], 1),
+            dataset_id="source::sales",
+        )
+    )
+    original = primary.egress_ledger.record
+    attempts = 0
+
+    def fail_once(event):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("egress ledger unavailable")
+        return original(event)
+
+    monkeypatch.setattr(primary.egress_ledger, "record", fail_once)
+    with pytest.raises(OSError, match="egress ledger"):
+        primary.replicate_owned()
+    assert secondary.snapshot("source::sales", "sales") is None
+
+    assert primary.replicate_owned() == 1
+    snapshot = secondary.snapshot("source::sales", "sales")
+    assert snapshot is not None
+    assert snapshot.generation_id == "generation-1"
+    assert len(stores["published"].list("_control/egress/v1/")) == 1
+
+
 def test_handover_during_replication_cannot_advertise(monkeypatch):
     catalog, _, stores, primary, secondary = _runtime()
     first = replace(_snapshot(stores["published"], 1), dataset_id="source::sales")

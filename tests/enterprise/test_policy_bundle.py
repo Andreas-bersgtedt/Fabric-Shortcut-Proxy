@@ -247,3 +247,37 @@ def test_private_artifact_store_bundle_uses_verified_cache_on_outage(
     assert not loaded.from_cache
     assert cached.revision == 15
     assert cached.from_cache
+
+
+def test_private_store_transport_failure_uses_verified_cache(tmp_path):
+    from azure.core.exceptions import ServiceRequestError
+
+    private_key, public_path = _key_pair(tmp_path)
+    raw = _bundle(private_key, revision=16)
+    store = MemoryStore()
+    store.put("policies/placement.json", raw)
+    cache_path = tmp_path / "policy-cache.json"
+    load_policy_bundle_from_store(
+        store=store,
+        object_key="policies/placement.json",
+        public_key_file=str(public_path),
+        cache_file=str(cache_path),
+        expected_key_id="global-1",
+        value_loader=PlacementConfig.from_dict,
+    )
+
+    def unavailable(*_args, **_kwargs):
+        raise ServiceRequestError("private endpoint unavailable")
+
+    store.get = unavailable
+    cached = load_policy_bundle_from_store(
+        store=store,
+        object_key="policies/placement.json",
+        public_key_file=str(public_path),
+        cache_file=str(cache_path),
+        expected_key_id="global-1",
+        value_loader=PlacementConfig.from_dict,
+    )
+
+    assert cached.revision == 16
+    assert cached.from_cache

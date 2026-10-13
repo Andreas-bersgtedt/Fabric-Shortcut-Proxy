@@ -697,9 +697,6 @@ class FederatedPublicationCoordinator:
                 if current is not None and current["sequence"] >= descriptor.sequence:
                     continue
                 receipt = self.verifier.replicate(descriptor, target)
-                self.catalog.advertise(
-                    receipt, owner_id=self.owner_id, fence=int(record["fence"])
-                )
                 source_profile = self.catalog.placement.stores[
                     policy.required_storage_profile
                 ]
@@ -724,6 +721,11 @@ class FederatedPublicationCoordinator:
                             ),
                         )
                     )
+                self.catalog.advertise(
+                    receipt,
+                    owner_id=self.owner_id,
+                    fence=int(record["fence"]),
+                )
                 completed += 1
         return completed
 

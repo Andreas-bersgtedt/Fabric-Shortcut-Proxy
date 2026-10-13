@@ -74,11 +74,28 @@ def test_major_release_compatibility_contract_is_documented():
         "does not introduce a storage-format or configuration-schema migration"
         in normalized_upgrade
     )
-    assert f"fabric-shortcut-proxy=={version}" in upgrade
+    assert "fabric-shortcut-proxy==3.0.1" in upgrade
     assert "C++ serving Agent 1.0.0" in upgrade
     assert "Databricks, Redshift, and Teradata remain beta" in upgrade
     assert "Impala 3.4" in upgrade
     assert "Issue #94 remains open" in changelog
+
+
+def test_current_minor_upgrade_contract_is_documented():
+    package = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    version = package["project"]["version"]
+    if not version.startswith("3.1."):
+        return
+
+    upgrade = (ROOT / "docs" / "UPGRADE_3_1.md").read_text(
+        encoding="utf-8"
+    )
+    assert f"fabric-shortcut-proxy=={version}" in upgrade
+    assert "Do not mix 3.0.1 and 3.1.0" in upgrade
+    assert "tenant_id" in upgrade
+    assert "C++ serving Agent 1.0.0" in upgrade
 
 
 def test_current_diagrams_do_not_hard_code_fsp_release_version():

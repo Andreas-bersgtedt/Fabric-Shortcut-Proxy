@@ -1,0 +1,447 @@
+{
+  "artifact_throughput": {
+    "neu": {
+      "bytes_per_iteration": 67108864,
+      "download_bytes_per_second": {
+        "max": 19207620.14285014,
+        "min": 16217440.190049065,
+        "p50": 17007716.3842999,
+        "p95": 19207620.14285014
+      },
+      "failures": [],
+      "iterations": 3,
+      "location": "northeurope",
+      "successful_iterations": 3,
+      "upload_bytes_per_second": {
+        "max": 31848072.469925914,
+        "min": 20349138.323094755,
+        "p50": 31313079.253146123,
+        "p95": 31848072.469925914
+      }
+    },
+    "swc": {
+      "bytes_per_iteration": 67108864,
+      "download_bytes_per_second": {
+        "max": 134103166.34722078,
+        "min": 129215124.15339716,
+        "p50": 130851668.79098567,
+        "p95": 134103166.34722078
+      },
+      "failures": [],
+      "iterations": 3,
+      "location": "swedencentral",
+      "successful_iterations": 3,
+      "upload_bytes_per_second": {
+        "max": 105318387.03215122,
+        "min": 57198058.67847586,
+        "p50": 97344341.9274487,
+        "p95": 105318387.03215122
+      }
+    }
+  },
+  "benchmark_row_budget": 1000000,
+  "captured_at_utc": "2026-10-13T11:55:00Z",
+  "central_topology": "Sweden materializer, Sweden SQL private endpoint, Sweden published Blob",
+  "columns": 18,
+  "decision": {
+    "estimated_distributed_wan_bytes_per_1m_rows": 492134972,
+    "limitations": "The run sampled 1,000,000 of 10,000,000 rows. Fabric serving remained on the published Customer acceptance object because the audit table was not added to the production catalog or shortcut.",
+    "observed_compressed_bytes_per_row": 48.288,
+    "recommended_split_strategy": "range for full-table partitioning, executed at concurrency 1 on current 1-vCPU workers",
+    "recommended_split_target_bytes": 134217728,
+    "recommended_split_target_rows": 250000,
+    "recommended_table_max_concurrency": 1,
+    "selected_topology": "central Sweden for dbo.PBICleanedAuditlogs",
+    "single_split_neu_rows_per_second": 29918.428,
+    "single_split_swc_rows_per_second": 36554.245
+  },
+  "distributed_topology": "North Europe temporary benchmark pod, Sweden-authorized workload identity, Sweden SQL private endpoint pinned with hostAliases, Sweden published Blob",
+  "fabric_serving": [
+    {
+      "cold": {
+        "GET": {
+          "bytes": 92314,
+          "method": "GET",
+          "milliseconds": 3866.1992,
+          "status": 200
+        },
+        "HEAD": {
+          "bytes": 0,
+          "method": "HEAD",
+          "milliseconds": 6146.4597,
+          "status": 200
+        },
+        "RANGE": {
+          "bytes": 65536,
+          "method": "RANGE",
+          "milliseconds": 3459.0035000000003,
+          "status": 206
+        }
+      },
+      "expected_bytes": 92314,
+      "expected_sha256": "b5e731463c3ea890b692d55c805e3bdaccec9318886d35d16c2b683ed5864dd1",
+      "generation": "00000000000000000056-181ef2c5f1eb1ffd",
+      "shortcut": "fsp-phase4-swc",
+      "warm": {
+        "GET": {
+          "max_ms": 3690.9,
+          "min_ms": 982.94,
+          "p50_ms": 2954.967,
+          "p95_ms": 3690.9
+        },
+        "HEAD": {
+          "max_ms": 3330.112,
+          "min_ms": 628.676,
+          "p50_ms": 3054.618,
+          "p95_ms": 3330.112
+        },
+        "RANGE": {
+          "max_ms": 3479.033,
+          "min_ms": 773.326,
+          "p50_ms": 2420.266,
+          "p95_ms": 3479.033
+        }
+      }
+    },
+    {
+      "cold": {
+        "GET": {
+          "bytes": 92314,
+          "method": "GET",
+          "milliseconds": 3862.2382000000002,
+          "status": 200
+        },
+        "HEAD": {
+          "bytes": 0,
+          "method": "HEAD",
+          "milliseconds": 4595.6029,
+          "status": 200
+        },
+        "RANGE": {
+          "bytes": 65536,
+          "method": "RANGE",
+          "milliseconds": 1104.9622000000002,
+          "status": 206
+        }
+      },
+      "expected_bytes": 92314,
+      "expected_sha256": "b5e731463c3ea890b692d55c805e3bdaccec9318886d35d16c2b683ed5864dd1",
+      "generation": "00000000000000000056-181ef2c5f1eb1ffd",
+      "shortcut": "fsp-phase4-neu",
+      "warm": {
+        "GET": {
+          "max_ms": 4149.741,
+          "min_ms": 862.97,
+          "p50_ms": 2760.889,
+          "p95_ms": 4149.741
+        },
+        "HEAD": {
+          "max_ms": 3334.295,
+          "min_ms": 748.016,
+          "p50_ms": 774.034,
+          "p95_ms": 3334.295
+        },
+        "RANGE": {
+          "max_ms": 3582.933,
+          "min_ms": 856.139,
+          "p50_ms": 3210.732,
+          "p95_ms": 3582.933
+        }
+      }
+    }
+  ],
+  "identity_and_dns_changes_persisted": false,
+  "intended_concurrency_isolated": {
+    "neu": {
+      "compression_ratio": 9.144035,
+      "concurrency": 4,
+      "encode_cpu_seconds": 173.776289,
+      "encode_wall_seconds": 182.846346,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48539548,
+      "published_rows_per_second": 16100.375932,
+      "rows": 1000000,
+      "rows_per_split": 250000,
+      "source_wait_seconds": 162.870018,
+      "split_count": 4,
+      "split_strategy": "modulo",
+      "upload_seconds": 3.908391,
+      "wall_seconds": 62.110351
+    },
+    "swc": {
+      "compression_ratio": 9.144035,
+      "concurrency": 4,
+      "encode_cpu_seconds": 548.883188,
+      "encode_wall_seconds": 330.311596,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48539548,
+      "published_rows_per_second": 11926.942401,
+      "rows": 1000000,
+      "rows_per_split": 250000,
+      "source_wait_seconds": 311.212318,
+      "split_count": 4,
+      "split_strategy": "modulo",
+      "upload_seconds": 2.059449,
+      "wall_seconds": 83.843785
+    }
+  },
+  "primary_key": "AuditLogId",
+  "range_concurrency": {
+    "neu": {
+      "compression_ratio": 9.164854,
+      "concurrency": 4,
+      "encode_cpu_seconds": 174.818016,
+      "encode_wall_seconds": 182.900709,
+      "estimated_source_bytes": 442597151,
+      "parquet_bytes": 48292877,
+      "published_rows_per_second": 16107.859567,
+      "rows": 1000000,
+      "rows_per_split": 250000,
+      "source_wait_seconds": 162.056565,
+      "split_count": 4,
+      "split_strategy": "range",
+      "upload_seconds": 2.942816,
+      "wall_seconds": 62.081495
+    },
+    "swc": {
+      "compression_ratio": 9.164854,
+      "concurrency": 4,
+      "encode_cpu_seconds": 589.468208,
+      "encode_wall_seconds": 352.931722,
+      "estimated_source_bytes": 442597151,
+      "parquet_bytes": 48292877,
+      "published_rows_per_second": 11162.118678,
+      "rows": 1000000,
+      "rows_per_split": 250000,
+      "source_wait_seconds": 333.983968,
+      "split_count": 4,
+      "split_strategy": "range",
+      "upload_seconds": 1.719835,
+      "wall_seconds": 89.588727
+    }
+  },
+  "saturated_pool_other_idle": {
+    "neu": {
+      "compression_ratio": 9.067377,
+      "concurrency": 4,
+      "encode_cpu_seconds": 198.619619,
+      "encode_wall_seconds": 210.024108,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48949915,
+      "published_rows_per_second": 16307.641078,
+      "rows": 1000000,
+      "rows_per_split": 125000,
+      "source_wait_seconds": 190.196211,
+      "split_count": 8,
+      "split_strategy": "modulo",
+      "upload_seconds": 4.106581,
+      "wall_seconds": 61.320947
+    },
+    "swc": {
+      "compression_ratio": 9.067377,
+      "concurrency": 4,
+      "encode_cpu_seconds": 529.358345,
+      "encode_wall_seconds": 322.390292,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48949915,
+      "published_rows_per_second": 12056.030363,
+      "rows": 1000000,
+      "rows_per_split": 125000,
+      "source_wait_seconds": 303.17719,
+      "split_count": 8,
+      "split_strategy": "modulo",
+      "upload_seconds": 1.818157,
+      "wall_seconds": 82.946042
+    }
+  },
+  "single_split": {
+    "neu": {
+      "compression_ratio": 9.191736,
+      "concurrency": 1,
+      "encode_cpu_seconds": 29.027482,
+      "encode_wall_seconds": 29.826158,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48287647,
+      "published_rows_per_second": 29918.427722,
+      "rows": 1000000,
+      "rows_per_split": 1000000,
+      "source_wait_seconds": 13.163978,
+      "split_count": 1,
+      "split_strategy": "modulo",
+      "upload_seconds": 3.491305,
+      "wall_seconds": 33.424216
+    },
+    "swc_cold_first": {
+      "compression_ratio": 9.191736,
+      "concurrency": 1,
+      "encode_cpu_seconds": 26.132226,
+      "encode_wall_seconds": 26.5141,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48287647,
+      "published_rows_per_second": 35495.008532,
+      "rows": 1000000,
+      "rows_per_split": 1000000,
+      "source_wait_seconds": 11.637971,
+      "split_count": 1,
+      "split_strategy": "modulo",
+      "upload_seconds": 1.590245,
+      "wall_seconds": 28.172975
+    },
+    "swc_warm": {
+      "compression_ratio": 9.191736,
+      "concurrency": 1,
+      "encode_cpu_seconds": 25.172498,
+      "encode_wall_seconds": 25.561795,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48287647,
+      "published_rows_per_second": 36554.24538,
+      "rows": 1000000,
+      "rows_per_split": 1000000,
+      "source_wait_seconds": 11.103722,
+      "split_count": 1,
+      "split_strategy": "modulo",
+      "upload_seconds": 1.728499,
+      "wall_seconds": 27.356604
+    }
+  },
+  "source_row_count": 10000000,
+  "source_table": "dbo.PBICleanedAuditlogs",
+  "two_pools_concurrent": {
+    "combined_rows_per_second": 23878.566474,
+    "combined_wall_seconds": 83.757122,
+    "neu": {
+      "compression_ratio": 9.144035,
+      "concurrency": 4,
+      "encode_cpu_seconds": 171.909048,
+      "encode_wall_seconds": 178.012571,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48539548,
+      "published_rows_per_second": 16471.551339,
+      "rows": 1000000,
+      "rows_per_split": 250000,
+      "source_wait_seconds": 158.67647,
+      "split_count": 4,
+      "split_strategy": "modulo",
+      "upload_seconds": 2.884144,
+      "wall_seconds": 60.710736
+    },
+    "swc": {
+      "compression_ratio": 9.144035,
+      "concurrency": 4,
+      "encode_cpu_seconds": 544.266757,
+      "encode_wall_seconds": 328.752498,
+      "estimated_source_bytes": 443847325,
+      "parquet_bytes": 48539548,
+      "published_rows_per_second": 11939.283237,
+      "rows": 1000000,
+      "rows_per_split": 250000,
+      "source_wait_seconds": 310.042499,
+      "split_count": 4,
+      "split_strategy": "modulo",
+      "upload_seconds": 1.637565,
+      "wall_seconds": 83.757122
+    }
+  },
+  "worker_failure_transport": {
+    "neu": [
+      {
+        "encode_cpu_seconds": 0.511213,
+        "encode_wall_seconds": 0.976586,
+        "estimated_source_bytes": 338625,
+        "failed_bytes_measured_remotely": true,
+        "failed_upload_bytes": 4194304,
+        "failure_fraction": 0.25,
+        "parquet_bytes": 92314,
+        "published_rows_per_second": 282.875192,
+        "retried_upload_bytes": 16777216,
+        "rows": 847,
+        "source_wait_seconds": 0.520218,
+        "upload_bytes": 16777216,
+        "upload_seconds": 1.423576,
+        "wall_seconds": 2.994253
+      },
+      {
+        "encode_cpu_seconds": 0.604174,
+        "encode_wall_seconds": 1.3921,
+        "estimated_source_bytes": 338625,
+        "failed_bytes_measured_remotely": true,
+        "failed_upload_bytes": 12582912,
+        "failure_fraction": 0.75,
+        "parquet_bytes": 92314,
+        "published_rows_per_second": 236.519785,
+        "retried_upload_bytes": 16777216,
+        "rows": 847,
+        "source_wait_seconds": 0.744199,
+        "upload_bytes": 16777216,
+        "upload_seconds": 1.567345,
+        "wall_seconds": 3.581096
+      },
+      {
+        "encode_cpu_seconds": 0.527819,
+        "encode_wall_seconds": 0.95195,
+        "estimated_source_bytes": 338625,
+        "failed_bytes_measured_remotely": false,
+        "failed_upload_bytes": 0,
+        "failure_fraction": 1.0,
+        "parquet_bytes": 92314,
+        "published_rows_per_second": 261.487341,
+        "retried_upload_bytes": 16777216,
+        "rows": 847,
+        "source_wait_seconds": 0.492779,
+        "upload_bytes": 16777216,
+        "upload_seconds": 1.681831,
+        "wall_seconds": 3.239163
+      }
+    ],
+    "swc": [
+      {
+        "encode_cpu_seconds": 0.378034,
+        "encode_wall_seconds": 1.780152,
+        "estimated_source_bytes": 338625,
+        "failed_bytes_measured_remotely": true,
+        "failed_upload_bytes": 4194304,
+        "failure_fraction": 0.25,
+        "parquet_bytes": 92314,
+        "published_rows_per_second": 301.265932,
+        "retried_upload_bytes": 16777216,
+        "rows": 847,
+        "source_wait_seconds": 1.406494,
+        "upload_bytes": 16777216,
+        "upload_seconds": 0.684601,
+        "wall_seconds": 2.81147
+      },
+      {
+        "encode_cpu_seconds": 0.343448,
+        "encode_wall_seconds": 1.528258,
+        "estimated_source_bytes": 338625,
+        "failed_bytes_measured_remotely": true,
+        "failed_upload_bytes": 12582912,
+        "failure_fraction": 0.75,
+        "parquet_bytes": 92314,
+        "published_rows_per_second": 293.178519,
+        "retried_upload_bytes": 16777216,
+        "rows": 847,
+        "source_wait_seconds": 1.181794,
+        "upload_bytes": 16777216,
+        "upload_seconds": 1.03357,
+        "wall_seconds": 2.889025
+      },
+      {
+        "encode_cpu_seconds": 0.415966,
+        "encode_wall_seconds": 1.835583,
+        "estimated_source_bytes": 338625,
+        "failed_bytes_measured_remotely": false,
+        "failed_upload_bytes": 0,
+        "failure_fraction": 1.0,
+        "parquet_bytes": 92314,
+        "published_rows_per_second": 264.422579,
+        "retried_upload_bytes": 16777216,
+        "rows": 847,
+        "source_wait_seconds": 1.431022,
+        "upload_bytes": 16777216,
+        "upload_seconds": 1.022094,
+        "wall_seconds": 3.203206
+      }
+    ]
+  }
+}

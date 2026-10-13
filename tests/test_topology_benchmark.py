@@ -1,7 +1,14 @@
 from __future__ import annotations
 
-from benchmarks.topology_benchmark import StageSample, percentile, summarize
+import pytest
+
 from benchmarks.artifact_throughput import deterministic_chunks
+from benchmarks.topology_benchmark import (
+    StageSample,
+    percentile,
+    resolve_benchmark_table,
+    summarize,
+)
 
 
 def _sample(index: int, duration: float) -> StageSample:
@@ -71,3 +78,46 @@ def test_throughput_chunks_are_bounded_and_exact():
 
     assert [len(chunk) for chunk in chunks] == [1 << 20, 17]
     assert len(b"".join(chunks)) == (1 << 20) + 17
+
+
+@pytest.mark.asyncio
+async def test_reflected_benchmark_table_uses_integer_primary_key(
+    monkeypatch,
+):
+    from fabric_shortcut_proxy.config import ColumnDef
+
+    async def schema(_source, _connection):
+        return [
+            ColumnDef(
+                field_id=1,
+                name="AuditLogId",
+                iceberg_type="long",
+                nullable=False,
+            )
+        ]
+
+    async def primary_key(_source, _connection):
+        return ["AuditLogId"]
+
+    monkeypatch.setattr(
+        "benchmarks.topology_benchmark.derive_table_schema",
+        schema,
+    )
+    monkeypatch.setattr(
+        "benchmarks.topology_benchmark.reflect_primary_key",
+        primary_key,
+    )
+
+    table = await resolve_benchmark_table(
+        source_table="dbo.PBICleanedAuditlogs",
+        connection_id="Sales_DW",
+        key_column="",
+        split_count=4,
+        split_strategy="range",
+    )
+
+    assert table.source_table == "dbo.PBICleanedAuditlogs"
+    assert table.connection_id == "Sales_DW"
+    assert table.key_column == "AuditLogId"
+    assert table.num_splits == 4
+    assert table.split_strategy == "range"

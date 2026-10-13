@@ -576,7 +576,11 @@ class TableDef:
         ):
             byte_target_rows = max(
                 1,
-                self.effective_split_target_bytes
+                (
+                    self.effective_split_target_bytes
+                    + self.effective_split_estimated_bytes_per_row
+                    - 1
+                )
                 // self.effective_split_estimated_bytes_per_row,
             )
         return max(

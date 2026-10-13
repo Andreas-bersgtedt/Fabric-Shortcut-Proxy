@@ -13,15 +13,22 @@ from dataclasses import asdict, dataclass
 from typing import AsyncIterator
 
 from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import TableDef
 from fabric_shortcut_proxy.db.executor import (
+    derive_table_schema,
     dispose_engines,
+    fetch_key_bounds,
+    reflect_primary_key,
     stream_split_query,
 )
 from fabric_shortcut_proxy.iceberg.state_store import SplitDescriptor
 from fabric_shortcut_proxy.parquet.generator import (
     stream_rows_to_parquet_sink,
 )
-from fabric_shortcut_proxy.planner.split_planner import build_split_query
+from fabric_shortcut_proxy.planner.split_planner import (
+    build_split_query,
+    compute_key_ranges,
+)
 from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
 
 
@@ -155,6 +162,8 @@ async def _materialize_one(
     split_index: int,
     split_count: int,
     failure_fraction: float | None,
+    rows_per_split: int,
+    key_range: tuple[int, int] | None,
 ) -> StageSample:
     store = get_default_store()
     key = (
@@ -167,8 +176,13 @@ async def _materialize_one(
         object_key=key,
         watermark_ms=int(time.time() * 1000),
         table=table,
+        split_key_column=table.key_column,
+        key_lo=key_range[0] if key_range is not None else None,
+        key_hi=key_range[1] if key_range is not None else None,
     )
     sql, params = build_split_query(split)
+    if rows_per_split > 0:
+        params["max_rows"] = rows_per_split
     source_wait = 0.0
     source_bytes = 0
     query = stream_split_query(
@@ -343,10 +357,37 @@ async def run_scenario(
     split_count: int,
     concurrency: int,
     failure_fraction: float | None = None,
+    source_table: str = "",
+    connection_id: str = "default",
+    key_column: str = "",
+    rows_per_split: int = 0,
+    split_strategy: str = "modulo",
 ) -> dict:
-    if not config.TABLES:
-        raise RuntimeError("benchmark requires one configured source table")
-    table = config.TABLES[0]
+    if rows_per_split < 0:
+        raise ValueError("rows_per_split must be non-negative")
+    table = await resolve_benchmark_table(
+        source_table=source_table,
+        connection_id=connection_id,
+        key_column=key_column,
+        split_count=split_count,
+        split_strategy=split_strategy,
+    )
+    ranges = None
+    if split_strategy == "range":
+        bounds = await fetch_key_bounds(
+            table.source_table,
+            str(table.key_column),
+            connection=table.connection_id,
+        )
+        if bounds is None:
+            raise RuntimeError(
+                f"no key bounds for {table.source_table!r}"
+            )
+        ranges = compute_key_ranges(
+            int(bounds[0]),
+            int(bounds[1]),
+            split_count,
+        )
     gate = asyncio.Semaphore(max(1, concurrency))
 
     async def run(index: int) -> StageSample:
@@ -357,6 +398,8 @@ async def run_scenario(
                 split_index=index,
                 split_count=split_count,
                 failure_fraction=failure_fraction,
+                rows_per_split=rows_per_split,
+                key_range=(ranges[index] if ranges is not None else None),
             )
 
     started = time.perf_counter()
@@ -370,10 +413,67 @@ async def run_scenario(
         "split_count": split_count,
         "concurrency": concurrency,
         "failure_fraction": failure_fraction,
+        "source_table": table.source_table,
+        "connection_id": table.connection_id,
+        "key_column": table.key_column,
+        "rows_per_split": rows_per_split,
+        "split_strategy": split_strategy,
         "wall_seconds": wall,
         "summary": summarize(samples, wall_seconds=wall),
         "samples": [sample.to_dict() for sample in samples],
     }
+
+
+async def resolve_benchmark_table(
+    *,
+    source_table: str,
+    connection_id: str,
+    key_column: str,
+    split_count: int,
+    split_strategy: str,
+) -> TableDef:
+    if not source_table:
+        if not config.TABLES:
+            raise RuntimeError(
+                "benchmark requires one configured source table"
+            )
+        table = config.TABLES[0]
+        table.num_splits = split_count
+        table.split_strategy = split_strategy
+        return table
+    schema = await derive_table_schema(source_table, connection_id)
+    reflected_key = key_column.strip()
+    if not reflected_key:
+        primary_key = await reflect_primary_key(
+            source_table,
+            connection_id,
+        )
+        reflected_key = primary_key[0] if primary_key else ""
+    if not reflected_key:
+        reflected_key = next(
+            (
+                column.name
+                for column in schema
+                if (
+                    not column.nullable
+                    and column.iceberg_type in {"int", "long"}
+                )
+            ),
+            "",
+        )
+    if not reflected_key:
+        raise RuntimeError(
+            f"benchmark source {source_table!r} has no integer split key"
+        )
+    return TableDef(
+        name=source_table.rsplit(".", 1)[-1],
+        source_table=source_table,
+        schema=schema,
+        num_splits=split_count,
+        key_column=reflected_key,
+        connection_id=connection_id,
+        split_strategy=split_strategy,
+    )
 
 
 def _arguments() -> argparse.Namespace:
@@ -386,13 +486,28 @@ def _arguments() -> argparse.Namespace:
         type=float,
         choices=(0.25, 0.75, 1.0),
     )
+    parser.add_argument("--source-table", default="")
+    parser.add_argument("--connection", default="default")
+    parser.add_argument("--key-column", default="")
+    parser.add_argument("--rows-per-split", type=int, default=0)
+    parser.add_argument(
+        "--split-strategy",
+        choices=("modulo", "range"),
+        default="modulo",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _arguments()
-    if args.splits < 1 or args.concurrency < 1:
-        raise SystemExit("splits and concurrency must be positive")
+    if (
+        args.splits < 1
+        or args.concurrency < 1
+        or args.rows_per_split < 0
+    ):
+        raise SystemExit(
+            "splits/concurrency must be positive and rows-per-split non-negative"
+        )
     async def main() -> dict:
         try:
             return await run_scenario(
@@ -400,6 +515,11 @@ if __name__ == "__main__":
                 split_count=args.splits,
                 concurrency=args.concurrency,
                 failure_fraction=args.failure_fraction,
+                source_table=args.source_table,
+                connection_id=args.connection,
+                key_column=args.key_column,
+                rows_per_split=args.rows_per_split,
+                split_strategy=args.split_strategy,
             )
         finally:
             await dispose_engines()

@@ -85,7 +85,7 @@ def test_effective_max_rows_prevents_byte_only_truncation(monkeypatch):
     monkeypatch.setattr(config, "SPLIT_TARGET_BYTES", 128 * 1024 * 1024)
     monkeypatch.setattr(config, "SPLIT_ESTIMATED_BYTES_PER_ROW", 100)
 
-    assert _table().effective_max_rows == 1_342_177
+    assert _table().effective_max_rows == 1_342_178
 
 
 @pytest.mark.asyncio
@@ -110,6 +110,32 @@ async def test_byte_only_planning_does_not_apply_smaller_query_cap(
 
     assert await choose_table_num_splits(table) == 2
     assert table.effective_max_rows >= 1_000_000
+
+
+@pytest.mark.asyncio
+async def test_byte_target_query_cap_uses_same_ceiling_as_split_count(
+    monkeypatch,
+):
+    monkeypatch.setattr(config, "QUERY_MAX_ROWS", 500_000)
+    monkeypatch.setattr(config, "SPLIT_TARGET_ROWS", 0)
+    monkeypatch.setattr(config, "SPLIT_TARGET_BYTES", 128 * 1024 * 1024)
+    monkeypatch.setattr(config, "SPLIT_ESTIMATED_BYTES_PER_ROW", 100)
+    monkeypatch.setattr(config, "SPLIT_COUNT_MIN", 1)
+    monkeypatch.setattr(config, "SPLIT_COUNT_MAX", 64)
+
+    async def _fake_count(_source: str, connection: str = "default"):
+        return 5_368_709
+
+    monkeypatch.setattr(
+        "fabric_shortcut_proxy.db.executor.fetch_table_row_count",
+        _fake_count,
+    )
+    table = _table(split_target_rows=0)
+    split_count = await choose_table_num_splits(table)
+
+    assert split_count == 4
+    assert table.effective_max_rows == 1_342_178
+    assert table.effective_max_rows >= -(-5_368_709 // split_count)
 
 
 def test_build_split_query_uses_effective_max_rows(monkeypatch):

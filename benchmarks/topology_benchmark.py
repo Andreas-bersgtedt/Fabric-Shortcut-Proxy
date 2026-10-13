@@ -13,7 +13,10 @@ from dataclasses import asdict, dataclass
 from typing import AsyncIterator
 
 from fabric_shortcut_proxy import config
-from fabric_shortcut_proxy.db.executor import stream_split_query
+from fabric_shortcut_proxy.db.executor import (
+    dispose_engines,
+    stream_split_query,
+)
 from fabric_shortcut_proxy.iceberg.state_store import SplitDescriptor
 from fabric_shortcut_proxy.parquet.generator import (
     stream_rows_to_parquet_sink,
@@ -192,27 +195,35 @@ async def _materialize_one(
         digest = hashlib.sha256()
         uploaded = 0
 
-        def chunks():
+        def chunks(*, inject_failure: bool):
             nonlocal uploaded
+            threshold = (
+                max(1, int(size * failure_fraction))
+                if inject_failure and failure_fraction is not None
+                else None
+            )
             while True:
-                chunk = output.read(1 << 20)
+                if threshold is not None and uploaded >= threshold:
+                    raise OSError("injected benchmark upload failure")
+                read_size = 1 << 20
+                if threshold is not None:
+                    read_size = min(read_size, threshold - uploaded)
+                chunk = output.read(read_size)
                 if not chunk:
                     return
                 uploaded += len(chunk)
                 digest.update(chunk)
-                if (
-                    failure_fraction is not None
-                    and failure_fraction < 1
-                    and uploaded >= max(1, int(size * failure_fraction))
-                ):
-                    raise OSError("injected benchmark upload failure")
                 yield chunk
 
         failed_bytes = 0
         upload_started = time.perf_counter()
         if failure_fraction is not None and failure_fraction < 1:
             try:
-                store.put_stream(key, chunks(), length=size)
+                store.put_stream(
+                    key,
+                    chunks(inject_failure=True),
+                    length=size,
+                )
             except OSError:
                 failed_bytes = uploaded
             else:
@@ -220,7 +231,11 @@ async def _materialize_one(
             output.seek(0)
             digest = hashlib.sha256()
             uploaded = 0
-        store.put_stream(key, chunks(), length=size)
+        store.put_stream(
+            key,
+            chunks(inject_failure=False),
+            length=size,
+        )
         upload_seconds = time.perf_counter() - upload_started
         if failure_fraction == 1:
             failed_bytes = size
@@ -302,16 +317,15 @@ if __name__ == "__main__":
     args = _arguments()
     if args.splits < 1 or args.concurrency < 1:
         raise SystemExit("splits and concurrency must be positive")
-    print(
-        json.dumps(
-            asyncio.run(
-                run_scenario(
-                    scenario=args.scenario,
-                    split_count=args.splits,
-                    concurrency=args.concurrency,
-                    failure_fraction=args.failure_fraction,
-                )
-            ),
-            sort_keys=True,
-        )
-    )
+    async def main() -> dict:
+        try:
+            return await run_scenario(
+                scenario=args.scenario,
+                split_count=args.splits,
+                concurrency=args.concurrency,
+                failure_fraction=args.failure_fraction,
+            )
+        finally:
+            await dispose_engines()
+
+    print(json.dumps(asyncio.run(main()), sort_keys=True))

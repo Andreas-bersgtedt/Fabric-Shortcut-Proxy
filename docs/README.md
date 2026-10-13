@@ -22,6 +22,7 @@ connectivity, security, operations, and tutorials.
 | System architecture | [TechnicalArchitecture.md](TechnicalArchitecture.md) |
 | Phase 4 federation runtime and acceptance evidence | [FEDERATED_ARTIFACTS.md](FEDERATED_ARTIFACTS.md) |
 | Phase 5 global governance and operations | [GLOBAL_GOVERNANCE.md](GLOBAL_GOVERNANCE.md) |
+| Central versus distributed performance benchmark | [PERFORMANCE_BENCHMARK.md](PERFORMANCE_BENCHMARK.md) |
 | Editable enterprise deployment diagram | [architecture-enterprise-helm.excalidraw](architecture-enterprise-helm.excalidraw) |
 | External load balancing | [EXTERNAL_LB_RUNBOOK.md](EXTERNAL_LB_RUNBOOK.md) |
 | Source-specific operations | [ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md](ORACLE_DATABRICKS_OPERATOR_RUNBOOK.md) |

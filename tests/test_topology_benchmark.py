@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from benchmarks.topology_benchmark import StageSample, percentile, summarize
+from benchmarks.artifact_throughput import deterministic_chunks
 
 
 def _sample(index: int, duration: float) -> StageSample:
@@ -51,3 +52,10 @@ def test_sample_rates_use_measured_totals():
     assert sample.rows_per_second == 50.0
     assert sample.upload_bytes_per_second == 500.0
     assert sample.to_dict()["compression_ratio"] == 4.0
+
+
+def test_throughput_chunks_are_bounded_and_exact():
+    chunks = list(deterministic_chunks((1 << 20) + 17))
+
+    assert [len(chunk) for chunk in chunks] == [1 << 20, 17]
+    assert len(b"".join(chunks)) == (1 << 20) + 17

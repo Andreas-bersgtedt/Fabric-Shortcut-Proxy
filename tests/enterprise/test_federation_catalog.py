@@ -100,19 +100,29 @@ def test_corrupt_destination_retains_older_complete_generation():
     assert catalog.resolve(DATASET, "secondary", now_ms=3_000)["generation"]["sequence"] == 1
 
 
-def test_verifier_reads_bytes_even_when_store_metadata_reports_matching_digest(monkeypatch):
+def test_verifier_uses_properties_without_object_stream_read(monkeypatch):
     catalog, _, stores, verifier = _setup()
     descriptor = _descriptor(stores)
-    ref = descriptor.objects[0]
-    stores["published"].put(ref.key, b"X" * ref.size_bytes)
     monkeypatch.setattr(
         stores["published"], "verify",
-        lambda key, *, size=None, content_hash=None: True,
+        lambda key, *, size, content_hash: True,
     )
-    with pytest.raises(CatalogConflict, match="object verification failed"):
-        _publish(catalog, verifier, descriptor)
-    with pytest.raises(CatalogConflict, match="no complete generation"):
-        catalog.resolve(DATASET, "primary", now_ms=2_000)
+    monkeypatch.setattr(
+        stores["published"],
+        "get_stream",
+        lambda *_args, **_kwargs: pytest.fail(
+            "published object verification streamed the object"
+        ),
+    )
+
+    _publish(catalog, verifier, descriptor)
+
+    assert (
+        catalog.resolve(DATASET, "primary", now_ms=2_000)[
+            "generation"
+        ]["sequence"]
+        == 1
+    )
 
 
 def test_lagging_replica_serves_its_own_previous_complete_generation():

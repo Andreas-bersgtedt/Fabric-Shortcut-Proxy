@@ -104,6 +104,27 @@ async def test_choose_table_num_splits_honors_override(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_choose_table_num_splits_honors_compressed_byte_target(
+    monkeypatch,
+):
+    monkeypatch.setattr(config, "SPLIT_TARGET_ROWS", 1_000_000)
+    monkeypatch.setattr(config, "SPLIT_TARGET_BYTES", 16 * 1024 * 1024)
+    monkeypatch.setattr(config, "SPLIT_ESTIMATED_BYTES_PER_ROW", 100)
+    monkeypatch.setattr(config, "SPLIT_COUNT_MIN", 1)
+    monkeypatch.setattr(config, "SPLIT_COUNT_MAX", 64)
+
+    async def _fake_count(_source: str, connection: str = "default"):
+        return 4_000_000
+
+    monkeypatch.setattr(
+        "fabric_shortcut_proxy.db.executor.fetch_table_row_count",
+        _fake_count,
+    )
+
+    assert await choose_table_num_splits(_table()) == 24
+
+
+@pytest.mark.asyncio
 async def test_choose_table_num_splits_override_zero_keeps_configured(monkeypatch):
     monkeypatch.setattr(config, "SPLIT_TARGET_ROWS", 100_000, raising=False)
 
@@ -120,13 +141,19 @@ def test_tabledef_from_json_parses_override():
         "source_table": "dbo.clickstream",
         "key_column": "event_id",
         "split_target_rows": 1_000_000,
+        "split_target_bytes": 134_217_728,
+        "split_estimated_bytes_per_row": 96,
     })
     assert t.split_target_rows == 1_000_000
+    assert t.split_target_bytes == 134_217_728
+    assert t.split_estimated_bytes_per_row == 96
 
 
 def test_tabledef_from_json_absent_override_is_none():
     t = _tabledef_from_json({"name": "orders", "source_table": "dbo.orders"})
     assert t.split_target_rows is None
+    assert t.split_target_bytes is None
+    assert t.split_estimated_bytes_per_row is None
 
 
 def test_effective_split_strategy_falls_back_to_global(monkeypatch):
@@ -190,4 +217,3 @@ async def test_plan_ranges_honors_per_table_strategy(monkeypatch):
     ]
     assert await plan_ranges_for_snapshot(snap) is True
     assert all(s.key_lo is not None and s.key_hi is not None for s in snap.splits)
-

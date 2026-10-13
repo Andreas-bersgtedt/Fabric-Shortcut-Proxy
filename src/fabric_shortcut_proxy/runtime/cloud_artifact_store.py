@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime
 import hashlib
+import hmac
 import tempfile
 import time
 from typing import BinaryIO, Iterable
@@ -137,6 +138,33 @@ class S3ArtifactStore(ArtifactStore):
                 return None
             raise
         return ObjectStat(k, int(result["ContentLength"]), _mtime(result.get("LastModified")), result.get("ETag"))
+
+    def verify(self, key: str, *, size: int, content_hash: str) -> bool:
+        k = _normalize_key(key)
+        try:
+            result = self._client.head_object(
+                Bucket=self._bucket,
+                Key=self._key(k),
+            )
+        except Exception as exc:
+            if _is_not_found(exc):
+                return False
+            raise
+        if int(result["ContentLength"]) != size:
+            return False
+        metadata = result.get("Metadata") or {}
+        stored_hash = next(
+            (
+                str(value)
+                for name, value in metadata.items()
+                if str(name).lower() == "sha256"
+            ),
+            "",
+        )
+        return bool(stored_hash) and hmac.compare_digest(
+            stored_hash.lower(),
+            content_hash.lower(),
+        )
 
     def exists(self, key: str) -> bool:
         return self.head(key) is not None
@@ -278,6 +306,31 @@ class GCSArtifactStore(ArtifactStore):
                 return None
             raise
         return ObjectStat(k, int(blob.size), _mtime(blob.updated), str(blob.generation))
+
+    def verify(self, key: str, *, size: int, content_hash: str) -> bool:
+        k = _normalize_key(key)
+        blob = self._blob(k)
+        try:
+            blob.reload()
+        except Exception as exc:
+            if _gcs_missing(exc):
+                return False
+            raise
+        if int(blob.size) != size:
+            return False
+        metadata = blob.metadata or {}
+        stored_hash = next(
+            (
+                str(value)
+                for name, value in metadata.items()
+                if str(name).lower() == "sha256"
+            ),
+            "",
+        )
+        return bool(stored_hash) and hmac.compare_digest(
+            stored_hash.lower(),
+            content_hash.lower(),
+        )
 
     def exists(self, key: str) -> bool:
         return self.head(key) is not None

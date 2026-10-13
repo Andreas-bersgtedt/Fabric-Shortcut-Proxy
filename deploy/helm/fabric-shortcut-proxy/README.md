@@ -353,6 +353,33 @@ Every row reports measured integer `bytes` even when no rate exists.
 `unpriced_bytes` keeps missing operator rates visible; estimated cost covers
 only `priced_bytes`.
 
+### Performance guardrails
+
+Queued distributed materialization writes Parquet to a site-local temporary
+file, then streams the file once to the artifact store while computing size,
+SHA-256, and S3-compatible MD5. The complete Parquet output is not held in
+memory or inserted into the Agent cache. Cloud publication verification uses
+object size and SHA-256 metadata; only the bounded generation manifest is read
+for exact content validation.
+
+Split planning can enforce row and compressed-byte targets together:
+
+```yaml
+fsp:
+  splitTargetRows: "250000"
+  splitTargetBytes: "134217728"
+  splitEstimatedBytesPerRow: "96"
+```
+
+The planner chooses the larger split count required by either target, bounded
+by `SPLIT_COUNT_MIN` and `SPLIT_COUNT_MAX`. Set the byte target and estimate to
+`0` to preserve row-only behavior.
+
+Placement policy supports `source_max_concurrency` on a connection and
+`max_concurrency` on each pool. Source limits apply across all of that
+connection's tables; pool limits apply across every source assigned to the
+pool. An omitted value remains unlimited.
+
 Set `agentAuth.identityTokensSecretName` to a Kubernetes Secret with the
 `AGENT_IDENTITY_TOKENS` key. Its JSON object maps every configured identity to
 a token of at least 32 bytes. A token can be shared by agents in the same pool,

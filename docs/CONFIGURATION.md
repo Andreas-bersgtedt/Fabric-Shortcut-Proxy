@@ -630,6 +630,9 @@ Create one Fabric shortcut per table.
 | `NUM_SPLITS` | `8` | Split count |
 | `TABLE_FORMAT` | `iceberg` | Output format served to Fabric: `iceberg` (Fabric virtualizes to Delta) or `delta` (native `_delta_log`, no conversion, lower lag). See §13 |
 | `QUERY_MAX_ROWS` | `500000` | Max rows per split |
+| `SPLIT_TARGET_ROWS` | `100000` | Target rows per split for dynamic planning; `0` disables the row target |
+| `SPLIT_TARGET_BYTES` | `0` | Target compressed Parquet bytes per split; `0` disables the byte target |
+| `SPLIT_ESTIMATED_BYTES_PER_ROW` | `0` | Measured or estimated compressed bytes per row used with `SPLIT_TARGET_BYTES` |
 | `QUERY_TIMEOUT` | `30` | SQL timeout (seconds) |
 | `S3_BUCKET` | `fabric-iceberg-poc` | Bucket Fabric connects to |
 | `PORT` | `9000` | HTTP listen port |

@@ -77,6 +77,18 @@ def test_manager_binds_operator_artifact_profile() -> None:
     assert 'name: FSP_ARTIFACT_STORE_PROFILE\n              value: "eu-published"' in rendered
 
 
+def test_split_row_and_compressed_byte_targets_render() -> None:
+    rendered = _render(
+        "--set-string", "fsp.splitTargetRows=250000",
+        "--set-string", "fsp.splitTargetBytes=134217728",
+        "--set-string", "fsp.splitEstimatedBytesPerRow=96",
+    )
+
+    assert 'SPLIT_TARGET_ROWS: "250000"' in rendered
+    assert 'SPLIT_TARGET_BYTES: "134217728"' in rendered
+    assert 'SPLIT_ESTIMATED_BYTES_PER_ROW: "96"' in rendered
+
+
 def test_manager_renders_signed_policy_bundle_and_public_key() -> None:
     rendered = _render(
         "--set", "manager.policyBundle.enabled=true",

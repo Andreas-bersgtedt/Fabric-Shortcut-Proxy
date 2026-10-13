@@ -318,6 +318,13 @@ NUM_SPLITS: int = _get_int("NUM_SPLITS", "num_splits", 8, _PERF_CFG)
 SPLIT_STRATEGY: str = _get_str("SPLIT_STRATEGY", "split_strategy", "modulo", _PERF_CFG).strip().lower()
 SPLIT_BALANCE: str = _get_str("SPLIT_BALANCE", "split_balance", "span", _PERF_CFG).strip().lower()
 SPLIT_TARGET_ROWS: int = _get_int("SPLIT_TARGET_ROWS", "split_target_rows", 100_000, _PERF_CFG)
+SPLIT_TARGET_BYTES: int = _get_int("SPLIT_TARGET_BYTES", "split_target_bytes", 0, _PERF_CFG)
+SPLIT_ESTIMATED_BYTES_PER_ROW: int = _get_int(
+    "SPLIT_ESTIMATED_BYTES_PER_ROW",
+    "split_estimated_bytes_per_row",
+    0,
+    _PERF_CFG,
+)
 SPLIT_COUNT_MIN: int = _get_int("SPLIT_COUNT_MIN", "split_count_min", 1, _PERF_CFG)
 SPLIT_COUNT_MAX: int = _get_int("SPLIT_COUNT_MAX", "split_count_max", 256, _PERF_CFG)
 SPLIT_SAMPLE_ROWS: int = _get_int("SPLIT_SAMPLE_ROWS", "split_sample_rows", 0, _PERF_CFG)
@@ -503,6 +510,8 @@ class TableDef:
     key_column: str | None = None
     connection_id: str = "default"
     split_target_rows: int | None = None
+    split_target_bytes: int | None = None
+    split_estimated_bytes_per_row: int | None = None
     split_strategy: str | None = None
     split_balance: str | None = None
     split_sample_rows: int | None = None
@@ -522,6 +531,24 @@ class TableDef:
     def effective_split_target_rows(self) -> int:
         """Per-table target rows/split, falling back to the global default."""
         return SPLIT_TARGET_ROWS if self.split_target_rows is None else self.split_target_rows
+
+    @property
+    def effective_split_target_bytes(self) -> int:
+        """Per-table compressed byte target, or zero when disabled."""
+        return (
+            SPLIT_TARGET_BYTES
+            if self.split_target_bytes is None
+            else self.split_target_bytes
+        )
+
+    @property
+    def effective_split_estimated_bytes_per_row(self) -> int:
+        """Estimated compressed bytes/row used for byte-aware planning."""
+        return (
+            SPLIT_ESTIMATED_BYTES_PER_ROW
+            if self.split_estimated_bytes_per_row is None
+            else self.split_estimated_bytes_per_row
+        )
 
     @property
     def effective_split_strategy(self) -> str:
@@ -615,6 +642,16 @@ def _tabledef_from_json(d: dict) -> "TableDef":
         key_column=d.get("key_column") or None,
         connection_id=str(d.get("connection") or d.get("connection_id") or "default"),
         split_target_rows=(int(d["split_target_rows"]) if d.get("split_target_rows") is not None else None),
+        split_target_bytes=(
+            int(d["split_target_bytes"])
+            if d.get("split_target_bytes") is not None
+            else None
+        ),
+        split_estimated_bytes_per_row=(
+            int(d["split_estimated_bytes_per_row"])
+            if d.get("split_estimated_bytes_per_row") is not None
+            else None
+        ),
         split_strategy=(str(d["split_strategy"]) if d.get("split_strategy") else None),
         split_balance=(str(d["split_balance"]) if d.get("split_balance") else None),
         split_sample_rows=(int(d["split_sample_rows"]) if d.get("split_sample_rows") is not None else None),
@@ -763,6 +800,15 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
         problems.append(f"SPLIT_BALANCE must be 'span' or 'count' (got {SPLIT_BALANCE!r}).")
     if SPLIT_TARGET_ROWS < 0:
         problems.append(f"SPLIT_TARGET_ROWS must be >= 0 (got {SPLIT_TARGET_ROWS}).")
+    if SPLIT_TARGET_BYTES < 0:
+        problems.append(
+            f"SPLIT_TARGET_BYTES must be >= 0 (got {SPLIT_TARGET_BYTES})."
+        )
+    if SPLIT_ESTIMATED_BYTES_PER_ROW < 0:
+        problems.append(
+            "SPLIT_ESTIMATED_BYTES_PER_ROW must be >= 0 "
+            f"(got {SPLIT_ESTIMATED_BYTES_PER_ROW})."
+        )
     if SPLIT_COUNT_MIN < 1:
         problems.append(f"SPLIT_COUNT_MIN must be >= 1 (got {SPLIT_COUNT_MIN}).")
     if SPLIT_COUNT_MAX < SPLIT_COUNT_MIN:
@@ -950,6 +996,19 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
                 problems.append(f"Table {t.name!r}: num_splits must be >= 1.")
             if t.split_target_rows is not None and t.split_target_rows < 0:
                 problems.append(f"Table {t.name!r}: split_target_rows must be >= 0 (got {t.split_target_rows}).")
+            if t.split_target_bytes is not None and t.split_target_bytes < 0:
+                problems.append(
+                    f"Table {t.name!r}: split_target_bytes must be >= 0 "
+                    f"(got {t.split_target_bytes})."
+                )
+            if (
+                t.split_estimated_bytes_per_row is not None
+                and t.split_estimated_bytes_per_row < 0
+            ):
+                problems.append(
+                    f"Table {t.name!r}: split_estimated_bytes_per_row must "
+                    f"be >= 0 (got {t.split_estimated_bytes_per_row})."
+                )
             if t.split_strategy is not None and t.split_strategy not in ("modulo", "range", "date", "auto"):
                 problems.append(f"Table {t.name!r}: split_strategy must be one of 'modulo'|'range'|'date'|'auto' (got {t.split_strategy!r}).")
             if t.split_balance is not None and t.split_balance not in ("span", "count"):
@@ -1144,6 +1203,8 @@ SETTINGS_META: dict[str, dict] = {
     "split_strategy": {"cat": "Splits & query", "help": "'modulo' (full-scan), 'range' (integer ranges), 'date' (temporal ranges), or 'auto' (range/date then deterministic fallback)."},
     "split_balance": {"cat": "Splits & query", "help": "How range/date splits are sized: 'span' (equal key/time width, default) or 'count' (equal rows per split via NTILE quantiles \u2014 balances skewed keys; adds a one-time planning scan on the source).", "choices": ["span", "count"]},
     "split_target_rows": {"cat": "Splits & query", "help": "Target rows per split for dynamic split-count planning (0 disables, keeps configured split counts)."},
+    "split_target_bytes": {"cat": "Splits & query", "help": "Target compressed Parquet bytes per split (0 disables byte-aware planning)."},
+    "split_estimated_bytes_per_row": {"cat": "Splits & query", "help": "Measured or estimated compressed bytes per row used with split_target_bytes."},
     "split_count_min": {"cat": "Splits & query", "help": "Lower guardrail for dynamic split-count planning."},
     "split_count_max": {"cat": "Splits & query", "help": "Upper guardrail for dynamic split-count planning."},
     "split_sample_rows": {"cat": "Splits & query", "help": "Cap rows fed into equal-count (NTILE) quantile planning (0 = full scan). When the table is larger, a deterministic integer-key sample bounds the planning sort/tempdb cost; approximate boundaries, still far more balanced than 'span'."},
@@ -1284,6 +1345,7 @@ _SETTINGS_CAT_ORDER = [
 LIVE_SETTINGS: frozenset[str] = frozenset({
     # Performance / splits
     "num_splits", "split_strategy", "split_target_rows",
+    "split_target_bytes", "split_estimated_bytes_per_row",
     "split_count_min", "split_count_max", "split_balance", "split_sample_rows",
     "split_use_stats_histogram",
     "streaming_parquet", "stream_batch_rows",
@@ -1314,6 +1376,8 @@ _KEY_TO_ATTR: dict[str, str] = {
     "split_strategy": "SPLIT_STRATEGY",
     "split_balance": "SPLIT_BALANCE",
     "split_target_rows": "SPLIT_TARGET_ROWS",
+    "split_target_bytes": "SPLIT_TARGET_BYTES",
+    "split_estimated_bytes_per_row": "SPLIT_ESTIMATED_BYTES_PER_ROW",
     "split_count_min": "SPLIT_COUNT_MIN",
     "split_count_max": "SPLIT_COUNT_MAX",
     "split_sample_rows": "SPLIT_SAMPLE_ROWS",
@@ -1510,6 +1574,8 @@ _SETTINGS_TO_FILE_MAP: dict[str, str] = {
     "split_strategy": "config.performance.json",
     "split_balance": "config.performance.json",
     "split_target_rows": "config.performance.json",
+    "split_target_bytes": "config.performance.json",
+    "split_estimated_bytes_per_row": "config.performance.json",
     "split_count_min": "config.performance.json",
     "split_count_max": "config.performance.json",
     "split_sample_rows": "config.performance.json",

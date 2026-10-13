@@ -49,6 +49,7 @@ class FakeS3:
             value = self.objects[Key]
             return {
                 "ContentLength": len(value["Body"]), "ETag": value["ETag"],
+                "Metadata": dict(value["Metadata"]),
                 "LastModified": datetime(2026, 10, 9, tzinfo=timezone.utc),
             }
 

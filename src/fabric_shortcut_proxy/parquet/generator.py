@@ -4,14 +4,15 @@ Parquet generator.
 Converts a list of row dicts (from SQL) into Parquet-format bytes
 whose schema exactly matches the declared Iceberg schema.
 
-Uses PyArrow in-memory; the result is buffered entirely before returning,
-so `Content-Length` can be set accurately in the S3 response.
+The compatibility helper returns bytes for direct serving. Distributed queued
+materialization writes to a seekable local spool and streams that file to the
+artifact store without creating a complete output byte string in memory.
 """
 from __future__ import annotations
 
 import io
 from decimal import Decimal
-from typing import Any
+from typing import Any, BinaryIO
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -131,12 +132,31 @@ async def stream_rows_to_parquet(row_batches, split_index: int, columns=None) ->
     ``row_batches`` is an async iterator of ``list[dict]``. Each batch is written
     as its own row group via a single :class:`pyarrow.parquet.ParquetWriter`, so
     only one batch is resident at a time. Returns ``(parquet_bytes, num_rows)``.
-    The bytes are still buffered in full (an S3 object needs a Content-Length and
-    a locatable footer) — the win is the peak *input* memory, not the output.
+    This compatibility wrapper still returns complete bytes. Distributed
+    materialization uses :func:`stream_rows_to_parquet_sink` instead.
     """
+    buf = io.BytesIO()
+    total = await stream_rows_to_parquet_sink(
+        row_batches,
+        buf,
+        split_index=split_index,
+        columns=columns,
+    )
+    data = buf.getvalue()
+    log.info("parquet_streamed", split_index=split_index, num_rows=total, bytes=len(data))
+    return data, total
+
+
+async def stream_rows_to_parquet_sink(
+    row_batches,
+    sink: BinaryIO,
+    *,
+    split_index: int,
+    columns=None,
+) -> int:
+    """Write async row batches directly to a seekable binary Parquet sink."""
     cols = columns if columns is not None else config.TABLE_SCHEMA
     schema = pyarrow_schema(cols)
-    buf = io.BytesIO()
     writer: pq.ParquetWriter | None = None
     total = 0
     try:
@@ -145,21 +165,27 @@ async def stream_rows_to_parquet(row_batches, split_index: int, columns=None) ->
                 continue
             table = _build_table(batch, cols, schema, split_index)
             if writer is None:
-                writer = pq.ParquetWriter(buf, schema, compression=_COMPRESSION)
+                writer = pq.ParquetWriter(
+                    sink,
+                    schema,
+                    compression=_COMPRESSION,
+                )
             writer.write_table(table)
             total += len(batch)
         if writer is None:
             # No rows — emit an empty file with the correct schema.
             empty = pa.table({c.name: pa.array([], type=schema.field(c.name).type)
                               for c in cols}, schema=schema)
-            writer = pq.ParquetWriter(buf, schema, compression=_COMPRESSION)
+            writer = pq.ParquetWriter(
+                sink,
+                schema,
+                compression=_COMPRESSION,
+            )
             writer.write_table(empty)
     finally:
         if writer is not None:
             writer.close()
-    data = buf.getvalue()
-    log.info("parquet_streamed", split_index=split_index, num_rows=total, bytes=len(data))
-    return data, total
+    return total
 
 
 def _table_to_bytes(table: pa.Table, split_index: int) -> bytes:

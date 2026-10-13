@@ -104,6 +104,19 @@ def set_location_gauges(name: str, values: dict[str, float]) -> None:
         }
 
 
+def set_dimension_gauges(
+    name: str,
+    label: str,
+    values: dict[str, float],
+) -> None:
+    """Replace every series for one single-label gauge."""
+    with _lock:
+        _gauges[name] = {
+            _label_key({label: dimension}): float(value)
+            for dimension, value in values.items()
+        }
+
+
 def _agent_location() -> str:
     from fabric_shortcut_proxy import config
 

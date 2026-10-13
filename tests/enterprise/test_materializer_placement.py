@@ -282,6 +282,79 @@ def test_connection_max_concurrency_limits_active_tasks():
     ) == 1
 
 
+def test_source_and_pool_concurrency_limits_are_enforced_and_exported():
+    from fabric_shortcut_proxy.observability import metrics
+
+    queue = DurableWorkQueue(MemoryStore())
+    task_ids = []
+    for index, table in enumerate(("sales.orders", "sales.customers")):
+        request = queue.create_request(
+            requested_key=f"warehouse/{table}/metadata.json",
+            table=table,
+            epoch=1,
+            table_format="iceberg",
+            generation_id="shared-generation",
+            generation_fence=1,
+            plan_sha256="a" * 64,
+            tasks=[
+                MaterializeTask(
+                    table=table,
+                    epoch=1,
+                    split_index=0,
+                    source_table=table,
+                    connection_id="erp-a",
+                    output_key=f"warehouse/{index}.parquet",
+                )
+            ],
+            deadline_ms=int(time.time() * 1000) + 60_000,
+        )
+        task_ids.extend(request["task_ids"])
+    placement = PlacementConfig.from_dict(
+        {
+            "pools": [
+                {
+                    "pool_id": "primary",
+                    "identities": ["primary-agent"],
+                    "allowed_connection_ids": ["erp-a"],
+                    "max_concurrency": 1,
+                }
+            ],
+            "connections": {
+                "erp-a": {
+                    "required_pool": "primary",
+                    "source_max_concurrency": 1,
+                }
+            },
+        }
+    )
+    registry = Registry(placement=placement)
+    _register(registry, "primary-agent")
+    scheduler = _scheduler(queue, registry)
+
+    assert scheduler.dispatch_once() == 1
+    assert scheduler.dispatch_once() == 0
+
+    tasks = [queue.get_task(task_id) for task_id in task_ids]
+    assert sum(task["state"] == "CLAIMED" for task in tasks) == 1
+    rendered = metrics.render_prometheus()
+    assert (
+        'fsp_materialization_source_active_claims{source="erp-a"} 1.0'
+        in rendered
+    )
+    assert (
+        'fsp_materialization_source_concurrency_limit{source="erp-a"} 1.0'
+        in rendered
+    )
+    assert (
+        'fsp_materialization_pool_active_claims{pool="primary"} 1.0'
+        in rendered
+    )
+    assert (
+        'fsp_materialization_pool_concurrency_limit{pool="primary"} 1.0'
+        in rendered
+    )
+
+
 @pytest.mark.parametrize(
     "value, message",
     [

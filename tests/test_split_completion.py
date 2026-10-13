@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import io
 
 import pytest
+import pyarrow.parquet as pq
 
 import fabric_shortcut_proxy.cache.lru_cache as cache
 from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.config import ColumnDef
 from fabric_shortcut_proxy.iceberg.stats import ColumnStats
 from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore, reset_default_store, set_default_store
 from fabric_shortcut_proxy.runtime.generation import GenerationError, acquire_generation
@@ -158,6 +161,85 @@ async def test_queued_retry_reuses_verified_completion_without_source_query(
     assert count == 13
     assert split.file_size_in_bytes == len(data)
     assert split.content_hash == __import__("hashlib").sha256(data).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_queued_streaming_spools_and_uploads_without_full_output_buffer(
+    shared_store,
+    monkeypatch,
+):
+    import fabric_shortcut_proxy.runtime.materializer as materializer
+
+    context = acquire_generation(shared_store, shard_count=1)
+    columns = [
+        ColumnDef(
+            field_id=1,
+            name="id",
+            iceberg_type="long",
+            nullable=False,
+        )
+    ]
+    split = _split(index=0)
+    split.table = SimpleNamespace(
+        name="sales",
+        schema=columns,
+        connection_id="default",
+    )
+    split.generation_id = context.generation_id
+    split.generation_fence = context.fence
+    split.generation_token = context.lease_token
+    split.generation_plan_sha256 = context.plan_sha256
+    split.content_hash = ""
+    split.s3_etag = ""
+
+    async def batches():
+        yield [{"id": 1}, {"id": 2}]
+        yield [{"id": 3}]
+
+    monkeypatch.setattr(config, "STREAMING_PARQUET", True)
+    monkeypatch.setattr(config, "ICEBERG_MANIFEST_STATS", True)
+    monkeypatch.setattr(
+        materializer,
+        "build_split_query",
+        lambda _split: ("SELECT id FROM sales", {}),
+    )
+    monkeypatch.setattr(
+        materializer,
+        "stream_split_query",
+        lambda *_args, **_kwargs: batches(),
+    )
+    monkeypatch.setattr(
+        materializer,
+        "stream_rows_to_parquet",
+        lambda *_args, **_kwargs: pytest.fail(
+            "queued streaming must not return complete Parquet bytes"
+        ),
+    )
+    monkeypatch.setattr(
+        cache,
+        "put_parquet",
+        lambda *_args, **_kwargs: pytest.fail(
+            "queued streaming must not cache complete Parquet bytes"
+        ),
+    )
+    monkeypatch.setattr(
+        cache,
+        "pin_parquet",
+        lambda *_args, **_kwargs: pytest.fail(
+            "queued streaming must not pin complete Parquet bytes"
+        ),
+    )
+
+    count = await materializer.materialize_queued_split(split)
+
+    data = shared_store.get(split.object_key)
+    completion = read_split_completion(split)
+    assert count == 3
+    assert pq.read_table(io.BytesIO(data)).num_rows == 3
+    assert split.file_size_in_bytes == len(data)
+    assert completion is not None
+    assert completion.sha256 == split.content_hash
+    assert completion.s3_etag == split.s3_etag
 
 
 @pytest.mark.asyncio

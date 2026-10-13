@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
 from typing import Any
 from urllib.parse import urlsplit
@@ -87,6 +87,7 @@ class MaterializerPolicy:
     required_storage_profile: str = ""
     fallback_pools: tuple[str, ...] = ()
     max_concurrency: int | None = None
+    source_max_concurrency: int | None = None
     residency_locations: tuple[str, ...] = ()
     staging_storage_profile: str = ""
     serving_endpoints: tuple[str, ...] = ()
@@ -588,10 +589,20 @@ class PlacementConfig:
             )
 
     def policy_for(self, connection_id: str, source_table: str) -> MaterializerPolicy:
-        policy = self.tables.get(
-            (connection_id, source_table),
-            self.connections.get(connection_id, MaterializerPolicy()),
+        parent = self.connections.get(
+            connection_id,
+            MaterializerPolicy(),
         )
+        policy = self.tables.get((connection_id, source_table), parent)
+        if (
+            policy is not parent
+            and policy.source_max_concurrency is None
+            and parent.source_max_concurrency is not None
+        ):
+            policy = replace(
+                policy,
+                source_max_concurrency=parent.source_max_concurrency,
+            )
         return policy
 
     def validate_task_tenant(
@@ -921,6 +932,7 @@ def _policy(
         "required_storage_profile",
         "fallback_pools",
         "max_concurrency",
+        "source_max_concurrency",
         "residency_locations",
         "staging_storage_profile",
         "serving_endpoints",
@@ -956,6 +968,11 @@ def _policy(
         required_storage_profile=required_storage_profile,
         fallback_pools=tuple(fallback_pools),
         max_concurrency=_positive_limit(raw.get("max_concurrency"), scope),
+        source_max_concurrency=_positive_limit(
+            raw.get("source_max_concurrency"),
+            scope,
+            "source_max_concurrency",
+        ),
         residency_locations=tuple(_text_list(raw, "residency_locations", required=False)),
         staging_storage_profile=_optional_text(raw, "staging_storage_profile"),
         serving_endpoints=tuple(_text_list(raw, "serving_endpoints", required=False)),

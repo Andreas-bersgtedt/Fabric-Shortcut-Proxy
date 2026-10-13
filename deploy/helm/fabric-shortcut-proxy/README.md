@@ -288,6 +288,40 @@ The filtered response excludes legacy and other-tenant events rather than
 returning unowned records. Without a top-level `tenants` list, existing
 single-tenant placement behavior and wire payloads remain unchanged.
 
+### Agent release rings
+
+An optional `agent_versions` policy accepts only the current and previous
+major/minor release lines, then narrows each operator-owned pool to its rollout
+ring:
+
+```yaml
+manager:
+  agentPlacementConfig:
+    agent_versions:
+      current: "3.1"
+      previous: "3.0"
+      rings:
+        non-production: ["3.1"]
+        production-canary: ["3.1", "3.0"]
+        remote-sites: ["3.0"]
+      rollout_order:
+        - non-production
+        - production-canary
+        - remote-sites
+    pools:
+      - pool_id: dev-pool
+        upgrade_ring: non-production
+        identities: [dev-agent]
+        allowed_connection_ids: [erp-a]
+```
+
+Agent registration derives the ring from the configured Agent identity; a
+self-reported pool or ring grants nothing. A release outside N/N-1 or outside
+the pool's enabled ring returns HTTP 409 with
+`agent_version_unsupported`. Rejected Agents never enter the registry, so
+their tasks remain queued for a compatible worker. Omit `agent_versions` and
+`upgrade_ring` together to preserve the existing version behavior.
+
 ### Cross-boundary byte and cost reports
 
 Manager records verified materializer upload bytes when the pool location

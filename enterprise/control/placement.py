@@ -25,6 +25,21 @@ class TenantIsolationViolation(PlacementPolicyViolation):
     code = "tenant_isolation_violation"
 
 
+class AgentVersionUnsupported(ValueError):
+    code = "agent_version_unsupported"
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"{self.code}: {detail}")
+
+
+@dataclass(frozen=True)
+class AgentVersionPolicy:
+    current: str
+    previous: str
+    rollout_order: tuple[str, ...]
+    rings: dict[str, frozenset[str]]
+
+
 @dataclass(frozen=True)
 class StoreProfile:
     location: str
@@ -53,6 +68,7 @@ class MaterializerPool:
     heartbeat_miss_limit: int | None = None
     claim_lease_seconds: int | None = None
     tenant_id: str = ""
+    upgrade_ring: str = ""
 
     def allows(self, connection_id: str, source_table: str) -> bool:
         if not connection_id or connection_id not in self.allowed_connection_ids:
@@ -90,6 +106,7 @@ class PlacementConfig:
         stores: dict[str, StoreProfile] | None = None,
         serving_endpoints: dict[str, ServingEndpoint] | None = None,
         tenants: frozenset[str] | None = None,
+        agent_versions: AgentVersionPolicy | None = None,
     ) -> None:
         self.pools = pools or {}
         self.connections = connections or {}
@@ -97,6 +114,7 @@ class PlacementConfig:
         self.stores = stores or {}
         self.serving_endpoints = serving_endpoints or {}
         self.tenants = tenants or frozenset()
+        self.agent_versions = agent_versions
         self.active_storage_profile = ""
         self.policy_bundle_revision: int | None = None
         self.policy_bundle_key_id = ""
@@ -180,6 +198,7 @@ class PlacementConfig:
             "tables",
             "stores",
             "serving_endpoints",
+            "agent_versions",
         }
         if set(value) - allowed_keys:
             unknown = sorted(set(value) - allowed_keys)
@@ -193,6 +212,9 @@ class PlacementConfig:
         )
         if len(tenants) != len(raw_tenants):
             raise ValueError("placement tenants must be unique")
+        agent_versions = _agent_version_policy(
+            value.get("agent_versions")
+        )
         pools: dict[str, MaterializerPool] = {}
         identities: set[str] = set()
         raw_pools = value.get("pools", [])
@@ -213,6 +235,7 @@ class PlacementConfig:
                 "heartbeat_miss_limit",
                 "claim_lease_seconds",
                 "tenant_id",
+                "upgrade_ring",
             }
             unknown_fields = sorted(set(item) - allowed_fields)
             if unknown_fields:
@@ -251,6 +274,11 @@ class PlacementConfig:
                     required=bool(tenants),
                     scope=f"pool {pool_id!r}",
                     tenants=tenants,
+                ),
+                upgrade_ring=_upgrade_ring(
+                    item,
+                    agent_versions,
+                    scope=f"pool {pool_id!r}",
                 ),
             )
 
@@ -387,6 +415,7 @@ class PlacementConfig:
             stores,
             endpoints,
             tenants,
+            agent_versions,
         )
         for policy in (*connections.values(), *tables.values()):
             result.validate_tenant(policy)
@@ -467,6 +496,41 @@ class PlacementConfig:
         if unexpected:
             raise ValueError(
                 f"mTLS bindings contain unmapped Agent identities: {unexpected}"
+            )
+
+    def validate_agent_version(
+        self,
+        identity: str,
+        version: str,
+    ) -> None:
+        policy = self.agent_versions
+        if policy is None:
+            return
+        pool = self.pool_for_identity(identity)
+        if pool is None:
+            raise AgentVersionUnsupported(
+                f"Agent {identity!r} is not assigned to a version ring"
+            )
+        match = re.fullmatch(
+            r"(\d+)\.(\d+)(?:\.\d+)?"
+            r"(?:[-+][0-9A-Za-z.-]+)?",
+            str(version).strip(),
+        )
+        if match is None:
+            raise AgentVersionUnsupported(
+                f"Agent {identity!r} did not report a semantic version"
+            )
+        release = f"{int(match.group(1))}.{int(match.group(2))}"
+        if release not in {policy.current, policy.previous}:
+            raise AgentVersionUnsupported(
+                f"Agent {identity!r} release {release} is outside "
+                f"N/N-1 ({policy.current}, {policy.previous})"
+            )
+        allowed = policy.rings[pool.upgrade_ring]
+        if release not in allowed:
+            raise AgentVersionUnsupported(
+                f"Agent {identity!r} release {release} is not enabled "
+                f"for ring {pool.upgrade_ring!r}"
             )
 
     def policy_for(self, connection_id: str, source_table: str) -> MaterializerPolicy:
@@ -688,6 +752,105 @@ def _tenant_id(
             f"{scope} requires a top-level tenants declaration"
         )
     return tenant_id
+
+
+def _release_line(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"\d+\.\d+",
+        value.strip(),
+    ):
+        raise ValueError(
+            f"agent_versions {field} must use major.minor"
+        )
+    major, minor = value.strip().split(".", 1)
+    return f"{int(major)}.{int(minor)}"
+
+
+def _agent_version_policy(raw: Any) -> AgentVersionPolicy | None:
+    if raw in (None, {}):
+        return None
+    if not isinstance(raw, dict) or set(raw) != {
+        "current",
+        "previous",
+        "rings",
+        "rollout_order",
+    }:
+        raise ValueError(
+            "agent_versions requires current, previous, rings and rollout_order"
+        )
+    current = _release_line(raw["current"], "current")
+    previous = _release_line(raw["previous"], "previous")
+    if current == previous:
+        raise ValueError(
+            "agent_versions current and previous must differ"
+        )
+    raw_rings = raw["rings"]
+    raw_order = raw["rollout_order"]
+    if (
+        not isinstance(raw_rings, dict)
+        or not raw_rings
+        or not isinstance(raw_order, list)
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in raw_order
+        )
+    ):
+        raise ValueError(
+            "agent_versions requires non-empty rings and rollout_order"
+        )
+    order = tuple(item.strip() for item in raw_order)
+    if len(set(order)) != len(order) or set(order) != set(raw_rings):
+        raise ValueError(
+            "agent_versions rollout_order must list every ring exactly once"
+        )
+    supported = {current, previous}
+    rings = {}
+    for ring_id, releases in raw_rings.items():
+        if (
+            not isinstance(ring_id, str)
+            or not ring_id.strip()
+            or not isinstance(releases, list)
+            or not releases
+        ):
+            raise ValueError(
+                "agent_versions ring definitions must be non-empty lists"
+            )
+        normalized = frozenset(
+            _release_line(item, f"ring {ring_id!r}")
+            for item in releases
+        )
+        if not normalized.issubset(supported):
+            raise ValueError(
+                f"agent_versions ring {ring_id!r} includes "
+                "a release outside N/N-1"
+            )
+        rings[ring_id.strip()] = normalized
+    return AgentVersionPolicy(
+        current=current,
+        previous=previous,
+        rollout_order=order,
+        rings=rings,
+    )
+
+
+def _upgrade_ring(
+    item: dict[str, Any],
+    policy: AgentVersionPolicy | None,
+    *,
+    scope: str,
+) -> str:
+    ring = _optional_text(item, "upgrade_ring")
+    if policy is None:
+        if ring:
+            raise ValueError(
+                f"{scope} upgrade_ring requires agent_versions"
+            )
+        return ""
+    if not ring or ring not in policy.rings:
+        raise ValueError(
+            f"{scope} must reference one configured upgrade ring"
+        )
+    return ring
 
 
 def _policy(

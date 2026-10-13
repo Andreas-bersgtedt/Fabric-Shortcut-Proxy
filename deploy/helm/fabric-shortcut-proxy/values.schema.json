@@ -302,6 +302,7 @@
               "required": [
                 "enabled",
                 "url",
+                "azure",
                 "publicKeySecretName",
                 "publicKeySecretKey",
                 "cacheFile",
@@ -311,6 +312,33 @@
               "properties": {
                 "enabled": { "type": "boolean" },
                 "url": { "type": "string" },
+                "azure": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "accountUrl",
+                    "container",
+                    "blobName",
+                    "authMode",
+                    "clientId",
+                    "tenantId",
+                    "tokenFile"
+                  ],
+                  "properties": {
+                    "accountUrl": { "type": "string" },
+                    "container": { "type": "string" },
+                    "blobName": { "type": "string" },
+                    "authMode": {
+                      "enum": [
+                        "managed_identity",
+                        "workload_identity"
+                      ]
+                    },
+                    "clientId": { "type": "string" },
+                    "tenantId": { "type": "string" },
+                    "tokenFile": { "type": "string" }
+                  }
+                },
                 "publicKeySecretName": { "type": "string" },
                 "publicKeySecretKey": {
                   "type": "string",

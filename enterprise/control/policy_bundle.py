@@ -16,6 +16,10 @@ from urllib.parse import urlsplit
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from fabric_shortcut_proxy.runtime.artifact_store import (
+    ArtifactStore,
+    ObjectNotFound,
+)
 
 
 _MAX_BUNDLE_BYTES = 4 * 1024 * 1024
@@ -314,4 +318,34 @@ def load_policy_bundle(
         revision=remote.revision,
         key_id=remote.key_id,
         from_cache=False,
+    )
+
+
+def load_policy_bundle_from_store(
+    *,
+    store: ArtifactStore,
+    object_key: str,
+    public_key_file: str,
+    cache_file: str,
+    value_loader: Callable[[dict], T],
+    expected_key_id: str = "",
+) -> LoadedPolicyBundle[T]:
+    if not object_key.strip():
+        raise PolicyBundleValidationError(
+            "FSP_POLICY_BUNDLE_BLOB_NAME is required"
+        )
+
+    def fetch(_source: str, _timeout: float) -> bytes:
+        try:
+            return store.get(object_key)
+        except (ObjectNotFound, OSError) as exc:
+            raise _RemoteUnavailable(str(exc)) from exc
+
+    return load_policy_bundle(
+        source_url=f"artifact-store:{object_key}",
+        public_key_file=public_key_file,
+        cache_file=cache_file,
+        value_loader=value_loader,
+        expected_key_id=expected_key_id,
+        fetcher=fetch,
     )

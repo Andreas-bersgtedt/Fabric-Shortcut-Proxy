@@ -123,6 +123,14 @@ manager:
   policyBundle:
     enabled: false
     url: ""
+    azure:
+      accountUrl: ""
+      container: ""
+      blobName: ""
+      authMode: workload_identity
+      clientId: ""
+      tenantId: ""
+      tokenFile: /var/run/secrets/azure/tokens/azure-identity-token
     publicKeySecretName: ""
     publicKeySecretKey: public-key.pem
     cacheFile: /config/policy-bundle.json

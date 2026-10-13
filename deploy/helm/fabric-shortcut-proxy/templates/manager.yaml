@@ -1,8 +1,13 @@
 {{- if .Values.manager.enabled }}
 {{- $mtls := .Values.agentAuth.mtls | default dict }}
 {{- $policyBundle := .Values.manager.policyBundle | default dict }}
-{{- if and ($policyBundle.enabled | default false) (gt (len .Values.manager.agentPlacementConfig) 0) }}
-{{- fail "manager.policyBundle and manager.agentPlacementConfig cannot both define placement policy" }}
+{{- $policyAzure := $policyBundle.azure | default dict }}
+{{- if ($policyBundle.enabled | default false) }}
+{{- $hasPolicyUrl := ne ($policyBundle.url | default "") "" }}
+{{- $hasPolicyAzure := ne ($policyAzure.accountUrl | default "") "" }}
+{{- if eq $hasPolicyUrl $hasPolicyAzure }}
+{{- fail "manager.policyBundle requires exactly one of url or azure.accountUrl" }}
+{{- end }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -96,10 +101,31 @@ spec:
             {{- end }}
             {{- end }}
             - name: AGENT_PLACEMENT_CONFIG
+              {{- if ($policyBundle.enabled | default false) }}
+              value: "{}"
+              {{- else }}
               value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
+              {{- end }}
             {{- if ($policyBundle.enabled | default false) }}
+            {{- if $policyBundle.url }}
             - name: FSP_POLICY_BUNDLE_URL
-              value: {{ required "manager.policyBundle.url is required" $policyBundle.url | quote }}
+              value: {{ $policyBundle.url | quote }}
+            {{- else }}
+            - name: FSP_POLICY_BUNDLE_ACCOUNT_URL
+              value: {{ required "manager.policyBundle.azure.accountUrl is required" $policyAzure.accountUrl | quote }}
+            - name: FSP_POLICY_BUNDLE_CONTAINER
+              value: {{ required "manager.policyBundle.azure.container is required" $policyAzure.container | quote }}
+            - name: FSP_POLICY_BUNDLE_BLOB_NAME
+              value: {{ required "manager.policyBundle.azure.blobName is required" $policyAzure.blobName | quote }}
+            - name: FSP_POLICY_BUNDLE_AUTH_MODE
+              value: {{ $policyAzure.authMode | quote }}
+            - name: FSP_POLICY_BUNDLE_CLIENT_ID
+              value: {{ $policyAzure.clientId | quote }}
+            - name: FSP_POLICY_BUNDLE_TENANT_ID
+              value: {{ $policyAzure.tenantId | quote }}
+            - name: FSP_POLICY_BUNDLE_TOKEN_FILE
+              value: {{ $policyAzure.tokenFile | quote }}
+            {{- end }}
             - name: FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE
               value: /etc/fsp-policy/public-key.pem
             - name: FSP_POLICY_BUNDLE_CACHE_FILE

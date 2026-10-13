@@ -654,6 +654,13 @@ Create one Fabric shortcut per table.
 | `FSP_CATALOG_RENEW_INTERVAL_SECONDS` | `20` | Finite, positive renewal interval shorter than the owner lease; invalid values prevent Manager startup when federation is enabled. Keep well below the lease to allow for storage latency |
 | `AGENT_PLACEMENT_CONFIG` | `{}` | Unsigned inline placement JSON. Leave empty when `FSP_POLICY_BUNDLE_URL` is set |
 | `FSP_POLICY_BUNDLE_URL` | *(empty)* | HTTPS URL for the Manager's Ed25519-signed placement bundle. A configured URL replaces `AGENT_PLACEMENT_CONFIG` |
+| `FSP_POLICY_BUNDLE_ACCOUNT_URL` | *(empty)* | Private Azure Blob account URL for the signed bundle; mutually exclusive with `FSP_POLICY_BUNDLE_URL` |
+| `FSP_POLICY_BUNDLE_CONTAINER` | *(empty)* | Azure container containing the signed policy bundle |
+| `FSP_POLICY_BUNDLE_BLOB_NAME` | *(empty)* | Blob key for the signed policy bundle |
+| `FSP_POLICY_BUNDLE_AUTH_MODE` | `managed_identity` | Azure policy source auth: `managed_identity` or `workload_identity` |
+| `FSP_POLICY_BUNDLE_CLIENT_ID` | *(empty)* | Optional managed/workload identity client ID for the private policy source |
+| `FSP_POLICY_BUNDLE_TENANT_ID` | *(empty)* | Optional tenant ID for workload identity |
+| `FSP_POLICY_BUNDLE_TOKEN_FILE` | *(empty)* | Federated token file for workload identity |
 | `FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE` | *(empty)* | PEM Ed25519 public key used to verify the policy bundle |
 | `FSP_POLICY_BUNDLE_CACHE_FILE` | `$FSP_CONFIG_DIR/policy-bundle.json` | Persistent last-known-good signed bundle used only when the remote endpoint is unavailable |
 | `FSP_POLICY_BUNDLE_KEY_ID` | *(empty)* | Optional pinned `key_id`; a different bundle key ID fails startup |

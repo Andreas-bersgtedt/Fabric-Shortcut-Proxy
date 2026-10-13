@@ -134,14 +134,26 @@ class PlacementConfig:
     @classmethod
     def from_environment(cls) -> "PlacementConfig":
         bundle_url = os.environ.get("FSP_POLICY_BUNDLE_URL", "").strip()
+        bundle_account_url = os.environ.get(
+            "FSP_POLICY_BUNDLE_ACCOUNT_URL",
+            "",
+        ).strip()
         raw = os.environ.get("AGENT_PLACEMENT_CONFIG", "").strip()
-        if bundle_url:
+        if bundle_url and bundle_account_url:
+            raise ValueError(
+                "configure either FSP_POLICY_BUNDLE_URL or "
+                "FSP_POLICY_BUNDLE_ACCOUNT_URL, not both"
+            )
+        if bundle_url or bundle_account_url:
             if raw and raw != "{}":
                 raise ValueError(
                     "FSP_POLICY_BUNDLE_URL and AGENT_PLACEMENT_CONFIG "
                     "cannot both define placement policy"
                 )
-            from enterprise.control.policy_bundle import load_policy_bundle
+            from enterprise.control.policy_bundle import (
+                load_policy_bundle,
+                load_policy_bundle_from_store,
+            )
 
             timeout_text = os.environ.get(
                 "FSP_POLICY_BUNDLE_TIMEOUT_SECONDS",
@@ -160,20 +172,62 @@ class PlacementConfig:
                     "policy-bundle.json",
                 ),
             ).strip()
-            loaded = load_policy_bundle(
-                source_url=bundle_url,
-                public_key_file=os.environ.get(
-                    "FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE",
-                    "",
-                ).strip(),
-                cache_file=cache_file,
-                expected_key_id=os.environ.get(
-                    "FSP_POLICY_BUNDLE_KEY_ID",
-                    "",
-                ).strip(),
-                timeout_seconds=timeout_seconds,
-                value_loader=cls.from_dict,
-            )
+            public_key_file = os.environ.get(
+                "FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE",
+                "",
+            ).strip()
+            expected_key_id = os.environ.get(
+                "FSP_POLICY_BUNDLE_KEY_ID",
+                "",
+            ).strip()
+            if bundle_account_url:
+                from fabric_shortcut_proxy.runtime.azure_artifact_store import (
+                    build_azure_store,
+                )
+
+                bundle_store = build_azure_store(
+                    account_url=bundle_account_url,
+                    container_name=os.environ.get(
+                        "FSP_POLICY_BUNDLE_CONTAINER",
+                        "",
+                    ).strip(),
+                    auth_mode=os.environ.get(
+                        "FSP_POLICY_BUNDLE_AUTH_MODE",
+                        "managed_identity",
+                    ).strip(),
+                    tenant_id=os.environ.get(
+                        "FSP_POLICY_BUNDLE_TENANT_ID",
+                        "",
+                    ).strip(),
+                    client_id=os.environ.get(
+                        "FSP_POLICY_BUNDLE_CLIENT_ID",
+                        "",
+                    ).strip(),
+                    token_file=os.environ.get(
+                        "FSP_POLICY_BUNDLE_TOKEN_FILE",
+                        "",
+                    ).strip(),
+                )
+                loaded = load_policy_bundle_from_store(
+                    store=bundle_store,
+                    object_key=os.environ.get(
+                        "FSP_POLICY_BUNDLE_BLOB_NAME",
+                        "",
+                    ).strip(),
+                    public_key_file=public_key_file,
+                    cache_file=cache_file,
+                    expected_key_id=expected_key_id,
+                    value_loader=cls.from_dict,
+                )
+            else:
+                loaded = load_policy_bundle(
+                    source_url=bundle_url,
+                    public_key_file=public_key_file,
+                    cache_file=cache_file,
+                    expected_key_id=expected_key_id,
+                    timeout_seconds=timeout_seconds,
+                    value_loader=cls.from_dict,
+                )
             placement = loaded.value
             placement.policy_bundle_revision = loaded.revision
             placement.policy_bundle_key_id = loaded.key_id

@@ -376,7 +376,11 @@ the supplied agent ID to the configured pool; changing `AGENT_POOL_ID` or
 
 Set `manager.policyBundle.enabled=true` to load Manager placement policy from a
 signed global bundle instead of `manager.agentPlacementConfig`. The two inputs
-are mutually exclusive. A bundle has this shape:
+are mutually exclusive inside the Manager process. Helm renders
+`AGENT_PLACEMENT_CONFIG={}` for Manager when the bundle is enabled; the chart
+value remains available to catalog and regional-reader workloads that do not
+fetch the global bundle. Keep that bootstrap copy equivalent to the bundle's
+`placement` object. A bundle has this shape:
 
 ```json
 {
@@ -416,6 +420,30 @@ networkPolicy:
       - cidr: 203.0.113.10/32
         ports: [443]
 ```
+
+For a private Azure global layer, replace `url` with an identity-authenticated
+Blob source:
+
+```yaml
+manager:
+  policyBundle:
+    enabled: true
+    azure:
+      accountUrl: https://catalog.blob.core.windows.net
+      container: catalog
+      blobName: policies/phase5-placement.json
+      authMode: workload_identity
+      clientId: 00000000-0000-0000-0000-000000000000
+      tenantId: 00000000-0000-0000-0000-000000000000
+      tokenFile: /var/run/secrets/azure/tokens/azure-identity-token
+    publicKeySecretName: fsp-policy-key
+    cacheFile: /config/policy-bundle.json
+    keyId: global-2026
+```
+
+Configure exactly one source: `url` or `azure.accountUrl`. The private Blob
+path uses managed identity or workload identity and the same signature,
+revision, validation, and last-known-good rules as HTTPS.
 
 Manager validates the signature, key ID, monotonic revision, and complete
 placement policy before replacing the cache. HTTP 5xx responses, connection

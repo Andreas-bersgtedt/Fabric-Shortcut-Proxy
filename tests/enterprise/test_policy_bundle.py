@@ -15,7 +15,9 @@ from enterprise.control.policy_bundle import (
     PolicyBundleValidationError,
     _RemoteUnavailable,
     load_policy_bundle,
+    load_policy_bundle_from_store,
 )
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 from tests.enterprise.test_residency_policy import _config
 
 
@@ -212,3 +214,36 @@ def test_environment_loads_bundle_metadata(monkeypatch, tmp_path):
     assert placement.policy_bundle_revision == 14
     assert placement.policy_bundle_key_id == "global-1"
     assert placement.policy_bundle_from_cache
+
+
+def test_private_artifact_store_bundle_uses_verified_cache_on_outage(
+    tmp_path,
+):
+    private_key, public_path = _key_pair(tmp_path)
+    raw = _bundle(private_key, revision=15)
+    store = MemoryStore()
+    store.put("policies/placement.json", raw)
+    cache_path = tmp_path / "policy-cache.json"
+
+    loaded = load_policy_bundle_from_store(
+        store=store,
+        object_key="policies/placement.json",
+        public_key_file=str(public_path),
+        cache_file=str(cache_path),
+        expected_key_id="global-1",
+        value_loader=PlacementConfig.from_dict,
+    )
+    store.delete("policies/placement.json")
+    cached = load_policy_bundle_from_store(
+        store=store,
+        object_key="policies/placement.json",
+        public_key_file=str(public_path),
+        cache_file=str(cache_path),
+        expected_key_id="global-1",
+        value_loader=PlacementConfig.from_dict,
+    )
+
+    assert loaded.revision == 15
+    assert not loaded.from_cache
+    assert cached.revision == 15
+    assert cached.from_cache

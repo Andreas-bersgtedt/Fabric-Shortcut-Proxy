@@ -103,7 +103,7 @@ def parse_pricing(raw: str) -> dict[str, Any]:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError("FSP_EGRESS_PRICING must be valid JSON") from exc
-    if value == {}:
+    if value in ({}, None):
         return {"currency": "", "rates": {}}
     if (
         not isinstance(value, dict)

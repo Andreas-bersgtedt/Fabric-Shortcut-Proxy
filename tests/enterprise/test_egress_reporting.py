@@ -87,6 +87,13 @@ def test_report_keeps_unpriced_bytes_visible():
     assert report["rows"][0]["estimated_cost"] is None
 
 
+def test_null_pricing_from_legacy_helm_values_is_empty():
+    assert parse_pricing("null") == {
+        "currency": "",
+        "rates": {},
+    }
+
+
 def test_task_result_records_only_cross_boundary_bytes(monkeypatch):
     placement = PlacementConfig.from_dict(
         {

@@ -4,6 +4,11 @@ Phase 5 is tracked by #149. The implementation is opt-in and keeps legacy
 single-tenant placement, unrestricted Agent release strings, and inline
 placement JSON when the new policy fields are absent.
 
+Phase 5 covers signed policy bundles, tenant isolation, measured egress
+reporting, Agent release rings, and recovery drills, with an estimated effort
+of 3 to 5 engineer-weeks. The edge Manager and local journal in #154 are
+separate backlog and are not v3.1.0 exit criteria.
+
 ## Signed policy bundles
 
 Regional Managers can load an Ed25519-signed placement bundle from HTTPS or a
@@ -94,10 +99,9 @@ target: North Europe restored Fabric reads in 23.478 seconds against the
 five-minute regional RTO. The new global-layer drill stayed below the
 one-hour RTO and retained policy revision 1, giving zero observed policy RPO.
 
-## Deferred edge Manager
+## Edge Manager backlog
 
-#154 remains open. Its source requirement says to build the edge Manager only
-for a confirmed real site that must refresh during long disconnections. The
-current hybrid site is an Azure-IaaS simulation and does not establish that
-requirement. Implementation resumes when a real site supplies its schedule,
-local-store, outage-duration, and replay constraints.
+#154 is outside Phase 5 and v3.1.0. The current hybrid site is an Azure-IaaS
+simulation and does not establish a need for scheduled refresh during long
+disconnections. The backlog item can be planned when a real site supplies its
+schedule, local-store, outage-duration, and replay constraints.

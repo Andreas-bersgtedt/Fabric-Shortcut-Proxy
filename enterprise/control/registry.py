@@ -58,6 +58,7 @@ class AgentRecord:
     pool_id: str = ""
     location: str = ""
     storage_profile: str = ""
+    tenant_id: str = ""
     allowed_connection_ids: list[str] = field(default_factory=list)
     allowed_table_patterns: list[str] = field(default_factory=list)
     commands: list[ControlCommand] = field(default_factory=list)
@@ -85,6 +86,7 @@ class AgentRecord:
             "pool_id": self.pool_id,
             "location": self.location,
             "storage_profile": self.storage_profile,
+            "tenant_id": self.tenant_id,
             "allowed_connection_ids": list(self.allowed_connection_ids),
             "allowed_table_patterns": list(self.allowed_table_patterns),
             "health": self.health.to_dict(),
@@ -139,6 +141,7 @@ class Registry:
                 "pool_id": record.pool_id,
                 "location": record.location,
                 "storage_profile": record.storage_profile,
+                "tenant_id": record.tenant_id,
                 "allowed_connection_ids": list(record.allowed_connection_ids),
                 "allowed_table_patterns": list(record.allowed_table_patterns),
                 "commands": [command.to_dict() for command in record.commands],
@@ -183,6 +186,7 @@ class Registry:
                 pool_id=str(value.get("pool_id", "")),
                 location=str(value.get("location", "")),
                 storage_profile=str(value.get("storage_profile", "")),
+                tenant_id=str(value.get("tenant_id", "")),
                 allowed_connection_ids=[
                     str(item) for item in value.get("allowed_connection_ids", [])
                 ],
@@ -278,6 +282,7 @@ class Registry:
                 pool_id=pool.pool_id if pool else "",
                 location=pool.location if pool else "",
                 storage_profile=pool.storage_profile if pool else "",
+                tenant_id=pool.tenant_id if pool else "",
                 allowed_connection_ids=(
                     sorted(pool.allowed_connection_ids) if pool else []
                 ),

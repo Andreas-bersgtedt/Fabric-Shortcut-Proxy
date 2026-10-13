@@ -233,8 +233,11 @@ For example, configure the hub release with:
 ```yaml
 manager:
   agentPlacementConfig:
+    tenants:
+      - erp
     pools:
       - pool_id: erp-site-a
+        tenant_id: erp
         identities:
           - site-a-materializer-0:9000
           - site-a-materializer-1:9000
@@ -246,6 +249,7 @@ manager:
           - sales.*
         max_concurrency: 4
       - pool_id: erp-site-b
+        tenant_id: erp
         identities:
           - site-b-materializer-0:9000
         location: site-b
@@ -254,6 +258,7 @@ manager:
           - erp-a
     connections:
       erp-a:
+        tenant_id: erp
         required_pool: erp-site-a
         required_storage_profile: central-blob
         fallback_pools:
@@ -264,6 +269,24 @@ manager:
         required_pool: erp-site-b
         required_location: site-b
 ```
+
+When `tenants` is present, every pool, connection, store profile, and serving
+endpoint must declare exactly one listed `tenant_id`. Table policies inherit
+their connection tenant and cannot change it. Pool source access, store and
+serving references, queued tasks, catalog records, regional S3 access audits,
+and scheduler assignment are checked against that tenant. A task with a
+missing or different tenant remains queued with
+`tenant_isolation_violation`; fallback pools do not bypass the check.
+
+The config-builder audit endpoint accepts an exact tenant filter:
+
+```text
+GET /_config/api/audit?tenant_id=erp
+```
+
+The filtered response excludes legacy and other-tenant events rather than
+returning unowned records. Without a top-level `tenants` list, existing
+single-tenant placement behavior and wire payloads remain unchanged.
 
 Set `agentAuth.identityTokensSecretName` to a Kubernetes Secret with the
 `AGENT_IDENTITY_TOKENS` key. Its JSON object maps every configured identity to

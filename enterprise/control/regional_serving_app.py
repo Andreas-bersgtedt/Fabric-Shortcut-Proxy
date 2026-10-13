@@ -82,10 +82,16 @@ def create_regional_serving_app(
         raise ValueError("regional endpoint must bind its own configured store")
     if not buckets or any(not bucket or "/" in bucket for bucket in buckets):
         raise ValueError("regional serving requires bucket-to-dataset assignments")
-    for dataset_id in buckets.values():
+    bucket_tenants = {}
+    for bucket, dataset_id in buckets.items():
         policy = coordinator.catalog._policy(dataset_id)
         if endpoint_id not in policy.serving_endpoints:
             raise ValueError("regional endpoint is not assigned to the dataset")
+        if endpoint.tenant_id != policy.tenant_id:
+            raise ValueError(
+                "regional endpoint cannot serve another tenant's dataset"
+            )
+        bucket_tenants[bucket] = policy.tenant_id
 
     @asynccontextmanager
     async def lifespan(app):
@@ -102,6 +108,8 @@ def create_regional_serving_app(
         canonical_path = "".join(
             chr(byte) if byte < 0x80 else f"%{byte:02X}" for byte in raw_path
         ) if isinstance(raw_path, bytes) and raw_path else request.url.path
+        bucket, _, key = request.url.path.lstrip("/").partition("/")
+        tenant_id = bucket_tenants.get(bucket, endpoint.tenant_id)
         try:
             identity = verify_signature(
                 request.method, canonical_path, request.url.query, request.headers,
@@ -109,16 +117,53 @@ def create_regional_serving_app(
             )
         except SigV4Error as exc:
             log.warning("regional_sigv4_rejected", code=exc.code)
+            from fabric_shortcut_proxy.observability.audit import record
+
+            record(
+                identity="-",
+                bucket=bucket,
+                key=key,
+                backend=coordinator.storage_profile,
+                method=request.method,
+                status=403,
+                reason=exc.code,
+                tenant_id=tenant_id,
+            )
             return Response(error_response(exc.code, exc.message, request.url.path),
                             status_code=403, media_type="application/xml")
-        bucket, _, key = request.url.path.lstrip("/").partition("/")
         denial = access_keys.authorize(identity, bucket, key, request.method)
         if denial:
             log.warning("regional_authz_denied", identity=identity, bucket=bucket)
+            from fabric_shortcut_proxy.observability.audit import record
+
+            record(
+                identity=identity,
+                bucket=bucket,
+                key=key,
+                backend=coordinator.storage_profile,
+                method=request.method,
+                status=403,
+                reason="access_denied",
+                tenant_id=tenant_id,
+            )
             return Response(error_response("AccessDenied", denial, request.url.path),
                             status_code=403, media_type="application/xml")
         request.state.identity = identity
-        return await call_next(request)
+        response = await call_next(request)
+        length = response.headers.get("content-length", "")
+        from fabric_shortcut_proxy.observability.audit import record
+
+        record(
+            identity=identity,
+            bucket=bucket,
+            key=key,
+            backend=coordinator.storage_profile,
+            method=request.method,
+            status=response.status_code,
+            bytes_=int(length) if length.isdigit() else 0,
+            tenant_id=tenant_id,
+        )
+        return response
 
     @app.exception_handler(CatalogConflict)
     @app.exception_handler(OSError)

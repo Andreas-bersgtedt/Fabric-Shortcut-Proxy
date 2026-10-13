@@ -3,23 +3,33 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Any
 from urllib.parse import urlsplit
 
 
-class ResidencyPolicyViolation(ValueError):
-    code = "residency_policy_violation"
+class PlacementPolicyViolation(ValueError):
+    code = "placement_policy_violation"
 
     def __init__(self, detail: str) -> None:
         super().__init__(f"{self.code}: {detail}")
+
+
+class ResidencyPolicyViolation(PlacementPolicyViolation):
+    code = "residency_policy_violation"
+
+
+class TenantIsolationViolation(PlacementPolicyViolation):
+    code = "tenant_isolation_violation"
 
 
 @dataclass(frozen=True)
 class StoreProfile:
     location: str
     provider: str
+    tenant_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -27,6 +37,7 @@ class ServingEndpoint:
     location: str
     storage_profile: str
     url: str
+    tenant_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -41,6 +52,7 @@ class MaterializerPool:
     heartbeat_ms: int | None = None
     heartbeat_miss_limit: int | None = None
     claim_lease_seconds: int | None = None
+    tenant_id: str = ""
 
     def allows(self, connection_id: str, source_table: str) -> bool:
         if not connection_id or connection_id not in self.allowed_connection_ids:
@@ -53,6 +65,7 @@ class MaterializerPool:
 
 @dataclass(frozen=True)
 class MaterializerPolicy:
+    tenant_id: str = ""
     required_pool: str = ""
     required_location: str = ""
     required_storage_profile: str = ""
@@ -76,12 +89,14 @@ class PlacementConfig:
         tables: dict[tuple[str, str], MaterializerPolicy] | None = None,
         stores: dict[str, StoreProfile] | None = None,
         serving_endpoints: dict[str, ServingEndpoint] | None = None,
+        tenants: frozenset[str] | None = None,
     ) -> None:
         self.pools = pools or {}
         self.connections = connections or {}
         self.tables = tables or {}
         self.stores = stores or {}
         self.serving_endpoints = serving_endpoints or {}
+        self.tenants = tenants or frozenset()
         self.active_storage_profile = ""
         self.policy_bundle_revision: int | None = None
         self.policy_bundle_key_id = ""
@@ -94,7 +109,9 @@ class PlacementConfig:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.pools or self.connections or self.tables)
+        return bool(
+            self.tenants or self.pools or self.connections or self.tables
+        )
 
     @classmethod
     def from_environment(cls) -> "PlacementConfig":
@@ -156,10 +173,26 @@ class PlacementConfig:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "PlacementConfig":
-        allowed_keys = {"pools", "connections", "tables", "stores", "serving_endpoints"}
+        allowed_keys = {
+            "tenants",
+            "pools",
+            "connections",
+            "tables",
+            "stores",
+            "serving_endpoints",
+        }
         if set(value) - allowed_keys:
             unknown = sorted(set(value) - allowed_keys)
             raise ValueError(f"unknown placement configuration keys: {unknown}")
+        raw_tenants = value.get("tenants", [])
+        if not isinstance(raw_tenants, list):
+            raise ValueError("placement tenants must be a list")
+        tenants = frozenset(
+            _tenant_id(item, required=True, scope="tenant")
+            for item in raw_tenants
+        )
+        if len(tenants) != len(raw_tenants):
+            raise ValueError("placement tenants must be unique")
         pools: dict[str, MaterializerPool] = {}
         identities: set[str] = set()
         raw_pools = value.get("pools", [])
@@ -179,6 +212,7 @@ class PlacementConfig:
                 "heartbeat_ms",
                 "heartbeat_miss_limit",
                 "claim_lease_seconds",
+                "tenant_id",
             }
             unknown_fields = sorted(set(item) - allowed_fields)
             if unknown_fields:
@@ -212,6 +246,12 @@ class PlacementConfig:
                 heartbeat_ms=_positive_limit(item.get("heartbeat_ms"), pool_id, "heartbeat_ms"),
                 heartbeat_miss_limit=_positive_limit(item.get("heartbeat_miss_limit"), pool_id, "heartbeat_miss_limit"),
                 claim_lease_seconds=_positive_limit(item.get("claim_lease_seconds"), pool_id, "claim_lease_seconds"),
+                tenant_id=_tenant_id(
+                    item,
+                    required=bool(tenants),
+                    scope=f"pool {pool_id!r}",
+                    tenants=tenants,
+                ),
             )
 
         connections: dict[str, MaterializerPolicy] = {}
@@ -223,7 +263,12 @@ class PlacementConfig:
             key = str(connection_id).strip()
             if not key:
                 raise ValueError("connection policy keys must be non-empty")
-            connections[key] = _policy(raw_policy, pools, f"connection {key!r}")
+            connections[key] = _policy(
+                raw_policy,
+                pools,
+                f"connection {key!r}",
+                tenants,
+            )
             connection_definitions[key] = raw_policy
 
         tables: dict[tuple[str, str], MaterializerPolicy] = {}
@@ -238,9 +283,26 @@ class PlacementConfig:
                 )
             key = (connection_id.strip(), source_table.strip())
             parent = connections.get(key[0])
+            if not isinstance(raw_policy, dict):
+                raise ValueError("table policy must be an object")
+            if (
+                parent is not None
+                and parent.tenant_id
+                and "tenant_id" not in raw_policy
+            ):
+                raw_policy = {
+                    **raw_policy,
+                    "tenant_id": parent.tenant_id,
+                }
+            if (
+                parent is not None
+                and parent.tenant_id
+                and raw_policy.get("tenant_id") != parent.tenant_id
+            ):
+                raise TenantIsolationViolation(
+                    "table override cannot change connection tenant"
+                )
             if parent is not None and parent.residency_locations:
-                if not isinstance(raw_policy, dict):
-                    raise ValueError("table policy must be an object")
                 raw_policy = {**connection_definitions[key[0]], **raw_policy}
                 locations = _text_list(raw_policy, "residency_locations", required=False)
                 if not locations or not set(locations).issubset(parent.residency_locations):
@@ -249,6 +311,7 @@ class PlacementConfig:
                 raw_policy,
                 pools,
                 f"table {key[0]!r}::{key[1]!r}",
+                tenants,
             )
         stores: dict[str, StoreProfile] = {}
         raw_stores = value.get("stores", {})
@@ -257,12 +320,27 @@ class PlacementConfig:
         for name, definition in raw_stores.items():
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("store profile names must be non-empty strings")
-            if not isinstance(definition, dict) or set(definition) != {"location", "provider"}:
-                raise ValueError("store profiles require only location and provider")
+            allowed_store_fields = {"location", "provider", "tenant_id"}
+            if (
+                not isinstance(definition, dict)
+                or set(definition) - allowed_store_fields
+            ):
+                raise ValueError(
+                    "store profiles require location, provider and optional tenant_id"
+                )
             provider = _required_text(definition, "provider")
             if provider not in {"azure", "s3", "gcs", "local"}:
                 raise ValueError(f"unsupported store provider: {provider}")
-            stores[name] = StoreProfile(_required_text(definition, "location"), provider)
+            stores[name] = StoreProfile(
+                _required_text(definition, "location"),
+                provider,
+                _tenant_id(
+                    definition,
+                    required=bool(tenants),
+                    scope=f"store {name!r}",
+                    tenants=tenants,
+                ),
+            )
         endpoints: dict[str, ServingEndpoint] = {}
         raw_endpoints = value.get("serving_endpoints", {})
         if not isinstance(raw_endpoints, dict):
@@ -270,10 +348,20 @@ class PlacementConfig:
         for name, definition in raw_endpoints.items():
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("serving endpoint names must be non-empty strings")
-            if not isinstance(definition, dict) or set(definition) != {
-                "location", "storage_profile", "url"
-            }:
-                raise ValueError("serving endpoints require location, storage_profile and url")
+            allowed_endpoint_fields = {
+                "location",
+                "storage_profile",
+                "url",
+                "tenant_id",
+            }
+            if (
+                not isinstance(definition, dict)
+                or set(definition) - allowed_endpoint_fields
+            ):
+                raise ValueError(
+                    "serving endpoints require location, storage_profile, "
+                    "url and optional tenant_id"
+                )
             url = _required_text(definition, "url")
             parsed = urlsplit(url)
             if (
@@ -285,10 +373,38 @@ class PlacementConfig:
                 _required_text(definition, "location"),
                 _required_text(definition, "storage_profile"),
                 url,
+                _tenant_id(
+                    definition,
+                    required=bool(tenants),
+                    scope=f"serving endpoint {name!r}",
+                    tenants=tenants,
+                ),
             )
-        result = cls(pools, connections, tables, stores, endpoints)
+        result = cls(
+            pools,
+            connections,
+            tables,
+            stores,
+            endpoints,
+            tenants,
+        )
         for policy in (*connections.values(), *tables.values()):
+            result.validate_tenant(policy)
             result.validate_residency(policy)
+        if tenants:
+            for pool in pools.values():
+                for connection_id in pool.allowed_connection_ids:
+                    connection = connections.get(connection_id)
+                    if connection is None:
+                        raise ValueError(
+                            f"pool {pool.pool_id!r} references unknown "
+                            f"connection {connection_id!r}"
+                        )
+                    if connection.tenant_id != pool.tenant_id:
+                        raise TenantIsolationViolation(
+                            f"pool {pool.pool_id!r} cannot access connection "
+                            f"{connection_id!r} from another tenant"
+                        )
         return result
 
     def pool_for_identity(self, identity: str) -> MaterializerPool | None:
@@ -360,6 +476,72 @@ class PlacementConfig:
         )
         return policy
 
+    def validate_task_tenant(
+        self,
+        tenant_id: str,
+        policy: MaterializerPolicy,
+    ) -> None:
+        if not self.tenants:
+            if tenant_id:
+                raise TenantIsolationViolation(
+                    "task declares a tenant but tenant isolation is disabled"
+                )
+            return
+        if not tenant_id or tenant_id != policy.tenant_id:
+            raise TenantIsolationViolation(
+                "task tenant does not match dataset tenant"
+            )
+
+    def validate_tenant(
+        self,
+        policy: MaterializerPolicy,
+        *,
+        connection_id: str = "",
+    ) -> None:
+        if not self.tenants:
+            return
+        if policy.tenant_id not in self.tenants:
+            raise TenantIsolationViolation(
+                "dataset policy must belong to one configured tenant"
+            )
+        parent = self.connections.get(connection_id)
+        if parent is not None and parent.tenant_id != policy.tenant_id:
+            raise TenantIsolationViolation(
+                "table override cannot change connection tenant"
+            )
+        profiles = {
+            policy.required_storage_profile,
+            policy.staging_storage_profile,
+            *policy.replica_storage_profiles,
+            *policy.cache_storage_profiles,
+        }
+        for profile_id in profiles - {""}:
+            profile = self.stores.get(profile_id)
+            if profile is None or profile.tenant_id != policy.tenant_id:
+                raise TenantIsolationViolation(
+                    f"store {profile_id!r} belongs to another tenant"
+                )
+        for pool_id in (
+            policy.required_pool,
+            *policy.fallback_pools,
+        ):
+            if not pool_id:
+                continue
+            pool = self.pools.get(pool_id)
+            if pool is None or pool.tenant_id != policy.tenant_id:
+                raise TenantIsolationViolation(
+                    f"pool {pool_id!r} belongs to another tenant"
+                )
+        for endpoint_id in policy.serving_endpoints:
+            endpoint = self.serving_endpoints.get(endpoint_id)
+            if (
+                endpoint is None
+                or endpoint.tenant_id != policy.tenant_id
+            ):
+                raise TenantIsolationViolation(
+                    f"serving endpoint {endpoint_id!r} belongs to another tenant"
+                )
+
     def validate_residency(self, policy: MaterializerPolicy, *, connection_id: str = "") -> None:
         parent = self.connections.get(connection_id)
         if parent is not None and parent.residency_locations:
@@ -419,10 +601,12 @@ class PlacementConfig:
         ):
             raise ResidencyPolicyViolation("serving store must match its declared provider and endpoint")
         for connection_id, policy in self.connections.items():
+            self.validate_tenant(policy, connection_id=connection_id)
             self.validate_residency(policy, connection_id=connection_id)
         self.active_storage_profile = profile_id
 
     def validate_dispatch(self, policy: MaterializerPolicy, *, connection_id: str = "") -> None:
+        self.validate_tenant(policy, connection_id=connection_id)
         self.validate_residency(policy, connection_id=connection_id)
         if not policy.residency_locations:
             return
@@ -472,8 +656,45 @@ def _positive_limit(value: Any, scope: str, field: str = "max_concurrency") -> i
     return value
 
 
+def _tenant_id(
+    item: Any,
+    *,
+    required: bool,
+    scope: str,
+    tenants: frozenset[str] = frozenset(),
+) -> str:
+    if isinstance(item, dict):
+        value = item.get("tenant_id", "")
+    else:
+        value = item
+    if not isinstance(value, str):
+        raise ValueError(f"{scope} tenant_id must be a string")
+    tenant_id = value.strip()
+    if required and not tenant_id:
+        raise TenantIsolationViolation(
+            f"{scope} must belong to one configured tenant"
+        )
+    if tenant_id and not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}",
+        tenant_id,
+    ):
+        raise ValueError(f"{scope} tenant_id has an invalid format")
+    if tenant_id and tenants and tenant_id not in tenants:
+        raise TenantIsolationViolation(
+            f"{scope} references unknown tenant {tenant_id!r}"
+        )
+    if isinstance(item, dict) and tenant_id and not tenants:
+        raise TenantIsolationViolation(
+            f"{scope} requires a top-level tenants declaration"
+        )
+    return tenant_id
+
+
 def _policy(
-    raw: Any, pools: dict[str, MaterializerPool], scope: str
+    raw: Any,
+    pools: dict[str, MaterializerPool],
+    scope: str,
+    tenants: frozenset[str],
 ) -> MaterializerPolicy:
     if not isinstance(raw, dict):
         raise ValueError(f"{scope} policy must be an object")
@@ -489,6 +710,7 @@ def _policy(
         "replica_storage_profiles",
         "cache_storage_profiles",
         "freshness_target_ms",
+        "tenant_id",
     }
     if set(raw) - allowed:
         unknown = sorted(set(raw) - allowed)
@@ -506,6 +728,12 @@ def _policy(
     if len(set(named_pools)) != len(named_pools):
         raise ValueError(f"{scope} policy repeats a pool")
     return MaterializerPolicy(
+        tenant_id=_tenant_id(
+            raw,
+            required=bool(tenants),
+            scope=scope,
+            tenants=tenants,
+        ),
         required_pool=required_pool,
         required_location=required_location,
         required_storage_profile=required_storage_profile,

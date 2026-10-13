@@ -173,6 +173,7 @@ def test_scheduler_keeps_no_match_queued_and_reports_it(monkeypatch):
         "task_id": task["task_id"],
         "request_id": request["request_id"],
         "dataset": "erp-a::sales.customers",
+        "tenant_id": "",
         "pool_id": "primary",
         "location": "site-a",
         "outcome": "queued",

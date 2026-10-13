@@ -548,13 +548,24 @@ class DurableWorkQueue:
         tasks: list[MaterializeTask],
         deadline_ms: int,
     ) -> dict:
-        identity = "|".join((
+        tenants = {task.tenant_id for task in tasks if task.tenant_id}
+        if len(tenants) > 1 or (
+            tenants and any(not task.tenant_id for task in tasks)
+        ):
+            raise WorkQueueConflict(
+                "materialization request spans multiple tenants"
+            )
+        tenant_id = next(iter(tenants), "")
+        identity_parts = [
             table,
             str(epoch),
             generation_id,
             str(generation_fence),
             plan_sha256,
-        ))
+        ]
+        if tenant_id:
+            identity_parts.append(tenant_id)
+        identity = "|".join(identity_parts)
         request_id = _hash(identity)
         id_key = _idempotency_key(identity)
         with self._lock:
@@ -613,6 +624,7 @@ class DurableWorkQueue:
                 "epoch": int(epoch),
                 "table_format": table_format,
                 "dataset_id": dataset_id,
+                "tenant_id": tenant_id,
                 "generation_id": generation_id,
                 "generation_fence": int(generation_fence),
                 "plan_sha256": plan_sha256,
@@ -1457,6 +1469,7 @@ class DurableWorkQueue:
                 or manifest.generation_id != request["generation_id"]
                 or manifest.generation_fence != int(request["generation_fence"])
                 or manifest.plan_sha256 != request["plan_sha256"]
+                or manifest.tenant_id != str(request.get("tenant_id", ""))
             ):
                 raise WorkQueueConflict("snapshot identity does not match request")
             from fabric_shortcut_proxy.runtime.generation import (

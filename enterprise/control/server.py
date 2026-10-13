@@ -11,8 +11,9 @@ from typing import Callable
 
 from enterprise.control.contract import (
     RegisterRequest, RegisterResponse, HeartbeatRequest, ControlCommand,
-    Assignment, SnapshotManifest, TaskResult, Ack,
+    Assignment, SnapshotManifest, MaterializeTask, TaskResult, Ack,
 )
+from enterprise.control.egress import EgressEvent, EgressLedger
 from enterprise.control.registry import Registry
 from enterprise.control.work_queue import DurableWorkQueue
 from fabric_shortcut_proxy.observability.logging import get_logger
@@ -41,6 +42,11 @@ class ControlService:
         self._snapshot_provider = snapshot_provider
         self._work_queue = work_queue
         self._leadership_check = leadership_check
+        self._egress_ledger = (
+            EgressLedger(work_queue.store)
+            if work_queue is not None
+            else None
+        )
 
     def _require_leader(self) -> None:
         if self._leadership_check is not None:
@@ -86,10 +92,81 @@ class ControlService:
                     terminal=True,
                     reason_code="wrong_owner",
                 )
-            return self._work_queue.accept_result(
+            result = self._work_queue.accept_result(
                 res, agent_lease_id=agent.lease_id
             )
+            if (
+                result.ok
+                and result.state == "SUCCEEDED"
+                and self._egress_ledger is not None
+            ):
+                task = self._work_queue.get_task(res.task_id)
+                if task is not None:
+                    payload = MaterializeTask.from_dict(task["task"])
+                    pool = self._registry.placement.pool_for_identity(
+                        res.agent_id
+                    )
+                    profile = (
+                        self._registry.placement.stores.get(
+                            pool.storage_profile
+                        )
+                        if pool is not None and pool.storage_profile
+                        else None
+                    )
+                    if (
+                        pool is not None
+                        and profile is not None
+                        and pool.location
+                        and profile.location
+                        and pool.location != profile.location
+                    ):
+                        accepted = task.get("result") or {}
+                        self._egress_ledger.record(
+                            EgressEvent(
+                                event_id=(
+                                    f"materialize:{res.task_id}:"
+                                    f"{int(task['attempt'])}"
+                                ),
+                                occurred_at_ms=int(
+                                    accepted.get(
+                                        "completed_at_ms",
+                                        task["updated_at_ms"],
+                                    )
+                                ),
+                                tenant_id=payload.tenant_id,
+                                dataset_id=(
+                                    f"{payload.connection_id}::"
+                                    f"{payload.source_table}"
+                                ),
+                                pool_id=pool.pool_id,
+                                source_region=pool.location,
+                                destination_region=profile.location,
+                                direction="materialization_upload",
+                                bytes=int(
+                                    accepted.get("size_bytes", 0)
+                                ),
+                            )
+                        )
+            return result
         log.info("task_result", agent_id=res.agent_id, table=res.table,
                  epoch=res.epoch, split_index=res.split_index, ok=res.ok,
                  error=res.error or None)
         return Ack(ok=True)
+
+    def egress_report(
+        self,
+        month: str,
+        *,
+        pricing: dict | None = None,
+    ) -> dict:
+        if self._egress_ledger is None:
+            return {
+                "month": month,
+                "currency": None,
+                "total_bytes": 0,
+                "priced_bytes": 0,
+                "unpriced_bytes": 0,
+                "estimated_cost": None,
+                "rows": [],
+            }
+        return self._egress_ledger.report(month, pricing=pricing)

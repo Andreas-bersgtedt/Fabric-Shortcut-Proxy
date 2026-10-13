@@ -111,6 +111,8 @@ spec:
             {{- end }}
             - name: FSP_ARTIFACT_STORE_PROFILE
               value: {{ .Values.manager.artifactStoreProfile | quote }}
+            - name: FSP_EGRESS_PRICING
+              value: {{ .Values.manager.egressPricing | toJson | quote }}
             {{- if .Values.federation.enabled }}
             - name: FSP_FEDERATION_ENABLED
               value: "1"

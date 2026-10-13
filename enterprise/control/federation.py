@@ -16,6 +16,7 @@ import time
 from typing import Mapping
 
 from enterprise.control.contract import SnapshotManifest
+from enterprise.control.egress import EgressEvent, EgressLedger
 from enterprise.control.placement import PlacementConfig, ResidencyPolicyViolation
 from fabric_shortcut_proxy.runtime.artifact_store import ArtifactStore, ObjectNotFound, _normalize_key
 
@@ -468,6 +469,7 @@ class FederatedPublicationCoordinator:
         self.owner_location = owner_location
         self.storage_profile = storage_profile
         self.lease_ms = lease_ms
+        self.egress_ledger = EgressLedger(store)
 
     @classmethod
     def from_environment(
@@ -698,6 +700,30 @@ class FederatedPublicationCoordinator:
                 self.catalog.advertise(
                     receipt, owner_id=self.owner_id, fence=int(record["fence"])
                 )
+                source_profile = self.catalog.placement.stores[
+                    policy.required_storage_profile
+                ]
+                target_profile = self.catalog.placement.stores[target]
+                if source_profile.location != target_profile.location:
+                    self.egress_ledger.record(
+                        EgressEvent(
+                            event_id=(
+                                f"replicate:{record['dataset_id']}:"
+                                f"{descriptor.generation_id}:{target}"
+                            ),
+                            occurred_at_ms=descriptor.produced_at_ms,
+                            tenant_id=str(record.get("tenant_id", "")),
+                            dataset_id=str(record["dataset_id"]),
+                            pool_id="replication",
+                            source_region=source_profile.location,
+                            destination_region=target_profile.location,
+                            direction="replication",
+                            bytes=sum(
+                                reference.size_bytes
+                                for reference in descriptor.all_objects
+                            ),
+                        )
+                    )
                 completed += 1
         return completed
 

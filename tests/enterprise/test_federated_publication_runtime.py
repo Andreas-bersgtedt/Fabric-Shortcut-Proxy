@@ -112,6 +112,14 @@ def test_queue_serves_only_catalog_commit_after_restart_and_replication():
     assert list(stores["published"].list(f"{SNAPSHOTS_PREFIX}/")) == []
     assert primary.replicate_owned() == 1
     assert primary.replicate_owned() == 0
+    egress_records = stores["published"].list("_control/egress/v1/")
+    assert len(egress_records) == 1
+    egress = json.loads(stores["published"].get(egress_records[0].key))
+    assert egress["dataset_id"] == "source::sales"
+    assert egress["direction"] == "replication"
+    assert egress["source_region"] == "azure:swedencentral"
+    assert egress["destination_region"] == "azure:northeurope"
+    assert egress["bytes"] > len(_parquet())
     restarted = DurableWorkQueue(stores["replica"])
     restarted.configure_federation(secondary, {"sales": "source::sales"})
     snapshot = restarted.get_snapshot("sales", 7)

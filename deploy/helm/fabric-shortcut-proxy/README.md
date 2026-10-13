@@ -288,6 +288,37 @@ The filtered response excludes legacy and other-tenant events rather than
 returning unowned records. Without a top-level `tenants` list, existing
 single-tenant placement behavior and wire payloads remain unchanged.
 
+### Cross-boundary byte and cost reports
+
+Manager records verified materializer upload bytes when the pool location
+differs from its assigned store location. Federated replication records the
+sum of every verified object and manifest copied to another region. Events are
+idempotent per task attempt or replica generation and retain tenant, dataset,
+pool, source region, destination region, direction, and byte count.
+
+Pricing is optional and operator-supplied. Rates are decimal prices per GiB
+for an exact `source->destination` boundary:
+
+```yaml
+manager:
+  egressPricing:
+    currency: USD
+    rates:
+      "site-a->azure:swedencentral": 0.025
+      "azure:swedencentral->azure:northeurope": 0.02
+```
+
+Retrieve the current UTC month or a specified month:
+
+```text
+GET /control/egress-report
+GET /control/egress-report?month=2026-10
+```
+
+Every row reports measured integer `bytes` even when no rate exists.
+`unpriced_bytes` keeps missing operator rates visible; estimated cost covers
+only `priced_bytes`.
+
 Set `agentAuth.identityTokensSecretName` to a Kubernetes Secret with the
 `AGENT_IDENTITY_TOKENS` key. Its JSON object maps every configured identity to
 a token of at least 32 bytes. A token can be shared by agents in the same pool,

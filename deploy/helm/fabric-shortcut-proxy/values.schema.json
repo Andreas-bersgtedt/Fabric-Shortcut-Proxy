@@ -324,6 +324,23 @@
                 }
               }
             },
+            "egressPricing": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "currency": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rates": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              }
+            },
             "artifactStoreProfile": { "type": "string" }
           }
         }

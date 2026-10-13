@@ -94,6 +94,20 @@ def test_manager_renders_signed_policy_bundle_and_public_key() -> None:
     assert "path: public-key.pem" in rendered
 
 
+def test_manager_renders_operator_supplied_egress_pricing() -> None:
+    rendered = _render(
+        "--set-json",
+        (
+            'manager.egressPricing={"currency":"USD","rates":'
+            '{"azure:swedencentral->azure:northeurope":0.02}}'
+        ),
+    )
+
+    assert "name: FSP_EGRESS_PRICING" in rendered
+    assert "azure:swedencentral-\\\\u003eazure:northeurope" in rendered
+    assert '\\"currency\\":\\"USD\\"' in rendered
+
+
 def test_manager_rejects_static_and_signed_placement_policy() -> None:
     result = _helm(
         "template",

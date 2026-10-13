@@ -82,10 +82,12 @@ The October report contained 1,728,642 measured cross-boundary bytes for
 No prices were configured, so all bytes remained explicitly unpriced.
 
 The policy blobs were restored and both Managers restarted in remote-backed
-mode. All regional workloads were ready. ACR public access remained disabled
-with default action `Deny`. The signing private key was stored in the existing
-FSP Key Vault, the temporary data-plane role was removed, and local private
-key material was deleted.
+mode. All regional workloads finished on image digest
+`sha256:82e657a33d2dc289e553f19b04b71ce4631fba6c06f97666036b114e1cab4f06`.
+Both Fabric shortcuts returned the expected object after the final rollout.
+ACR public access remained disabled with default action `Deny`. The signing
+private key was stored in the existing FSP Key Vault, the temporary data-plane
+role was removed, and local private key material was deleted.
 
 The Phase 4 region-loss drill remains applicable to the Phase 5 recovery
 target: North Europe restored Fabric reads in 23.478 seconds against the

@@ -716,6 +716,22 @@ def create_manager_app() -> FastAPI:
         )
         return status
 
+    @app.get("/control/egress-report")
+    async def control_egress_report(month: str = ""):
+        from datetime import datetime, timezone
+
+        from enterprise.control.egress import parse_pricing
+
+        report_month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+        pricing = parse_pricing(
+            os.environ.get("FSP_EGRESS_PRICING", "")
+        )
+        return await asyncio.to_thread(
+            service.egress_report,
+            report_month,
+            pricing=pricing,
+        )
+
     @app.post("/control/work-queue/requests/{request_id}/cancel")
     async def cancel_work_request(request_id: str, request: Request):
         from fastapi.responses import JSONResponse

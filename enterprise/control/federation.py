@@ -16,6 +16,7 @@ import time
 from typing import Mapping
 
 from enterprise.control.contract import SnapshotManifest
+from enterprise.control.egress import EgressEvent, EgressLedger
 from enterprise.control.placement import PlacementConfig, ResidencyPolicyViolation
 from fabric_shortcut_proxy.runtime.artifact_store import ArtifactStore, ObjectNotFound, _normalize_key
 
@@ -247,6 +248,11 @@ class GlobalCatalog:
         record = json.loads(raw)
         if not isinstance(record, dict) or record.get("version") != 1 or record.get("dataset_id") != dataset_id:
             raise ValueError("invalid durable catalog record")
+        policy = self._policy(dataset_id)
+        self.placement.validate_task_tenant(
+            str(record.get("tenant_id", "")),
+            policy,
+        )
         return raw, record
 
     def get(self, dataset_id: str) -> dict:
@@ -267,6 +273,11 @@ class GlobalCatalog:
                 or not isinstance(record.get("dataset_id"), str)
             ):
                 raise ValueError("invalid durable catalog record")
+            policy = self._policy(str(record["dataset_id"]))
+            self.placement.validate_task_tenant(
+                str(record.get("tenant_id", "")),
+                policy,
+            )
             records.append(record)
         return sorted(records, key=lambda record: record["dataset_id"])
 
@@ -275,6 +286,10 @@ class GlobalCatalog:
         if not separator or not connection or not table:
             raise ValueError("dataset ID must use connection_id::source_table")
         policy = self.placement.policy_for(connection, table)
+        self.placement.validate_tenant(
+            policy,
+            connection_id=connection,
+        )
         self.placement.validate_residency(policy, connection_id=connection)
         if not policy.residency_locations:
             raise ResidencyPolicyViolation("federation requires an explicit residency boundary")
@@ -308,6 +323,7 @@ class GlobalCatalog:
             "expires_at_ms": now + lease_ms, "freshness_target_ms": freshness_target_ms,
             "replicas": {},
             "generations": {},
+            "tenant_id": policy.tenant_id,
         })
 
     @staticmethod
@@ -453,6 +469,7 @@ class FederatedPublicationCoordinator:
         self.owner_location = owner_location
         self.storage_profile = storage_profile
         self.lease_ms = lease_ms
+        self.egress_ledger = EgressLedger(store)
 
     @classmethod
     def from_environment(
@@ -622,6 +639,11 @@ class FederatedPublicationCoordinator:
         return record
 
     def publish(self, manifest: SnapshotManifest) -> dict:
+        policy = self.catalog._policy(manifest.dataset_id)
+        self.catalog.placement.validate_task_tenant(
+            manifest.tenant_id,
+            policy,
+        )
         record = self.require_owner(manifest.dataset_id)
         descriptor = self._descriptor(manifest)
         receipt = self.verifier.verify(descriptor, self.storage_profile)
@@ -675,8 +697,34 @@ class FederatedPublicationCoordinator:
                 if current is not None and current["sequence"] >= descriptor.sequence:
                     continue
                 receipt = self.verifier.replicate(descriptor, target)
+                source_profile = self.catalog.placement.stores[
+                    policy.required_storage_profile
+                ]
+                target_profile = self.catalog.placement.stores[target]
+                if source_profile.location != target_profile.location:
+                    self.egress_ledger.record(
+                        EgressEvent(
+                            event_id=(
+                                f"replicate:{record['dataset_id']}:"
+                                f"{descriptor.generation_id}:{target}"
+                            ),
+                            occurred_at_ms=descriptor.produced_at_ms,
+                            tenant_id=str(record.get("tenant_id", "")),
+                            dataset_id=str(record["dataset_id"]),
+                            pool_id="replication",
+                            source_region=source_profile.location,
+                            destination_region=target_profile.location,
+                            direction="replication",
+                            bytes=sum(
+                                reference.size_bytes
+                                for reference in descriptor.all_objects
+                            ),
+                        )
+                    )
                 self.catalog.advertise(
-                    receipt, owner_id=self.owner_id, fence=int(record["fence"])
+                    receipt,
+                    owner_id=self.owner_id,
+                    fence=int(record["fence"]),
                 )
                 completed += 1
         return completed

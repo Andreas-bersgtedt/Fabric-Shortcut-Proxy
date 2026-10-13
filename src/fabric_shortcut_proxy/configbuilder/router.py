@@ -2569,11 +2569,16 @@ async def delete_access_key_endpoint(access_key_id: str) -> JSONResponse:
 
 
 @router.get("/api/audit")
-async def recent_audit() -> JSONResponse:
+async def recent_audit(tenant_id: str = "") -> JSONResponse:
     """Most recent storage-proxy audit events (in-memory ring)."""
     from fabric_shortcut_proxy.observability import audit
+    events = (
+        audit.recent_for_tenant(tenant_id, 200)
+        if tenant_id
+        else audit.recent(200)
+    )
     return JSONResponse({"ok": True, "enabled": bool(config.ENABLE_AUDIT_LOG),
-                         "events": audit.recent(200)})
+                         "events": events})
 
 
 # ---------------------------------------------------------------------------

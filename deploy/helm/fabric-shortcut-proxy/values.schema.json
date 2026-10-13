@@ -296,6 +296,79 @@
               "type": "object",
               "additionalProperties": true
             },
+            "policyBundle": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "enabled",
+                "url",
+                "azure",
+                "publicKeySecretName",
+                "publicKeySecretKey",
+                "cacheFile",
+                "keyId",
+                "timeoutSeconds"
+              ],
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "url": { "type": "string" },
+                "azure": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "accountUrl",
+                    "container",
+                    "blobName",
+                    "authMode",
+                    "clientId",
+                    "tenantId",
+                    "tokenFile"
+                  ],
+                  "properties": {
+                    "accountUrl": { "type": "string" },
+                    "container": { "type": "string" },
+                    "blobName": { "type": "string" },
+                    "authMode": {
+                      "enum": [
+                        "managed_identity",
+                        "workload_identity"
+                      ]
+                    },
+                    "clientId": { "type": "string" },
+                    "tenantId": { "type": "string" },
+                    "tokenFile": { "type": "string" }
+                  }
+                },
+                "publicKeySecretName": { "type": "string" },
+                "publicKeySecretKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "cacheFile": { "type": "string", "minLength": 1 },
+                "keyId": { "type": "string" },
+                "timeoutSeconds": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            },
+            "egressPricing": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "currency": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rates": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              }
+            },
             "artifactStoreProfile": { "type": "string" }
           }
         }

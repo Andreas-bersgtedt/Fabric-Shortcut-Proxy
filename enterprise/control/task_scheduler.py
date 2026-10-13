@@ -10,7 +10,10 @@ from enterprise.control.contract import (
     ControlCommand,
     MaterializeTask,
 )
-from enterprise.control.placement import MaterializerPolicy, ResidencyPolicyViolation
+from enterprise.control.placement import (
+    MaterializerPolicy,
+    PlacementPolicyViolation,
+)
 from enterprise.control.registry import Registry
 from enterprise.control.work_queue import DurableWorkQueue, WorkQueueConflict
 from fabric_shortcut_proxy.observability.logging import get_logger
@@ -122,14 +125,37 @@ class TaskScheduler:
         *,
         connection_id: str,
         source_table: str,
+        tenant_id: str,
         policy: MaterializerPolicy,
         active_dataset_claims: dict[tuple[str, str], int],
         active_pool_claims: dict[str, int],
     ) -> list[tuple[float, str]]:
         placement = self.registry.placement
+        public_agents = {
+            str(item["agent_id"]): item
+            for item in self.registry.list_public()
+        }
+        try:
+            placement.validate_task_tenant(tenant_id, policy)
+        except PlacementPolicyViolation:
+            return []
+        if placement.tenants:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if str(
+                    public_agents.get(candidate[1], {}).get(
+                        "tenant_id",
+                        "",
+                    )
+                )
+                == tenant_id
+            ]
+            if not candidates:
+                return []
         try:
             placement.validate_dispatch(policy, connection_id=connection_id)
-        except ResidencyPolicyViolation:
+        except PlacementPolicyViolation:
             return []
         if not placement.enabled:
             return candidates
@@ -149,11 +175,6 @@ class TaskScheduler:
             ([policy.required_pool] if policy.required_pool else [])
             + list(policy.fallback_pools)
         )
-        public_agents = {
-            str(item["agent_id"]): item
-            for item in self.registry.list_public()
-        }
-
         def matching(candidate: tuple[float, str], target: str = "") -> bool:
             _score, agent_id = candidate
             agent = public_agents.get(agent_id, {})
@@ -240,6 +261,7 @@ class TaskScheduler:
                         [(0.0, agent_id)],
                         connection_id=generation_payload.connection_id,
                         source_table=generation_payload.source_table,
+                        tenant_id=generation_payload.tenant_id,
                         policy=self.registry.placement.policy_for(
                             generation_payload.connection_id,
                             generation_payload.source_table,
@@ -323,6 +345,57 @@ class TaskScheduler:
                     task_payload.request_id, "generation_fenced"
                 )
                 continue
+            policy = self.registry.placement.policy_for(
+                task_payload.connection_id,
+                task_payload.source_table,
+            )
+            try:
+                self.registry.placement.validate_task_tenant(
+                    task_payload.tenant_id,
+                    policy,
+                )
+                self.registry.placement.validate_dispatch(
+                    policy,
+                    connection_id=task_payload.connection_id,
+                )
+            except PlacementPolicyViolation as exc:
+                if self.queue.set_dispatch_status(
+                    task["task_id"],
+                    exc.code,
+                ):
+                    log.error(
+                        "placement_policy_violation",
+                        task_id=task["task_id"],
+                        dataset=(
+                            f"{task_payload.connection_id}::"
+                            f"{task_payload.source_table}"
+                        ),
+                        tenant_id=task_payload.tenant_id,
+                        detail=str(exc),
+                    )
+                    metrics.record_assignment_rejection(
+                        self._policy_location(policy),
+                        exc.code,
+                    )
+                    from fabric_shortcut_proxy.observability.audit import (
+                        record_placement_decision,
+                    )
+
+                    record_placement_decision(
+                        task_id=str(task["task_id"]),
+                        request_id=task_payload.request_id,
+                        dataset=(
+                            f"{task_payload.connection_id}::"
+                            f"{task_payload.source_table}"
+                        ),
+                        tenant_id=task_payload.tenant_id,
+                        pool_id=policy.required_pool,
+                        location=self._policy_location(policy),
+                        outcome="queued",
+                        reason=exc.code,
+                        fallback=False,
+                    )
+                continue
             required_owner_shard = None
             membership = memberships.get(task_payload.generation_id)
             active_members = None
@@ -356,37 +429,11 @@ class TaskScheduler:
                 required_owner_shard=required_owner_shard,
                 allowed_workers=active_members,
             )
-            policy = self.registry.placement.policy_for(
-                task_payload.connection_id,
-                task_payload.source_table,
-            )
-            try:
-                self.registry.placement.validate_dispatch(
-                    policy, connection_id=task_payload.connection_id
-                )
-            except ResidencyPolicyViolation as exc:
-                if self.queue.set_dispatch_status(task["task_id"], exc.code):
-                    log.error(
-                        "residency_policy_violation",
-                        task_id=task["task_id"],
-                        dataset=f"{task_payload.connection_id}::{task_payload.source_table}",
-                        detail=str(exc),
-                    )
-                    metrics.record_assignment_rejection(self._policy_location(policy), exc.code)
-                    from fabric_shortcut_proxy.observability.audit import record_placement_decision
-                    record_placement_decision(
-                        task_id=str(task["task_id"]),
-                        request_id=task_payload.request_id,
-                        dataset=f"{task_payload.connection_id}::{task_payload.source_table}",
-                        pool_id=policy.required_pool,
-                        location=self._policy_location(policy),
-                        outcome="queued", reason=exc.code, fallback=False,
-                    )
-                continue
             agents = self._placement_eligible(
                 agents,
                 connection_id=task_payload.connection_id,
                 source_table=task_payload.source_table,
+                tenant_id=task_payload.tenant_id,
                 policy=policy,
                 active_dataset_claims=active_dataset_claims,
                 active_pool_claims=active_pool_claims,
@@ -414,6 +461,7 @@ class TaskScheduler:
                             f"{task_payload.connection_id}::"
                             f"{task_payload.source_table}"
                         ),
+                        tenant_id=task_payload.tenant_id,
                         pool_id=(
                             policy.required_pool
                             or ",".join(policy.fallback_pools)
@@ -503,6 +551,7 @@ class TaskScheduler:
                     f"{command_task.connection_id}::"
                     f"{command_task.source_table}"
                 ),
+                tenant_id=command_task.tenant_id,
                 pool_id=actual_pool_id,
                 location=worker.location if worker is not None else "",
                 outcome="assigned",

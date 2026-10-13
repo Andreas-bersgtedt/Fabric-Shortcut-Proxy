@@ -77,6 +77,105 @@ def test_manager_binds_operator_artifact_profile() -> None:
     assert 'name: FSP_ARTIFACT_STORE_PROFILE\n              value: "eu-published"' in rendered
 
 
+def test_manager_renders_signed_policy_bundle_and_public_key() -> None:
+    rendered = _render(
+        "--set", "manager.policyBundle.enabled=true",
+        "--set", "manager.policyBundle.url=https://policy.example.test/placement.json",
+        "--set", "manager.policyBundle.publicKeySecretName=fsp-policy-key",
+        "--set", "manager.policyBundle.keyId=global-2026",
+    )
+
+    assert "name: FSP_POLICY_BUNDLE_URL" in rendered
+    assert 'value: "https://policy.example.test/placement.json"' in rendered
+    assert "name: FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE" in rendered
+    assert "name: policy-bundle-public-key" in rendered
+    assert "secretName: fsp-policy-key" in rendered
+    assert "key: public-key.pem" in rendered
+    assert "path: public-key.pem" in rendered
+
+
+def test_manager_renders_private_azure_policy_bundle() -> None:
+    rendered = _render(
+        "--set", "manager.policyBundle.enabled=true",
+        "--set",
+        (
+            "manager.policyBundle.azure.accountUrl="
+            "https://catalog.blob.core.windows.net"
+        ),
+        "--set", "manager.policyBundle.azure.container=catalog",
+        "--set",
+        "manager.policyBundle.azure.blobName=policies/phase5.json",
+        "--set",
+        "manager.policyBundle.publicKeySecretName=fsp-policy-key",
+    )
+
+    assert "name: FSP_POLICY_BUNDLE_ACCOUNT_URL" in rendered
+    assert "https://catalog.blob.core.windows.net" in rendered
+    assert "name: FSP_POLICY_BUNDLE_CONTAINER" in rendered
+    assert 'value: "catalog"' in rendered
+    assert "name: FSP_POLICY_BUNDLE_BLOB_NAME" in rendered
+    assert 'value: "policies/phase5.json"' in rendered
+    assert "name: FSP_POLICY_BUNDLE_URL" not in rendered
+
+
+def test_manager_rejects_multiple_policy_bundle_sources() -> None:
+    result = _helm(
+        "template",
+        "fsp",
+        str(CHART),
+        "--set", "manager.policyBundle.enabled=true",
+        "--set",
+        "manager.policyBundle.url=https://policy.example.test/bundle.json",
+        "--set",
+        (
+            "manager.policyBundle.azure.accountUrl="
+            "https://catalog.blob.core.windows.net"
+        ),
+        expect_success=False,
+    )
+
+    assert "requires exactly one of url or azure.accountUrl" in result.stderr
+
+
+def test_manager_renders_operator_supplied_egress_pricing() -> None:
+    rendered = _render(
+        "--set-json",
+        (
+            'manager.egressPricing={"currency":"USD","rates":'
+            '{"azure:swedencentral->azure:northeurope":0.02}}'
+        ),
+    )
+
+    assert "name: FSP_EGRESS_PRICING" in rendered
+    assert "azure:swedencentral-\\\\u003eazure:northeurope" in rendered
+    assert '\\"currency\\":\\"USD\\"' in rendered
+
+
+def test_signed_manager_does_not_receive_static_placement_policy() -> None:
+    rendered = _render(
+        "--set", "manager.policyBundle.enabled=true",
+        "--set",
+        "manager.policyBundle.url=https://policy.example.test/bundle.json",
+        "--set",
+        "manager.policyBundle.publicKeySecretName=fsp-policy-key",
+        "--set",
+        "manager.agentPlacementConfig.pools[0].pool_id=pool-a",
+    )
+
+    manager = next(
+        document
+        for document in rendered.split("\n---")
+        if "# Source: fabric-shortcut-proxy/templates/manager.yaml"
+        in document
+        and "kind: Deployment" in document
+    )
+    assert (
+        'name: AGENT_PLACEMENT_CONFIG\n              value: "{}"'
+        in manager
+    )
+    assert '"pool_id":"pool-a"' not in manager
+
+
 def test_federation_renders_catalog_and_regional_manager_identity() -> None:
     rendered = _render(
         "--set", "federation.enabled=true",

@@ -215,6 +215,7 @@ class SnapshotManifest:
     request_id: str = ""
     dataset_id: str = ""
     produced_at_ms: int = 0
+    tenant_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -238,6 +239,8 @@ class SnapshotManifest:
             result["dataset_id"] = self.dataset_id
         if self.produced_at_ms:
             result["produced_at_ms"] = self.produced_at_ms
+        if self.tenant_id:
+            result["tenant_id"] = self.tenant_id
         return result
 
     @classmethod
@@ -255,6 +258,7 @@ class SnapshotManifest:
             request_id=str(d.get("request_id", "")),
             dataset_id=str(d.get("dataset_id", "")),
             produced_at_ms=int(d.get("produced_at_ms", 0)),
+            tenant_id=str(d.get("tenant_id", "")),
         )
 
 
@@ -396,6 +400,7 @@ class MaterializeTask:
     split_strategy: str = ""
     membership_version: int = 0
     worker_fence: int = 0
+    tenant_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -416,6 +421,7 @@ class MaterializeTask:
             "table_format",
             "key_column",
             "split_strategy",
+            "tenant_id",
         ):
             value = getattr(self, key)
             if value:
@@ -459,6 +465,7 @@ class MaterializeTask:
             split_strategy=str(d.get("split_strategy", "")),
             membership_version=int(d.get("membership_version", 0)),
             worker_fence=int(d.get("worker_fence", 0)),
+            tenant_id=str(d.get("tenant_id", "")),
         )
 
 

@@ -31,6 +31,7 @@ from enterprise.control.contract import (
 )
 from enterprise.control.registry import LeaseError
 from enterprise.control.lease import LeaseStoreError, StaleLeaderError
+from enterprise.control.placement import AgentVersionUnsupported
 from fabric_shortcut_proxy.security.agent_auth import AGENT_ID_HEADER, AGENT_TOKEN_HEADER, agent_authentication_required
 
 # Path prefix for the REST control plane.
@@ -95,6 +96,14 @@ def create_control_router(server: ControlServer):
                 status_code=503,
                 headers={"Retry-After": "1"},
                 content={"error": "not_primary", "detail": str(exc)},
+            )
+        except AgentVersionUnsupported as exc:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": exc.code,
+                    "detail": str(exc),
+                },
             )
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"error": "invalid_registration", "detail": str(exc)})

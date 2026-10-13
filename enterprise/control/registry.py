@@ -27,7 +27,10 @@ from enterprise.control.contract import (
     ControlCommand,
     contract_compatible,
 )
-from enterprise.control.placement import PlacementConfig
+from enterprise.control.placement import (
+    AgentVersionUnsupported,
+    PlacementConfig,
+)
 
 if TYPE_CHECKING:
     from enterprise.control.lease import LeaderLease
@@ -58,6 +61,8 @@ class AgentRecord:
     pool_id: str = ""
     location: str = ""
     storage_profile: str = ""
+    tenant_id: str = ""
+    upgrade_ring: str = ""
     allowed_connection_ids: list[str] = field(default_factory=list)
     allowed_table_patterns: list[str] = field(default_factory=list)
     commands: list[ControlCommand] = field(default_factory=list)
@@ -85,6 +90,8 @@ class AgentRecord:
             "pool_id": self.pool_id,
             "location": self.location,
             "storage_profile": self.storage_profile,
+            "tenant_id": self.tenant_id,
+            "upgrade_ring": self.upgrade_ring,
             "allowed_connection_ids": list(self.allowed_connection_ids),
             "allowed_table_patterns": list(self.allowed_table_patterns),
             "health": self.health.to_dict(),
@@ -139,6 +146,8 @@ class Registry:
                 "pool_id": record.pool_id,
                 "location": record.location,
                 "storage_profile": record.storage_profile,
+                "tenant_id": record.tenant_id,
+                "upgrade_ring": record.upgrade_ring,
                 "allowed_connection_ids": list(record.allowed_connection_ids),
                 "allowed_table_patterns": list(record.allowed_table_patterns),
                 "commands": [command.to_dict() for command in record.commands],
@@ -158,6 +167,14 @@ class Registry:
             if not isinstance(value, dict):
                 raise ValueError("durable registry agent record must be an object")
             agent_id = str(value["agent_id"])
+            try:
+                self.placement.validate_agent_version(
+                    agent_id,
+                    str(value.get("version", "")),
+                )
+            except AgentVersionUnsupported:
+                continue
+            pool = self.placement.pool_for_identity(agent_id)
             restored[agent_id] = AgentRecord(
                 agent_id=agent_id,
                 lease_id=str(value["lease_id"]),
@@ -180,15 +197,21 @@ class Registry:
                 ),
                 shard_index=int(value.get("shard_index", -1)),
                 contract_version=str(value.get("contract_version", "1.0")),
-                pool_id=str(value.get("pool_id", "")),
-                location=str(value.get("location", "")),
-                storage_profile=str(value.get("storage_profile", "")),
-                allowed_connection_ids=[
-                    str(item) for item in value.get("allowed_connection_ids", [])
-                ],
-                allowed_table_patterns=[
-                    str(item) for item in value.get("allowed_table_patterns", [])
-                ],
+                pool_id=pool.pool_id if pool else "",
+                location=pool.location if pool else "",
+                storage_profile=pool.storage_profile if pool else "",
+                tenant_id=pool.tenant_id if pool else "",
+                upgrade_ring=pool.upgrade_ring if pool else "",
+                allowed_connection_ids=(
+                    sorted(pool.allowed_connection_ids)
+                    if pool
+                    else []
+                ),
+                allowed_table_patterns=(
+                    list(pool.allowed_table_patterns)
+                    if pool
+                    else []
+                ),
                 commands=[
                     ControlCommand.from_dict(item)
                     for item in value.get("commands", [])
@@ -264,6 +287,10 @@ class Registry:
         if not self._host_allowed(req.host) or not self._host_allowed(advertised):
             raise ValueError("agent host is not allowed by AGENT_HOST_ALLOWLIST")
         pool = self.placement.pool_for_identity(req.agent_id)
+        self.placement.validate_agent_version(
+            req.agent_id,
+            req.version,
+        )
         lease = uuid.uuid4().hex
         now = _now()
         with self._lock:
@@ -278,6 +305,8 @@ class Registry:
                 pool_id=pool.pool_id if pool else "",
                 location=pool.location if pool else "",
                 storage_profile=pool.storage_profile if pool else "",
+                tenant_id=pool.tenant_id if pool else "",
+                upgrade_ring=pool.upgrade_ring if pool else "",
                 allowed_connection_ids=(
                     sorted(pool.allowed_connection_ids) if pool else []
                 ),

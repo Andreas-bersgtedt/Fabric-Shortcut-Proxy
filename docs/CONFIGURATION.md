@@ -652,6 +652,20 @@ Create one Fabric shortcut per table.
 | `FSP_REGIONAL_MANAGER_LOCATION` | *(empty)* | Cloud-qualified Manager location, for example `azure:swedencentral` |
 | `FSP_CATALOG_OWNER_LEASE_MS` | `60000` | Dataset owner lease renewed by its regional Manager |
 | `FSP_CATALOG_RENEW_INTERVAL_SECONDS` | `20` | Finite, positive renewal interval shorter than the owner lease; invalid values prevent Manager startup when federation is enabled. Keep well below the lease to allow for storage latency |
+| `AGENT_PLACEMENT_CONFIG` | `{}` | Unsigned inline placement JSON. Leave empty when `FSP_POLICY_BUNDLE_URL` is set |
+| `FSP_POLICY_BUNDLE_URL` | *(empty)* | HTTPS URL for the Manager's Ed25519-signed placement bundle. A configured URL replaces `AGENT_PLACEMENT_CONFIG` |
+| `FSP_POLICY_BUNDLE_ACCOUNT_URL` | *(empty)* | Private Azure Blob account URL for the signed bundle; mutually exclusive with `FSP_POLICY_BUNDLE_URL` |
+| `FSP_POLICY_BUNDLE_CONTAINER` | *(empty)* | Azure container containing the signed policy bundle |
+| `FSP_POLICY_BUNDLE_BLOB_NAME` | *(empty)* | Blob key for the signed policy bundle |
+| `FSP_POLICY_BUNDLE_AUTH_MODE` | `managed_identity` | Azure policy source auth: `managed_identity` or `workload_identity` |
+| `FSP_POLICY_BUNDLE_CLIENT_ID` | *(empty)* | Optional managed/workload identity client ID for the private policy source |
+| `FSP_POLICY_BUNDLE_TENANT_ID` | *(empty)* | Optional tenant ID for workload identity |
+| `FSP_POLICY_BUNDLE_TOKEN_FILE` | *(empty)* | Federated token file for workload identity |
+| `FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE` | *(empty)* | PEM Ed25519 public key used to verify the policy bundle |
+| `FSP_POLICY_BUNDLE_CACHE_FILE` | `$FSP_CONFIG_DIR/policy-bundle.json` | Persistent last-known-good signed bundle used only when the remote endpoint is unavailable |
+| `FSP_POLICY_BUNDLE_KEY_ID` | *(empty)* | Optional pinned `key_id`; a different bundle key ID fails startup |
+| `FSP_POLICY_BUNDLE_TIMEOUT_SECONDS` | `5` | Positive HTTPS fetch timeout. Connection failures, HTTP 408/429, HTTP 5xx, and timeouts use the verified cache |
+| `FSP_EGRESS_PRICING` | `{}` | Optional JSON with `currency` and decimal per-GiB `rates` keyed by exact `source->destination`; byte accounting does not depend on pricing |
 | `FSP_ARTIFACT_STORE_PROFILE` | *(empty)* | Placement store profile bound to the configured artifact backend and used for verified catalog advertisement |
 | `FSP_FEDERATION_REPLICA_STORES` | `{}` | Manager-only JSON map of declared replica profile IDs to Azure Blob settings: `account_url`, `container_name`, `auth_mode`, and optional `client_id`, `tenant_id`, `token_file`. Identity auth only; configures durable reconciliation on the renewal cadence |
 | `FSP_REGIONAL_SERVING_ENDPOINT_ID` | *(empty)* | Assigned placement endpoint for `python -m enterprise.regional_serving`; the local store must match its provider and location |

@@ -64,7 +64,7 @@ def _file_handle():
 
 def record(*, identity: str, bucket: str, key: str, backend: str, method: str,
            status: int, action: str = "access", bytes_: int = 0, client: str = "",
-           reason: str = "") -> None:
+           reason: str = "", tenant_id: str = "") -> None:
     """Record one audit event (no-op when auditing is disabled)."""
     from fabric_shortcut_proxy import config
     if not getattr(config, "ENABLE_AUDIT_LOG", True):
@@ -83,6 +83,8 @@ def record(*, identity: str, bucket: str, key: str, backend: str, method: str,
     }
     if reason:
         event["reason"] = _scrub(reason)
+    if tenant_id:
+        event["tenant_id"] = _scrub(tenant_id)
     with _lock:
         _buf.append(event)
     _log.info("audit", **event)
@@ -243,6 +245,7 @@ def record_placement_decision(
     task_id: str,
     request_id: str,
     dataset: str,
+    tenant_id: str = "",
     pool_id: str,
     location: str,
     outcome: str,
@@ -260,6 +263,7 @@ def record_placement_decision(
         "task_id": _scrub(task_id),
         "request_id": _scrub(request_id),
         "dataset": _scrub(dataset),
+        "tenant_id": _scrub(tenant_id or "-"),
         "pool_id": _scrub(pool_id or "-"),
         "location": _scrub(location or "-"),
         "outcome": outcome,
@@ -388,3 +392,21 @@ def recent(limit: int = 100) -> list[dict]:
     with _lock:
         items = list(_buf)
     return items[-limit:]
+
+
+def recent_for_tenant(
+    tenant_id: str,
+    limit: int = 100,
+) -> list[dict]:
+    """Return only audit events explicitly owned by one tenant."""
+    normalized = str(tenant_id).strip()
+    if not normalized:
+        raise ValueError("tenant_id is required for tenant audit export")
+    bounded_limit = max(1, min(int(limit), 512))
+    with _lock:
+        items = [
+            item
+            for item in _buf
+            if item.get("tenant_id") == normalized
+        ]
+    return items[-bounded_limit:]

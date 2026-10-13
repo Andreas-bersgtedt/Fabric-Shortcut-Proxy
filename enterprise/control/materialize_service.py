@@ -27,7 +27,7 @@ from enterprise.control.contract import (
     SplitRef,
 )
 from enterprise.control.work_queue import DurableWorkQueue
-from enterprise.control.placement import PlacementConfig, ResidencyPolicyViolation
+from enterprise.control.placement import PlacementConfig, PlacementPolicyViolation
 from enterprise.control.federation import FederatedPublicationCoordinator
 from fabric_shortcut_proxy.observability.logging import get_logger
 
@@ -255,13 +255,21 @@ async def materialize_for_key(key: str) -> dict:
     if snap is None:
         return {"ok": False, "materialized": False, "reason": "unknown_key"}
 
+    policy = _placement.policy_for(
+        snap.table.connection_id,
+        snap.table.source_table,
+    )
     try:
         _placement.validate_dispatch(
-            _placement.policy_for(snap.table.connection_id, snap.table.source_table),
+            policy,
             connection_id=snap.table.connection_id,
         )
-    except ResidencyPolicyViolation as exc:
-        log.error("residency_policy_violation", table=snap.table.name, detail=str(exc))
+    except PlacementPolicyViolation as exc:
+        log.error(
+            "placement_policy_violation",
+            table=snap.table.name,
+            detail=str(exc),
+        )
         return {"ok": False, "materialized": False, "reason": exc.code}
     if _federation is not None:
         await asyncio.to_thread(
@@ -306,6 +314,7 @@ async def materialize_for_key(key: str) -> dict:
             num_splits=len(snap.splits),
             key_column=snap.table.key_column or "",
             split_strategy=snap.table.effective_split_strategy,
+            tenant_id=policy.tenant_id,
         )
         for split in snap.splits
     ]
@@ -417,6 +426,7 @@ async def materialize_for_key(key: str) -> dict:
             published_at_ms=int(time.time() * 1000),
             dataset_id=str(terminal.get("dataset_id", "")),
             produced_at_ms=int(terminal["created_at_ms"]),
+            tenant_id=str(terminal.get("tenant_id", "")),
         )
         await asyncio.to_thread(
             _queue.publish_snapshot, terminal["request_id"], manifest

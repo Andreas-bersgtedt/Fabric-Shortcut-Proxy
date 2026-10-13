@@ -50,17 +50,22 @@ these stages.
 
 ## Worker failure and retry
 
-Each injected failure retried the same deterministic Parquet output and
-completed with the expected SHA-256.
+The transport failure cases used a deterministic 16 MiB upload payload after
+the Parquet encoding stage. This is large enough to cross Azure's 4 MiB block
+boundary. The 25% and 75% values below come from Azure's remote uncommitted
+block list, not producer-side yielded bytes. Each retry uploaded the complete
+16 MiB payload.
 
-| Failure point | Failed bytes | Sweden wall | North Europe wall |
-| --- | ---: | ---: | ---: |
-| 25% of upload | 23,078 | 2.340 s | 2.030 s |
-| 75% of upload | 69,235 | 2.340 s | 2.061 s |
-| After upload completion | 92,314 | 2.697 s | 2.253 s |
+| Failure point | Remotely staged failed bytes | Retried bytes | Sweden wall | North Europe wall |
+| --- | ---: | ---: | ---: | ---: |
+| 25% of upload | 4,194,304 | 16,777,216 | 2.811 s | 2.994 s |
+| 75% of upload | 12,582,912 | 16,777,216 | 2.889 s | 3.581 s |
+| After upload completion | 0 | 16,777,216 | 3.203 s | 3.239 s |
 
-The test records retry cost rather than claiming those small-object timings
-predict production failure recovery.
+The post-upload case committed the immutable object, simulated loss of the
+result acknowledgement, then retried `put_stream_if_absent` against the
+existing object. The test records retry cost rather than claiming these
+timings predict production failure recovery.
 
 ## Private-link artifact throughput
 

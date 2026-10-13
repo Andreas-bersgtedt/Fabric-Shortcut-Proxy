@@ -569,7 +569,21 @@ class TableDef:
     def effective_max_rows(self) -> int:
         """Per-split row cap. A per-table split_target_rows above the connection
         cap raises this so a larger target is never truncated by the default."""
-        return max(effective_query_max_rows(self.connection_id), self.effective_split_target_rows)
+        byte_target_rows = 0
+        if (
+            self.effective_split_target_bytes > 0
+            and self.effective_split_estimated_bytes_per_row > 0
+        ):
+            byte_target_rows = max(
+                1,
+                self.effective_split_target_bytes
+                // self.effective_split_estimated_bytes_per_row,
+            )
+        return max(
+            effective_query_max_rows(self.connection_id),
+            self.effective_split_target_rows,
+            byte_target_rows,
+        )
 
 
 def column_defs_from_json(raw_schema, *, context: str = "Column") -> list[ColumnDef]:

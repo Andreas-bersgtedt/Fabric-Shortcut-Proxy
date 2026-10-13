@@ -33,12 +33,15 @@ class StageSample:
     rows: int
     estimated_source_bytes: int
     parquet_bytes: int
+    upload_bytes: int
     source_wait_seconds: float
     encode_wall_seconds: float
     encode_cpu_seconds: float
     upload_seconds: float
     total_seconds: float
     failed_upload_bytes: int
+    retried_upload_bytes: int
+    failed_bytes_measured_remotely: bool
     sha256: str
 
     @property
@@ -48,7 +51,7 @@ class StageSample:
     @property
     def upload_bytes_per_second(self) -> float:
         return (
-            self.parquet_bytes / self.upload_seconds
+            self.upload_bytes / self.upload_seconds
             if self.upload_seconds
             else 0.0
         )
@@ -80,22 +83,34 @@ def percentile(values: list[float], quantile: float) -> float:
     return ordered[index]
 
 
-def summarize(samples: list[StageSample]) -> dict:
+def summarize(
+    samples: list[StageSample],
+    *,
+    wall_seconds: float | None = None,
+) -> dict:
     totals = [sample.total_seconds for sample in samples]
     rows = sum(sample.rows for sample in samples)
     parquet_bytes = sum(sample.parquet_bytes for sample in samples)
     source_bytes = sum(sample.estimated_source_bytes for sample in samples)
-    elapsed = max(totals, default=0.0)
+    elapsed = (
+        wall_seconds
+        if wall_seconds is not None
+        else sum(totals)
+    )
     return {
         "samples": len(samples),
         "rows": rows,
         "estimated_source_bytes": source_bytes,
         "parquet_bytes": parquet_bytes,
+        "upload_bytes": sum(sample.upload_bytes for sample in samples),
         "compression_ratio": (
             source_bytes / parquet_bytes if parquet_bytes else None
         ),
         "failed_upload_bytes": sum(
             sample.failed_upload_bytes for sample in samples
+        ),
+        "retried_upload_bytes": sum(
+            sample.retried_upload_bytes for sample in samples
         ),
         "rows_per_second": rows / elapsed if elapsed else 0.0,
         "total_seconds": {
@@ -190,7 +205,19 @@ async def _materialize_one(
         encode_wall = time.perf_counter() - encode_started
         encode_cpu = time.process_time() - cpu_started
         output.flush()
-        size = output.tell()
+        parquet_size = output.tell()
+        upload_size = parquet_size
+        if failure_fraction is not None:
+            upload_size = max(parquet_size, 16 * 1024 * 1024)
+            padding = hashlib.sha256(b"fsp-benchmark-padding").digest()
+            remaining = upload_size - parquet_size
+            while remaining:
+                chunk = (padding * ((min(remaining, 1 << 20) // len(padding)) + 1))[
+                    : min(remaining, 1 << 20)
+                ]
+                output.write(chunk)
+                remaining -= len(chunk)
+            output.flush()
         output.seek(0)
         digest = hashlib.sha256()
         uploaded = 0
@@ -198,7 +225,7 @@ async def _materialize_one(
         def chunks(*, inject_failure: bool):
             nonlocal uploaded
             threshold = (
-                max(1, int(size * failure_fraction))
+                max(1, int(upload_size * failure_fraction))
                 if inject_failure and failure_fraction is not None
                 else None
             )
@@ -216,31 +243,75 @@ async def _materialize_one(
                 yield chunk
 
         failed_bytes = 0
+        retried_bytes = 0
+        failed_bytes_measured_remotely = False
         upload_started = time.perf_counter()
         if failure_fraction is not None and failure_fraction < 1:
             try:
                 store.put_stream(
                     key,
                     chunks(inject_failure=True),
-                    length=size,
+                    length=upload_size,
                 )
             except OSError:
                 failed_bytes = uploaded
+                blob_factory = getattr(store, "_blob", None)
+                if callable(blob_factory):
+                    try:
+                        block_list = blob_factory(key).get_block_list(
+                            block_list_type="uncommitted"
+                        )
+                        blocks = getattr(
+                            block_list,
+                            "uncommitted_blocks",
+                            None,
+                        )
+                        if blocks is None and isinstance(
+                            block_list,
+                            tuple,
+                        ):
+                            blocks = block_list[1]
+                        remote_bytes = sum(
+                            int(block.size) for block in (blocks or [])
+                        )
+                        if remote_bytes:
+                            failed_bytes = remote_bytes
+                            failed_bytes_measured_remotely = True
+                    except Exception:
+                        pass
             else:
                 raise AssertionError("injected upload failure did not fire")
             output.seek(0)
             digest = hashlib.sha256()
             uploaded = 0
-        store.put_stream(
-            key,
-            chunks(inject_failure=False),
-            length=size,
-        )
-        upload_seconds = time.perf_counter() - upload_started
-        if failure_fraction == 1:
-            failed_bytes = size
+            retried_bytes = upload_size
+            store.put_stream_if_absent(
+                key,
+                chunks(inject_failure=False),
+                length=upload_size,
+            )
+        elif failure_fraction == 1:
+            store.put_stream_if_absent(
+                key,
+                chunks(inject_failure=False),
+                length=upload_size,
+            )
             output.seek(0)
-            store.put_stream(key, output, length=size)
+            digest = hashlib.sha256()
+            uploaded = 0
+            retried_bytes = upload_size
+            store.put_stream_if_absent(
+                key,
+                chunks(inject_failure=False),
+                length=upload_size,
+            )
+        else:
+            store.put_stream(
+                key,
+                chunks(inject_failure=False),
+                length=upload_size,
+            )
+        upload_seconds = time.perf_counter() - upload_started
         try:
             return StageSample(
                 scenario=scenario,
@@ -248,13 +319,18 @@ async def _materialize_one(
                 split_index=split_index,
                 rows=rows,
                 estimated_source_bytes=source_bytes,
-                parquet_bytes=size,
+                parquet_bytes=parquet_size,
+                upload_bytes=upload_size,
                 source_wait_seconds=source_wait,
                 encode_wall_seconds=encode_wall,
                 encode_cpu_seconds=encode_cpu,
                 upload_seconds=upload_seconds,
                 total_seconds=time.perf_counter() - total_started,
                 failed_upload_bytes=failed_bytes,
+                retried_upload_bytes=retried_bytes,
+                failed_bytes_measured_remotely=(
+                    failed_bytes_measured_remotely
+                ),
                 sha256=digest.hexdigest(),
             )
         finally:
@@ -295,7 +371,7 @@ async def run_scenario(
         "concurrency": concurrency,
         "failure_fraction": failure_fraction,
         "wall_seconds": wall,
-        "summary": summarize(samples),
+        "summary": summarize(samples, wall_seconds=wall),
         "samples": [sample.to_dict() for sample in samples],
     }
 

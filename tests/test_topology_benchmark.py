@@ -12,12 +12,15 @@ def _sample(index: int, duration: float) -> StageSample:
         rows=100,
         estimated_source_bytes=1000,
         parquet_bytes=250,
+        upload_bytes=250,
         source_wait_seconds=duration / 4,
         encode_wall_seconds=duration / 4,
         encode_cpu_seconds=duration / 8,
         upload_seconds=duration / 4,
         total_seconds=duration,
         failed_upload_bytes=index,
+        retried_upload_bytes=0,
+        failed_bytes_measured_remotely=False,
         sha256="a" * 64,
     )
 
@@ -30,14 +33,14 @@ def test_percentile_and_summary_are_deterministic():
     ]
 
     assert percentile([1.0, 2.0, 3.0], 0.95) == 3.0
-    result = summarize(samples)
+    result = summarize(samples, wall_seconds=6.0)
     assert result["samples"] == 3
     assert result["rows"] == 300
     assert result["estimated_source_bytes"] == 3000
     assert result["parquet_bytes"] == 750
     assert result["compression_ratio"] == 4.0
     assert result["failed_upload_bytes"] == 3
-    assert result["rows_per_second"] == 100.0
+    assert result["rows_per_second"] == 50.0
     assert result["total_seconds"] == {
         "min": 1.0,
         "median": 2.0,
@@ -52,6 +55,15 @@ def test_sample_rates_use_measured_totals():
     assert sample.rows_per_second == 50.0
     assert sample.upload_bytes_per_second == 500.0
     assert sample.to_dict()["compression_ratio"] == 4.0
+
+
+def test_summary_uses_scenario_wall_time_for_concurrency_waves():
+    samples = [_sample(index, 2.0) for index in range(8)]
+
+    result = summarize(samples, wall_seconds=4.0)
+
+    assert result["rows"] == 800
+    assert result["rows_per_second"] == 200.0
 
 
 def test_throughput_chunks_are_bounded_and_exact():

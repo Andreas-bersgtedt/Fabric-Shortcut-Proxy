@@ -178,6 +178,13 @@
       "slo": 60
     }
   },
+  "review_corrections": {
+    "25_and_75_percent_failed_bytes_from_remote_uncommitted_blocks": true,
+    "aggregate_rows_per_second_uses_scenario_wall_time": true,
+    "byte_only_planning_raises_query_cap": true,
+    "failure_payload_bytes": 16777216,
+    "post_upload_retry_uses_put_stream_if_absent": true
+  },
   "rows_per_refresh": 847,
   "scenarios": {
     "intended_concurrency": {
@@ -297,90 +304,102 @@
     "worker_failures": {
       "neu": [
         {
-          "compression_ratio": 3.668187,
-          "encode_cpu_seconds": 0.562652,
-          "encode_wall_seconds": 0.883409,
+          "encode_cpu_seconds": 0.511213,
+          "encode_wall_seconds": 0.976586,
           "estimated_source_bytes": 338625,
-          "failed_upload_bytes": 23078,
+          "failed_bytes_measured_remotely": true,
+          "failed_upload_bytes": 4194304,
           "failure_fraction": 0.25,
           "parquet_bytes": 92314,
-          "published_rows_per_second": 417.307002,
+          "published_rows_per_second": 282.875192,
+          "retried_upload_bytes": 16777216,
           "rows": 847,
-          "source_wait_seconds": 0.390102,
-          "upload_seconds": 0.557345,
-          "wall_seconds": 2.029681
+          "source_wait_seconds": 0.520218,
+          "upload_bytes": 16777216,
+          "upload_seconds": 1.423576,
+          "wall_seconds": 2.994253
         },
         {
-          "compression_ratio": 3.668187,
-          "encode_cpu_seconds": 0.482996,
-          "encode_wall_seconds": 0.923797,
+          "encode_cpu_seconds": 0.604174,
+          "encode_wall_seconds": 1.3921,
           "estimated_source_bytes": 338625,
-          "failed_upload_bytes": 69235,
+          "failed_bytes_measured_remotely": true,
+          "failed_upload_bytes": 12582912,
           "failure_fraction": 0.75,
           "parquet_bytes": 92314,
-          "published_rows_per_second": 410.884001,
+          "published_rows_per_second": 236.519785,
+          "retried_upload_bytes": 16777216,
           "rows": 847,
-          "source_wait_seconds": 0.46993,
-          "upload_seconds": 0.558104,
-          "wall_seconds": 2.061409
+          "source_wait_seconds": 0.744199,
+          "upload_bytes": 16777216,
+          "upload_seconds": 1.567345,
+          "wall_seconds": 3.581096
         },
         {
-          "compression_ratio": 3.668187,
-          "encode_cpu_seconds": 0.442135,
-          "encode_wall_seconds": 0.772827,
+          "encode_cpu_seconds": 0.527819,
+          "encode_wall_seconds": 0.95195,
           "estimated_source_bytes": 338625,
-          "failed_upload_bytes": 92314,
+          "failed_bytes_measured_remotely": false,
+          "failed_upload_bytes": 0,
           "failure_fraction": 1.0,
           "parquet_bytes": 92314,
-          "published_rows_per_second": 375.980962,
+          "published_rows_per_second": 261.487341,
+          "retried_upload_bytes": 16777216,
           "rows": 847,
-          "source_wait_seconds": 0.397353,
-          "upload_seconds": 0.754588,
-          "wall_seconds": 2.252774
+          "source_wait_seconds": 0.492779,
+          "upload_bytes": 16777216,
+          "upload_seconds": 1.681831,
+          "wall_seconds": 3.239163
         }
       ],
       "swc": [
         {
-          "compression_ratio": 3.668187,
-          "encode_cpu_seconds": 0.386522,
-          "encode_wall_seconds": 1.560435,
+          "encode_cpu_seconds": 0.378034,
+          "encode_wall_seconds": 1.780152,
           "estimated_source_bytes": 338625,
-          "failed_upload_bytes": 23078,
+          "failed_bytes_measured_remotely": true,
+          "failed_upload_bytes": 4194304,
           "failure_fraction": 0.25,
           "parquet_bytes": 92314,
-          "published_rows_per_second": 362.02179,
+          "published_rows_per_second": 301.265932,
+          "retried_upload_bytes": 16777216,
           "rows": 847,
-          "source_wait_seconds": 1.175171,
-          "upload_seconds": 0.458011,
-          "wall_seconds": 2.339638
+          "source_wait_seconds": 1.406494,
+          "upload_bytes": 16777216,
+          "upload_seconds": 0.684601,
+          "wall_seconds": 2.81147
         },
         {
-          "compression_ratio": 3.668187,
-          "encode_cpu_seconds": 0.386264,
-          "encode_wall_seconds": 1.53921,
+          "encode_cpu_seconds": 0.343448,
+          "encode_wall_seconds": 1.528258,
           "estimated_source_bytes": 338625,
-          "failed_upload_bytes": 69235,
+          "failed_bytes_measured_remotely": true,
+          "failed_upload_bytes": 12582912,
           "failure_fraction": 0.75,
           "parquet_bytes": 92314,
-          "published_rows_per_second": 362.008355,
+          "published_rows_per_second": 293.178519,
+          "retried_upload_bytes": 16777216,
           "rows": 847,
-          "source_wait_seconds": 1.164032,
-          "upload_seconds": 0.493012,
-          "wall_seconds": 2.339725
+          "source_wait_seconds": 1.181794,
+          "upload_bytes": 16777216,
+          "upload_seconds": 1.03357,
+          "wall_seconds": 2.889025
         },
         {
-          "compression_ratio": 3.668187,
-          "encode_cpu_seconds": 0.347816,
-          "encode_wall_seconds": 1.771667,
+          "encode_cpu_seconds": 0.415966,
+          "encode_wall_seconds": 1.835583,
           "estimated_source_bytes": 338625,
-          "failed_upload_bytes": 92314,
+          "failed_bytes_measured_remotely": false,
+          "failed_upload_bytes": 0,
           "failure_fraction": 1.0,
           "parquet_bytes": 92314,
-          "published_rows_per_second": 314.102908,
+          "published_rows_per_second": 264.422579,
+          "retried_upload_bytes": 16777216,
           "rows": 847,
-          "source_wait_seconds": 1.419894,
-          "upload_seconds": 0.593337,
-          "wall_seconds": 2.696568
+          "source_wait_seconds": 1.431022,
+          "upload_bytes": 16777216,
+          "upload_seconds": 1.022094,
+          "wall_seconds": 3.203206
         }
       ]
     }

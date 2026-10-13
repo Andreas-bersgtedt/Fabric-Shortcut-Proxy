@@ -120,6 +120,14 @@ manager:
   enabled: true
   replicas: 1
   agentPlacementConfig: {}
+  policyBundle:
+    enabled: false
+    url: ""
+    publicKeySecretName: ""
+    publicKeySecretKey: public-key.pem
+    cacheFile: /config/policy-bundle.json
+    keyId: ""
+    timeoutSeconds: 5
   artifactStoreProfile: ""
   auditLogEnabled: "0"
   configBuilderEnabled: "0"

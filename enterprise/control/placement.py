@@ -83,6 +83,9 @@ class PlacementConfig:
         self.stores = stores or {}
         self.serving_endpoints = serving_endpoints or {}
         self.active_storage_profile = ""
+        self.policy_bundle_revision: int | None = None
+        self.policy_bundle_key_id = ""
+        self.policy_bundle_from_cache = False
         self.identity_pools = {
             identity: pool
             for pool in self.pools.values()
@@ -95,7 +98,52 @@ class PlacementConfig:
 
     @classmethod
     def from_environment(cls) -> "PlacementConfig":
+        bundle_url = os.environ.get("FSP_POLICY_BUNDLE_URL", "").strip()
         raw = os.environ.get("AGENT_PLACEMENT_CONFIG", "").strip()
+        if bundle_url:
+            if raw and raw != "{}":
+                raise ValueError(
+                    "FSP_POLICY_BUNDLE_URL and AGENT_PLACEMENT_CONFIG "
+                    "cannot both define placement policy"
+                )
+            from enterprise.control.policy_bundle import load_policy_bundle
+
+            timeout_text = os.environ.get(
+                "FSP_POLICY_BUNDLE_TIMEOUT_SECONDS",
+                "5",
+            ).strip()
+            try:
+                timeout_seconds = float(timeout_text)
+            except ValueError as exc:
+                raise ValueError(
+                    "FSP_POLICY_BUNDLE_TIMEOUT_SECONDS must be numeric"
+                ) from exc
+            cache_file = os.environ.get(
+                "FSP_POLICY_BUNDLE_CACHE_FILE",
+                os.path.join(
+                    os.environ.get("FSP_CONFIG_DIR", "/config"),
+                    "policy-bundle.json",
+                ),
+            ).strip()
+            loaded = load_policy_bundle(
+                source_url=bundle_url,
+                public_key_file=os.environ.get(
+                    "FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE",
+                    "",
+                ).strip(),
+                cache_file=cache_file,
+                expected_key_id=os.environ.get(
+                    "FSP_POLICY_BUNDLE_KEY_ID",
+                    "",
+                ).strip(),
+                timeout_seconds=timeout_seconds,
+                value_loader=cls.from_dict,
+            )
+            placement = loaded.value
+            placement.policy_bundle_revision = loaded.revision
+            placement.policy_bundle_key_id = loaded.key_id
+            placement.policy_bundle_from_cache = loaded.from_cache
+            return placement
         if not raw:
             return cls()
         try:

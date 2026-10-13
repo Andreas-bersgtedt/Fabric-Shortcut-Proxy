@@ -77,6 +77,41 @@ def test_manager_binds_operator_artifact_profile() -> None:
     assert 'name: FSP_ARTIFACT_STORE_PROFILE\n              value: "eu-published"' in rendered
 
 
+def test_manager_renders_signed_policy_bundle_and_public_key() -> None:
+    rendered = _render(
+        "--set", "manager.policyBundle.enabled=true",
+        "--set", "manager.policyBundle.url=https://policy.example.test/placement.json",
+        "--set", "manager.policyBundle.publicKeySecretName=fsp-policy-key",
+        "--set", "manager.policyBundle.keyId=global-2026",
+    )
+
+    assert "name: FSP_POLICY_BUNDLE_URL" in rendered
+    assert 'value: "https://policy.example.test/placement.json"' in rendered
+    assert "name: FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE" in rendered
+    assert "name: policy-bundle-public-key" in rendered
+    assert "secretName: fsp-policy-key" in rendered
+    assert "key: public-key.pem" in rendered
+    assert "path: public-key.pem" in rendered
+
+
+def test_manager_rejects_static_and_signed_placement_policy() -> None:
+    result = _helm(
+        "template",
+        "fsp",
+        str(CHART),
+        "--set",
+        "manager.policyBundle.enabled=true",
+        "--set",
+        "manager.agentPlacementConfig.pools[0].pool_id=pool-a",
+        expect_success=False,
+    )
+
+    assert (
+        "manager.policyBundle and manager.agentPlacementConfig cannot both "
+        "define placement policy"
+    ) in result.stderr
+
+
 def test_federation_renders_catalog_and_regional_manager_identity() -> None:
     rendered = _render(
         "--set", "federation.enabled=true",

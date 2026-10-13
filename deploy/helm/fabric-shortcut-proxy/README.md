@@ -283,6 +283,58 @@ The remote site's `fsp-agent-auth` Secret must use that site's pool token as
 `AGENT_TOKEN`. Keep the shared Manager token separate. Pool credentials bind
 the supplied agent ID to the configured pool; changing `AGENT_POOL_ID` or
 `AGENT_LOCATION` cannot grant access to a different pool.
+
+### Signed placement policy bundles
+
+Set `manager.policyBundle.enabled=true` to load Manager placement policy from a
+signed global bundle instead of `manager.agentPlacementConfig`. The two inputs
+are mutually exclusive. A bundle has this shape:
+
+```json
+{
+  "schema_version": 1,
+  "revision": 42,
+  "issued_at_ms": 1800000000000,
+  "key_id": "global-2026",
+  "placement": {
+    "pools": [],
+    "connections": {},
+    "tables": {},
+    "stores": {},
+    "serving_endpoints": {}
+  },
+  "signature": "base64-ed25519-signature"
+}
+```
+
+The Ed25519 signature covers the UTF-8 JSON encoding of every field except
+`signature`, serialized with sorted keys and separators `,` and `:`. Store the
+PEM public key in a Kubernetes Secret and configure the Manager:
+
+```yaml
+manager:
+  agentPlacementConfig: {}
+  policyBundle:
+    enabled: true
+    url: https://policy.example.com/fsp/placement.json
+    publicKeySecretName: fsp-policy-key
+    publicKeySecretKey: public-key.pem
+    cacheFile: /config/policy-bundle.json
+    keyId: global-2026
+    timeoutSeconds: 5
+networkPolicy:
+  managerEgress:
+    allowList:
+      - cidr: 203.0.113.10/32
+        ports: [443]
+```
+
+Manager validates the signature, key ID, monotonic revision, and complete
+placement policy before replacing the cache. HTTP 5xx responses, connection
+failures, and timeouts use the previously verified cached bundle. HTTP 4xx
+responses, malformed or unsigned bundles, invalid placement, and revision
+rollback fail startup without replacing the last-known-good cache. Use a
+persistent `/config` volume so the cache survives a pod or node restart.
 Set `manager.auditLogEnabled: "1"` to emit placement decisions to the audit
 ring/file sink and structured Manager logs.
 

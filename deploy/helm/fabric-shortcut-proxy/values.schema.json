@@ -296,6 +296,34 @@
               "type": "object",
               "additionalProperties": true
             },
+            "policyBundle": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "enabled",
+                "url",
+                "publicKeySecretName",
+                "publicKeySecretKey",
+                "cacheFile",
+                "keyId",
+                "timeoutSeconds"
+              ],
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "url": { "type": "string" },
+                "publicKeySecretName": { "type": "string" },
+                "publicKeySecretKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "cacheFile": { "type": "string", "minLength": 1 },
+                "keyId": { "type": "string" },
+                "timeoutSeconds": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            },
             "artifactStoreProfile": { "type": "string" }
           }
         }

@@ -1,5 +1,9 @@
 {{- if .Values.manager.enabled }}
 {{- $mtls := .Values.agentAuth.mtls | default dict }}
+{{- $policyBundle := .Values.manager.policyBundle | default dict }}
+{{- if and ($policyBundle.enabled | default false) (gt (len .Values.manager.agentPlacementConfig) 0) }}
+{{- fail "manager.policyBundle and manager.agentPlacementConfig cannot both define placement policy" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -93,6 +97,18 @@ spec:
             {{- end }}
             - name: AGENT_PLACEMENT_CONFIG
               value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
+            {{- if ($policyBundle.enabled | default false) }}
+            - name: FSP_POLICY_BUNDLE_URL
+              value: {{ required "manager.policyBundle.url is required" $policyBundle.url | quote }}
+            - name: FSP_POLICY_BUNDLE_PUBLIC_KEY_FILE
+              value: /etc/fsp-policy/public-key.pem
+            - name: FSP_POLICY_BUNDLE_CACHE_FILE
+              value: {{ $policyBundle.cacheFile | quote }}
+            - name: FSP_POLICY_BUNDLE_KEY_ID
+              value: {{ $policyBundle.keyId | quote }}
+            - name: FSP_POLICY_BUNDLE_TIMEOUT_SECONDS
+              value: {{ $policyBundle.timeoutSeconds | quote }}
+            {{- end }}
             - name: FSP_ARTIFACT_STORE_PROFILE
               value: {{ .Values.manager.artifactStoreProfile | quote }}
             {{- if .Values.federation.enabled }}
@@ -209,6 +225,11 @@ spec:
               mountPath: /etc/fsp-mtls
               readOnly: true
             {{- end }}
+            {{- if ($policyBundle.enabled | default false) }}
+            - name: policy-bundle-public-key
+              mountPath: /etc/fsp-policy
+              readOnly: true
+            {{- end }}
       volumes:
         - name: artifacts
           persistentVolumeClaim:
@@ -225,6 +246,14 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        {{- end }}
+        {{- if ($policyBundle.enabled | default false) }}
+        - name: policy-bundle-public-key
+          secret:
+            secretName: {{ required "manager.policyBundle.publicKeySecretName is required" $policyBundle.publicKeySecretName }}
+            items:
+              - key: {{ $policyBundle.publicKeySecretKey }}
+                path: public-key.pem
         {{- end }}
 ---
 apiVersion: v1

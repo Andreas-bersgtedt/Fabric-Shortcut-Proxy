@@ -155,7 +155,8 @@ tokenization-key record. Tokenization record ids retain their native lowercase
 letters/numbers/hyphens restriction. The reference translates to native
 `key_ref` with its canonical spelling intact, never to the key value. Native transform, split-key, schema, and source
 capability validation also apply. An explicit empty table list stays empty after
-restart.
+restart and passes startup validation, allowing a Manager or Agent to run
+without configured source tables.
 
 Bare record ids remain accepted for compatibility. Neither form is normalized
 on save or read: canonical references remain canonical and bare references remain

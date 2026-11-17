@@ -142,6 +142,13 @@ def test_validate_config_passes_with_defaults():
     config.validate_config()  # should not raise
 
 
+def test_validate_config_rejects_unexpected_empty_tables(monkeypatch):
+    monkeypatch.setattr(config, "TABLES", [])
+    monkeypatch.setattr(config, "_FILE_CFG", {})
+    with pytest.raises(ValueError, match="TABLES must define at least one table"):
+        config.validate_config()
+
+
 def test_agent_non_loopback_startup_does_not_require_manager_basic(monkeypatch):
     from main import _validate_agent_startup_config
 

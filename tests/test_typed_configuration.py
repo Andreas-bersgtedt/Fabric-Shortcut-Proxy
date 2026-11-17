@@ -337,9 +337,10 @@ async def test_typed_save_defaults_and_empty_tables_survive_restart(typed_app):
     assert after.json()["settings"]["tables"] == []
     result = await asyncio.to_thread(
         subprocess.run, [sys.executable, "-c",
-                         "from fabric_shortcut_proxy import config; assert config.TABLES == []"],
+                         "from fabric_shortcut_proxy import config; assert config.TABLES == []; config.validate_config()"],
         capture_output=True, text=True, check=False,
-        env={**os.environ, "PYTHONPATH": str(Path(config.__file__).parent.parent)},
+        env={**os.environ, "REQUIRE_SIGV4": "0",
+             "PYTHONPATH": str(Path(config.__file__).parent.parent)},
     )
     assert result.returncode == 0, result.stderr
 

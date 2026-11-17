@@ -1008,7 +1008,7 @@ def validate_config(*, operator_bind_host: str | None = None) -> None:
     if DB_RETRY_BACKOFF_SECONDS < 0:
         problems.append(f"DB_RETRY_BACKOFF must be >= 0 (got {DB_RETRY_BACKOFF_SECONDS}).")
 
-    if not TABLES:
+    if not TABLES and _FILE_CFG.get("tables") != []:
         problems.append("TABLES must define at least one table.")
     else:
         table_names = [t.name for t in TABLES]

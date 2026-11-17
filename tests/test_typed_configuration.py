@@ -339,7 +339,7 @@ async def test_typed_save_defaults_and_empty_tables_survive_restart(typed_app):
         subprocess.run, [sys.executable, "-c",
                          "from fabric_shortcut_proxy import config; assert config.TABLES == []; config.validate_config()"],
         capture_output=True, text=True, check=False,
-        env={**os.environ, "REQUIRE_SIGV4": "0",
+        env={**os.environ, "REQUIRE_SIGV4": "0", "AGENT_TOKEN_PREVIOUS": "",
              "PYTHONPATH": str(Path(config.__file__).parent.parent)},
     )
     assert result.returncode == 0, result.stderr

@@ -311,6 +311,7 @@ tls:
     email: ""
   ingress:
     className: nginx
+    managerApiEnabled: false
 
 # Private TLS ingress that exposes only the agent-control routes of the
 # Manager to remote materializer sites. Admin (/_config, /_manager,

@@ -59,6 +59,17 @@ spec:
     - host: {{ $hostname | quote }}
       http:
         paths:
+          {{- if .Values.tls.ingress.managerApiEnabled }}
+          {{- range list "/healthz" "/readyz" "/openapi.json" "/agents" "/control/work-queue" }}
+          - path: {{ . }}
+            pathType: Exact
+            backend:
+              service:
+                name: fsp-manager
+                port:
+                  name: control
+          {{- end }}
+          {{- end }}
           - path: /_config
             pathType: Prefix
             backend:

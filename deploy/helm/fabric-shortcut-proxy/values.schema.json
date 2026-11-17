@@ -626,7 +626,8 @@
           "type": "object",
           "required": ["className"],
           "properties": {
-            "className": { "type": "string", "minLength": 1 }
+            "className": { "type": "string", "minLength": 1 },
+            "managerApiEnabled": { "type": "boolean" }
           }
         }
       }

@@ -78,6 +78,34 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   `identityTokensSecretName` optionally references a Secret containing the
   JSON `AGENT_IDENTITY_TOKENS` map for authenticated pool identities.
 
+## Manager registration ingress
+
+With `tls.enabled: true`, opt in to `tls.ingress.managerApiEnabled: true`
+to expose the exact Manager routes `/healthz`, `/readyz`, `/openapi.json`,
+`/agents`, and `/control/work-queue` on `tls.hostname`. These support
+Orchestrator registration and observations. The default is false so existing
+public API exposure does not change on upgrade.
+
+The routes use the existing `fsp-manager` control service and TLS certificate.
+Manager authentication and function permissions still apply to protected APIs;
+health and readiness retain their normal probe behavior. The operator UI
+prefixes remain unchanged. No other `/control` route is exposed, and the `/`
+catch-all continues to serve S3.
+
+For delegated Entra access, `manager.entra.allowedClientIds` must include the
+calling application's SPA client ID as well as any existing FSP UI client ID.
+The SPA requests the FSP API's delegated scope. Existing FSP user permissions
+still determine access; adding a client does not grant user roles.
+
+The Manager startup probe allows up to five minutes for initialization before
+liveness checks begin. Readiness still gates traffic, and the existing runtime
+liveness checks remain enabled after startup.
+
+When an existing Helm release has drifted, reconcile its current values before
+a full upgrade. A targeted live ingress patch must also be reflected in the
+environment values (`tls.ingress.managerApiEnabled: true`) before the next Helm
+upgrade, or Helm can remove those routes. Do not replace the S3 catch-all.
+
 ## Entra Agent authentication
 
 For Python control clients on AKS, install the image with the `agent-entra`

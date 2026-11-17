@@ -214,6 +214,13 @@ spec:
           ports:
             - name: control
               containerPort: 9200
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: control
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /healthz

@@ -543,6 +543,53 @@ def test_enabled_private_service_requires_azure_network_values(
     assert expected_message in result.stderr
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_manager_registration_ingress_is_opt_in_and_exact(enabled: bool) -> None:
+    rendered = _render(
+        "--show-only", "templates/tls-ingress.yaml",
+        "-f", str(EXAMPLE_VALUES),
+        "--set", f"tls.ingress.managerApiEnabled={str(enabled).lower()}",
+    )
+    import yaml
+
+    documents = list(yaml.safe_load_all(rendered))
+    ingress = next(item for item in documents if item["metadata"]["name"] == "fsp-config-public")
+    paths = ingress["spec"]["rules"][0]["http"]["paths"]
+    manager_paths = {"/healthz", "/readyz", "/openapi.json", "/agents", "/control/work-queue"}
+    assert {item["path"] for item in paths} == (
+        {"/_config", "/_manager", "/_monitor"} | (manager_paths if enabled else set())
+    )
+    for item in paths:
+        assert item["backend"]["service"] == {"name": "fsp-manager", "port": {"name": "control"}}
+        assert item["pathType"] == ("Exact" if item["path"] in manager_paths else "Prefix")
+    s3 = next(item for item in documents if item["metadata"]["name"] == "fsp-nginx-public")
+    assert s3["spec"]["rules"][0]["http"]["paths"] == [{
+        "path": "/", "pathType": "Prefix",
+        "backend": {"service": {"name": "fsp-nginx-public", "port": {"name": "https"}}},
+    }]
+
+
+def test_manager_startup_probe_preserves_runtime_health_checks() -> None:
+    import yaml
+
+    rendered = _render("--show-only", "templates/manager.yaml", "-f", str(EXAMPLE_VALUES))
+    deployment = next(
+        item for item in yaml.safe_load_all(rendered)
+        if item["kind"] == "Deployment"
+    )
+    manager = next(
+        item for item in deployment["spec"]["template"]["spec"]["containers"]
+        if item["name"] == "manager"
+    )
+    startup = manager["startupProbe"]
+    assert startup["httpGet"] == {"path": "/healthz", "port": "control"}
+    assert startup["periodSeconds"] * startup["failureThreshold"] == 300
+    assert startup["timeoutSeconds"] == 5
+    for name, period in (("readinessProbe", 5), ("livenessProbe", 10)):
+        assert manager[name]["httpGet"] == startup["httpGet"]
+        assert manager[name]["periodSeconds"] == period
+
+
 def test_control_ingress_prefix_preserves_agent_route_allowlist() -> None:
     rendered = _render(
         "--show-only", "templates/agent-control-ingress.yaml",

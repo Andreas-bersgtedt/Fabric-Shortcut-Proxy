@@ -24,6 +24,7 @@ def configuration_app(tmp_path, monkeypatch):
     monkeypatch.setenv("FSP_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "config.json"))
     monkeypatch.setenv("FSP_AUTHZ_ENFORCE", "0")
+    monkeypatch.delenv("NUM_SPLITS", raising=False)
     monkeypatch.setattr(router_module, "_BUILDER_TABLES_OVERRIDE", None)
     app = FastAPI()
     app.include_router(router_module.router)

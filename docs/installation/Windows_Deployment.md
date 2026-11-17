@@ -162,7 +162,7 @@ SQL Server with a **read‑only** login (Windows co‑located example):
 ```json
 {
   "connection": {
-    "db_url": "mssql+aioodbc://fabric_ro:CHANGE_ME@localhost:1433/Salesdb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes",
+    "db_url": "mssql+aioodbc://fabric_ro:CHANGE_ME@localhost:1433/Salesdb?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no",
     "source_table": "dbo.orders",
     "key_column": "order_id",
     "table_name": "orders",
@@ -174,13 +174,14 @@ SQL Server with a **read‑only** login (Windows co‑located example):
 ```
 
 For Windows Integrated auth instead of a SQL login, use
-`mssql+aioodbc://@localhost/Salesdb?driver=ODBC+Driver+18+for+SQL+Server&trusted_connection=yes&TrustServerCertificate=yes`
+`mssql+aioodbc://@localhost/Salesdb?driver=ODBC+Driver+18+for+SQL+Server&trusted_connection=yes&Encrypt=yes&TrustServerCertificate=no`
 and run the service under an account with DB read access.
 PostgreSQL: `postgresql+asyncpg://fabric_ro:CHANGE_ME@pg-host:5432/salesdb` ·
 Oracle: `oracle+oracledb://fabric_ro:CHANGE_ME@oracle-host:1521/ORCLPDB1`.
 
 > **Production:** move the password out of this file into the DPAPI credential store
 > (section 8) or a machine environment variable.
+> The proxy host must trust the SQL Server certificate and the URL hostname must match it.
 
 ### 7.2 Tables — `config.tables.json`
 

@@ -46,6 +46,7 @@ combines chapter 4 (install), chapter 5 (configure), and chapter 6 (connect).
 
 - The OS ODBC Driver 18 for SQL Server (chapter 4).
 - A read-only SQL login scoped to the table you expose.
+- A SQL Server certificate trusted by the proxy host and matching `sql-host`.
 - An On-Premises Data Gateway that can reach the proxy host (chapter 6).
 
 ### Step 1: point the proxy at the table
@@ -54,7 +55,7 @@ Set the connection string and the key column, then start the proxy. Use `delta` 
 reads `_delta_log` directly.
 
 ```powershell
-$env:DB_URL = "mssql+aioodbc://appreader:secret@sql-host:1433/salesdb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+$env:DB_URL = "mssql+aioodbc://appreader:secret@sql-host:1433/salesdb?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
 $env:DB_SOURCE_TABLE = "dbo.orders"
 $env:KEY_COLUMN = "order_id"
 $env:TABLE_FORMAT = "delta"
@@ -194,7 +195,7 @@ address itself is never published.
 ### Step 3: start and verify
 
 ```powershell
-$env:DB_URL = "mssql+aioodbc://appreader:secret@sql-host:1433/salesdb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+$env:DB_URL = "mssql+aioodbc://appreader:secret@sql-host:1433/salesdb?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
 python main.py
 ```
 

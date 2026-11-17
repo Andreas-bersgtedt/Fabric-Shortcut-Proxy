@@ -185,7 +185,7 @@ Point `db_url` at your source with a **read‑only** login. SQL Server example:
 ```json
 {
   "connection": {
-    "db_url": "mssql+aioodbc://fabric_ro:CHANGE_ME@sqlhost:1433/Salesdb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes",
+    "db_url": "mssql+aioodbc://fabric_ro:CHANGE_ME@sqlhost:1433/Salesdb?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no",
     "source_table": "dbo.orders",
     "key_column": "order_id",
     "table_name": "orders",
@@ -202,6 +202,7 @@ You can add more sources under a `connections` array (see the example file's com
 
 > **Do not leave the password in this file for production.** Section 8 moves it into the
 > encrypted credential store or an environment variable.
+> The proxy host must trust the SQL Server certificate and its hostname must match `sqlhost`.
 
 ### 7.2 Tables — `config.tables.json`
 

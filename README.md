@@ -13,6 +13,7 @@ table objects and generates Parquet files on demand from SQL pushdown queries.
 
 > **Looking for a runbook or reference?** [docs/README.md](docs/README.md) maps
 > the maintained configuration, deployment, security, UAT, and troubleshooting guides.
+> Open work and release boundaries are summarized in the [roadmap](docs/ROADMAP.md).
 
 > **Deploying to enterprise AKS?** Start with the
 > [enterprise demo runbook](infra/fsp-demo/README.md). Bicep provisions Azure resources,
@@ -345,10 +346,14 @@ $env:TABLE_NAME      = "orders"          # canonical path derived from source id
 DB_URL=postgresql+asyncpg://user:pass@host/dbname
 
 # SQL Server (aioodbc + ODBC Driver 18)
-DB_URL=mssql+aioodbc://user:pass@host/db?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+DB_URL=mssql+aioodbc://user:pass@host/db?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no
 ```
 
-If `KEY_COLUMN` is unset, the source table's **primary key** is auto-detected.
+The SQL Server certificate must be trusted by the proxy host and match the URL hostname.
+
+If `KEY_COLUMN` is unset, the proxy attempts primary-key reflection and then a
+non-null integer column. Normal table startup requires an integer key; Databricks
+and Impala require it to be explicit.
 Use `config.tables.json` to expose **multiple** tables without editing Python. Edit
 `config.py` only for code-level defaults or local development overrides.
 
@@ -541,7 +546,7 @@ explicit reset.
 
 Use this order when docs appear to conflict:
 
-1. **Runtime source of truth**: [config.py](config.py) (defaults, validation, effective-setting sources) and API/router modules.
+1. **Runtime source of truth**: [config.py](src/fabric_shortcut_proxy/config.py) (defaults, validation, effective-setting sources) and API/router modules.
 2. **Operator docs (kept current)**:
   - [README.md](README.md) for setup and quick operations.
   - [User Manual](docs/manual/README.md) for the full end-to-end guide (install, configure, connect, secure, operate).

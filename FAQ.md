@@ -128,7 +128,7 @@ readers (delta-rs + pyiceberg). Individual extras remain available for minimal m
 library-only installations.
 
 **What connection URL do I use?**
-- SQL Server: `mssql+aioodbc://user:pass@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes`
+- SQL Server: `mssql+aioodbc://user:pass@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no`
 - PostgreSQL: `postgresql+asyncpg://user:pass@host:5432/db`
 - Oracle: `oracle+oracledb://user:pass@host:1521/ORCLPDB1`
 - Databricks: `databricks://token:<PAT>@<workspace>:443?http_path=/sql/1.0/warehouses/<id>`
@@ -137,6 +137,7 @@ library-only installations.
 - Apache Impala: `impala://host:21050/db`
 - SQLite: `sqlite+aiosqlite:///./poc_source.db`
 
+Use a SQL Server certificate trusted by the proxy host that matches the URL hostname.
 Always use a **read‑only** login scoped to the exposed tables. See
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -175,7 +176,7 @@ array in `config.tables.json`.
 that manages sources, reflected tables, tokenization policies, storage credentials, access
 keys, encrypted backups, and Open Mirroring targets. It applies changes to the split config
 files and encrypted credential store. It accepts DB credentials, so keep it on a trusted network. See
-[configbuilder/](configbuilder/) and
+[configbuilder/](src/fabric_shortcut_proxy/configbuilder/) and
 [docs/archive/CONFIG_BUILDER_PLAN.md](docs/archive/CONFIG_BUILDER_PLAN.md) (historical design).
 
 **What does backup and restore include?** The Config Builder **Security** area creates a
@@ -522,7 +523,9 @@ storage proxy (local/S3/Azure) with per‑key ACLs, credential mediation, and au
 multi‑table; content‑addressed refresh (`AUTO_REFRESH`); disk cache; snapshot history;
 config-builder + monitor UIs; authenticated Manager health cards and historical host-resource
 trends; Open Mirroring publishing; Oracle & Databricks (limited); TLS at the proxy or a fronting
-LB; `MANAGER_AUTH` gate; row-target split sizing and range/date/auto planning.
+LB; `MANAGER_AUTH` gate; row-target split sizing and integer range/auto planning.
+The lower-level date and row-number planner paths are not available through normal
+table startup, which currently requires an integer key.
 See [the Changelog](docs/CHANGELOG.md) for current release history. Files under
 [docs/archive](docs/archive/README.md) are historical records, not current
 status sources.

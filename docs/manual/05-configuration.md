@@ -62,7 +62,7 @@ dialect separately.
 
 ```
 postgresql+asyncpg://user:pass@host:5432/dbname
-mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no
 oracle+oracledb://user:pass@host:1521/service
 databricks://token:<pat>@<host>?http_path=/sql/1.0/warehouses/<id>
 ```
@@ -70,20 +70,23 @@ databricks://token:<pat>@<host>?http_path=/sql/1.0/warehouses/<id>
 Set it as an environment variable or in `config.connection.json`:
 
 ```powershell
-$env:DB_URL = "mssql+aioodbc://appreader:secret@sql-host:1433/salesdb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+$env:DB_URL = "mssql+aioodbc://appreader:secret@sql-host:1433/salesdb?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
 ```
 
 Install the matching driver first (chapter 4, §4.4). SQL Server also needs the OS ODBC
-Driver 18.
+Driver 18. For production, the SQL Server certificate must be trusted by the proxy host
+and match the hostname in the URL.
 
 ## 5.4 The key column
 
 The key column is the one thing you choose per table.
 
 - Set it, and it becomes the split key; its presence enables automatic schema reflection.
-- Leave it unset, and the proxy uses the table's auto-detected primary key.
-- Integer keys enable range planning (index-pruned reads). Non-integer keys fall back to
-  row-number sharding.
+- Leave it unset to use a reflected primary key or a non-null integer column where
+  the source supports inference. Databricks and Impala require an explicit key.
+- Normal table startup requires an integer (`int` or `long`) key. Although the
+  lower-level planner supports temporal and row-number strategies, startup rejects
+  date, timestamp, and string keys.
 - Views usually have no primary key. Always set a key column for a view.
 
 You do not write a column schema by hand. The proxy reflects the source columns at startup
@@ -123,16 +126,24 @@ Per-table fields you will use most:
 | `name` | The object name in the served path |
 | `source_table` | Schema-qualified source table or view |
 | `key_column` | Split key (required for views) |
-| `num_splits` | Pin a fixed split count for this table (otherwise dynamic) |
-| `split_strategy` | `modulo`, `range`, `date`, or `auto` for this table (else the global default) |
+| `num_splits` | Split count used when dynamic planning is disabled or row estimation fails |
+| `split_strategy` | `modulo`, `range`, `date`, or `auto` (else the global default); normal startup currently requires an integer key |
 | `split_target_rows` | Target rows per split for this table; a value above the row cap also raises the cap for this table |
 | `split_balance` | `span` (equal key/time width) or `count` (equal rows per split) for this table |
 | `split_sample_rows` | Cap rows fed into `count` quantile planning for this table (0 = full scan) |
 | `schema` | Optional explicit column list; omit a column to remove it from output |
-| `connection_id` | Bind this table to a named connection (see §5.8) |
+| `connection` | Bind this table to a named connection; `connection_id` is also accepted (see §5.8) |
 
-Table names must be unique, and every `connection_id` must reference a defined connection;
-the proxy validates both at startup.
+To use a fixed count in the native table registry, set both `split_target_rows`
+and `split_target_bytes` to `0` for the table and set `num_splits`. Otherwise, a
+successful estimate can replace the configured count. The opt-in typed contract
+does not support zero-valued table targets; see the
+[Config Builder guide](../CONFIG_BUILDER_GUIDE.md).
+
+Table names must be unique. At startup, tables referring to undefined connections are
+skipped with a warning so the Config Builder remains accessible; an unexpected empty
+runtime registry still fails validation. Re-add the missing source and reassign the
+table before publishing it.
 
 ## 5.7 The config builder
 
@@ -169,7 +180,7 @@ and System, see [CONFIG_BUILDER_GUIDE.md](../CONFIG_BUILDER_GUIDE.md).
 ## 5.8 Multi-connection sources
 
 A single deployment can serve tables from more than one source. Define named connections
-and bind each table to one with `connection_id`. The default connection is `default` (the
+and bind each table to one with `connection` (or `connection_id`). The default connection is `default` (the
 top-level `DB_URL`). Each connection can use a different dialect, so one proxy can front a
 SQL Server and a PostgreSQL source at once. The config builder manages connections in the
 UI; the encrypted credential store (chapter 7) holds each connection's secret and hydrates
@@ -268,10 +279,10 @@ be recovered after navigating to another area of the UI while the Manager proces
 
 ## 5.12 Validation
 
-The proxy validates configuration at startup and fails closed with a clear, redacted
-message on problems: unknown dialects, missing token keys, transformed split keys, malformed
-policy schemas, duplicate table names, undefined connections, and incompatible
-refresh/tokenization combinations. Fix the reported problem and restart. A masked (`***`)
+The proxy validates configuration at startup and reports problems such as unknown dialects,
+missing token keys, transformed split keys, malformed policy schemas, duplicate table names,
+and incompatible refresh/tokenization combinations. Tables with undefined connections are
+skipped as described in §5.6. Fix the reported problem and restart. A masked (`***`)
 connection string is never stored, hydrated, or treated as a credential.
 
 ## 5.13 Next

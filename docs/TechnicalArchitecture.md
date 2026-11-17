@@ -587,7 +587,7 @@ Message shapes are transport-neutral dataclasses in
 
 ## 12. Observability & audit
 
-Grounded in [observability/](../observability), `logging.py`, `metrics.py`,
+Grounded in [observability/](../src/fabric_shortcut_proxy/observability), `logging.py`, `metrics.py`,
 `trace.py`, `querystats.py`, `audit.py`, `endpoints.py`.
 
 ```mermaid

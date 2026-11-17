@@ -191,17 +191,20 @@ The scheme prefix auto-selects the dialect:
 
 ```
 postgresql+asyncpg://user:pass@host:5432/dbname
-mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
+mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no
 redshift+redshift_connector://user:pass@host:5439/dbname
 teradatasql://user:pass@host/?database=dbname&dbs_port=1025
 impala://host:21050/dbname
 ```
 
+For SQL Server, the proxy host must trust the server certificate and the URL
+hostname must match it.
+
 ### 3.2 The key column (`KEY_COLUMN`): the only thing you must choose
 
 By default, split count is dynamic (`split_target_rows=100000`) and planning uses
-contiguous key ranges for index-pruned reads when possible. The legacy modulo
-predicate remains as deterministic fallback. Range/date splits are sized by equal
+contiguous integer key ranges for index-pruned reads when possible. The legacy
+modulo predicate remains as deterministic fallback. Ranges are sized by equal
 key width by default (`split_balance=span`) or by equal rows (`split_balance=count`);
 see §3.5.
 
@@ -221,9 +224,11 @@ ORDER BY <key>
 
 - If `KEY_COLUMN` is set, that column is the split key **and** its presence turns
   on automatic schema reflection.
-- If it is not set, the proxy uses the table's **primary key** (auto-detected).
-- Integer keys are preferred for range planning. For non-integer keys, the planner
-  falls back to deterministic row-number sharding.
+- If it is not set, the proxy attempts primary-key reflection, then an eligible
+  non-null integer column. Databricks and Impala require an explicit key.
+- Normal table startup requires an integer (`int` or `long`) key. The lower-level
+  planner implements date ranges and row-number sharding, but startup rejects
+  date, timestamp, and string keys.
 
 > **Views** usually have no primary key, always pass `KEY_COLUMN` for a view.
 
@@ -263,9 +268,15 @@ generated SQL both handle it:
 
 ### 3.5 Row budget
 
-Each split returns up to `QUERY_MAX_ROWS` (default 500,000) rows. Ensure
-`total_rows ≤ num_splits × QUERY_MAX_ROWS`; otherwise raise `NUM_SPLITS` (or the
-table's `num_splits`) or `QUERY_MAX_ROWS`.
+The effective row cap per split is the maximum of the connection's `QUERY_MAX_ROWS`
+(default 500,000), the effective row target, and the byte-derived row target
+(`ceil(split_target_bytes / split_estimated_bytes_per_row)` when both are positive).
+Size the cap and split plan for the largest split, including skew. The table-wide
+row count alone cannot guarantee that every split fits.
+
+Dynamic planning can override `num_splits` when a row estimate is available. To
+use a fixed count for a table, set its `split_target_rows` and `split_target_bytes`
+to `0` and set `num_splits`. On estimation failure the configured count is used.
 
 Per-table `split_target_rows` overrides the global default for a single table —
 useful when a narrow, high-volume table should pack far more rows per split than
@@ -276,14 +287,13 @@ the 100,000 default:
   "key_column": "event_id", "split_target_rows": 1000000 }
 ```
 
-A per-table `split_target_rows` also raises that table's per-split row cap: the
-effective cap is `max(query_max_rows, split_target_rows)`, so a larger target is
-never truncated by the smaller default. Omit the field to inherit the global
-`split_target_rows`.
+A per-table `split_target_rows` above the connection cap raises that table's
+effective cap. Omit the field to inherit the global `split_target_rows`.
 
 Per-table `split_strategy` overrides the global strategy for a single table, so a
 small dimension and a large fact table can plan differently — `modulo` (full
-scan), `range` (integer key ranges), `date` (temporal ranges) or `auto`:
+scan), `range` (integer key ranges), `date` or `auto`. The date strategy's
+temporal-key path is not available through normal table startup:
 
 ```json
 { "name": "customers", "source_table": "dbo.customers", "key_column": "customer_id",
@@ -536,8 +546,8 @@ SQL Server supports three authentication methods. Pick one in the Config Builder
 **Authentication** selector (SQL Server only), or set the `DB_URL` directly:
 
 ```powershell
-# 1) SQL authentication (Driver 18 encrypts by default -> TrustServerCertificate for dev)
-$env:DB_URL          = "mssql+aioodbc://sa:Str0ng!Pass@mssql-host:1433/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+# 1) SQL authentication
+$env:DB_URL          = "mssql+aioodbc://sa:Str0ng!Pass@mssql-host:1433/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
 $env:DB_SOURCE_TABLE = "dbo.orders"
 $env:KEY_COLUMN      = "order_id"
 $env:TABLE_NAME      = "orders"
@@ -546,7 +556,7 @@ $env:NUM_SPLITS      = "8"
 
 # 2) Windows / integrated authentication (the account running the Manager/agent;
 #    on Linux this needs a Kerberos-joined host). No username or password is stored.
-# $env:DB_URL = "mssql+aioodbc://@mssql-host/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&Trusted_Connection=yes&TrustServerCertificate=yes"
+# $env:DB_URL = "mssql+aioodbc://@mssql-host/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&Trusted_Connection=yes&Encrypt=yes&TrustServerCertificate=no"
 
 # 3) Entra ID service principal (SPN). The client id is the UID, the secret is the PWD,
 #    over an encrypted channel. Needs ODBC Driver 18 (or 17.4+). Grant the SPN a login
@@ -611,7 +621,7 @@ same for any dialect.
 ### 7.3 Launch
 
 ```powershell
-$env:DB_URL = "mssql+aioodbc://sa:Str0ng!Pass@mssql-host:1433/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+$env:DB_URL = "mssql+aioodbc://sa:Str0ng!Pass@mssql-host:1433/SalesDb?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
 .\Manager.ps1 -SkipInstall
 ```
 
@@ -629,7 +639,7 @@ Create one Fabric shortcut per table.
 | `TABLE_NAME` | `sales` | Iceberg name; canonical path defaults to `db/<server>/<database>/<schema>/<object>` |
 | `NUM_SPLITS` | `8` | Split count |
 | `TABLE_FORMAT` | `iceberg` | Output format served to Fabric: `iceberg` (Fabric virtualizes to Delta) or `delta` (native `_delta_log`, no conversion, lower lag). See §13 |
-| `QUERY_MAX_ROWS` | `500000` | Max rows per split |
+| `QUERY_MAX_ROWS` | `500000` | Connection row cap; larger row or byte-derived targets raise the effective split cap |
 | `SPLIT_TARGET_ROWS` | `100000` | Target rows per split for dynamic planning; `0` disables the row target |
 | `SPLIT_TARGET_BYTES` | `0` | Target compressed Parquet bytes per split; `0` disables the byte target |
 | `SPLIT_ESTIMATED_BYTES_PER_ROW` | `0` | Measured or estimated compressed bytes per row used with `SPLIT_TARGET_BYTES` |
@@ -790,7 +800,7 @@ TABLES = [
 | `RuntimeError: … no integer split key found` | No `KEY_COLUMN` and no integer PK | Set `KEY_COLUMN` to an integer column |
 | `RuntimeError: key_column … must be an integer` | Key column is text/uuid/etc. | Choose an integer key |
 | `RuntimeError: Could not reflect any columns for …` | Bad name or no permission | Fix `DB_SOURCE_TABLE`; grant `SELECT`/metadata rights |
-| Rows appear truncated | `total_rows > num_splits × QUERY_MAX_ROWS` | Raise `NUM_SPLITS` or `QUERY_MAX_ROWS` |
+| Rows appear truncated | A split exceeds its effective row cap, including due to skew | Review the split plan and effective cap; increase the cap or adjust the plan |
 | PostgreSQL: `ModuleNotFoundError: asyncpg` | Driver not installed | `pip install asyncpg` |
 | SQL Server: `Can't open lib 'ODBC Driver 18…'` | OS ODBC driver missing | Install *ODBC Driver 18 for SQL Server* |
 | SQL Server: SSL/certificate error | Driver 18 encrypts by default | Add `&TrustServerCertificate=yes` (dev) or use a trusted cert |

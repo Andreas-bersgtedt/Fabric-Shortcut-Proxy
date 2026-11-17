@@ -39,30 +39,31 @@ same split do not re-query the source.
 A table is served as several virtual Parquet files called **splits**. Splits let Fabric
 read a table in parallel and let the proxy bound the rows returned per query.
 
-The planner assigns rows to splits according to the table's **split strategy**
-(`split_strategy`: `range` for integer keys, `date` for temporal keys, `auto` to pick
-either, or `modulo`), in order of preference:
+The planner assigns rows to splits according to the table's **split strategy**.
+Normal table startup currently requires an integer (`int` or `long`) key:
 
 - **Range split (preferred).** Contiguous key ranges are read straight off the key
   index. The predicate is `WHERE <key> >= :key_lo AND <key> < :key_hi ORDER BY <key>`.
-- **Date split.** The same contiguous-range approach over a temporal key.
 - **Modulo split (fallback).** Rows are sharded by `(<key> % num_splits) = split_index`.
   This is the deterministic fallback when range bounds are unavailable.
-- **Row-number split.** For non-integer keys, rows are sharded by
-  `(ROW_NUMBER() OVER (ORDER BY <key>) - 1) % num_splits`.
+
+The lower-level planner also implements date ranges and row-number sharding, but
+normal table startup rejects date and string keys. Do not rely on those paths
+for a configured table until the startup validation supports them.
 
 Split count is dynamic by default. The planner targets roughly `split_target_rows`
 (100,000) rows per split and clamps the count between `split_count_min` and
-`split_count_max`. You can also pin a fixed `num_splits` per table.
+`split_count_max`. To use a fixed `num_splits`, disable both row and byte targets
+for that table.
 
-By default range/date splits cut the key axis into equal widths (`split_balance=span`).
+By default range splits cut the key axis into equal widths (`split_balance=span`).
 For a skewed key, `split_balance=count` cuts at row quantiles instead, so each split holds
 roughly equal rows — derived from the source's statistics histogram on SQL Server and
 PostgreSQL (a zero-scan metadata read) or `NTILE` elsewhere.
 
-Each split returns at most `QUERY_MAX_ROWS` rows (default 500,000). A table must satisfy
-`total_rows ≤ num_splits × QUERY_MAX_ROWS`; if it does not, raise the split count or the
-row cap. A per-table `split_target_rows` above the cap raises it for that table.
+The effective per-split row cap is the maximum of the connection's `QUERY_MAX_ROWS`
+(default 500,000), the row target, and the byte-derived row target. Account for
+skew: each split must fit within that cap, not just the table total.
 
 Strategy, balance, target rows, and split count are all overridable per table.
 
@@ -72,9 +73,9 @@ The key column is the one thing you must choose per table.
 
 - If you set a key column, it is the split key and its presence enables automatic
   schema reflection.
-- If you do not, the proxy uses the table's primary key, auto-detected.
-- Integer keys are preferred because they enable range planning. Non-integer keys fall
-  back to row-number sharding.
+- If you do not, the proxy attempts primary-key reflection, then an eligible
+  non-null integer column. Databricks and Impala require an explicit key.
+- The resolved key must be an integer (`int` or `long`).
 - Views usually have no primary key. Always set a key column for a view.
 
 ## 2.4 Snapshots and versions

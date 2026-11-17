@@ -27,7 +27,7 @@ For production deployments, set these environment variables:
 
 ```bash
 # Database connection (REQUIRED if DB_URL not in config.connection.json)
-export DB_URL="mssql+aioodbc://username:password@host:1433/database?TrustServerCertificate=yes&driver=ODBC+Driver+18+for+SQL+Server"
+export DB_URL="mssql+aioodbc://username:password@host:1433/database?Encrypt=yes&TrustServerCertificate=no&driver=ODBC+Driver+18+for+SQL+Server"
 
 # AWS S3 credentials (REQUIRED for S3 access)
 export AWS_ACCESS_KEY_ID="your_access_key"
@@ -38,6 +38,10 @@ export AWS_SESSION_TOKEN="optional_session_token"  # For temporary credentials
 export CONTROL_PORT="9200"
 export PORT="9000"
 ```
+
+SQL Server must present a certificate trusted by the proxy host and matching the
+connection hostname. `TrustServerCertificate=yes` bypasses validation and should
+be limited to isolated development environments.
 
 ### Configuration File Format
 
@@ -63,7 +67,7 @@ When the application starts:
 #### Windows PowerShell
 
 ```powershell
-$env:DB_URL = "mssql+aioodbc://user:pass@server:1433/db?TrustServerCertificate=yes&driver=ODBC+Driver+18+for+SQL+Server"
+$env:DB_URL = "mssql+aioodbc://user:pass@server:1433/db?Encrypt=yes&TrustServerCertificate=no&driver=ODBC+Driver+18+for+SQL+Server"
 $env:AWS_ACCESS_KEY_ID = "your_key"
 $env:AWS_SECRET_ACCESS_KEY = "your_secret"
 
@@ -74,7 +78,7 @@ python -m enterprise.manager
 #### Linux / macOS Bash
 
 ```bash
-export DB_URL="mssql+aioodbc://user:pass@server:1433/db?TrustServerCertificate=yes&driver=ODBC+Driver+18+for+SQL+Server"
+export DB_URL="mssql+aioodbc://user:pass@server:1433/db?Encrypt=yes&TrustServerCertificate=no&driver=ODBC+Driver+18+for+SQL+Server"
 export AWS_ACCESS_KEY_ID="your_key"
 export AWS_SECRET_ACCESS_KEY="your_secret"
 
@@ -86,7 +90,7 @@ python -m enterprise.manager
 Create `.env.local` in the project root (never commit):
 
 ```bash
-DB_URL=mssql+aioodbc://user:pass@server:1433/db?TrustServerCertificate=yes&driver=ODBC+Driver+18+for+SQL+Server
+DB_URL=mssql+aioodbc://user:pass@server:1433/db?Encrypt=yes&TrustServerCertificate=no&driver=ODBC+Driver+18+for+SQL+Server
 AWS_ACCESS_KEY_ID=your_key
 AWS_SECRET_ACCESS_KEY=your_secret
 ```

@@ -8,6 +8,7 @@ connectivity, security, operations, and tutorials.
 | Topic | Document |
 | --- | --- |
 | Configuration and source connections | [CONFIGURATION.md](CONFIGURATION.md) |
+| Current roadmap and open gaps | [ROADMAP.md](ROADMAP.md) |
 | Upgrade from 3.0.1 to 3.1.0 | [UPGRADE_3_1.md](UPGRADE_3_1.md) |
 | Config Builder workflow and screenshots | [CONFIG_BUILDER_GUIDE.md](CONFIG_BUILDER_GUIDE.md) |
 | Manager fleet, monitoring, and lifecycle controls | [MANAGER_GUIDE.md](MANAGER_GUIDE.md) |
@@ -34,3 +35,11 @@ connectivity, security, operations, and tutorials.
 
 Historical design records and completed planning snapshots are in
 [archive/](archive/README.md). They do not define current runtime behavior.
+
+## Documentation checks
+
+With the project's `dev` extra installed, run
+`python -m pytest tests/test_documentation_links.py -q` to check local Markdown
+links and images in tracked and non-ignored untracked Markdown files. The Lite
+CI suite runs the same check. It does not validate external URLs, fragments,
+root-relative URLs, or links in raw HTML.

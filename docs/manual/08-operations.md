@@ -451,7 +451,7 @@ on a timer (`retention_gc_interval_seconds`), or trigger it once with `POST /_ad
 | `/readyz` returns 503 | Source unreachable or snapshot not built | Connection string, driver, DB reachability, startup logs |
 | Fabric shows a 403 | SigV4 mismatch or unauthorized key | Access key, secret, per-key ACL for the bucket/prefix |
 | Fabric read fails with a size mismatch | Split size drift | `/_admin/objects?table=`; keep `PIN_MATERIALIZED_SPLITS=1` |
-| A table refuses to start | A `total_rows > num_splits × QUERY_MAX_ROWS` bound, or a validation error | Startup log; raise `num_splits` or `QUERY_MAX_ROWS` |
+| A table refuses to start or rows appear truncated | A split exceeds its effective row cap, or a validation error | Check the startup log and split plan; account for skew and adjust the effective cap or plan |
 | Change-probe-unavailable warning | Source has no cheap probe | Set `REFRESH_ALLOW_FULL_PULL=1` or use `ttl` |
 | A view fails to plan | No primary key detected | Set `key_column` for the view |
 | Tokenized table fails at startup | Missing key, unsupported dialect, or refresh conflict | Read the redacted error; see chapter 7 |

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added opt-in typed source and table configuration reads and persisted writes,
+  using encrypted credential-store references. Typed writes require an exact
+  `If-Match` revision and report restart-required changes; see
+  [the Config Builder guide](CONFIG_BUILDER_GUIDE.md).
+- Added opt-in Helm ingress for the exact Manager registration and observation
+  routes, and a Manager startup probe with a five-minute initialization budget.
+
+### Changed
+
+- Native configuration reads return an ETag. Native save and apply requests can
+  use `If-Match` to reject stale writes; callers without it remain unconditional.
+- Native saves can switch between a database URL and a credential reference.
+  An explicitly empty table registry persists and is accepted at startup.
+
 ## [3.1.0]: 2026-10-13
 
 ### Added

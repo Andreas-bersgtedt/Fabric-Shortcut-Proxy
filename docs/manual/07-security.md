@@ -40,10 +40,14 @@ credential ids, not secrets), and `secrets/credentials.json` (the encrypted stor
 Set secrets from the environment in production:
 
 ```powershell
-$env:DB_URL = "mssql+aioodbc://user:pass@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+$env:DB_URL = "mssql+aioodbc://user:pass@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
 $env:S3_ACCESS_KEY_ID = "your_key"
 $env:S3_SECRET_ACCESS_KEY = "your_secret"
 ```
+
+For production, install a trusted SQL Server certificate whose name matches the
+connection hostname. `TrustServerCertificate=yes` bypasses certificate
+validation and is only suitable for an isolated development environment.
 
 The config builder never writes a database password into a config file unless you opt in,
 and a masked (`***`) connection string is never stored, hydrated, or treated as a credential.

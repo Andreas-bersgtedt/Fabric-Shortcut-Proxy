@@ -419,9 +419,10 @@ The validated Helm values use workload identity for Azure SDK access. If a separ
 requires service-principal ODBC authentication, build the runtime connection URL from a
 secret-safe `odbc_connect` string. This optional source credential is distinct from the
 pod's workload identity.
+The SQL Server certificate must be trusted by the pod and match the source hostname.
 
 ```bash
-odbc_connect=$(python -c 'import os, urllib.parse; secret=os.environ["AZURE_CLIENT_SECRET"].replace("}", "}}"); conn="Driver={ODBC Driver 18 for SQL Server};Server=tcp:<source-sql-host>,1433;Database=<source-database>;Authentication=ActiveDirectoryServicePrincipal;UID="+os.environ["AZURE_CLIENT_ID"]+";PWD={"+secret+"};Encrypt=yes;TrustServerCertificate=yes"; print(urllib.parse.quote_plus(conn))')
+odbc_connect=$(python -c 'import os, urllib.parse; secret=os.environ["AZURE_CLIENT_SECRET"].replace("}", "}}"); conn="Driver={ODBC Driver 18 for SQL Server};Server=tcp:<source-sql-host>,1433;Database=<source-database>;Authentication=ActiveDirectoryServicePrincipal;UID="+os.environ["AZURE_CLIENT_ID"]+";PWD={"+secret+"};Encrypt=yes;TrustServerCertificate=no"; print(urllib.parse.quote_plus(conn))')
 export DB_URL="mssql+aioodbc:///?odbc_connect=${odbc_connect}"
 export DB_URL_<SOURCE_ID>="$DB_URL"
 exec python -m main

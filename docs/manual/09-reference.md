@@ -33,13 +33,15 @@ Each setting has an environment variable and a JSON key; the environment always 
 | `DB_SOURCE_TABLE` | `source_table` | `sales` | Source table or view |
 | `KEY_COLUMN` | `key_column` | *(unset)* | Split key; enables reflection |
 | `TABLE_FORMAT` | `table_format` | `iceberg` | `iceberg` or `delta` |
-| `NUM_SPLITS` | `num_splits` | `8` | Fixed split count (else dynamic) |
-| `SPLIT_STRATEGY` | `split_strategy` | `modulo` | `modulo`, `range`, `date`, or `auto` (per-table overridable) |
-| `SPLIT_TARGET_ROWS` | `split_target_rows` | `100000` | Target rows per split for dynamic count (0 = fixed `num_splits`) |
+| `NUM_SPLITS` | `num_splits` | `8` | Count used when dynamic planning is disabled or estimation fails |
+| `SPLIT_STRATEGY` | `split_strategy` | `modulo` | `modulo`, `range`, `date`, or `auto`; normal table startup currently requires an integer key |
+| `SPLIT_TARGET_ROWS` | `split_target_rows` | `100000` | Target rows per split; set to 0 along with the byte target for a fixed count |
+| `SPLIT_TARGET_BYTES` | `split_target_bytes` | `0` | Compressed-byte target; requires an estimated byte size per row |
+| `SPLIT_ESTIMATED_BYTES_PER_ROW` | `split_estimated_bytes_per_row` | `0` | Estimated compressed bytes per row for byte-aware planning |
 | `SPLIT_BALANCE` | `split_balance` | `span` | `span` (equal width) or `count` (equal rows via histogram/NTILE) |
 | `SPLIT_SAMPLE_ROWS` | `split_sample_rows` | `0` | Cap rows fed into `count` quantile planning (0 = full scan) |
 | `SPLIT_USE_STATS_HISTOGRAM` | `split_use_stats_histogram` | `1` | Use the source stats histogram for `count` boundaries (SQL Server/PostgreSQL) |
-| `QUERY_MAX_ROWS` | `query_max_rows` | `500000` | Max rows per split query |
+| `QUERY_MAX_ROWS` | `query_max_rows` | `500000` | Connection row cap; a larger row or byte-derived target raises the effective split cap |
 | `QUERY_TIMEOUT` | `query_timeout_seconds` | `30` | SQL query timeout (seconds) |
 | `SOURCE_MAX_CONCURRENCY` | `source_max_concurrency` | `0` | Cap concurrent source queries; `0` is unlimited |
 | `STREAMING_PARQUET` | `streaming_parquet` | `0` | Generate Parquet in row batches |

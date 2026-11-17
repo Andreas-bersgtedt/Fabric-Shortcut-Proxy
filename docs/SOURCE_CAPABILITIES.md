@@ -6,6 +6,8 @@ not that every server version or object has suitable metadata. `beta` means the
 conservative capability contract and offline release gate pass, while live
 source certification remains pending. `preview` requires source-specific
 evidence before wider use. Oracle retains its existing `supported` status.
+Range/date bounds describe source and planner capabilities; normal table startup
+currently requires an integer split key and rejects temporal keys.
 
 | Source | Status | Views | PK reflection | Explicit key required | Range/date bounds | Modulo | NTILE | Stats histogram | Fast row estimate | Freshness probe | Native deterministic | Native random | Bounded-memory streaming |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -51,8 +53,8 @@ from `beta` to `supported`.
 - **Databricks and Impala split keys:** PK reflection is not relied on. Choose
   `key_column` explicitly from the reflected source columns. The Config Builder
   leaves this choice blank and blocks apply until the chosen column is present.
-  Use a stable, sortable key appropriate for the configured strategy; the live
-  gate uses a non-null integer key.
+  Use a stable integer key for normal table startup; the live gate uses a
+  non-null integer key.
 - **Oracle quoted identifiers:** lowercase names are treated as conventional
   unquoted Oracle identifiers and normalized to uppercase. Preserve a
   case-sensitive quoted schema, table or column by including its double quotes

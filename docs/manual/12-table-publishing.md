@@ -15,31 +15,36 @@ validates it and resolves source columns at startup.
       "connection": "warehouse_pg",
       "key_column": "order_id",
       "split_strategy": "range",
-      "split_target_rows": 100000,
-      "table_format": "delta"
+      "split_target_rows": 100000
     }
   ]
 }
 ```
 
 `name` appears in the Fabric shortcut path. `source_table` is the schema-qualified
-source object. Omit `connection` to use `default`. `key_column` is required for
-views and recommended for every table because it anchors split planning.
+source object. Omit `connection` to use `default`. Normal startup requires an
+integer (`int` or `long`) `key_column`; specify it for views, Databricks, and
+Impala, which cannot rely on primary-key reflection.
 
 ## 12.2 Choose split behavior
 
-`modulo` assigns rows by key remainder. `range` reads contiguous key slices.
-`date` partitions temporal keys. `auto` selects the strongest available option.
+`modulo` assigns rows by key remainder. `range` reads contiguous integer-key
+slices. `auto` selects from available strategies. The lower-level `date`
+strategy accepts temporal keys, but normal table startup currently rejects them.
 Use `split_balance=count` for skewed keys; SQL Server and PostgreSQL can use
 statistics histograms, while other dialects use a bounded sample or `NTILE` query.
 
-`split_target_rows` controls dynamic split count. `num_splits` fixes a count for
-small or predictable tables. Each split is bounded by `query_max_rows`; increase
-the cap when a configured split may contain more rows than the global limit.
+`split_target_rows` and an enabled byte target control dynamic split count. To use
+`num_splits` as a fixed count in the native table registry, set both `split_target_rows` and
+`split_target_bytes` to `0` for that table. The effective row cap is the maximum
+of the connection's `query_max_rows`, the row target, and the byte target divided
+by the estimated compressed bytes per row (rounded up). Size the cap for the
+largest split, including skew, to avoid truncating rows.
 
 ## 12.3 Select an output format
 
-Set `table_format` per table, or use the global `TABLE_FORMAT` setting.
+Set the global `TABLE_FORMAT` environment variable or `table_format` in
+`config.performance.json`. The table registry does not support a per-table format.
 
 - `delta` publishes a native `_delta_log` and is usually the direct Fabric path.
 - `iceberg` publishes Iceberg metadata, manifests, and Parquet splits.

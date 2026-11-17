@@ -117,10 +117,11 @@ that starts the Manager; this environment value takes precedence over the encryp
 ```powershell
 $env:FSP_TOKENIZATION_KEY_CUSTOMER_PII_V1 = "replace-with-a-long-random-uat-value"
 $env:AUTO_REFRESH = "0"
-.\Manager.ps1 -SkipInstall -DbUrl "mssql+aioodbc://user:password@server/UatDb?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+.\Manager.ps1 -SkipInstall -DbUrl "mssql+aioodbc://user:password@server/UatDb?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
 ```
 
-Replace the connection string with the UAT SQL Server. Do not place the
+Replace the connection string with the UAT SQL Server, using a hostname that
+matches its certificate and a CA trusted by the proxy host. Do not place the
 tokenization key in `config.tables.json` or the database URL.
 
 Startup must complete without a configuration error. SQL execution logs should

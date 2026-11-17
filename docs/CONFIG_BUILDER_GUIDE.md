@@ -12,6 +12,178 @@ using it outside a local lab.
 
 ![Config Builder overview](images/config-builder-overview.png)
 
+### Conditional configuration writes (source patch, not released 3.1.0)
+
+`GET /_config/api/current` returns an opaque `ETag` and `Cache-Control: no-store`.
+The native response is unchanged: `settings` is an effective-settings array, not
+a typed source/table snapshot. Pass the exact strong ETag in `If-Match` to
+`POST /_config/api/save` or `POST /_config/api/apply`. Successful writes return
+the new ETag. A mismatch returns HTTP 409, `application/problem+json`, code
+`stale_revision`, and a matching body/header correlation ID, before applying live
+settings or writing files. Re-read before retrying. Wildcards, weak tags, and
+lists are not supported. Existing callers that omit `If-Match` remain
+unconditional for compatibility.
+
+These operations and `config.write_config_updates` share a reentrant process
+lock and an OS file lock at `.fsp-configuration.lock` in `FSP_CONFIG_DIR` (or the
+working directory). The directory must be writable, and processes sharing
+configuration must use the same directory on a filesystem that supports shared
+advisory locks. Do not remove the lock file while processes are running.
+The revision covers persisted configuration and encrypted credential-store bytes and explicit environment
+overrides, not process-local defaults or import-time snapshots.
+Edits made outside these cooperating writers are detected at the next read or
+revision check but are not serialized with an in-progress write. This does not
+make multi-file writes rollback-atomic, protect credential-store operations, or
+add conditional writes to other endpoints.
+
+### Typed source/table contract (opt-in source patch)
+
+Send `X-FSP-Configuration-Contract: 3.1.0` on **every** typed
+`GET /_config/api/current`, `POST /_config/api/apply`, or
+`POST /_config/api/save`. Without this header, the browser keeps its existing
+settings-array response and native mutation format. An unsupported header value
+returns 406 rather than falling back to native interpretation.
+
+An opted-in current response is exactly a settings object:
+
+```json
+{
+  "settings": {
+    "connections": [{
+      "id": "default",
+      "database_url_reference": {
+        "kind": "fsp_credential_store",
+        "reference": "fsp-credential://default"
+      },
+      "query_timeout_seconds": 300,
+      "query_max_rows": 500000,
+      "max_retries": 3,
+      "retry_backoff_seconds": 1,
+      "validate_source_schema": true
+    }],
+    "tables": [{
+      "name": "orders",
+      "source_table": "public.orders",
+      "key_column": "id",
+      "connection": "default",
+      "schema": [{"field_id": 1, "name": "id", "type": "long", "nullable": false}]
+    }]
+  }
+}
+```
+
+This is **saved state**, re-read from disk under the revision lock, not a claim
+that agents have loaded it. Successful typed responses echo the contract header,
+include the strong `ETag`, `Cache-Control: no-store`, and
+`Vary: X-FSP-Configuration-Contract`. Optional null fields are omitted.
+
+For each write send the exact last ETag in `If-Match`. Replace one complete
+section per request:
+
+```http
+POST /_config/api/apply
+X-FSP-Configuration-Contract: 3.1.0
+If-Match: "<etag from current>"
+Content-Type: application/json
+
+{"settings":{"connections":[<complete desired connection list, including default>]}}
+```
+
+Then send `{"settings":{"tables":[<complete desired table list>]}}` with the ETag
+returned by the connections write. Both routes return
+`{"ok":true,"settings":{"connections":[...],"tables":[...]},"applied_live":[],
+"restart_required":["connections"]}` (or `["tables"]`), with a new ETag.
+The response includes persisted readback, checked against the requested state.
+There is no live source/table apply. Restart the Manager/Agents after completing
+the sequence. The two requests are not one rollback-atomic operation.
+
+Missing `If-Match` returns 428. A stale or non-exact value returns the existing
+409 `stale_revision` Problem Details response without changing configuration or
+credentials. Unrepresentable state and unsupported inputs return 422 with code
+`configuration_not_representable`; write failures return 500 with code
+`configuration_persist_failed`. Validation diagnostics never echo supplied
+credentials. Existing authentication middleware and `config.write` enforcement
+still apply; the opt-in header grants no permission and exposes no credential
+values. The full shared Problem Details contract in
+[issue #176](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/176)
+remains separate work.
+
+#### Supported references and native persistence
+
+Only `fsp_credential_store` references are supported. The canonical syntax is
+`fsp-credential://<record-id>`. A database reference names an existing, decryptable
+**URL record**, not a database URL or arbitrary secret blob. The record id must
+match `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`. Paths, trailing slashes, userinfo,
+ports, query strings, fragments, percent encoding, and embedded credentials are
+not accepted. The literal lowercase `fsp-credential://` prefix is required for
+canonical references; no general-purpose URI parsing or decoding is performed.
+The native default section and named entries persist it as
+`"db_url_reference":{"kind":"fsp_credential_store","reference":"fsp-credential://<record-id>"}`.
+The native loader extracts the record id and resolves that record on startup.
+No database URL is returned,
+copied to configuration, or inserted into the credential store by typed writes.
+Removing a source never deletes its stored credentials.
+Native saves also replace the default connection's previous URL or reference
+when switching between the two forms. Supplying both a non-empty `db_url` and
+`db_url_reference` in one update is rejected before persistence.
+
+`azure_key_vault` URLs and `kubernetes_secret` references return 422. Existing
+Key Vault startup hydration can populate the encrypted local store using the
+existing naming/authentication setup; refer to that **local record** afterward.
+Typed requests do not contact a vault, provision secrets, or invent reference
+names. The same store path and decryption identity/key must be available to the
+Manager and agents. Conflicting `DB_URL` / `DB_URL_<ID>` overrides are rejected
+instead of silently redirecting a saved reference. Other runtime overrides retain
+native precedence; saved settings are not runtime telemetry.
+
+Connections require unique ids, distinct native environment names, and exactly
+one `default`. Optional query controls default to the values shown above when
+omitted in a write. The default is stored in the singular native `connection`
+section; named sources remain in `connections`. Retry fields translate to
+`db_max_retries` and `db_retry_backoff_seconds`. The loader accepts the canonical
+`query_timeout_seconds` / `db_retry_backoff_seconds` settings emitted by the writer,
+with legacy `query_timeout` / `db_retry_backoff` as read fallbacks.
+
+Tables support `name`, `source_table`, `key_column`, `connection` (default
+`default`), optional positive `num_splits` and `split_target_rows`,
+`split_strategy` (`auto`, `modulo`, `range`, `date`), `split_balance` (`span`,
+`count`), and `schema`. Columns support `field_id`, `name`, optional `source`,
+`type`, `nullable`, and optional `transform`. Transform fields are `kind`,
+`key_reference`, `domain`, and `normalization`. A transform key reference uses
+the same `fsp-credential://<record-id>` syntax and must name an existing local
+tokenization-key record. Tokenization record ids retain their native lowercase
+letters/numbers/hyphens restriction. The reference translates to native
+`key_ref` with its canonical spelling intact, never to the key value. Native transform, split-key, schema, and source
+capability validation also apply. An explicit empty table list stays empty after
+restart.
+
+Bare record ids remain accepted for compatibility. Neither form is normalized
+on save or read: canonical references remain canonical and bare references remain
+bare, so readback does not change the supplied reference or its input hash.
+New Orchestrator requests should always use the canonical form. Both forms resolve
+to the same underlying record id without creating or renaming credential records.
+
+#### Existing configurations and release prerequisites
+
+The API does not silently migrate legacy state. Before using typed current/apply,
+an operator must persist an explicit default connection section using
+`db_url_reference`, named reference-based connections, and an explicit `tables`
+array (which can be empty). Provision URL and tokenization-key records through
+the existing authorized credential flow first. Inline/redacted/implicit database
+URLs, missing or unreadable records, fractional retry backoffs, disabled-table
+flags, policy selections, byte-split controls, and other fields outside this
+contract are rejected rather than omitted from a snapshot or overwritten.
+Unrelated top-level configuration sections and default single-table fallback
+settings are preserved; typed writes do not manage them.
+
+Ship this source patch in a new Manager/Agent runtime image before enabling
+Orchestrator typed apply. Mount writable configuration on a shared-lock-capable
+filesystem, migrate legacy state deliberately, provision the encrypted store
+without sharing plaintext credentials, and retain the deployment's authentication
+and `config.write` role assignment. Verify release negotiation and post-restart
+runtime behavior in the deployment. Source tests do not certify a deployed image,
+cloud connectivity, role assignments, or distributed credential-store locking.
+
 ## 1. Sign in and review readiness
 
 Sign in with a local identity or the configured Manager credentials. An OIDC

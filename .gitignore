@@ -34,6 +34,7 @@ response.xml
 
 # Local runtime config (use config/examples/config.example.json as a template)
 config.json
+.fsp-configuration.lock
 
 # Persistent Parquet cache (F5)
 .parquet_cache/

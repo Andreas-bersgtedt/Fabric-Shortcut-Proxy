@@ -111,7 +111,25 @@ def _get_float(env: str | None, key: str, default: float) -> float:
 #   Teradata   : teradatasql://user:pass@host/?database=db&dbs_port=1025
 #   Impala     : impala://host:21050/db
 #   SQLite     : sqlite+aiosqlite:///./poc_source.db
-DB_URL: str = _get_str("DB_URL", "db_url", "sqlite+aiosqlite:///./poc_source.db")
+def _referenced_url(section: dict) -> str:
+    reference = section.get("db_url_reference")
+    if reference is None:
+        return ""
+    from fabric_shortcut_proxy.security.configuration_references import (
+        resolve_database_reference,
+    )
+
+    if section.get("db_url"):
+        raise ValueError("db_url and db_url_reference cannot both be configured")
+    return resolve_database_reference(reference)
+
+
+DB_URL: str = (
+    os.environ["DB_URL"] if "DB_URL" in os.environ
+    else _referenced_url(_CONN_CFG) or _get_str(
+        None, "db_url", "sqlite+aiosqlite:///./poc_source.db",
+    )
+)
 
 # Single-table mode defaults (legacy; prefer config.json "tables" array)
 DB_SOURCE_TABLE: str = _get_str("DB_SOURCE_TABLE", "source_table", "sales")
@@ -123,7 +141,9 @@ TABLE_NAME: str = _get_str("TABLE_NAME", "table_name", "sales")
 # ---------------------------------------------------------------------------
 
 # Per-query timeout (seconds)
-QUERY_TIMEOUT_SECONDS: int = _get_int("QUERY_TIMEOUT", "query_timeout", 30)
+QUERY_TIMEOUT_SECONDS: int = _get_int(
+    "QUERY_TIMEOUT", "query_timeout_seconds", _CONN_CFG.get("query_timeout", 30),
+)
 
 # Max rows returned per split query
 QUERY_MAX_ROWS: int = _get_int("QUERY_MAX_ROWS", "query_max_rows", 500_000)
@@ -136,7 +156,9 @@ QUERY_MAX_ROWS: int = _get_int("QUERY_MAX_ROWS", "query_max_rows", 500_000)
 DB_MAX_RETRIES: int = _get_int("DB_MAX_RETRIES", "db_max_retries", 2)
 
 # Linear backoff between retries (seconds)
-DB_RETRY_BACKOFF_SECONDS: float = _get_float("DB_RETRY_BACKOFF", "db_retry_backoff", 0.5)
+DB_RETRY_BACKOFF_SECONDS: float = _get_float(
+    "DB_RETRY_BACKOFF", "db_retry_backoff_seconds", _CONN_CFG.get("db_retry_backoff", 0.5),
+)
 
 # Validate that the source table exposes every declared column at startup
 VALIDATE_SOURCE_SCHEMA: bool = _raw("VALIDATE_SOURCE_SCHEMA", "validate_source_schema", None)
@@ -237,7 +259,7 @@ def _connection_from_json(d: dict) -> Connection:
     cid = str(d.get("id") or d.get("name") or "").strip()
     return Connection(
         id=cid,
-        db_url=_env_url_for(cid) or str(d.get("db_url") or ""),
+        db_url=_env_url_for(cid) or _referenced_url(d) or str(d.get("db_url") or ""),
         query_timeout_seconds=int(d.get("query_timeout_seconds", QUERY_TIMEOUT_SECONDS)),
         query_max_rows=int(d.get("query_max_rows", QUERY_MAX_ROWS)),
         db_max_retries=int(d.get("db_max_retries", DB_MAX_RETRIES)),

@@ -28,6 +28,22 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from fabric_shortcut_proxy import config
+from fabric_shortcut_proxy.configbuilder.revision import (
+    REVISION_RESPONSES,
+    WRITE_REVISION_OPENAPI,
+    WRITE_REVISION_RESPONSES,
+    check_revision,
+    configuration_transaction,
+    revision_response,
+)
+from fabric_shortcut_proxy.configbuilder.typed_configuration import (
+    CONTRACT_HEADER,
+    CONTRACT_OPENAPI,
+    CONTRACT_VERSION,
+    ContractError,
+    apply_settings as apply_typed_settings,
+    read_settings as read_typed_settings,
+)
 from fabric_shortcut_proxy.db.capabilities import (
     capabilities_for_db_url,
     capabilities_for_dialect,
@@ -976,15 +992,50 @@ async def keyvault_test(request: Request) -> JSONResponse:
                          "vault": kv._vault_host(cfg.vault_uri), "auth_mode": cfg.auth_mode})
 
 
-@router.get("/api/current")
-async def current_config() -> JSONResponse:
+def _typed_contract(request: Request) -> bool:
+    version = request.headers.get(CONTRACT_HEADER)
+    if version is not None and version != CONTRACT_VERSION:
+        raise HTTPException(status_code=406, detail="unsupported configuration contract")
+    return version is not None
+
+
+def _typed_error(exc: ContractError) -> JSONResponse:
+    log.warning("typed_configuration_rejected", code="configuration_not_representable")
+    return JSONResponse({
+        "ok": False, "code": "configuration_not_representable", "error": str(exc),
+    }, status_code=422)
+
+
+def _typed_response(payload: dict) -> JSONResponse:
+    response = revision_response(JSONResponse(payload))
+    response.headers[CONTRACT_HEADER] = CONTRACT_VERSION
+    response.headers["Vary"] = CONTRACT_HEADER
+    return response
+
+
+_CONFIG_WRITE_OPENAPI = {
+    "parameters": WRITE_REVISION_OPENAPI["parameters"] + CONTRACT_OPENAPI["parameters"],
+}
+
+
+@router.get("/api/current", responses=REVISION_RESPONSES, openapi_extra=CONTRACT_OPENAPI)
+async def current_config(request: Request) -> JSONResponse:
     """Phase 5.1: the CURRENT effective configuration — each setting's live value
     and its source (env / config.json / default), secrets redacted. Lets the
     builder show what's actually running, not just defaults."""
-    return JSONResponse({
-        "settings": config.effective_settings(),
-        "config_file": config.config_file_path(),
-    })
+    typed = _typed_contract(request)
+    with configuration_transaction():
+        if typed:
+            try:
+                return _typed_response({
+                    "settings": read_typed_settings().model_dump(exclude_none=True, by_alias=True),
+                })
+            except ContractError as exc:
+                return _typed_error(exc)
+        return revision_response(JSONResponse({
+            "settings": config.effective_settings(),
+            "config_file": config.config_file_path(),
+        }))
 
 
 @router.get("/api/bootstrap")
@@ -1083,7 +1134,7 @@ async def bootstrap_builder() -> JSONResponse:
     })
 
 
-@router.post("/api/save")
+@router.post("/api/save", responses=WRITE_REVISION_RESPONSES, openapi_extra=_CONFIG_WRITE_OPENAPI)
 async def save_config(request: Request) -> JSONResponse:
     """Phase 5.1: validate + persist a partial settings map to the on-disk
     ``config.json`` (atomic merge, preserving ``tables`` and unlisted keys).
@@ -1093,7 +1144,22 @@ async def save_config(request: Request) -> JSONResponse:
     apply live via ``POST /_manager/api/scale``.
     """
     _check_config_write(request)
+    typed = _typed_contract(request)
     body = await request.json()
+    with configuration_transaction():
+        if typed and request.headers.get("if-match") is None:
+            raise HTTPException(status_code=428, detail="If-Match is required for typed writes")
+        failure = check_revision(
+            request.headers.get("if-match"), request.headers.get("x-correlation-id", ""),
+        )
+        if failure is not None:
+            return failure
+        if typed:
+            return _apply_typed_config_updates(body)
+        return revision_response(_save_config_updates(body))
+
+
+def _save_config_updates(body: object) -> JSONResponse:
     updates = body.get("settings") if isinstance(body, dict) else None
     if not isinstance(updates, dict) or not updates:
         return JSONResponse({"ok": False, "error": "body must be {\"settings\": {key: value, ...}}"},
@@ -1124,7 +1190,7 @@ async def save_config(request: Request) -> JSONResponse:
     })
 
 
-@router.post("/api/apply")
+@router.post("/api/apply", responses=WRITE_REVISION_RESPONSES, openapi_extra=_CONFIG_WRITE_OPENAPI)
 async def apply_config(request: Request) -> JSONResponse:
     """Apply settings to the running process AND persist to config.json in one call.
 
@@ -1135,7 +1201,35 @@ async def apply_config(request: Request) -> JSONResponse:
     Request body: ``{"settings": {"key": value, ...}}``
     """
     _check_config_write(request)
+    typed = _typed_contract(request)
     body = await request.json()
+    with configuration_transaction():
+        if typed and request.headers.get("if-match") is None:
+            raise HTTPException(status_code=428, detail="If-Match is required for typed writes")
+        failure = check_revision(
+            request.headers.get("if-match"), request.headers.get("x-correlation-id", ""),
+        )
+        if failure is not None:
+            return failure
+        if typed:
+            return _apply_typed_config_updates(body)
+        return revision_response(_apply_config_updates(body))
+
+
+def _apply_typed_config_updates(body: object) -> JSONResponse:
+    try:
+        return _typed_response(apply_typed_settings(body))
+    except ContractError as exc:
+        return _typed_error(exc)
+    except (OSError, ValueError):
+        log.warning("typed_configuration_persist_failed")
+        return JSONResponse({
+            "ok": False, "code": "configuration_persist_failed",
+            "error": "Could not persist typed configuration",
+        }, status_code=500)
+
+
+def _apply_config_updates(body: object) -> JSONResponse:
     updates = body.get("settings") if isinstance(body, dict) else None
     if not isinstance(updates, dict) or not updates:
         return JSONResponse({"ok": False, "error": 'body must be {"settings": {key: value, ...}}'},

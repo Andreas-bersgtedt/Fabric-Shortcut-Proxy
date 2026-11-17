@@ -433,6 +433,13 @@ def tokenization_key_env_var(key_ref: str) -> str:
 
 def resolve_tokenization_key(key_ref: str) -> str:
     """Resolve a tokenization key without storing it in table configuration."""
+    from fabric_shortcut_proxy.security.configuration_references import (
+        CREDENTIAL_REFERENCE_PREFIX,
+        credential_record_id,
+    )
+
+    if key_ref.startswith(CREDENTIAL_REFERENCE_PREFIX):
+        key_ref = credential_record_id(key_ref)
     env_var = tokenization_key_env_var(key_ref)
     value = os.environ.get(env_var)
     if not value and ENABLE_CREDENTIAL_STORE:
@@ -677,7 +684,7 @@ def _tabledef_from_json(d: dict) -> "TableDef":
     )
 
 
-if _FILE_CFG.get("tables"):
+if isinstance(_FILE_CFG.get("tables"), list):
     TABLES: list[TableDef] = [_tabledef_from_json(t) for t in _FILE_CFG["tables"]]
 else:
     TABLES = [
@@ -1485,6 +1492,7 @@ def config_file_path() -> str:
 
 # Mapping of settings to their config section files
 _SETTINGS_TO_FILE_MAP: dict[str, str] = {
+    "db_url_reference": "config.connection.json",
     # System settings → config.system.json
     "bucket": "config.system.json",
     "warehouse_prefix": "config.system.json",
@@ -1739,16 +1747,76 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
         for entry in (updates or {}).get("connections", [])
         if isinstance(entry, dict)
     }
+    persisted_reference_urls: dict[str, str] | None = None
+
+    def _reference_url(reference: object) -> str | None:
+        from fabric_shortcut_proxy.security.configuration_references import (
+            resolve_database_reference,
+        )
+        from fabric_shortcut_proxy.security.credential_store import CredentialStore
+
+        try:
+            return resolve_database_reference(
+                reference, store=CredentialStore(CREDENTIAL_STORE_PATH or None),
+            )
+        except ValueError:
+            errors.append("database credential reference is absent or unreadable")
+            return None
+
+    def _persisted_reference_url(connection_id: str) -> str | None:
+        nonlocal persisted_reference_urls
+        if persisted_reference_urls is None:
+            from fabric_shortcut_proxy.connection_config import _load_config_file
+
+            document = _load_config_file()
+            default = document.get("connection")
+            named = document.get("connections")
+            entries = [
+                {"id": "default", **(default if isinstance(default, dict) else {})},
+                *(named if isinstance(named, list) else []),
+            ]
+            persisted_reference_urls = {}
+            for entry in entries:
+                if isinstance(entry, dict) and entry.get("db_url_reference"):
+                    url = _reference_url(entry["db_url_reference"])
+                    if url:
+                        persisted_reference_urls[str(entry.get("id"))] = url
+        return persisted_reference_urls.get(connection_id)
 
     def _updated_connection_url(connection_id: str) -> str | None:
         if connection_id == "default":
-            return str(updates.get("db_url") or DB_URL or "").strip() or None
+            if updates.get("db_url_reference"):
+                return _reference_url(updates["db_url_reference"])
+            return str(
+                updates.get("db_url") or _persisted_reference_url("default") or DB_URL or ""
+            ).strip() or None
         if connection_id in updated_connections:
+            for entry in updates.get("connections", []):
+                if (
+                    isinstance(entry, dict) and entry.get("id") == connection_id
+                    and entry.get("db_url_reference")
+                ):
+                    return _reference_url(entry["db_url_reference"])
             return updated_connections[connection_id] or None
+        persisted_url = _persisted_reference_url(connection_id)
+        if persisted_url:
+            return persisted_url
         connection = CONNECTIONS.get(connection_id)
         return getattr(connection, "db_url", None)
 
     for k, v in (updates or {}).items():
+        if k == "db_url_reference":
+            from fabric_shortcut_proxy.security.configuration_references import (
+                validate_database_reference,
+            )
+
+            try:
+                clean[k] = validate_database_reference(v)
+            except ValueError as exc:
+                errors.append(str(exc))
+            if updates.get("db_url"):
+                errors.append("db_url and db_url_reference are mutually exclusive")
+            continue
         # Special case: "tables" is an array of table configs, not a scalar setting
         if k == "tables":
             if not isinstance(v, list):
@@ -1848,7 +1916,21 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                     continue
                 cid = str(e.get("id", "")).strip()
                 url = str(e.get("db_url", "")).strip()
-                if not cid or not url:
+                reference = e.get("db_url_reference")
+                if reference is not None:
+                    from fabric_shortcut_proxy.security.configuration_references import (
+                        validate_database_reference,
+                    )
+
+                    try:
+                        validate_database_reference(reference)
+                    except ValueError as exc:
+                        errors.append(str(exc))
+                        ok = False
+                    if url:
+                        errors.append(f"{k}[{i}]: db_url and db_url_reference are mutually exclusive")
+                        ok = False
+                if not cid or (not url and reference is None):
                     errors.append(f"{k}[{i}]: needs non-empty 'id' and 'db_url'")
                     ok = False
                 elif cid == "default":
@@ -2069,13 +2151,6 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
                 "requires artifact_store_serving"
             )
 
-        named_urls = {
-            connection_id: connection.db_url
-            for connection_id, connection in CONNECTIONS.items()
-        }
-        for entry in clean.get("connections", []):
-            if isinstance(entry, dict) and entry.get("id") and entry.get("db_url"):
-                named_urls[str(entry["id"])] = str(entry["db_url"])
         raw_tables = clean.get("tables")
         table_sources = []
         if isinstance(raw_tables, list):
@@ -2097,7 +2172,7 @@ def validate_setting_updates(updates: dict) -> tuple[dict, list[str]]:
 
         unsupported = []
         for table_name, connection_id in table_sources:
-            url = DB_URL if connection_id == "default" else named_urls.get(connection_id)
+            url = _updated_connection_url(connection_id)
             if not url:
                 continue
             caps = capabilities_for_db_url(url)
@@ -2140,6 +2215,14 @@ def apply_live_settings(updates: dict) -> dict:
 
 
 def write_config_updates(updates: dict) -> dict:
+    """Validate and persist updates under the cooperative configuration lock."""
+    from fabric_shortcut_proxy.configbuilder.revision import configuration_transaction
+
+    with configuration_transaction():
+        return _write_config_updates(updates)
+
+
+def _write_config_updates(updates: dict) -> dict:
     """Validate + merge ``updates`` into the appropriate separate config files (atomic writes).
     
     Handles individual settings via _SETTINGS_TO_FILE_MAP plus special handling for
@@ -2225,6 +2308,11 @@ def write_config_updates(updates: dict) -> dict:
             elif file_settings:
                 if not isinstance(existing.get(section_name), dict):
                     existing[section_name] = {}
+                if target_file == "config.connection.json":
+                    if file_settings.get("db_url"):
+                        existing[section_name].pop("db_url_reference", None)
+                    elif file_settings.get("db_url_reference"):
+                        existing[section_name].pop("db_url", None)
                 existing[section_name].update(file_settings)
 
             if connections_marker is not None:

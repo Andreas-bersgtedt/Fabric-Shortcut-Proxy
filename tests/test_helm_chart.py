@@ -333,8 +333,119 @@ def test_regional_serving_renders_read_only_identity_and_no_source_secret() -> N
     assert "name: reader-sigv4" in section
     assert "name: fsp-source" not in section
     assert "name: FSP_REGIONAL_SERVING_ENDPOINT_ID" in section
+    assert "name: ARTIFACT_STORE_ACCOUNT_URL" in section
+    assert "name: FSP_REGIONAL_SERVING_CLOUD_STORE" not in section
     assert "readOnlyRootFilesystem: true" in section
     assert "fsp-regional-serving" in _network_policy_names(rendered)
+
+
+@pytest.mark.parametrize(
+    ("store", "annotations"),
+    [
+        (
+            {"bucket": "aws-replica", "prefix": "fsp", "region": "eu-west-1"},
+            {"eks.amazonaws.com/role-arn": "arn:aws:iam::123456789012:role/reader"},
+        ),
+        (
+            {"bucket": "gcp-replica", "prefix": "fsp"},
+            {"iam.gke.io/gcp-service-account": "reader@example.iam.gserviceaccount.com"},
+        ),
+    ],
+)
+def test_regional_cloud_serving_renders_store_and_workload_identity(store, annotations) -> None:
+    import yaml
+
+    rendered = _render(
+        "--show-only", "templates/regional-serving.yaml",
+        "--set", "federation.regionalServing.enabled=true",
+        "--set", "federation.regionalServing.endpointId=regional",
+        "--set", "federation.regionalServing.storageProfile=replica",
+        "--set", "federation.regionalServing.buckets.sales=source::sales",
+        "--set", "federation.regionalServing.serviceAccountName=regional-reader",
+        "--set", "federation.regionalServing.clientId=00000000-0000-0000-0000-000000000001",
+        "--set", "federation.regionalServing.readerSecretName=reader-sigv4",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "workloadIdentity.enabled=true",
+        "--set", "workloadIdentity.clientId=00000000-0000-0000-0000-000000000002",
+        "--set-json", f"federation.regionalServing.cloudStore={json.dumps(store)}",
+        "--set-json", f"federation.regionalServing.serviceAccountAnnotations={json.dumps(annotations)}",
+    )
+    documents = [item for item in yaml.safe_load_all(rendered) if item]
+    account = next(item for item in documents if item["kind"] == "ServiceAccount")
+    assert account["metadata"]["annotations"] == {
+        "azure.workload.identity/client-id": "00000000-0000-0000-0000-000000000001",
+        **annotations,
+    }
+    deployment = next(item for item in documents if item["kind"] == "Deployment")
+    pod = deployment["spec"]["template"]
+    assert pod["metadata"]["labels"]["azure.workload.identity/use"] == "true"
+    container = pod["spec"]["containers"][0]
+    environment = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+    assert json.loads(environment["FSP_REGIONAL_SERVING_CLOUD_STORE"]) == store
+    assert environment["FSP_CATALOG_STORE_ACCOUNT_URL"] == "https://catalog.blob.core.windows.net"
+    assert environment["FSP_CATALOG_STORE_AUTH_MODE"] == "workload_identity"
+    assert "ARTIFACT_STORE_ACCOUNT_URL" not in environment
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    assert {"secretRef": {"name": "reader-sigv4"}} in container["envFrom"]
+    assert "fsp-source" not in rendered
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        {"prefix": "fsp"},
+        {"bucket": "replica", "access_key": "not-a-real-secret"},
+        {"bucket": "s3://user:password@bucket"},
+    ],
+)
+def test_regional_cloud_serving_rejects_invalid_store_settings(store) -> None:
+    result = _helm(
+        "template", "fsp", str(CHART),
+        "--set-json", f"federation.regionalServing.cloudStore={json.dumps(store)}",
+        expect_success=False,
+    )
+    assert result.returncode != 0
+
+
+def test_regional_cloud_serving_rejects_mixed_store_configuration() -> None:
+    result = _helm(
+        "template", "fsp", str(CHART),
+        "--set", "federation.regionalServing.enabled=true",
+        "--set", "federation.regionalServing.buckets.sales=source::sales",
+        "--set", "federation.regionalServing.artifactStoreAccountUrl=https://replica.blob.core.windows.net",
+        "--set", "federation.regionalServing.cloudStore.bucket=replica",
+        expect_success=False,
+    )
+    assert "cannot combine cloudStore with Azure artifact store settings" in result.stderr
+
+
+def test_regional_cloud_serving_requires_catalog_workload_identity() -> None:
+    result = _helm(
+        "template", "fsp", str(CHART),
+        "--set", "federation.regionalServing.enabled=true",
+        "--set", "federation.regionalServing.endpointId=regional",
+        "--set", "federation.regionalServing.storageProfile=replica",
+        "--set", "federation.regionalServing.buckets.sales=source::sales",
+        "--set", "federation.regionalServing.serviceAccountName=regional-reader",
+        "--set", "federation.regionalServing.clientId=00000000-0000-0000-0000-000000000001",
+        "--set", "federation.regionalServing.readerSecretName=reader-sigv4",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "federation.regionalServing.cloudStore.bucket=replica",
+        expect_success=False,
+    )
+    assert "cloud regional serving requires workloadIdentity.enabled=true" in result.stderr
+
+
+def test_regional_serving_rejects_conflicting_azure_identity_annotations() -> None:
+    annotations = {"azure.workload.identity/client-id": "different-client"}
+    result = _helm(
+        "template", "fsp", str(CHART),
+        "--set", "federation.regionalServing.enabled=true",
+        "--set", "federation.regionalServing.buckets.sales=source::sales",
+        "--set-json", f"federation.regionalServing.serviceAccountAnnotations={json.dumps(annotations)}",
+        expect_success=False,
+    )
+    assert "use federation.regionalServing.clientId" in result.stderr
 
 
 def test_regional_serving_rejects_unassigned_buckets() -> None:

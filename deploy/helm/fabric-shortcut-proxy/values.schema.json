@@ -413,16 +413,7 @@
                   "token_file": { "type": "string" }
                 }
               },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["bucket"],
-                "properties": {
-                  "bucket": { "type": "string", "minLength": 1, "pattern": "^[^/\\\\:@?#\\s]+$" },
-                  "prefix": { "type": "string" },
-                  "region": { "type": "string" }
-                }
-              }
+              { "$ref": "#/definitions/cloudStore" }
             ]
           }
         },
@@ -449,10 +440,20 @@
             "replicas": { "type": "integer", "minimum": 1 },
             "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "serviceAccountName": { "type": "string" },
+            "serviceAccountAnnotations": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
             "clientId": { "type": "string" },
             "readerSecretName": { "type": "string" },
             "artifactStoreAccountUrl": { "type": "string" },
             "artifactStoreContainer": { "type": "string" },
+            "cloudStore": {
+              "oneOf": [
+                { "type": "object", "maxProperties": 0 },
+                { "$ref": "#/definitions/cloudStore" }
+              ]
+            },
             "ingress": { "type": "object" },
             "egressAllowList": { "$ref": "#/properties/federation/properties/catalog/properties/egressAllowList" },
             "resources": { "$ref": "#/definitions/resources" }
@@ -660,6 +661,16 @@
     }
   },
   "definitions": {
+    "cloudStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket"],
+      "properties": {
+        "bucket": { "type": "string", "minLength": 1, "pattern": "^[^/\\\\:@?#\\s]+$" },
+        "prefix": { "type": "string" },
+        "region": { "type": "string" }
+      }
+    },
     "networkAllowList": {
       "type": "array",
       "items": {

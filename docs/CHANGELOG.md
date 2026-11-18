@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an opt-in live-provider artifact conformance suite. Live AWS/GCP acceptance
   and production deployment remain open.
 - Added an opt-in, size-limited Helm Manager upload spool for cloud replicas.
+- Added Helm configuration for S3/GCS regional readers and their workload
+  identity annotations.
 
 ### Changed
 

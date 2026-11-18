@@ -1,6 +1,17 @@
 {{- if .Values.federation.regionalServing.enabled }}
 {{- $serving := .Values.federation.regionalServing }}
+{{- $cloudStore := $serving.cloudStore | default dict }}
+{{- $annotations := $serving.serviceAccountAnnotations | default dict }}
 {{- if not $serving.buckets }}{{ fail "federation.regionalServing.buckets is required" }}{{ end }}
+{{- if hasKey $annotations "azure.workload.identity/client-id" }}
+{{- fail "use federation.regionalServing.clientId for the Azure workload identity" }}
+{{- end }}
+{{- if and $cloudStore (or $serving.artifactStoreAccountUrl $serving.artifactStoreContainer) }}
+{{- fail "cannot combine cloudStore with Azure artifact store settings" }}
+{{- end }}
+{{- if and $cloudStore (not .Values.workloadIdentity.enabled) }}
+{{- fail "cloud regional serving requires workloadIdentity.enabled=true for the Azure catalog" }}
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -10,6 +21,9 @@ metadata:
     {{- include "fsp.commonLabels" . | nindent 4 }}
   annotations:
     azure.workload.identity/client-id: {{ required "federation.regionalServing.clientId is required" $serving.clientId | quote }}
+    {{- with $annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- with .Values.images.pullSecrets }}
 imagePullSecrets:
 {{- range . }}
@@ -72,6 +86,10 @@ spec:
               value: {{ required "federation.regionalServing.endpointId is required" $serving.endpointId | quote }}
             - name: FSP_REGIONAL_SERVING_BUCKETS
               value: {{ $serving.buckets | toJson | quote }}
+            {{- if $cloudStore }}
+            - name: FSP_REGIONAL_SERVING_CLOUD_STORE
+              value: {{ $cloudStore | toJson | quote }}
+            {{- else }}
             - name: ARTIFACT_STORE_BACKEND
               value: azure
             - name: ARTIFACT_STORE_ACCOUNT_URL
@@ -86,6 +104,7 @@ spec:
               value: ""
             - name: ARTIFACT_STORE_TOKEN_FILE
               value: ""
+            {{- end }}
             - name: FSP_CATALOG_STORE_ACCOUNT_URL
               value: {{ required "federation.catalog.artifactStoreAccountUrl is required" .Values.federation.catalog.artifactStoreAccountUrl | quote }}
             - name: FSP_CATALOG_STORE_CONTAINER

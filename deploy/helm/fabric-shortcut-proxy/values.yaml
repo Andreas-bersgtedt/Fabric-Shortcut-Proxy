@@ -187,10 +187,12 @@ federation:
     replicas: 1
     port: 9401
     serviceAccountName: ""
+    serviceAccountAnnotations: {}
     clientId: ""
     readerSecretName: ""
     artifactStoreAccountUrl: ""
     artifactStoreContainer: ""
+    cloudStore: {}
     egressAllowList: []
     ingress:
       enabled: false

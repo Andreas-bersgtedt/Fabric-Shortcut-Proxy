@@ -219,12 +219,34 @@ without relaxing work-queue dispatch restrictions. GET, HEAD, Range and listing
 read one catalog-selected regional descriptor per request; unadvertised objects
 are not exposed. SigV4 and the existing access-key scope checks are required.
 The serving workload has no source Secret. An Azure reader needs a separate
-Blob Data Reader identity for local publications and catalog records. The
-Helm regional reader is Azure-only and disabled by default; it does not deploy
-S3/GCS readers or configure their workload identities. TLS ingress must be
-configured separately.
+Blob Data Reader identity for local publications and catalog records. The Helm
+regional reader is disabled by default and supports Azure, S3, or GCS. For S3
+or GCS, set `federation.regionalServing.cloudStore` to the replica bucket and
+prefix, with `region` for S3 only; leave the Azure regional artifact-store
+settings empty. Enable `workloadIdentity.enabled`, configure the Azure catalog
+identity, and use `serviceAccountAnnotations` for provider identity annotations
+as needed.
+Cloud roles, federated trust, identity webhooks and egress must be provisioned
+separately. TLS ingress must be configured separately.
 
-For an S3/GCS reader running outside that Helm workload, set
+For example, the S3-specific portion of a regional reader's Helm values can be:
+
+```yaml
+federation:
+  regionalServing:
+    cloudStore:
+      bucket: "<replica-bucket>"
+      prefix: "fsp-replica"
+      region: "eu-west-1"
+    serviceAccountAnnotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::<account-id>:role/<reader-role>"
+```
+
+For GKE, omit `region` and use the `iam.gke.io/gcp-service-account`
+annotation if the workload uses service-account impersonation. These settings
+do not grant permissions or configure the Azure catalog identity.
+
+For an S3/GCS reader running outside Helm, set
 `FSP_ARTIFACT_STORE_PROFILE` and `FSP_REGIONAL_SERVING_ENDPOINT_ID` to the
 matching regional profile and endpoint, and set
 `FSP_REGIONAL_SERVING_CLOUD_STORE` to the same bucket, prefix, and S3 region

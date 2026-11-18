@@ -9,6 +9,7 @@ connectivity, security, operations, and tutorials.
 | --- | --- |
 | Configuration and source connections | [CONFIGURATION.md](CONFIGURATION.md) |
 | Current roadmap and open gaps | [ROADMAP.md](ROADMAP.md) |
+| Upgrade from 3.1.0 to 3.2.0 | [UPGRADE_3_2.md](UPGRADE_3_2.md) |
 | Upgrade from 3.0.1 to 3.1.0 | [UPGRADE_3_1.md](UPGRADE_3_1.md) |
 | Config Builder workflow and screenshots | [CONFIG_BUILDER_GUIDE.md](CONFIG_BUILDER_GUIDE.md) |
 | Manager fleet, monitoring, and lifecycle controls | [MANAGER_GUIDE.md](MANAGER_GUIDE.md) |

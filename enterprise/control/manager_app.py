@@ -501,7 +501,7 @@ def create_manager_app() -> FastAPI:
         if gateway is not None:
             await gateway.aclose()
 
-    app = FastAPI(title="Fabric Shortcut Proxy: Manager", version="3.1.0", lifespan=lifespan)
+    app = FastAPI(title="Fabric Shortcut Proxy: Manager", version="3.2.0", lifespan=lifespan)
     app.state.registry = registry
     app.state.supervisors = supervisors
     app.state.lease = lease

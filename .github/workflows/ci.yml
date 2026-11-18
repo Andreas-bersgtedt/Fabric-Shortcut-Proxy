@@ -108,6 +108,65 @@ jobs:
           REQUIRE_SIGV4: "0"
         run: pytest tests/test_cloud_artifact_conformance.py tests/test_azure_artifact_store.py tests/test_artifact_store.py tests/enterprise/test_regional_serving.py -v
 
+  cloud-image-build:
+    name: Cloud-enabled Enterprise image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Add local-only build-context fixtures
+        run: |
+          mkdir -p secrets .artifacts
+          printf 'fixture' > secrets/cloud-image-test
+          printf 'fixture' > .artifacts/cloud-image-test
+          printf 'fixture' > secrets.json
+          printf 'fixture' > .env.local
+          printf 'fixture' > poc_source.db
+          printf 'fixture' > config.tokenization.json
+
+      - name: Build cloud-enabled Enterprise image
+        run: |
+          docker build -f Dockerfile.python \
+            --build-arg FSP_ENTERPRISE=1 \
+            --build-arg FSP_EXTRAS=postgres,azureblob,keyvault,onelake,s3-artifacts,gcs-artifacts \
+            -t fsp-cloud-image:ci .
+
+      - name: Verify installed packages and excluded local data
+        run: |
+          docker run --rm --network none --workdir / fsp-cloud-image:ci \
+            python -I -m pip check
+          docker run --rm --network none --workdir / fsp-cloud-image:ci \
+            python -I -c '
+          import importlib
+          from importlib.metadata import version
+          import os
+          from pathlib import Path
+          import tomllib
+
+          expected = tomllib.loads(
+              Path("/app/pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
+          assert version("fabric-shortcut-proxy") == expected
+          assert version("fabric-shortcut-proxy-enterprise") == expected
+          assert os.geteuid() == 10001
+          for name in (
+              "asyncpg", "azure.identity", "azure.storage.blob",
+              "azure.keyvault.secrets", "azure.storage.filedatalake",
+              "boto3", "google.cloud.storage",
+              "fabric_shortcut_proxy.runtime.cloud_artifact_store",
+              "enterprise.control.regional_serving_app",
+          ):
+              module = importlib.import_module(name)
+              if name.startswith(("fabric_shortcut_proxy.", "enterprise.")):
+                  assert not Path(module.__file__).is_relative_to("/app"), name
+          for name in (
+              "secrets/cloud-image-test", ".artifacts/cloud-image-test",
+              "secrets.json", ".env.local", "poc_source.db",
+              "config.tokenization.json",
+          ):
+              assert not Path("/app", name).exists(), name
+          '
+
   helm-chart:
     name: Helm chart validation
     runs-on: ubuntu-latest

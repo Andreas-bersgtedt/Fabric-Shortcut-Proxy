@@ -2,8 +2,8 @@
 
 This chart packages the FSP Manager, Python materializers, C++ serving Agents,
 storage, network policy, nginx proxy, and optional cert-manager ingress as one
-Helm release. Chart and application version `3.1.0` represent the stable
-baseline used for the enterprise demo migration.
+Helm release. Chart and application version `3.2.0` are the release candidate;
+the enterprise demo migration used the `3.1.0` baseline.
 
 ## Prerequisites
 
@@ -26,6 +26,10 @@ policy so uninstalling the release does not remove retained state.
 
 The Manager and regional reader require the Enterprise package in the Python
 image. To include both cloud artifact SDKs alongside the default extras:
+
+Build from a clean checkout and inspect the build context for local data or
+credentials. `.dockerignore` excludes common local files, but cannot identify
+every sensitive file.
 
 ```powershell
 docker build -f Dockerfile.python `
@@ -833,7 +837,7 @@ rollback policy until rollback no longer requires them.
 
 ## Release lifecycle
 
-The deployment script packages `fabric-shortcut-proxy-3.1.0.tgz` in a temporary directory and
+The deployment script packages `fabric-shortcut-proxy-3.2.0.tgz` in a temporary directory and
 runs `helm upgrade --install --atomic --take-ownership` through AKS Run Command. It also manages
 pinned cert-manager and ingress-nginx releases.
 

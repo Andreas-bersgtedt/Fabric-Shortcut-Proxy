@@ -52,6 +52,7 @@ def test_unreleased_changelog_starts_at_package_release():
         "src/fabric_shortcut_proxy/main.py": f'version="{version}"',
         "enterprise/agent_link.py": f'_APP_VERSION = "{version}"',
         "enterprise/control/admin.py": f'return "{version}"',
+        "enterprise/control/catalog_app.py": f'version="{version}"',
         "enterprise/control/manager_app.py": f'version="{version}"',
         "src/fabric_shortcut_proxy/configbuilder/router.py": f'return "{version}"',
     }
@@ -86,16 +87,16 @@ def test_current_minor_upgrade_contract_is_documented():
         (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
     version = package["project"]["version"]
-    if not version.startswith("3.1."):
+    if not version.startswith("3.2."):
         return
 
-    upgrade = (ROOT / "docs" / "UPGRADE_3_1.md").read_text(
+    upgrade = (ROOT / "docs" / "UPGRADE_3_2.md").read_text(
         encoding="utf-8"
     )
     assert f"fabric-shortcut-proxy=={version}" in upgrade
-    assert "Do not mix 3.0.1 and 3.1.0" in upgrade
-    assert "tenant_id" in upgrade
-    assert "C++ serving Agent 1.0.0" in upgrade
+    assert "X-FSP-Configuration-Contract: 3.1.0" in upgrade
+    assert "application/problem+json" in upgrade
+    assert "non-production" in upgrade
 
 
 def test_current_diagrams_do_not_hard_code_fsp_release_version():

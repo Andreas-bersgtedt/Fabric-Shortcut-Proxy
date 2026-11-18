@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - Unreleased
+
 ### Added
 
 - Added opt-in typed source and table configuration reads and persisted writes,
@@ -15,18 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [the Config Builder guide](CONFIG_BUILDER_GUIDE.md).
 - Added opt-in Helm ingress for the exact Manager registration and observation
   routes, and a Manager startup probe with a five-minute initialization budget.
-- Added shared Problem Details and correlation IDs for Catalog, Manager, and
-  Config Builder operator errors, with OpenAPI error and revision headers.
 - Added opt-in S3/GCS replication and regional readers as a
   [beta capability](FEDERATED_ARTIFACTS.md#cross-cloud-beta-release-gate)
-  with an Azure control plane. Live-provider conformance is available as an
-  opt-in suite and remains required for production support.
+  with an Azure control plane for non-production evaluation. Live-provider
+  conformance is available as an opt-in suite and remains required for
+  production support.
 - Added an opt-in, size-limited Helm Manager upload spool for cloud replicas.
 - Added Helm configuration for S3/GCS regional readers and their workload
   identity annotations.
 
 ### Changed
 
+- Catalog, Manager, and Config Builder operator errors now use Problem Details
+  and correlation IDs. Clients must accept the new content type and error body;
+  validation details can be redacted. OpenAPI includes the error and revision
+  headers.
 - Native configuration reads return an ETag. Native save and apply requests can
   use `If-Match` to reject stale writes; callers without it remain unconditional.
 - Native saves can switch between a database URL and a credential reference.
@@ -35,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as documented.
 - Cloud artifact uploads now fail if an explicitly configured `TMPDIR` is
   unavailable instead of using a different temporary directory.
+
+### Fixed
+
+- Excluded common local credential stores, environment files, databases, and
+  generated artifact data from the container build context.
 
 ## [3.1.0]: 2026-10-13
 
@@ -837,7 +847,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.1.0...HEAD
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.2.0...HEAD
+[3.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.1.0...3.2.0
 [3.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.1...3.1.0
 [3.0.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.0...3.0.1
 [3.0.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/2.10.0...3.0.0

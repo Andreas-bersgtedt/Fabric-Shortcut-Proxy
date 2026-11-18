@@ -17,9 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routes, and a Manager startup probe with a five-minute initialization budget.
 - Added shared Problem Details and correlation IDs for Catalog, Manager, and
   Config Builder operator errors, with OpenAPI error and revision headers.
-- Added S3/GCS replica profile wiring and regional reader configuration, plus
-  an opt-in live-provider artifact conformance suite. Live AWS/GCP acceptance
-  and production deployment remain open.
+- Added opt-in S3/GCS replication and regional readers as a
+  [beta capability](FEDERATED_ARTIFACTS.md#cross-cloud-beta-release-gate)
+  with an Azure control plane. Live-provider conformance is available as an
+  opt-in suite and remains required for production support.
+- Added an opt-in, size-limited Helm Manager upload spool for cloud replicas.
+- Added Helm configuration for S3/GCS regional readers and their workload
+  identity annotations.
 
 ### Changed
 
@@ -29,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An explicitly empty table registry persists and is accepted at startup.
 - Azure replica profiles without an explicit auth mode now use managed identity,
   as documented.
+- Cloud artifact uploads now fail if an explicitly configured `TMPDIR` is
+  unavailable instead of using a different temporary directory.
 
 ## [3.1.0]: 2026-10-13
 

@@ -24,6 +24,19 @@ reference.
 The Namespace, persistent volumes, and persistent claims carry Helm's `keep`
 policy so uninstalling the release does not remove retained state.
 
+The Manager and regional reader require the Enterprise package in the Python
+image. To include both cloud artifact SDKs alongside the default extras:
+
+```powershell
+docker build -f Dockerfile.python `
+  --build-arg FSP_ENTERPRISE=1 `
+  --build-arg FSP_EXTRAS=postgres,azureblob,keyvault,onelake,s3-artifacts,gcs-artifacts `
+  -t fabric-shortcut-proxy-cloud:dev .
+```
+
+Publish the image to the cluster's registry and set `images.python` to its
+immutable digest. The chart does not build or publish images.
+
 ## Windows PowerShell
 
 Install the pinned Helm version:
@@ -184,33 +197,49 @@ mismatches and unmapped identities fail closed.
 - `federation.replicaStores`: Manager-only map of declared replica profiles to
   Azure Blob `account_url`, `container_name`, `auth_mode`, and optional identity
   settings, or S3/GCS `bucket`, `prefix`, and optional S3 `region`. S3/GCS
-  replicas require an image built with their SDK extras and configured workload
-  identity. Their uploads also require a writable `TMPDIR` inside the allowed
-  residency boundary. The Manager's root filesystem is read-only, and the
-  chart does not configure a cloud upload spool; customize the deployment with
-  protected, capacity-sized writable storage before using these replicas. Add
-  storage and identity endpoint egress explicitly.
+  replicas and regional readers are
+  [beta](../../../docs/FEDERATED_ARTIFACTS.md#cross-cloud-beta-release-gate)
+  for non-production evaluation. They require an image built with their SDK extras and configured workload
+  identity. The chart's main service account is shared by the Manager and
+  other fleet workloads; customize identities if their permissions must differ.
+  Their uploads also require a writable `TMPDIR` inside the allowed residency
+  boundary. Enable `federation.replicaUploadSpool.enabled` and set a
+  positive whole-number `sizeLimit`, such as `20Gi`, to mount an `emptyDir`
+  for the Manager, whose root filesystem remains read-only. Verify the node's
+  ephemeral-storage location and encryption, size it for concurrent uploads,
+  and configure appropriate `manager.resources` ephemeral-storage requests and
+  limits. Kubelet accounting and eviction are not a hard disk quota; verify
+  the node supports ephemeral-storage measurement and monitor disk usage.
+  Abrupt termination can leave files until the Pod is removed, and deletion
+  does not guarantee secure erasure. Add storage and identity endpoint egress
+  explicitly.
   The Manager reconciles catalog pointers on its renewal cadence; interrupted
   copies resume by immutable create-if-absent after restart.
 - `federation.regionalServing`: optional database-free, SigV4-authenticated S3
-  Deployment and ClusterIP Service. The chart currently supports Azure Blob
-  regional readers only; S3/GCS reader deployments and workload identity are
-  not supplied by the chart. Configure `endpointId`, `storageProfile`,
-  `buckets`, `artifactStoreAccountUrl`, and `artifactStoreContainer`.
-  `serviceAccountName` and `clientId` create an annotated workload identity with
-  **Storage Blob Data Reader** on both local publications and catalog records.
+  Deployment and ClusterIP Service. Configure `endpointId`, `storageProfile`
+  and `buckets`, then either `artifactStoreAccountUrl` and
+  `artifactStoreContainer` for Azure Blob, or `cloudStore` with `bucket`,
+  optional `prefix`, and optional S3 `region`. The cloud settings must match
+  the replica profile; omit `region` for GCS. S3/GCS need an image built with
+  the matching SDK extra. Configure `serviceAccountName`, `clientId` and
+  `workloadIdentity.enabled` for the Azure catalog identity. Azure Blob readers
+  also need **Storage Blob Data Reader** on local publications.
+  `serviceAccountAnnotations` can supply provider-specific identity annotations,
+  such as an EKS role ARN or GKE service-account mapping. The chart does not
+  create the associated cloud roles, trust bindings, or identity webhooks.
   Set `regionalServing.ingress.enabled`, `hostname`, and issuer settings to
   expose only the regional S3 reader through TLS ingress.
   Use a separate identity from the publishing Manager. `readerSecretName` holds
   only `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`, not source credentials.
   The workload uses `CONTROL_PORT` (default chart port 9401), a read-only root
-  filesystem, and no source Secret. Add private Blob and identity egress to
+  filesystem, and no source Secret. Add catalog, storage and identity egress to
   `egressAllowList`; ingress permits the configured ingress-controller selectors.
   Publish TLS ingress separately at the exact HTTPS URL declared in placement.
   Each bucket selects one dataset's current complete regional descriptor.
   Object keys are immutable publication paths, not legacy mutable table aliases.
   Point a Fabric shortcut at the returned publication root, and validate both
-  Iceberg metadata references and Delta absolute S3 paths with Fabric before exit.
+  Iceberg metadata references and Delta absolute S3 paths with Fabric before
+  claiming production support.
 - `materializer.autoscaling`: optional HPA for the Python materializer
   StatefulSet. It requires `fsp.materializeMode=lazy` and
   `fsp.generationMembershipPolicy=elastic`; Helm rejects unsafe combinations.

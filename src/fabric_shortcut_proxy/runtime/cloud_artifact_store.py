@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime
 import hashlib
 import hmac
+import os
 import tempfile
 import time
 from typing import BinaryIO, Iterable
@@ -39,7 +40,8 @@ def _gcs_missing(exc: Exception) -> bool:
 def _staged_stream(data: BinaryIO | Iterable[bytes], length: int | None):
     if length is not None and length < 0:
         raise ValueError("length must be >= 0")
-    with tempfile.TemporaryFile() as staged:
+    # Keep the file visible so kubelet directory scans can account for its size.
+    with tempfile.NamedTemporaryFile(dir=os.environ.get("TMPDIR") or None) as staged:
         digest = hashlib.sha256()
         size = 0
         for chunk in _input_chunks(data):

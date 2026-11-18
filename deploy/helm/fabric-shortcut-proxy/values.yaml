@@ -176,6 +176,9 @@ federation:
   renewIntervalSeconds: 20
   # Azure, S3, or GCS settings keyed by declared replica profile; empty disables reconciliation.
   replicaStores: {}
+  replicaUploadSpool:
+    enabled: false
+    sizeLimit: ""
   regionalServing:
     enabled: false
     endpointId: ""
@@ -184,10 +187,12 @@ federation:
     replicas: 1
     port: 9401
     serviceAccountName: ""
+    serviceAccountAnnotations: {}
     clientId: ""
     readerSecretName: ""
     artifactStoreAccountUrl: ""
     artifactStoreContainer: ""
+    cloudStore: {}
     egressAllowList: []
     ingress:
       enabled: false

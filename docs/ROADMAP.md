@@ -11,9 +11,17 @@ in [archive](archive/README.md) are not current implementation guidance.
 | [#94: Source capability gaps](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/94) | Databricks, Redshift, and Teradata remain beta pending source-specific live evidence. Impala is supported for the tested CDP 7.1.7 / Impala 3.4 scope. See the [capability matrix and live gates](SOURCE_CAPABILITIES.md). |
 | [#171: Production AWS and GCP federation](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/171) | Production support remains deferred. The beta gate does not satisfy this issue's live deployment, identity, IAM isolation, Fabric reads, residency, or failover criteria. |
 | [#144: S3 and GCS artifact stores](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/144) | **Beta (prepared for 3.2.0):** opt-in S3/GCS data-plane replicas and regional readers with an Azure control plane. See the [cross-cloud beta release gate](FEDERATED_ARTIFACTS.md#cross-cloud-beta-release-gate). Production support still requires live conformance. |
-| [#154: Edge Manager and local journal](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/154) | Closed. The Azure lab demonstrated regional-only publication and ordered replay after reconnect; the issue is backed by private VMs, a durable journal, and captured catalog evidence. |
 
 ## Delivered scope and boundaries
+
+[#154: Edge Manager and local journal](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/154)
+closed on 2026-11-18 in commit `9a31542`. The Azure lab ran two private
+`Standard_B2s` VMs in Sweden Central and observed 179 acknowledged edge journal
+generations, 160 regional replay generations, and a stable edge replay cursor.
+The edge process was stopped and restarted during a TCP 9443 NSG outage, then
+acknowledged generations in sequence after reconnect. This lab evidence covers
+regional-only publication and ordered replay. It uses synthetic SQLite data and
+local stores, so it does not establish a real-site or production-readiness gate.
 
 [#176: Operator API revisions and errors](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/176)
 shipped in 3.2.0. Revision checks cover the Config Builder current, save, and

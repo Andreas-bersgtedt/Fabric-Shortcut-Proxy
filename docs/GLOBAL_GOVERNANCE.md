@@ -153,4 +153,11 @@ removes them after confirming they are no longer needed. A source change
 during copying can leave an invalid immutable destination object requiring
 operator intervention. Earlier experimental manifest-only journals lack
 metadata digests and are rejected; preserve them rather than replaying them
-without verification. Local tests do not establish the Azure lab criteria.
+without verification.
+
+The Azure lab in commit `9a31542` established both documented acceptance
+criteria for synthetic data. The edge journal acknowledged 179 generations.
+The regional catalog retained 160 ordered replay generations and a stable
+edge replay cursor after a process restart and reconnect. This evidence is
+not live Iceberg or Fabric data evidence and does not establish
+production readiness for a real site.

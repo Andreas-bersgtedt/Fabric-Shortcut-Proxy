@@ -171,7 +171,7 @@ references cannot escape the descriptor's verified object set. Avro sync
 markers are deterministic to preserve identical immutable retries. Delta
 publications are standalone version-zero logs with absolute S3 references to
 the verified data files, rather than relocated relative paths into old logs.
-These paths need actual Fabric compatibility evidence before exit.
+These paths need actual Fabric compatibility evidence before production promotion.
 
 The catalog keeps one CAS record per dataset. Owner ID, owner location,
 monotonically increasing fence, expiry, generation identities and complete
@@ -190,6 +190,34 @@ Replication copies immutable
 objects first and the manifest last, then verifies the destination. A failed
 copy does not change the catalog's previous pointer.
 
+## Cross-cloud beta release gate
+
+The beta is for opt-in evaluation with non-production data: the Manager
+replicates to S3 or GCS, and a regional reader serves verified replicas through
+the SigV4 API. The primary publication store and catalog stay on Azure.
+
+Release as beta when all of the following pass on the release candidate:
+
+- Offline cloud SDK contract tests pass for both providers.
+- Replication and regional serving regressions pass, including interrupted
+  copies that leave the prior complete replica advertised and signed reads of
+  verified replicas.
+- Helm lint and render tests pass for both providers, including opt-in
+  configuration, profile validation and the Manager upload spool.
+- Operator docs and release notes identify the opt-in settings, image
+  requirements, and limits of the beta.
+
+Live provider conformance, EKS/GKE workload identity, pool-scoped IAM,
+Fabric shortcut reads, residency, egress, and failover drills do not block
+this beta. They still block production promotion under [#144][issue-144]
+and [#171][issue-171]. SDK-double and chart tests do not certify a live
+deployment. S3/GCS cannot act as the Manager control store.
+
+[issue-144]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/144
+[issue-171]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/171
+
+### Replica configuration
+
 `FSP_FEDERATION_REPLICA_STORES` wires the Manager's reconciliation loop to
 declared Azure, S3, or GCS replica profiles. Azure profiles use managed/workload
 identity. S3/GCS profiles accept only `bucket`, optional `prefix`, and optional
@@ -200,7 +228,7 @@ fence. The loop logs storage failures and retries on the renewal cadence.
 HA standby Managers do not initiate reconciliation or owner renewal.
 Managers still publish to the policy's one primary staging/published store.
 Changing that physical primary during handover is not implemented. S3/GCS
-replica and reader wiring is unreleased and has only SDK-double evidence.
+replica and reader wiring is [beta (unreleased)](#cross-cloud-beta-release-gate).
 
 For example, after declaring `aws-replica` and `gcp-replica` with their
 providers and locations in placement, a Manager can set:
@@ -341,7 +369,7 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 |---|---|---|
 | #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are deployed. A planned Sweden Central→Sweden South failover and planned failback preserved the exact 12,478-byte catalog hash, generation pointers and fencing. Private Endpoints were recreated after each swap, both Fabric shortcuts were verified, RA-GZRS was restored in Sweden Central, and stale-owner renewal/publication remained rejected at fence 6. | Acceptance criteria complete. |
 | #143 | Catalog CAS is the sole federated snapshot visibility commit. Live bidirectional handover advanced fences 1→2→3, the North Europe owner published generation 6, and its stale renewal and publication authority were rejected after handback. Tests also cover both owner directions, expiry and post-commit bookkeeping failure. | Physical primary-store relocation is not implemented. |
-| #144 / #171 | S3/GCS data stores, replica/reader wiring, common data-plane/CAS tests, and an opt-in live-provider gate. SDK-double tests cover signed regional reads and interrupted replication. | Live provider conformance, AWS/GCP deployments, workload identity, IAM isolation, Fabric reads, and failover evidence remain. Cross-object S3/GCS control mutations are unsupported. |
+| #144 / #171 | Beta (unreleased) S3/GCS data stores and replica/reader wiring. SDK-double tests cover signed regional reads and interrupted replication. Live-provider conformance is opt-in. | Production promotion still requires live conformance, AWS/GCP deployments, workload identity, IAM isolation, Fabric reads, residency, egress, and failover evidence. Cross-object S3/GCS control mutations are unsupported. |
 | #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite; deployed Azure-IaaS Agent authenticated with the `FSP.Agent` app role and no static shared secret; live proof that its identity can write/delete only in `fsp-hybrid-staging` while catalog, published and replica writes return 403; and a deployed mTLS fallback that re-verifies the CA-signed certificate at Manager, maps its SHA-256 fingerprint to `hybrid-site-01` and exactly the `hybrid-site` pool, while rejecting missing, unknown and Agent-mismatched certificates. | Acceptance criteria complete. |
 | #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch; actual regional reader identities can read assigned objects/catalog but receive 403 on writes; catalog and reader workloads mount minimized Secrets with no `DB_URL`; NetworkPolicies expose no SQL egress; catalog storage contains JSON metadata plus an empty lease-lock blob and no Parquet; and a live out-of-boundary replica policy returns `residency_policy_violation`. | Multi-store materialization dispatch is not implemented, but it is outside the current single-primary routing contract. |
 | #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, actual Fabric reads through both regional endpoints, a measured Sweden-loss recovery read in 23.478 seconds, and live proof that a lagging replica serves the older complete generation while the unadvertised generation returns 404. A 15-generation SQL-backed run completed with zero failures, verified every advertised object and manifest, exposed no intermediate pointer, and recorded a 15.310-second maximum against the 60-second SLO. | Acceptance criteria complete. Portable receipts are needed only if verification moves to an independent worker. |

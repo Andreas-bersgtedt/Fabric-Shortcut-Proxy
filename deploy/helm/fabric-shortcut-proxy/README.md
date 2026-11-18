@@ -197,7 +197,9 @@ mismatches and unmapped identities fail closed.
 - `federation.replicaStores`: Manager-only map of declared replica profiles to
   Azure Blob `account_url`, `container_name`, `auth_mode`, and optional identity
   settings, or S3/GCS `bucket`, `prefix`, and optional S3 `region`. S3/GCS
-  replicas require an image built with their SDK extras and configured workload
+  replicas and regional readers are
+  [beta](../../../docs/FEDERATED_ARTIFACTS.md#cross-cloud-beta-release-gate)
+  for non-production evaluation. They require an image built with their SDK extras and configured workload
   identity. The chart's main service account is shared by the Manager and
   other fleet workloads; customize identities if their permissions must differ.
   Their uploads also require a writable `TMPDIR` inside the allowed residency
@@ -236,7 +238,8 @@ mismatches and unmapped identities fail closed.
   Each bucket selects one dataset's current complete regional descriptor.
   Object keys are immutable publication paths, not legacy mutable table aliases.
   Point a Fabric shortcut at the returned publication root, and validate both
-  Iceberg metadata references and Delta absolute S3 paths with Fabric before exit.
+  Iceberg metadata references and Delta absolute S3 paths with Fabric before
+  claiming production support.
 - `materializer.autoscaling`: optional HPA for the Python materializer
   StatefulSet. It requires `fsp.materializeMode=lazy` and
   `fsp.generationMembershipPolicy=elastic`; Helm rejects unsafe combinations.

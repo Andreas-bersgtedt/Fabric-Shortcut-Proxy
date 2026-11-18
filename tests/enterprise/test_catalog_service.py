@@ -17,7 +17,7 @@ from enterprise.control.federation import (
 )
 from enterprise.control.placement import PlacementConfig
 from fabric_shortcut_proxy import config
-from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
+from fabric_shortcut_proxy.runtime.artifact_store import ArtifactStore, MemoryStore
 from tests.enterprise.test_residency_policy import _config
 
 
@@ -81,7 +81,7 @@ def test_catalog_service_requires_auth_and_survives_restart(monkeypatch):
         assert moved.json()["fence"] == 2
 
 
-def _snapshot(store: MemoryStore, generation: int) -> SnapshotManifest:
+def _snapshot(store: ArtifactStore, generation: int) -> SnapshotManifest:
     data = f"generation-{generation}".encode()
     metadata = f'{{"generation":{generation}}}'.encode()
     data_key = f"published/{generation}/part.parquet"

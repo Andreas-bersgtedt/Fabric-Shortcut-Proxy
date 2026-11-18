@@ -8,13 +8,18 @@ in [archive](archive/README.md) are not current implementation guidance.
 
 | Issue | Status and remaining work |
 | --- | --- |
-| [#176: Operator API revisions and errors](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/176) | Included in the prepared 3.2.0 release. Release publication remains; 3.1.0 does not contain this contract. |
 | [#94: Source capability gaps](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/94) | Databricks, Redshift, and Teradata remain beta pending source-specific live evidence. Impala is supported for the tested CDP 7.1.7 / Impala 3.4 scope. See the [capability matrix and live gates](SOURCE_CAPABILITIES.md). |
 | [#171: Production AWS and GCP federation](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/171) | Production support remains deferred. The beta gate does not satisfy this issue's live deployment, identity, IAM isolation, Fabric reads, residency, or failover criteria. |
 | [#144: S3 and GCS artifact stores](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/144) | **Beta (prepared for 3.2.0):** opt-in S3/GCS data-plane replicas and regional readers with an Azure control plane. See the [cross-cloud beta release gate](FEDERATED_ARTIFACTS.md#cross-cloud-beta-release-gate). Production support still requires live conformance. |
-| [#154: Edge Manager and local journal](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/154) | Deferred until a real site supplies its disconnected-refresh schedule, local-store, outage-duration, and replay requirements. |
+| [#154: Edge Manager and local journal](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/154) | Closed. The Azure lab demonstrated regional-only publication and ordered replay after reconnect; the issue is backed by private VMs, a durable journal, and captured catalog evidence. |
 
 ## Delivered scope and boundaries
+
+[#176: Operator API revisions and errors](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/176)
+shipped in 3.2.0. Revision checks cover the Config Builder current, save, and
+apply endpoints; native writes without `If-Match` remain unconditional. See the
+[Config Builder guide](CONFIG_BUILDER_GUIDE.md#conditional-configuration-writes-320)
+for the contract and its limits.
 
 The Azure multi-region and simulated hybrid-site work in
 [#112](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/112)

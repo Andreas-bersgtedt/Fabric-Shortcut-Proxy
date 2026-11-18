@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "fsp-edge-lab-dev-349e"
+    },
+    "location": {
+      "value": "swedencentral"
+    },
+    "sessionId": {
+      "value": "349eaf24-bd36-417c-b676-f60600d2a627"
+    },
+    "deployedBy": {
+      "value": "System Administrator"
+    },
+    "createdAt": {
+      "value": "2026-11-18T19:39:54.0832230Z"
+    },
+    "deployerObjectId": {
+      "value": "a4bec7ab-e85e-4664-a78f-4a2fd9660772"
+    }
+  }
+}

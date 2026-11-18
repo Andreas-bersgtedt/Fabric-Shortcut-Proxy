@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from enterprise.control.federation import (
-    CatalogConflict, GenerationDescriptor, GlobalCatalog, ObjectReference,
+    CatalogConflict, EdgeReplay, GenerationDescriptor, GlobalCatalog, ObjectReference,
     RegionalReplicaVerifier,
 )
 from enterprise.control.placement import PlacementConfig, ResidencyPolicyViolation
@@ -61,6 +61,100 @@ def _publish(catalog, verifier, descriptor, profile="published", owner="manager-
         else verifier.replicate(descriptor, profile)
     )
     return catalog.advertise(receipt, owner_id=owner, fence=fence, now_ms=now)
+
+
+def test_edge_replay_cursor_rejects_gaps_and_conflicting_retries():
+    catalog, metadata, stores, verifier = _setup()
+    first = _descriptor(stores, 1)
+    receipt = verifier.verify(first, "published")
+    replay = EdgeReplay("site-1", 1, "a" * 64)
+    record = catalog.advertise(
+        receipt, owner_id="manager-a", fence=1, now_ms=1_000, edge_replay=replay,
+    )
+    assert record["edge_replay"]["sequence"] == 1
+    before = metadata.get(metadata.list()[0].key)
+    assert catalog.advertise(
+        receipt, owner_id="manager-a", fence=1, now_ms=1_001, edge_replay=replay,
+    ) == record
+    assert metadata.get(metadata.list()[0].key) == before
+
+    with pytest.raises(CatalogConflict, match="retry differs"):
+        catalog.advertise(
+            receipt, owner_id="manager-a", fence=1, now_ms=1_001,
+            edge_replay=EdgeReplay("site-1", 1, "b" * 64),
+        )
+    with pytest.raises(CatalogConflict, match="must advance"):
+        catalog.advertise(
+            receipt, owner_id="manager-a", fence=1, now_ms=1_001,
+            edge_replay=EdgeReplay("site-1", 2, "b" * 64),
+        )
+    second = verifier.verify(_descriptor(stores, 2), "published")
+    with pytest.raises(CatalogConflict, match="retry differs"):
+        catalog.advertise(
+            second, owner_id="manager-a", fence=1, now_ms=1_001, edge_replay=replay,
+        )
+    with pytest.raises(CatalogConflict, match="without gaps"):
+        catalog.advertise(
+            second, owner_id="manager-a", fence=1, now_ms=1_001,
+            edge_replay=EdgeReplay("site-1", 3, "c" * 64),
+        )
+    with pytest.raises(CatalogConflict, match="another edge stream"):
+        catalog.advertise(
+            second, owner_id="manager-a", fence=1, now_ms=1_001,
+            edge_replay=EdgeReplay("site-2", 2, "c" * 64),
+        )
+    assert metadata.get(metadata.list()[0].key) == before
+
+
+def test_edge_replay_requires_first_sequence_and_primary_store():
+    catalog, _, stores, verifier = _setup()
+    descriptor = _descriptor(stores, 1)
+    primary = verifier.verify(descriptor, "published")
+    with pytest.raises(CatalogConflict, match="start at one"):
+        catalog.advertise(
+            primary, owner_id="manager-a", fence=1, now_ms=1_000,
+            edge_replay=EdgeReplay("site-1", 2, "a" * 64),
+        )
+    replica = verifier.replicate(descriptor, "replica")
+    with pytest.raises(CatalogConflict, match="primary store"):
+        catalog.advertise(
+            replica, owner_id="manager-a", fence=1, now_ms=1_000,
+            edge_replay=EdgeReplay("site-1", 1, "a" * 64),
+        )
+    assert catalog.get(DATASET)["replicas"] == {}
+
+
+def test_edge_replay_commit_is_fenced_and_survives_catalog_retry(monkeypatch):
+    catalog, metadata, stores, verifier = _setup()
+    first = verifier.verify(_descriptor(stores, 1), "published")
+    catalog.advertise(
+        first, owner_id="manager-a", fence=1, now_ms=1_000,
+        edge_replay=EdgeReplay("site-1", 1, "a" * 64),
+    )
+    second = verifier.verify(_descriptor(stores, 2), "published")
+    replay = EdgeReplay("site-1", 2, "b" * 64)
+    before = catalog.get(DATASET)
+    original = metadata.compare_and_swap
+    monkeypatch.setattr(metadata, "compare_and_swap", lambda *_args: False)
+    with pytest.raises(CatalogConflict, match="changed concurrently"):
+        catalog.advertise(
+            second, owner_id="manager-a", fence=1, now_ms=1_001, edge_replay=replay,
+        )
+    assert catalog.get(DATASET) == before
+    monkeypatch.setattr(metadata, "compare_and_swap", original)
+    catalog.handover(
+        DATASET, owner_id="manager-a", fence=1, new_owner_id="manager-b",
+        new_location="azure:northeurope", lease_ms=100_000, now_ms=1_001,
+    )
+    with pytest.raises(CatalogConflict, match="stale or expired"):
+        catalog.advertise(
+            second, owner_id="manager-a", fence=1, now_ms=1_002, edge_replay=replay,
+        )
+    committed = catalog.advertise(
+        second, owner_id="manager-b", fence=2, now_ms=1_002, edge_replay=replay,
+    )
+    assert committed["edge_replay"]["sequence"] == 2
+    assert committed["replicas"]["published"]["generation_id"] == "generation-2"
 
 
 def test_catalog_contains_only_metadata_and_survives_reconstruction():

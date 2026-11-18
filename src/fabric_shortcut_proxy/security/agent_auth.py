@@ -28,6 +28,7 @@ _AGENT_EXACT_ROUTES = frozenset({
     ("POST", "/control/heartbeat"),
     ("POST", "/control/task-result"),
     ("POST", "/control/materialize"),
+    ("POST", "/control/edge/replay"),
 })
 _AGENT_PREFIX_ROUTES = (
     ("GET", "/control/assignment/"),

@@ -99,9 +99,58 @@ target: North Europe restored Fabric reads in 23.478 seconds against the
 five-minute regional RTO. The new global-layer drill stayed below the
 one-hour RTO and retained policy revision 1, giving zero observed policy RPO.
 
-## Edge Manager backlog
+## Experimental Edge Manager
 
-#154 is outside Phase 5 and v3.1.0. The current hybrid site is an Azure-IaaS
-simulation and does not establish a need for scheduled refresh during long
-disconnections. The backlog item can be planned when a real site supplies its
-schedule, local-store, outage-duration, and replay constraints.
+#154 is outside Phase 5 and v3.1.0. A documented lab scenario can supply the
+schedule, local-store, outage-duration, and replay assumptions and provide
+evidence for the issue's publication criteria. A real site is not required
+for issue closure. The existing Azure-IaaS hybrid site and in-memory disconnect
+tests do not demonstrate disconnected refresh or ordered journal replay.
+Lab evidence does not establish suitability for a production site's constraints.
+The experimental edge Manager can refresh one Iceberg dataset into a local
+artifact store and record its manifests in a SQLite journal. It requires one
+modulo split, disabled cache write-through, and `PIN_MATERIALIZED_SPLITS=0`.
+The edge sends each generation over HTTPS to the owning regional Manager,
+which verifies the recorded data and metadata digests before its catalog
+commit. The edge acknowledges only a matching response after that commit.
+The catalog cursor rejects gaps, other streams, and conflicting retries.
+
+Enable the receiver on a **single non-HA regional Manager** with federation
+and the work queue enabled. Set `FSP_EDGE_BINDINGS` to an identity-to-dataset
+map, for example:
+
+```json
+{"site-1":{"dataset_id":"source::sales","table":"sales","key_prefix":"db/sales"}}
+```
+
+The identity must be included in the placement configuration and authenticated
+with a unique identity-specific Agent token (`AGENT_AUTH_MODE=required`) or
+an Entra Agent identity (`AGENT_AUTH_MODE=entra`). Shared Agent tokens and
+operator Basic credentials cannot publish edge generations. The Manager must
+see an HTTPS request; if TLS terminates at an ingress, configure trusted proxy
+headers rather than trusting arbitrary clients. The binding's prefix must
+match the edge table path. Keep the edge principal's access restricted to its
+source and do not grant it write access to the regional artifact store or
+catalog.
+
+With the same table and connection configuration loaded on the edge, run:
+
+```text
+python -m enterprise.control.edge_service --table sales --journal <journal-path> --store-dir <local-artifact-directory> --manager-url https://<regional-manager> --identity site-1 --max-store-bytes <bytes>
+```
+
+Set `AGENT_AUTH_MODE` and the corresponding Agent credentials on the edge.
+`--refresh-seconds`, `--retry-seconds`, and `--max-pending` control the
+schedule, reconnect interval, and queued generation limit. The journal and
+artifact directory must be separate. The service holds process locks for both
+and stops scheduling refreshes when the pending limit is reached.
+
+The HTTP request is limited to 16 MiB including base64 and JSON overhead.
+The artifact limit applies to files in the local store, not the journal or
+temporary materialization memory. There is no automatic garbage collection;
+acknowledged snapshots and partial writes consume space until an operator
+removes them after confirming they are no longer needed. A source change
+during copying can leave an invalid immutable destination object requiring
+operator intervention. Earlier experimental manifest-only journals lack
+metadata digests and are rejected; preserve them rather than replaying them
+without verification. Local tests do not establish the Azure lab criteria.

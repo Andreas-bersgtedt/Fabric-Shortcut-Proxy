@@ -229,6 +229,64 @@ def create_manager_app() -> FastAPI:
                 "FSP_CATALOG_RENEW_INTERVAL_SECONDS must be finite, positive "
                 "and shorter than FSP_CATALOG_OWNER_LEASE_MS"
             )
+    edge_receiver = None
+    edge_bindings = os.environ.get("FSP_EDGE_BINDINGS", "").strip()
+    if edge_bindings:
+        from enterprise.control.edge_receiver import EdgeBinding, EdgeReplayReceiver
+
+        if federation is None:
+            raise ValueError("edge replay requires federation")
+        if config.MANAGER_HA:
+            raise ValueError("edge replay currently requires a single non-HA regional Manager")
+        auth_mode = os.environ.get("AGENT_AUTH_MODE", config.AGENT_AUTH_MODE).strip().lower()
+        if auth_mode not in {"required", "entra"}:
+            raise ValueError("edge replay requires identity-bound Agent authentication")
+        raw_bindings = json.loads(edge_bindings)
+        if not isinstance(raw_bindings, dict) or not raw_bindings:
+            raise ValueError("FSP_EDGE_BINDINGS must map edge identities to dataset bindings")
+        bindings = {}
+        for identity, value in raw_bindings.items():
+            if (
+                not isinstance(identity, str)
+                or not isinstance(value, dict)
+                or set(value) != {"dataset_id", "table", "key_prefix"}
+                or any(not isinstance(item, str) for item in value.values())
+            ):
+                raise ValueError("invalid edge identity binding")
+            binding = EdgeBinding(**value)
+            if not any(
+                table.name == binding.table
+                and f"{table.connection_id}::{table.source_table}" == binding.dataset_id
+                for table in config.TABLES
+            ):
+                raise ValueError("edge binding does not match a configured table")
+            bindings[identity] = binding
+        if auth_mode == "required":
+            identity_tokens = json.loads(os.environ.get("AGENT_IDENTITY_TOKENS", "{}"))
+            if not isinstance(identity_tokens, dict) or not set(bindings).issubset(identity_tokens):
+                raise ValueError("edge replay requires identity-specific Agent tokens")
+            for identity in bindings:
+                if any(
+                    other != identity and token == identity_tokens[identity]
+                    for other, token in identity_tokens.items()
+                ):
+                    raise ValueError("edge Agent tokens must be unique to each identity")
+        else:
+            from fabric_shortcut_proxy.security.entra_agent_auth import EntraAgentTokenProvider
+
+            identities = EntraAgentTokenProvider().identities
+            if not set(bindings).issubset(identities):
+                raise ValueError("edge replay requires mapped Entra identities")
+            for identity in bindings:
+                if any(
+                    other != identity and (
+                        value["principal_id"] == identities[identity]["principal_id"]
+                        or value["client_id"] == identities[identity]["client_id"]
+                    )
+                    for other, value in identities.items()
+                ):
+                    raise ValueError("edge Entra credentials must be unique to each identity")
+        edge_receiver = EdgeReplayReceiver(federation, bindings)
     from enterprise.control import materialize_service
 
     if config.MATERIALIZATION_WORK_QUEUE:
@@ -518,6 +576,10 @@ def create_manager_app() -> FastAPI:
     app.add_middleware(AgentAuthMiddleware)
     install_operator_errors(app, prefixes=OPERATOR_API_PREFIXES)
     app.include_router(create_control_router(service))
+    if edge_receiver is not None:
+        from enterprise.control.edge_http import create_edge_router
+
+        app.include_router(create_edge_router(edge_receiver))
 
     @app.get("/healthz")
     async def healthz():

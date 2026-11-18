@@ -1,6 +1,7 @@
 .git
 .github
 .azure
+.copilot-azure
 devplan
 **/*.local.json
 **/values-*.local.yaml

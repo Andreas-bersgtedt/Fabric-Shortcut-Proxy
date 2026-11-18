@@ -134,6 +134,21 @@ class VerifiedReplica:
     proof: str = field(repr=False)
 
 
+@dataclass(frozen=True)
+class EdgeReplay:
+    stream_id: str
+    sequence: int
+    manifest_sha256: str
+
+    def __post_init__(self):
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", self.stream_id):
+            raise ValueError("edge stream ID must contain 1-128 safe characters")
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 1:
+            raise ValueError("edge sequence must be a positive integer")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.manifest_sha256):
+            raise ValueError("edge manifest digest must be a lowercase SHA-256")
+
+
 def _receipt_proof(descriptor: GenerationDescriptor, storage_profile: str) -> str:
     return hmac.new(
         _RECEIPT_KEY,
@@ -381,7 +396,7 @@ class GlobalCatalog:
 
     def advertise(
         self, receipt: VerifiedReplica, *, owner_id: str, fence: int,
-        now_ms: int | None = None,
+        now_ms: int | None = None, edge_replay: EdgeReplay | None = None,
     ) -> dict:
         if not isinstance(receipt, VerifiedReplica):
             raise TypeError("catalog publication requires a regional verification receipt")
@@ -400,6 +415,48 @@ class GlobalCatalog:
         self._require_owner(record, owner_id, fence, now)
         current = record["replicas"].get(receipt.storage_profile)
         value = descriptor.to_dict()
+        if edge_replay is not None:
+            if receipt.storage_profile != policy.required_storage_profile:
+                raise CatalogConflict("edge replay must publish to the primary store")
+            previous = record.get("edge_replay")
+            descriptor_digest = hashlib.sha256(_encode(value)).hexdigest()
+            if previous is not None:
+                if not isinstance(previous, dict):
+                    raise CatalogConflict("invalid edge replay cursor")
+                if previous.get("stream_id") != edge_replay.stream_id:
+                    raise CatalogConflict("dataset is bound to another edge stream")
+                previous_sequence = previous.get("sequence")
+                if (
+                    isinstance(previous_sequence, bool)
+                    or not isinstance(previous_sequence, int)
+                    or previous_sequence < 1
+                ):
+                    raise CatalogConflict("invalid edge replay cursor")
+                if edge_replay.sequence == previous_sequence:
+                    if (
+                        previous.get("manifest_sha256") != edge_replay.manifest_sha256
+                        or previous.get("descriptor_sha256") != descriptor_digest
+                    ):
+                        raise CatalogConflict("edge replay retry differs from the committed generation")
+                    return record
+                if edge_replay.sequence != previous_sequence + 1:
+                    raise CatalogConflict("edge replay sequence must advance without gaps")
+            elif edge_replay.sequence != 1:
+                raise CatalogConflict("edge replay sequence must start at one")
+            if current is not None and int(current["sequence"]) >= descriptor.sequence:
+                raise CatalogConflict("edge replay generation must advance the primary")
+            if any(
+                item.get("generation_id") == descriptor.generation_id
+                for item in record["generations"].values()
+            ):
+                raise CatalogConflict("edge replay generation ID was already published")
+            record["edge_replay"] = {
+                "stream_id": edge_replay.stream_id,
+                "sequence": edge_replay.sequence,
+                "manifest_sha256": edge_replay.manifest_sha256,
+                "descriptor_sha256": descriptor_digest,
+                "publication_sequence": descriptor.sequence,
+            }
         identity = {
             "generation_id": descriptor.generation_id,
             "produced_at_ms": descriptor.produced_at_ms,
@@ -644,7 +701,9 @@ class FederatedPublicationCoordinator:
         )
         return record
 
-    def publish(self, manifest: SnapshotManifest) -> dict:
+    def publish(
+        self, manifest: SnapshotManifest, *, edge_replay: EdgeReplay | None = None
+    ) -> dict:
         policy = self.catalog._policy(manifest.dataset_id)
         self.catalog.placement.validate_task_tenant(
             manifest.tenant_id,
@@ -657,6 +716,7 @@ class FederatedPublicationCoordinator:
             receipt,
             owner_id=self.owner_id,
             fence=int(record["fence"]),
+            edge_replay=edge_replay,
         )
 
     def snapshot(self, dataset_id: str, table: str, epoch: int = 0) -> SnapshotManifest | None:

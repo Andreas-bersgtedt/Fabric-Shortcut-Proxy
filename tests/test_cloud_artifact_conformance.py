@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
+from pathlib import Path
 
 import pytest
 
@@ -246,6 +247,53 @@ def test_cloud_verification_uses_properties_without_object_download(
         size=len(body),
         content_hash=digest,
     )
+
+
+@pytest.mark.parametrize("provider", ["s3", "gcs"])
+def test_cloud_upload_uses_the_configured_temp_directory(provider, tmp_path, monkeypatch):
+    from fabric_shortcut_proxy.runtime import cloud_artifact_store
+
+    store = (
+        S3ArtifactStore(bucket="b", client=FakeS3())
+        if provider == "s3" else GCSArtifactStore(bucket=FakeGCSBucket())
+    )
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    temporary_file = cloud_artifact_store.tempfile.NamedTemporaryFile
+    files = []
+
+    def open_temporary_file(*args, **kwargs):
+        handle = temporary_file(*args, **kwargs)
+        files.append(Path(handle.name))
+        return handle
+
+    def chunks():
+        assert files
+        assert files[-1].parent == tmp_path
+        assert files[-1].is_file()
+        yield b"test"
+
+    monkeypatch.setattr(cloud_artifact_store.tempfile, "NamedTemporaryFile", open_temporary_file)
+    store.put_stream("g/data", chunks(), length=4)
+    assert len(files) == 1
+    assert not files[0].exists()
+    assert store.get("g/data") == b"test"
+    with pytest.raises(ValueError, match="length mismatch"):
+        store.put_stream("g/failed", chunks(), length=99)
+    assert len(files) == 2
+    assert not files[1].exists()
+    assert not store.exists("g/failed")
+
+
+@pytest.mark.parametrize("provider", ["s3", "gcs"])
+def test_cloud_upload_rejects_an_unavailable_temp_directory(provider, tmp_path, monkeypatch):
+    store = (
+        S3ArtifactStore(bucket="b", client=FakeS3())
+        if provider == "s3" else GCSArtifactStore(bucket=FakeGCSBucket())
+    )
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "missing"))
+    with pytest.raises(OSError):
+        store.put("g/data", b"test")
+    assert not store.exists("g/data")
 
 
 def test_shared_immutable_put_and_conflict(store):

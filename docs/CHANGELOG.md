@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added S3/GCS replica profile wiring and regional reader configuration, plus
   an opt-in live-provider artifact conformance suite. Live AWS/GCP acceptance
   and production deployment remain open.
+- Added an opt-in, size-limited Helm Manager upload spool for cloud replicas.
 
 ### Changed
 
@@ -29,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An explicitly empty table registry persists and is accepted at startup.
 - Azure replica profiles without an explicit auth mode now use managed identity,
   as documented.
+- Cloud artifact uploads now fail if an explicitly configured `TMPDIR` is
+  unavailable instead of using a different temporary directory.
 
 ## [3.1.0]: 2026-10-13
 

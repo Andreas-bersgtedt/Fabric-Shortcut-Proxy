@@ -399,16 +399,42 @@
         "replicaStores": {
           "type": "object",
           "additionalProperties": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["account_url", "container_name", "auth_mode"],
-            "properties": {
-              "account_url": { "type": "string", "pattern": "^https://" },
-              "container_name": { "type": "string", "minLength": 1 },
-              "auth_mode": { "enum": ["managed_identity", "workload_identity"] },
-              "client_id": { "type": "string" },
-              "tenant_id": { "type": "string" },
-              "token_file": { "type": "string" }
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["account_url", "container_name"],
+                "properties": {
+                  "account_url": { "type": "string", "pattern": "^https://" },
+                  "container_name": { "type": "string", "minLength": 1 },
+                  "auth_mode": { "enum": ["managed_identity", "workload_identity"] },
+                  "client_id": { "type": "string" },
+                  "tenant_id": { "type": "string" },
+                  "token_file": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["bucket"],
+                "properties": {
+                  "bucket": { "type": "string", "minLength": 1, "pattern": "^[^/\\\\:@?#\\s]+$" },
+                  "prefix": { "type": "string" },
+                  "region": { "type": "string" }
+                }
+              }
+            ]
+          }
+        },
+        "replicaUploadSpool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "sizeLimit"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "sizeLimit": {
+              "type": "string",
+              "pattern": "^$|^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|k)?$"
             }
           }
         },

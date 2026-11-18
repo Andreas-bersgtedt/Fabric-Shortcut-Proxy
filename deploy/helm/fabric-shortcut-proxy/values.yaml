@@ -176,6 +176,9 @@ federation:
   renewIntervalSeconds: 20
   # Azure, S3, or GCS settings keyed by declared replica profile; empty disables reconciliation.
   replicaStores: {}
+  replicaUploadSpool:
+    enabled: false
+    sizeLimit: ""
   regionalServing:
     enabled: false
     endpointId: ""

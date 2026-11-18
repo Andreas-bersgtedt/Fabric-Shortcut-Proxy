@@ -2,6 +2,7 @@
 {{- $mtls := .Values.agentAuth.mtls | default dict }}
 {{- $policyBundle := .Values.manager.policyBundle | default dict }}
 {{- $policyAzure := $policyBundle.azure | default dict }}
+{{- $replicaSpool := .Values.federation.replicaUploadSpool | default dict }}
 {{- if ($policyBundle.enabled | default false) }}
 {{- $hasPolicyUrl := ne ($policyBundle.url | default "") "" }}
 {{- $hasPolicyAzure := ne ($policyAzure.accountUrl | default "") "" }}
@@ -173,6 +174,10 @@ spec:
               value: external
             - name: ENABLE_GATEWAY
               value: "0"
+            {{- if $replicaSpool.enabled }}
+            - name: TMPDIR
+              value: /run/fsp-replica-spool
+            {{- end }}
             - name: FSP_CONFIG_DIR
               value: /config
             - name: CREDENTIAL_STORE_PATH
@@ -255,6 +260,10 @@ spec:
             - name: artifacts
               mountPath: /config
             {{- end }}
+            {{- if $replicaSpool.enabled }}
+            - name: replica-upload-spool
+              mountPath: /run/fsp-replica-spool
+            {{- end }}
             {{- if ($mtls.enabled | default false) }}
             - name: agent-mtls-ca
               mountPath: /etc/fsp-mtls
@@ -269,6 +278,11 @@ spec:
         - name: artifacts
           persistentVolumeClaim:
             claimName: fsp-artifacts
+        {{- if $replicaSpool.enabled }}
+        - name: replica-upload-spool
+          emptyDir:
+            sizeLimit: {{ required "federation.replicaUploadSpool.sizeLimit is required" $replicaSpool.sizeLimit | quote }}
+        {{- end }}
         {{- if .Values.storage.azureFiles.enabled }}
         - name: config
           persistentVolumeClaim:

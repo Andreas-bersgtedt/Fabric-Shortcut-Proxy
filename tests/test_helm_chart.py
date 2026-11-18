@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -202,6 +203,109 @@ def test_federation_renders_catalog_and_regional_manager_identity() -> None:
     assert 'name: FSP_REGIONAL_MANAGER_ID\n              value: "manager-swc"' in rendered
     assert 'name: FSP_CATALOG_OWNER_LEASE_MS\n              value: "60000"' in rendered
     assert 'name: FSP_CATALOG_STORE_CONTAINER\n              value: "catalog"' in rendered
+
+
+@pytest.mark.parametrize(
+    ("profile", "settings"),
+    [
+        ("aws", {"bucket": "aws-replica", "prefix": "fsp", "region": "eu-west-1"}),
+        ("gcp", {"bucket": "gcp-replica", "prefix": "fsp"}),
+        ("azure", {"account_url": "https://replica.blob.core.windows.net", "container_name": "published"}),
+    ],
+)
+def test_manager_accepts_declared_replica_store_settings(profile, settings) -> None:
+    import yaml
+
+    replicas = {profile: settings}
+    rendered = _render(
+        "--show-only", "templates/manager.yaml",
+        "--set", "federation.enabled=true",
+        "--set", "federation.managerId=manager-swc",
+        "--set", "federation.managerLocation=azure:swedencentral",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set-json", f"federation.replicaStores={json.dumps(replicas)}",
+    )
+    deployment = next(item for item in yaml.safe_load_all(rendered) if item["kind"] == "Deployment")
+    environment = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    value = next(item["value"] for item in environment if item["name"] == "FSP_FEDERATION_REPLICA_STORES")
+    assert json.loads(value) == replicas
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"bucket": "s3://user:password@bucket"},
+        {"bucket": "replica-bucket", "access_key": "not-a-real-secret"},
+        {"bucket": "replica-bucket", "account_url": "https://example.test"},
+    ],
+)
+def test_manager_rejects_invalid_cloud_replica_settings(settings) -> None:
+    result = _helm(
+        "template", "fsp", str(CHART),
+        "--set-json", f"federation.replicaStores={json.dumps({'replica': settings})}",
+        expect_success=False,
+    )
+    assert result.returncode != 0
+
+
+def test_manager_replica_upload_spool_is_opt_in_and_bounded() -> None:
+    import yaml
+
+    def manager_pod(rendered: str) -> dict:
+        deployment = next(
+            item for item in yaml.safe_load_all(rendered)
+            if item["kind"] == "Deployment"
+        )
+        return deployment["spec"]["template"]["spec"]
+
+    default = manager_pod(_render("--show-only", "templates/manager.yaml"))
+    default_manager = default["containers"][0]
+    assert all(item["name"] != "TMPDIR" for item in default_manager["env"])
+    assert all(item["name"] != "replica-upload-spool" for item in default["volumes"])
+
+    configured = manager_pod(_render(
+        "--show-only", "templates/manager.yaml",
+        "--set", "federation.enabled=true",
+        "--set", "federation.managerId=manager-swc",
+        "--set", "federation.managerLocation=azure:swedencentral",
+        "--set", "federation.catalog.artifactStoreAccountUrl=https://catalog.blob.core.windows.net",
+        "--set", "federation.replicaStores.aws.bucket=replica-bucket",
+        "--set", "federation.replicaUploadSpool.enabled=true",
+        "--set", "federation.replicaUploadSpool.sizeLimit=20Gi",
+    ))
+    manager = configured["containers"][0]
+    assert manager["securityContext"]["readOnlyRootFilesystem"] is True
+    assert configured["securityContext"]["fsGroup"] == 10001
+    assert next(item for item in manager["env"] if item["name"] == "TMPDIR") == {
+        "name": "TMPDIR", "value": "/run/fsp-replica-spool",
+    }
+    assert next(item for item in manager["volumeMounts"] if item["name"] == "replica-upload-spool") == {
+        "name": "replica-upload-spool", "mountPath": "/run/fsp-replica-spool",
+    }
+    assert next(item for item in configured["volumes"] if item["name"] == "replica-upload-spool") == {
+        "name": "replica-upload-spool", "emptyDir": {"sizeLimit": "20Gi"},
+    }
+
+
+def test_manager_replica_upload_spool_requires_a_size_limit() -> None:
+    result = _helm(
+        "template", "fsp", str(CHART),
+        "--set", "federation.replicaUploadSpool.enabled=true",
+        expect_success=False,
+    )
+    assert result.returncode != 0
+    assert "federation.replicaUploadSpool.sizeLimit is required" in result.stderr
+
+
+@pytest.mark.parametrize("size", ["0", "0Gi", "-1Gi", "1K", "invalid"])
+def test_manager_replica_upload_spool_rejects_invalid_size_limits(size: str) -> None:
+    result = _helm(
+        "template", "fsp", str(CHART),
+        "--set", "federation.replicaUploadSpool.enabled=true",
+        "--set-string", f"federation.replicaUploadSpool.sizeLimit={size}",
+        expect_success=False,
+    )
+    assert result.returncode != 0
 
 
 def test_regional_serving_renders_read_only_identity_and_no_source_secret() -> None:

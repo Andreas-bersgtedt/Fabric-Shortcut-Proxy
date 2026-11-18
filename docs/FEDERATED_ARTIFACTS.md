@@ -20,8 +20,22 @@ SHA-256 verification, paginated listings, deletion and single-object CAS.
 Uploads spool to a temporary file before sending data, allowing length and
 digest validation before committing an object. Configure temporary storage
 inside the site's residency boundary, with enough disk space and the same
-protection as other data caches. RAM use is bounded by the stream and upload
+protection as other data caches. A non-empty `TMPDIR` is used directly;
+an inaccessible directory fails the upload instead of falling back elsewhere.
+The spool file remains visible during the upload so kubelet directory scans can
+account for it. It is removed when closed normally, but abrupt process
+termination can leave it behind. RAM use is bounded by the stream and upload
 chunks, not total object size.
+
+The Helm Manager can opt into a writable, size-limited `emptyDir` by setting
+`federation.replicaUploadSpool.enabled` and a positive whole-number `sizeLimit`
+such as `20Gi`. The spool uses node ephemeral storage, so its placement and
+encryption must satisfy the site's residency policy. Size it for concurrent
+uploads and set appropriate ephemeral-storage requests and limits in
+`manager.resources`. Verify that the node supports ephemeral-storage
+measurement and monitor disk usage: kubelet accounting and eviction are not a
+hard disk quota. `emptyDir` is removed with the Pod but does not guarantee
+secure erasure.
 
 S3 uses conditional multipart completion. Failed multipart uploads are
 aborted; abort failures are logged and the original upload failure propagates.

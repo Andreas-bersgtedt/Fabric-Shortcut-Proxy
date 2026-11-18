@@ -186,10 +186,16 @@ mismatches and unmapped identities fail closed.
   settings, or S3/GCS `bucket`, `prefix`, and optional S3 `region`. S3/GCS
   replicas require an image built with their SDK extras and configured workload
   identity. Their uploads also require a writable `TMPDIR` inside the allowed
-  residency boundary. The Manager's root filesystem is read-only, and the
-  chart does not configure a cloud upload spool; customize the deployment with
-  protected, capacity-sized writable storage before using these replicas. Add
-  storage and identity endpoint egress explicitly.
+  residency boundary. Enable `federation.replicaUploadSpool.enabled` and set a
+  positive whole-number `sizeLimit`, such as `20Gi`, to mount an `emptyDir`
+  for the Manager, whose root filesystem remains read-only. Verify the node's
+  ephemeral-storage location and encryption, size it for concurrent uploads,
+  and configure appropriate `manager.resources` ephemeral-storage requests and
+  limits. Kubelet accounting and eviction are not a hard disk quota; verify
+  the node supports ephemeral-storage measurement and monitor disk usage.
+  Abrupt termination can leave files until the Pod is removed, and deletion
+  does not guarantee secure erasure. Add storage and identity endpoint egress
+  explicitly.
   The Manager reconciles catalog pointers on its renewal cadence; interrupted
   copies resume by immutable create-if-absent after restart.
 - `federation.regionalServing`: optional database-free, SigV4-authenticated S3

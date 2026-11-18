@@ -1,8 +1,8 @@
 # Upgrade to 3.2
 
-The 3.2.0 release candidate adds the operator API contract and opt-in S3/GCS
-replica and regional-reader support. It is not yet released. S3/GCS support is
-beta for non-production evaluation; live-provider acceptance is still open.
+Version 3.2.0 adds the operator API contract and opt-in S3/GCS replica and
+regional-reader support. S3/GCS support is beta for non-production evaluation;
+live-provider acceptance is still open.
 
 ## Before upgrading
 

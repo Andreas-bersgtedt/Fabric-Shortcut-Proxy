@@ -684,7 +684,7 @@ Create one Fabric shortcut per table.
 | `TMPDIR` | OS temporary directory | Optional explicit upload spool directory for S3/GCS artifacts. A non-empty, inaccessible path fails the upload rather than falling back to another directory |
 | `FSP_REGIONAL_SERVING_ENDPOINT_ID` | *(empty)* | Assigned placement endpoint for `python -m enterprise.regional_serving`; the local store must match its provider and location |
 | `FSP_REGIONAL_SERVING_BUCKETS` | `{}` | Regional reader JSON map of S3 bucket names to `connection_id::source_table`; no remote replica stores or database access are needed |
-| `FSP_REGIONAL_SERVING_CLOUD_STORE` | *(empty)* | Unreleased S3/GCS regional reader settings: JSON with `bucket`, optional `prefix`, and optional S3 `region`. The matching placement profile and shared Azure catalog must be configured; the Manager control store remains Azure/local |
+| `FSP_REGIONAL_SERVING_CLOUD_STORE` | *(empty)* | Beta S3/GCS regional reader settings in 3.2.0: JSON with `bucket`, optional `prefix`, and optional S3 `region`. The matching placement profile and shared Azure catalog must be configured; the Manager control store remains Azure/local |
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |

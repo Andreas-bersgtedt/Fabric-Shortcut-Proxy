@@ -524,8 +524,8 @@ the denied operator requests and verify that it contains no password or authoriz
 header values.
 
 The control design and release criteria are tracked in
-[the 2.9.0 security review](../devplan/290_sec_review.md), GitHub Epic #53, and child
-issues #54 through #62.
+[security epic #53](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/53)
+and child issues #54 through #62.
 
 ## Deployment Checklist
 

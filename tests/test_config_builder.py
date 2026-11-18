@@ -105,6 +105,7 @@ def test_connection_form_fields_restore_non_secret_mssql_settings():
         "http_path": "",
         "catalog": "",
         "schema": "",
+        "location": "",
         "auth_method": "sql",
         "client_id": "",
         "client_secret": "",
@@ -318,6 +319,56 @@ def test_build_url_databricks_with_http_path():
     assert s.startswith("databricks://token:")
     assert "@dbc.example.com:443" in s
     assert "http_path=%2Fsql%2F1.0%2Fwarehouses%2Fabc" in s
+
+
+def test_build_url_bigquery_adc_and_location():
+    url = build_url(
+        dialect="bigquery",
+        host="gcp-project",
+        database="analytics",
+        auth_method="adc",
+        query={"location": "europe-west4"},
+    )
+    assert url.drivername == "bigquery"
+    assert url.host == "gcp-project"
+    assert url.database == "analytics"
+    assert url.query["location"] == "europe-west4"
+    assert url.username is None and url.password is None
+
+
+def test_build_url_bigquery_rejects_missing_project_and_credentials():
+    with pytest.raises(ValueError, match="GCP project"):
+        build_url(dialect="bigquery", database="analytics")
+    with pytest.raises(ValueError, match="default dataset"):
+        build_url(dialect="bigquery", host="gcp-project")
+    with pytest.raises(ValueError, match="ADC/workload identity"):
+        build_url(
+            dialect="bigquery",
+            host="gcp-project",
+            database="analytics",
+            username="service-account",
+            password="secret",
+        )
+
+
+def test_connection_form_fields_restore_bigquery_location():
+    url = build_url(
+        dialect="bigquery",
+        host="gcp-project",
+        database="analytics",
+        auth_method="adc",
+        query={"location": "US"},
+    )
+    fields = _connection_form_fields(
+        "bigquery-source", url.render_as_string(hide_password=False)
+    )
+    assert fields["dialect"] == "bigquery"
+    assert fields["host"] == "gcp-project"
+    assert fields["database"] == "analytics"
+    assert fields["location"] == "US"
+    assert fields["auth_method"] == "adc"
+    assert fields["username"] == ""
+    assert fields["password"] == ""
 
 
 def test_build_url_redshift_defaults_port():

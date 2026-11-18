@@ -133,12 +133,13 @@ def _make_async_engine(
 
 
 def _make_sync_engine(db_url: str, timeout_seconds: int | None = None) -> Engine:
+    drivername = make_url(db_url).drivername.lower()
     kwargs: dict = {
         "echo": False,
         "hide_parameters": True,
         "pool_pre_ping": True,
     }
-    if "sqlite" not in db_url:
+    if "sqlite" not in db_url and "bigquery" not in drivername:
         kwargs.update({"pool_size": 5, "max_overflow": 10, "pool_timeout": 30})
     if db_url.lower().startswith("mssql+") and timeout_seconds is not None:
         kwargs["connect_args"] = {"timeout": max(1, int(timeout_seconds))}
@@ -869,31 +870,32 @@ def _split_qualified(name: str) -> tuple[str | None, str]:
 # Reflected type-name tokens that denote nested/composite source types with no
 # scalar Iceberg representation (issue #9: Redshift SUPER, Teradata ARRAY/PERIOD,
 # Impala ARRAY/MAP/STRUCT, Snowflake-style VARIANT).
-_NESTED_SOURCE_TYPE_TOKENS = ("ARRAY", "MAP", "STRUCT", "SUPER", "VARIANT", "PERIOD")
+_NESTED_SOURCE_TYPE_TOKENS = (
+    "ARRAY", "MAP", "STRUCT", "SUPER", "VARIANT", "PERIOD", "RECORD", "ROW",
+)
 
 
 def sqlalchemy_type_to_iceberg(sa_type) -> str:
     """Map a reflected SQLAlchemy column type to an Iceberg primitive type string."""
     name = type(sa_type).__name__.upper()
-    if "UUID" in name or "UNIQUEIDENTIFIER" in name:
-        # GUIDs are surfaced as text (pyodbc returns them as strings); this
-        # avoids the fixed(16) binary path and "just works" for reflection.
-        return "string"
-    if "MONEY" in name:
-        return "decimal(19,4)"   # SQL Server money / smallmoney
-    if name == "BIT":
-        return "boolean"
+    rendered = str(sa_type).upper()
+    combined = f"{name} {rendered}"
+    if any(token in combined for token in _NESTED_SOURCE_TYPE_TOKENS):
+        raise ValueError(
+            f"Source column type {type(sa_type).__name__!r} is a nested or composite "
+            "type that cannot be materialized as a scalar column. Exclude the column "
+            "or declare it explicitly in config.TABLES."
+        )
 
+    # Preserve SQLAlchemy's ordinary scalar mappings before vendor-name rules.
     if isinstance(sa_type, satypes.Boolean):
         return "boolean"
-    # Integers: check Big/Small before the Integer base class.
     if isinstance(sa_type, satypes.BigInteger):
         return "long"
     if isinstance(sa_type, satypes.SmallInteger):
         return "int"
     if isinstance(sa_type, satypes.Integer):
         return "int"
-    # Float subclasses Numeric, so check it first.
     if isinstance(sa_type, satypes.Float):
         return "double"
     if isinstance(sa_type, satypes.Numeric):
@@ -903,17 +905,49 @@ def sqlalchemy_type_to_iceberg(sa_type) -> str:
     if isinstance(sa_type, satypes.DateTime):
         if getattr(sa_type, "timezone", False):
             return "timestamptz"
-        # Naive DATETIME/DATETIME2: Fabric's SQL analytics endpoint rejects
-        # TIMESTAMP_NTZ (Iceberg `timestamp`), so default to `timestamptz` (UTC).
         return "timestamptz" if config.TIMESTAMP_ASSUME_UTC else "timestamp"
     if isinstance(sa_type, satypes.Date):
         return "date"
     if isinstance(sa_type, satypes.Time):
         return "time"
-    if isinstance(sa_type, satypes.LargeBinary) or "BINARY" in name:
+    if isinstance(sa_type, satypes.LargeBinary):
         return "binary"
     if isinstance(sa_type, (satypes.String, satypes.Text, satypes.Enum)):
         return "string"
+    if isinstance(sa_type, satypes.Uuid):
+        return "string"
+
+    # Vendor-specific scalar names for reflected BigQuery and other source types.
+    if "BIGNUMERIC" in combined:
+        return "decimal(76,38)"
+    if "NUMERIC" in combined:
+        return "decimal(38,9)"
+    if "INT64" in combined or "BIGINT" in combined:
+        return "long"
+    if "FLOAT64" in combined or "DOUBLE" in combined or "FLOAT" in combined:
+        return "double"
+    if "BOOLEAN" in combined or "BOOL" in combined:
+        return "boolean"
+    if "TIMESTAMP" in combined:
+        return "timestamptz"
+    if "DATETIME" in combined:
+        return "timestamp"
+    if "DATE" in combined:
+        return "date"
+    if "TIME" in combined:
+        return "time"
+    if "BYTES" in combined or "BINARY" in combined:
+        return "binary"
+    if "STRING" in combined or "TEXT" in combined or "GEOGRAPHY" in combined or "JSON" in combined:
+        return "string"
+    if "UUID" in name or "UNIQUEIDENTIFIER" in name:
+        # GUIDs are surfaced as text (pyodbc returns them as strings); this
+        # avoids the fixed(16) binary path and "just works" for reflection.
+        return "string"
+    if "MONEY" in name:
+        return "decimal(19,4)"   # SQL Server money / smallmoney
+    if name == "BIT":
+        return "boolean"
 
     # Semi-structured text (JSON/XML) serializes losslessly to a string column;
     # keep that mapping explicit rather than falling through by accident.

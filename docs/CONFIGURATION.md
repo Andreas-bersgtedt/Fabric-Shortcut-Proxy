@@ -195,7 +195,13 @@ mssql+aioodbc://user:pass@host:1433/dbname?driver=ODBC+Driver+18+for+SQL+Server&
 redshift+redshift_connector://user:pass@host:5439/dbname
 teradatasql://user:pass@host/?database=dbname&dbs_port=1025
 impala://host:21050/dbname
+bigquery://gcp-project/dataset?location=US
 ```
+
+For BigQuery, `gcp-project` is the project and `dataset` is the default dataset.
+The optional `location` query parameter is the dataset or processing region.
+Use Application Default Credentials or workload identity; do not put a key,
+username, password, or service-account JSON in `DB_URL` or Helm values.
 
 For SQL Server, the proxy host must trust the server certificate and the URL
 hostname must match it.
@@ -955,22 +961,27 @@ or use the config-builder **Storage** tab.
 
     // Public bucket needs an explicit credential-less auth mode.
     { "bucket": "adls-open", "backend": "azure", "root": "public",
-      "account": "opendatalake", "auth": "default", "read_only": true }
+      "account": "opendatalake", "auth": "default", "read_only": true },
+
+    // Google Cloud Storage uses ADC/workload identity.
+    { "bucket": "gcsvault", "backend": "gcs", "root": "reports-bucket",
+      "prefix": "2026/", "auth": "adc", "read_only": true }
   ]
 }
 ```
 
 - `bucket`: the S3 bucket Fabric/clients use; must differ from `S3_BUCKET` and be
   a valid S3 name.
-- `root`: filesystem path (`local`) / upstream bucket (`s3`) / container (`azure`).
+- `root`: filesystem path (`local`) / upstream bucket (`s3`) / container (`azure`) / GCS bucket (`gcs`).
 - `prefix`: optional; confine serving to a subtree (also `..`-hardened).
 - `credential`: id of an encrypted upstream credential in the store (never inline).
 - `auth`: for a credential-less mount, an explicit mode (S3: `anonymous`/`instance`;
-  Azure: `default`/`managed_identity`/`anonymous`).
+  Azure: `default`/`managed_identity`/`anonymous`; GCS: `adc`/`anonymous`).
 - Mounts are **read-only** in v1.
 
 Install the SDK for native backends: `pip install '.[s3proxy]'` (S3),
-`pip install '.[azureblob]'` (Azure). `local` needs nothing.
+`pip install '.[azureblob]'` (Azure), or `pip install '.[gcsproxy]'` (GCS).
+`local` needs nothing.
 
 ### 14.2 Backends & install extras
 
@@ -979,6 +990,7 @@ Install the SDK for native backends: `pip install '.[s3proxy]'` (S3),
 | `local` | a filesystem path (NFS/SMB mount) | — | n/a |
 | `s3` | the upstream S3 bucket | `.[s3proxy]` | static, session, assume_role, web_identity, profile, sso, instance, anonymous |
 | `azure` | the container | `.[azureblob]` | connection_string, account_key, sas, aad_client_secret, managed_identity, workload_identity, default, anonymous |
+| `gcs` | the upstream bucket | `.[gcsproxy]` | adc, anonymous |
 
 Upstream secrets live encrypted in the credential store and are set in the config
 builder (**Sources → mount editor**) or via `/_config/api/{s3,azure}-credentials`.
@@ -992,7 +1004,7 @@ The Config Builder can inspect and tokenize existing local, S3, or Azure Delta a
 Iceberg tables. Install the reader and the relevant cloud backend extra:
 
 ```powershell
-pip install -e ".[objectstore,s3proxy,azureblob]"
+pip install -e ".[objectstore,s3proxy,azureblob,gcsproxy]"
 ```
 
 An Iceberg mount uses the same backend, `root`, `prefix`, and credential settings

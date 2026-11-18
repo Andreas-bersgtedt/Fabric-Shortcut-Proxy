@@ -80,11 +80,12 @@ shares/object stores at once.
 | `local` | a filesystem path | an OS-mounted **NFS/SMB** share (UNC or mount point); zero extra deps |
 | `s3` | a native **S3 / MinIO / S3-compatible** bucket | ranged streaming + list pagination (`pip install '.[s3proxy]'`) |
 | `azure` | a native **Azure Blob / ADLS Gen2** container | flat blob + hierarchical namespace (`pip install '.[azureblob]'`) |
+| `gcs` | a native **Google Cloud Storage** bucket | ranged streaming + list/prefix browsing (`pip install '.[gcsproxy]'`) |
 
 **Security (Phase 4):**
 - **Per-key authorization**: issue scoped S3 **access keys** (allowed buckets/prefixes, read-only), stored encrypted; SigV4 is verified against them. The legacy single key stays a wildcard until you add a key.
 - **Forced auth on mounts**: `ENFORCE_MOUNT_AUTH` (default on) requires SigV4 on mounted buckets even when `REQUIRE_SIGV4` is off.
-- **Upstream credential mediation**: clients never see upstream S3/Azure secrets; they're held encrypted (DPAPI/Fernet) and resolved by id. Outbound S3 covers static/session/assume-role/web-identity/profile/SSO/instance/process/anonymous; Azure covers connection-string/account-key/SAS/AAD/managed-identity/default/anonymous.
+- **Upstream credential mediation**: clients never see upstream S3/Azure/GCS secrets; they're held encrypted (DPAPI/Fernet) and resolved by id where supported. Outbound S3 covers static/session/assume-role/web-identity/profile/SSO/instance/process/anonymous; Azure covers connection-string/account-key/SAS/AAD/managed-identity/default/anonymous; GCS uses Application Default Credentials or explicit anonymous public-bucket access.
 - **Entra ID + Key Vault (issue #16)**: the proxy can take its own Entra ID identity (`managed_identity`, `service_principal`, or `default`) and use **Azure Key Vault** as a central credential source, with optional **write-back** (`KEYVAULT_WRITE_BACK`) so the vault becomes the authoritative store — DB URLs, mount credentials, the S3 secret / admin token / Manager password, and per-key access keys **with their ACLs**. Cache-first and fail-soft: a Key Vault outage never stops the proxy. See [SECURITY.md](docs/SECURITY.md).
 - **TLS**: terminate HTTPS at the proxy (`TLS_CERT_FILE` + `TLS_KEY_FILE`) or a fronting LB.
 - **Audit**: every mounted-object access (identity, bucket, key, bytes) is logged when `ENABLE_AUDIT_LOG` is on; recent events at `GET /_config/api/audit`.
@@ -511,7 +512,7 @@ explicit reset.
 | `DB_RETRY_BACKOFF`    | `0.5`                                    | Linear backoff base (seconds) between retries |
 | `VALIDATE_SOURCE_SCHEMA` | `1`                                   | Fail fast at startup if a declared column is missing |
 | `REQUIRE_SIGV4`       | `1`                                      | Enforce AWS SigV4 request signatures (403 on mismatch) |
-| `ENABLE_STORAGE_PROXY` | `0`                                     | Serve mounted buckets (`config.mounts.json`) as read-only byte passthrough (local / s3 / azure) |
+| `ENABLE_STORAGE_PROXY` | `0`                                     | Serve mounted buckets (`config.mounts.json`) as read-only byte passthrough (local / s3 / azure / gcs) |
 | `ENFORCE_MOUNT_AUTH`  | `1`                                      | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` (a secured mount is never anonymous) |
 | `ENABLE_AUDIT_LOG`    | `1`                                      | Emit a structured audit event per mounted-object access (identity, bucket, key, bytes) |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | *(unset)*                     | Serve HTTPS from the proxy when both are set (else terminate TLS at a fronting LB) |

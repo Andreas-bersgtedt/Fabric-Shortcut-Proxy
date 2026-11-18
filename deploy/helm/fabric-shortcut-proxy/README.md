@@ -34,7 +34,7 @@ every sensitive file.
 ```powershell
 docker build -f Dockerfile.python `
   --build-arg FSP_ENTERPRISE=1 `
-  --build-arg FSP_EXTRAS=postgres,azureblob,keyvault,onelake,s3-artifacts,gcs-artifacts `
+  --build-arg FSP_EXTRAS=postgres,azureblob,keyvault,onelake,s3-artifacts,gcs-artifacts,gcsproxy,bigquery `
   -t fabric-shortcut-proxy-cloud:dev .
 ```
 
@@ -233,6 +233,14 @@ mismatches and unmapped identities fail closed.
   create the associated cloud roles, trust bindings, or identity webhooks.
   Set `regionalServing.ingress.enabled`, `hostname`, and issuer settings to
   expose only the regional S3 reader through TLS ingress.
+
+- GCS/BigQuery: put the source URL in `sourceSecret.name` as
+  `bigquery://<gcp-project>/<dataset>?location=<region>` for BigQuery, or use
+  ADC through GKE Workload Identity for GCS mount and artifact-reader services.
+  For GKE, map the Kubernetes service account with
+  `iam.gke.io/gcp-service-account` and grant the service account the minimum
+  BigQuery and GCS roles. Do not put service-account JSON or database passwords
+  in ConfigMaps, Helm values, or `config.connection.json`.
   Use a separate identity from the publishing Manager. `readerSecretName` holds
   only `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`, not source credentials.
   The workload uses `CONTROL_PORT` (default chart port 9401), a read-only root

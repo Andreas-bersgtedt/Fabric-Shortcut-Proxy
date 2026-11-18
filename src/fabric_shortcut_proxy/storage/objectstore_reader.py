@@ -182,7 +182,11 @@ def _remote_table_root(mount: Mount, subpath: str) -> str:
     key = "/".join(part for part in (prefix, sub) if part)
     if mount.backend == "s3":
         return f"s3://{mount.root}/{key}".rstrip("/")
-    return f"az://{mount.root}/{key}".rstrip("/")
+    if mount.backend == "azure":
+        return f"az://{mount.root}/{key}".rstrip("/")
+    if mount.backend == "gcs":
+        return f"gs://{mount.root}/{key}".rstrip("/")
+    raise ValueError(f"unsupported remote table backend {mount.backend!r}")
 
 
 def _iceberg_fileio_properties(
@@ -231,6 +235,22 @@ def _remote_client(mount: Mount, *, store=None):
             raise ObjectStoreReaderUnavailable(
                 "remote Iceberg on Azure requires azure-storage-blob; install "
                 "'fabric-shortcut-proxy[azureblob]'"
+            ) from exc
+    if mount.backend == "gcs":
+        try:
+            from fabric_shortcut_proxy.storage.gcs_auth import resolve_gcs_auth, validate_gcs_auth
+            auth = resolve_gcs_auth(mount, store=store)
+            problems = validate_gcs_auth(auth)
+            if problems:
+                raise ValueError("; ".join(problems))
+            from google.cloud import storage
+            if auth.mode == "anonymous":
+                return storage.Client.create_anonymous_client().bucket(mount.root)
+            return storage.Client().bucket(mount.root)
+        except ImportError as exc:
+            raise ObjectStoreReaderUnavailable(
+                "remote Iceberg on GCS requires google-cloud-storage; install "
+                "'fabric-shortcut-proxy[gcsproxy]'"
             ) from exc
     raise ValueError(f"remote Iceberg client is not available for {mount.backend!r}")
 
@@ -283,6 +303,9 @@ def _remote_object_key(mount: Mount, location: str, *, table_root: str) -> str:
                 raise ValueError("Iceberg abfs URI requires the mount's storage account")
         else:
             raise ValueError("Iceberg file URI must use az, abfs, or abfss for Azure")
+    elif backend == "gcs":
+        if scheme != "gs" or authority.lower() != mount.root.lower():
+            raise ValueError("Iceberg file URI is outside the configured GCS bucket")
     else:
         raise ValueError(f"unsupported remote Iceberg backend {backend!r}")
 
@@ -317,14 +340,21 @@ def _read_remote_object(client, backend: str, *, bucket: str, key: str) -> bytes
                 return body.read()
             finally:
                 body.close()
-        return client.get_blob_client(key).download_blob().readall()
+        if backend == "azure":
+            return client.get_blob_client(key).download_blob().readall()
+        if backend == "gcs":
+            blob = client.blob(key)
+            return blob.download_as_bytes(raw_download=True)
     except Exception as exc:
         status = getattr(exc, "status_code", None)
+        exc_code = getattr(exc, "code", None)
         response = getattr(exc, "response", None)
         code = ""
         if isinstance(response, dict):
             code = str((response.get("Error") or {}).get("Code") or "")
-        if status == 404 or code in ("404", "NoSuchKey", "NotFound", "BlobNotFound"):
+        if status == 404 or exc_code == 404 or code in (
+            "404", "NoSuchKey", "NotFound", "BlobNotFound",
+        ):
             return None
         raise
 
@@ -345,7 +375,12 @@ def _discover_remote_iceberg_metadata(
             for name in (f"v{version}.metadata.json", f"{version}.metadata.json"):
                 key = f"{metadata_prefix}/{name}"
                 if _read_remote_object(client, mount.backend, bucket=mount.root, key=key) is not None:
-                    return f"{'s3' if mount.backend == 's3' else 'az'}://{mount.root}/{key}", table_root
+                    scheme = (
+                        "s3" if mount.backend == "s3"
+                        else "az" if mount.backend == "azure"
+                        else "gs"
+                    )
+                    return f"{scheme}://{mount.root}/{key}", table_root
 
     candidates: list[tuple[int, float, str]] = []
     if mount.backend == "s3":
@@ -368,7 +403,7 @@ def _discover_remote_iceberg_metadata(
             if not page.get("IsTruncated") or not token:
                 break
             request["ContinuationToken"] = token
-    else:
+    elif mount.backend == "azure":
         for item in client.list_blobs(name_starts_with=metadata_prefix + "/"):
             key = str(item.name)
             if not key.startswith(metadata_prefix + "/"):
@@ -381,12 +416,25 @@ def _discover_remote_iceberg_metadata(
             modified = getattr(item, "last_modified", None)
             timestamp = modified.timestamp() if modified is not None else 0.0
             candidates.append((version, timestamp, key))
+    else:
+        for item in client.list_blobs(prefix=metadata_prefix + "/"):
+            key = str(item.name)
+            if not key.startswith(metadata_prefix + "/"):
+                continue
+            suffix = key[len(metadata_prefix) + 1:]
+            if "/" in suffix or not suffix.endswith(".metadata.json"):
+                continue
+            match = re.match(r"[vV]?(\d+)", os.path.basename(key))
+            version = int(match.group(1)) if match else -1
+            modified = getattr(item, "updated", None)
+            timestamp = modified.timestamp() if modified is not None else 0.0
+            candidates.append((version, timestamp, key))
     if not candidates:
         raise ObjectStoreReaderUnavailable(
             f"no Iceberg metadata found under the configured {mount.backend} mount"
         )
     key = max(candidates)[2]
-    scheme = "s3" if mount.backend == "s3" else "az"
+    scheme = "s3" if mount.backend == "s3" else ("az" if mount.backend == "azure" else "gs")
     return f"{scheme}://{mount.root}/{key}", table_root
 
 
@@ -457,6 +505,34 @@ def _azure_table_uri(mount: Mount, subpath: str) -> str:
     sub = (subpath or "").replace("\\", "/").strip("/")
     key = "/".join(p for p in (prefix, sub) if p)
     return f"az://{mount.root}/{key}".rstrip("/")
+
+
+def _gcs_table_uri(mount: Mount, subpath: str) -> str:
+    """``gs://<bucket>/<prefix><subpath>`` table root (no trailing slash)."""
+    prefix = (mount.prefix or "").replace("\\", "/").strip("/")
+    sub = (subpath or "").replace("\\", "/").strip("/")
+    key = "/".join(p for p in (prefix, sub) if p)
+    return f"gs://{mount.root}/{key}".rstrip("/")
+
+
+def _gcs_storage_options(mount: Mount, *, store=None) -> dict:
+    """Map a GCS mount to delta-rs storage options.
+
+    ADC/workload identity is preferred and needs no credential material. Public
+    buckets can opt in to unsigned access with ``auth: anonymous``.
+    """
+    from fabric_shortcut_proxy.storage.gcs_auth import resolve_gcs_auth, validate_gcs_auth
+
+    auth = resolve_gcs_auth(mount, store=store)
+    problems = validate_gcs_auth(auth)
+    if problems:
+        raise ObjectStoreReaderUnavailable("; ".join(problems))
+    if auth.mode == "anonymous":
+        return {
+            "google_skip_signature": "true",
+            "GOOGLE_SKIP_SIGNATURE": "true",
+        }
+    return {}
 
 
 def _parse_azure_connection_string(cs: str) -> dict:
@@ -568,8 +644,14 @@ def reader_for_mount(
         if mount.backend == "s3":
             return DeltaTableReader(_s3_table_uri(mount, subpath),
                                     storage_options=_s3_storage_options(mount))
-        return DeltaTableReader(_azure_table_uri(mount, subpath),
-                                storage_options=_azure_storage_options(mount))
+        if mount.backend == "azure":
+            return DeltaTableReader(_azure_table_uri(mount, subpath),
+                                    storage_options=_azure_storage_options(mount))
+        if mount.backend == "gcs":
+            return DeltaTableReader(
+                _gcs_table_uri(mount, subpath),
+                storage_options=_gcs_storage_options(mount),
+            )
     selected_snapshot = _selected_snapshot_id(mount, snapshot_id)
     if mount.backend == "local":
         scope_root, table_root = _local_iceberg_roots(mount, subpath)
@@ -592,8 +674,8 @@ def reader_for_mount(
 
 # Backends the reader can serve per format; drives Config Builder and API support.
 READER_BACKENDS: dict[str, tuple[str, ...]] = {
-    "delta": ("local", "s3", "azure"),
-    "iceberg": ("local", "s3", "azure"),
+    "delta": ("local", "s3", "azure", "gcs"),
+    "iceberg": ("local", "s3", "azure", "gcs"),
 }
 
 READER_AUTH_SUPPORT = {
@@ -615,6 +697,12 @@ READER_AUTH_SUPPORT = {
             "aad_client_secret", "managed_identity", "workload_identity", "default",
         ],
         "non_refreshing": ["connection_string", "account_key", "sas"],
+    },
+    "gcs": {
+        "supported": ["adc", "anonymous"],
+        "refreshing": ["adc"],
+        "provider_dependent_refresh": [],
+        "non_refreshing": ["anonymous"],
     },
 }
 
@@ -643,4 +731,5 @@ def reader_backend_available() -> dict[str, bool]:
         "local": True,
         "s3": available("boto3"),
         "azure": available("azure.storage.blob"),
+        "gcs": available("google.cloud.storage"),
     }

@@ -21,6 +21,7 @@ from fabric_shortcut_proxy.planner.dialects import (
     RedshiftDialect,
     TeradataDialect,
     ImpalaDialect,
+    BigQueryDialect,
 )
 from fabric_shortcut_proxy.planner.split_planner import build_split_query
 
@@ -58,6 +59,7 @@ def test_get_dialect_by_scheme():
     assert isinstance(get_dialect("redshift+redshift_connector://h:5439/db"), RedshiftDialect)
     assert isinstance(get_dialect("teradatasql://h/?database=dbc"), TeradataDialect)
     assert isinstance(get_dialect("impala://h:21050/db"), ImpalaDialect)
+    assert isinstance(get_dialect("bigquery://gcp-project/dataset"), BigQueryDialect)
 
 
 def test_dialect_quoting():
@@ -68,6 +70,7 @@ def test_dialect_quoting():
     assert RedshiftDialect().quote("id") == '"id"'
     assert TeradataDialect().quote("id") == '"id"'
     assert ImpalaDialect().quote("id") == "`id`"
+    assert BigQueryDialect().quote("id") == "`id`"
 
 
 def test_dialect_cast_type():
@@ -78,6 +81,7 @@ def test_dialect_cast_type():
     assert RedshiftDialect().cast_int("id") == "CAST(id AS BIGINT)"
     assert TeradataDialect().cast_int("id") == "CAST(id AS BIGINT)"
     assert ImpalaDialect().cast_int("id") == "CAST(id AS BIGINT)"
+    assert BigQueryDialect().cast_int("id") == "CAST(id AS INT64)"
 
 
 def test_quote_qualified_dotted():

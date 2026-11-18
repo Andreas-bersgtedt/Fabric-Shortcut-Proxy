@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added GCS mount and Delta/Iceberg reader support using Application Default
+  Credentials or explicit anonymous public-bucket access.
+- Added Google BigQuery as a beta SQL source with ADC/workload identity,
+  project/dataset/location configuration, explicit split-key selection, and
+  opt-in live capability and GCS conformance gates.
+
 ## [3.2.0] - 2026-11-18
 
 ### Added

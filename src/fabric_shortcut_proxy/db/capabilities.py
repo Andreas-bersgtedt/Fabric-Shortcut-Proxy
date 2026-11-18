@@ -248,6 +248,18 @@ _CAPABILITIES: dict[str, FlavorCapabilities] = {
         support_status="supported",
         requires_explicit_split_key=True,
     ),
+    "bigquery": FlavorCapabilities(
+        flavor="bigquery",
+        async_driver=False,
+        supports_streaming_query=False,
+        supports_view_listing=True,
+        supports_primary_key_reflection=False,
+        supports_range_key_bounds=True,
+        supports_modulo_split=True,
+        supports_fast_row_estimate=False,
+        support_status="beta",
+        requires_explicit_split_key=True,
+    ),
     "generic": FlavorCapabilities(
         flavor="generic",
         async_driver=False,
@@ -267,6 +279,9 @@ _DIALECT_ALIASES = {
     "postgres": "postgresql",
     "sqlserver": "mssql",
     "oraclesql": "oracle",
+    "googlebigquery": "bigquery",
+    "google_bigquery": "bigquery",
+    "bq": "bigquery",
 }
 
 
@@ -277,6 +292,8 @@ def normalize_dialect(dialect: str | None) -> str:
 
 def flavor_from_db_url(db_url: str) -> str:
     scheme = (db_url or "").lower().split("://", 1)[0]
+    if "bigquery" in scheme:
+        return "bigquery"
     # Match Redshift before PostgreSQL: it reuses Postgres query syntax but is a
     # distinct flavor (no pgcrypto / pg_stats / freshness assumptions).
     if "redshift" in scheme:

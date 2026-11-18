@@ -35,6 +35,7 @@ from fabric_shortcut_proxy.planner.split_planner import (
 _SOURCE_ENV = {
     "oracle": ("ORACLE", ("HOST", "DATABASE", "USERNAME", "PASSWORD")),
     "databricks": ("DATABRICKS", ("HOST", "TOKEN", "HTTP_PATH")),
+    "bigquery": ("BIGQUERY", ("PROJECT", "DATASET")),
     "redshift": ("REDSHIFT", ("HOST", "DATABASE", "USERNAME", "PASSWORD")),
     "teradata": ("TERADATA", ("HOST", "DATABASE", "USERNAME", "PASSWORD")),
     # The official Impala quickstart accepts unauthenticated NOSASL connections.
@@ -43,6 +44,18 @@ _SOURCE_ENV = {
 
 
 def _connection(prefix: str, dialect: str) -> dict:
+    if dialect == "bigquery":
+        query = {}
+        location = os.environ.get("BIGQUERY_LOCATION")
+        if location:
+            query["location"] = location
+        return {
+            "dialect": dialect,
+            "host": os.environ.get("BIGQUERY_PROJECT"),
+            "database": os.environ.get("BIGQUERY_DATASET"),
+            "auth_method": "adc",
+            "query": query,
+        }
     return {
         "dialect": dialect,
         "host": os.environ.get(f"{prefix}_HOST"),

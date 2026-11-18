@@ -247,7 +247,9 @@ validation also makes that saved source ready for table changes; it is not neces
 to open, test, and save an unchanged source before adding a table.
 
 Use **Files & object storage** in the same tab to configure local, S3-compatible,
-or Azure mounts. A mount bucket must not reuse the warehouse bucket name.
+Azure, or Google Cloud Storage mounts. A mount bucket must not reuse the
+warehouse bucket name. GCS mounts use ADC/workload identity; no GCS secret is
+stored in `config.mounts.json`.
 
 ## 3. Select tables and splits
 

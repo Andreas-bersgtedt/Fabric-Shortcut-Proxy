@@ -597,6 +597,31 @@ def test_local_s3_and_azure_iceberg_reads_are_equivalent(tmp_path, monkeypatch):
             list(remote_readers[0].read_batches(batch_rows=16))
 
 
+def test_gcs_remote_iceberg_uri_is_confined():
+    from fabric_shortcut_proxy.storage.objectstore_reader import _remote_object_key
+
+    mount = Mount(
+        bucket="proxy-bucket", backend="gcs", root="source",
+        prefix="curated",
+    )
+    assert _remote_object_key(
+        mount,
+        "gs://source/curated/table/file.parquet",
+        table_root="gs://source/curated/table",
+    ) == "curated/table/file.parquet"
+    for location in (
+        "gs://other-bucket/curated/table/file.parquet",
+        "gs://source/other/table/file.parquet",
+        "https://storage.googleapis.com/source/curated/table/file.parquet",
+    ):
+        with pytest.raises(ValueError):
+            _remote_object_key(
+                mount,
+                location,
+                table_root="gs://source/curated/table",
+            )
+
+
 def test_remote_iceberg_fileio_reads_confined_s3_and_azure_objects():
     import io
 
@@ -963,8 +988,8 @@ async def test_readyz_surfaces_tokenizing_mounts(monkeypatch):
     assert tokenizer["mounts"][0]["format"] == "delta"
     assert tokenizer["mounts"][0]["transforms"] == 1
     assert set(tokenizer["formats"]) == {"delta", "iceberg"}
-    assert tokenizer["reader_backends"]["iceberg"] == ["local", "s3", "azure"]
-    assert set(tokenizer["reader_backend_available"]) == {"local", "s3", "azure"}
+    assert tokenizer["reader_backends"]["iceberg"] == ["local", "s3", "azure", "gcs"]
+    assert set(tokenizer["reader_backend_available"]) == {"local", "s3", "azure", "gcs"}
 
 
 async def test_readyz_reports_pinned_iceberg_mount(monkeypatch):
@@ -1023,6 +1048,34 @@ def test_s3_storage_options_rejects_unsupported_mode():
     mount = Mount(bucket="b", backend="s3", root="lake", format="delta", auth="sso")
     with pytest.raises(ObjectStoreReaderUnavailable):
         _s3_storage_options(mount)
+
+
+# --- gcs (Google Cloud Storage) delta-rs storage_options mapping ----------
+
+def test_gcs_storage_options_adc_and_uri():
+    from fabric_shortcut_proxy.storage.objectstore_reader import (
+        _gcs_storage_options,
+        _gcs_table_uri,
+    )
+
+    mount = Mount(
+        bucket="b", backend="gcs", root="lake", prefix="curated/",
+        format="delta", auth="adc",
+    )
+    assert _gcs_storage_options(mount) == {}
+    assert _gcs_table_uri(mount, "") == "gs://lake/curated"
+
+
+def test_gcs_storage_options_anonymous():
+    from fabric_shortcut_proxy.storage.objectstore_reader import _gcs_storage_options
+
+    mount = Mount(
+        bucket="b", backend="gcs", root="lake", format="delta",
+        auth="anonymous",
+    )
+    options = _gcs_storage_options(mount)
+    assert options["google_skip_signature"] == "true"
+    assert options["GOOGLE_SKIP_SIGNATURE"] == "true"
 
 
 # --- azure (ADLS Gen2) delta-rs storage_options mapping (no network) ---------

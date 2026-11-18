@@ -87,7 +87,9 @@ $env:FSP_LIVE_AZURE_CONTAINER = "<dedicated-test-container>"
 $env:FSP_LIVE_S3_BUCKET = "<dedicated-test-bucket>"
 $env:FSP_LIVE_S3_REGION = "<test-region>"
 $env:FSP_LIVE_GCS_BUCKET = "<dedicated-test-bucket>"
+$env:FSP_RUN_LIVE_GCP_GATES = "1"
 .\.venv\Scripts\python.exe -m pytest tests\test_cloud_artifact_conformance.py -q
+.\.venv\Scripts\python.exe -m pytest tests\test_integration_gcp.py -q
 Remove-Item Env:\FSP_LIVE_ARTIFACT_PROVIDERS
 ```
 

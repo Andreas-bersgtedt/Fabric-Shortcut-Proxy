@@ -1,4 +1,5 @@
 from dataclasses import replace
+import json
 
 from botocore.auth import S3SigV4Auth
 from botocore.awsrequest import AWSRequest
@@ -7,9 +8,14 @@ from fastapi.testclient import TestClient
 import pytest
 
 from enterprise.control.regional_serving_app import create_regional_serving_app
+from enterprise.control.federation import FederatedPublicationCoordinator
+from enterprise.control.placement import PlacementConfig
+from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 from fabric_shortcut_proxy.security import access_keys
-from tests.enterprise.test_catalog_service import _snapshot
+from tests.enterprise.test_catalog_service import DATASET, _snapshot
 from tests.enterprise.test_federated_publication_runtime import _runtime
+from tests.enterprise.test_residency_policy import _config
+from tests.test_cloud_artifact_conformance import FakeGCSBucket, FakeS3
 
 
 def _sign(method, path, *, headers=None):
@@ -115,3 +121,241 @@ def test_serving_factory_binds_replica_without_enabling_dispatch(monkeypatch):
     assert app.title.endswith("regional serving")
     with pytest.raises(ResidencyPolicyViolation, match="cross-store dispatch"):
         placement.validate_dispatch(placement.policy_for("source", "sales"))
+
+
+@pytest.mark.parametrize(
+    ("provider", "location"),
+    [("s3", "aws:us-east-1"), ("gcs", "gcp:europe-west1")],
+)
+def test_cloud_replica_environment_replication_and_signed_regional_reads(
+    monkeypatch, provider, location,
+):
+    from enterprise.control import regional_serving_app
+    from fabric_shortcut_proxy.runtime import artifact_store, azure_artifact_store, cloud_artifact_store
+
+    if provider == "s3":
+        boto3 = pytest.importorskip("boto3")
+        sdk_client = FakeS3()
+
+        def client(service, *, region_name):
+            assert service == "s3" and region_name == "us-east-1"
+            return sdk_client
+
+        monkeypatch.setattr(boto3, "client", client)
+    else:
+        storage = pytest.importorskip("google.cloud.storage")
+        sdk_bucket = FakeGCSBucket()
+
+        class StorageClient:
+            def bucket(self, name):
+                assert name == "artifacts"
+                return sdk_bucket
+
+        monkeypatch.setattr(storage, "Client", StorageClient)
+
+    value = _config()
+    value["stores"]["replica"].update(provider=provider, location=location)
+    value["serving_endpoints"]["secondary"]["location"] = location
+    value["connections"]["erp"]["residency_locations"].append(location)
+    placement = PlacementConfig.from_dict(value)
+    catalog_store, primary_store = MemoryStore(), MemoryStore()
+    settings = {"bucket": "artifacts", "prefix": "replica"}
+    if provider == "s3":
+        settings["region"] = "us-east-1"
+    calls = []
+    build_cloud_data_store = cloud_artifact_store.build_cloud_data_store
+
+    def cloud_store(selected_provider, **kwargs):
+        store = build_cloud_data_store(selected_provider, **kwargs)
+        calls.append((selected_provider, kwargs, store))
+        return store
+
+    monkeypatch.setattr(cloud_artifact_store, "build_cloud_data_store", cloud_store)
+    monkeypatch.setattr(azure_artifact_store, "build_azure_store", lambda **kwargs: catalog_store)
+    monkeypatch.setenv("FSP_CATALOG_STORE_ACCOUNT_URL", "https://catalog.example.test")
+    monkeypatch.setenv("FSP_CATALOG_STORE_CONTAINER", "catalog")
+    monkeypatch.setenv("FSP_REGIONAL_MANAGER_ID", "manager-swc")
+    monkeypatch.setenv("FSP_REGIONAL_MANAGER_LOCATION", "azure:swedencentral")
+    monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "published")
+    monkeypatch.setenv("FSP_FEDERATION_REPLICA_STORES", json.dumps({"replica": settings}))
+    primary = FederatedPublicationCoordinator.from_environment(primary_store, placement)
+    replica_store = calls[0][2]
+    primary.catalog.create(
+        DATASET, owner_id="manager-swc", owner_location="azure:swedencentral",
+        lease_ms=100_000, freshness_target_ms=5_000,
+    )
+    primary.publish(_snapshot(primary_store, 1))
+    assert primary.replicate_owned() == 1
+
+    monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "replica")
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_ENDPOINT_ID", "secondary")
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_BUCKETS", json.dumps({"sales": DATASET}))
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_CLOUD_STORE", json.dumps(settings))
+    monkeypatch.setenv("FSP_FEDERATION_REPLICA_STORES", "{}")
+    monkeypatch.setattr(PlacementConfig, "from_environment", lambda: placement)
+    monkeypatch.setattr(
+        artifact_store, "get_default_store",
+        lambda: pytest.fail("cloud regional reader must not use the Manager store"),
+    )
+    monkeypatch.setattr(access_keys, "resolve_secret", lambda _key: "regional-test-secret")
+    monkeypatch.setattr(access_keys, "authorize", lambda *_args: None)
+    app = regional_serving_app.app_from_environment()
+    expected_settings = {"region": "", **settings}
+    assert [(name, kwargs) for name, kwargs, _store in calls] == [
+        (provider, expected_settings), (provider, expected_settings),
+    ]
+    reader_store = calls[1][2]
+
+    with TestClient(app) as client:
+        old_path = "/sales/published/1/part.parquet"
+        new_path = "/sales/published/2/part.parquet"
+        assert client.get(old_path, headers=_sign("GET", old_path)).content == b"generation-1"
+        primary.publish(_snapshot(primary_store, 2))
+        original_put = replica_store.put_stream_if_absent
+
+        def interrupted(*args, **kwargs):
+            raise OSError("replication interrupted")
+
+        monkeypatch.setattr(replica_store, "put_stream_if_absent", interrupted)
+        with pytest.raises(OSError, match="replication interrupted"):
+            primary.replicate_owned()
+        assert client.get(old_path, headers=_sign("GET", old_path)).status_code == 200
+        assert client.get(new_path, headers=_sign("GET", new_path)).status_code == 404
+        monkeypatch.setattr(replica_store, "put_stream_if_absent", original_put)
+        assert primary.replicate_owned() == 1
+        assert client.get(new_path, headers=_sign("GET", new_path)).content == b"generation-2"
+
+        if provider == "s3":
+            from botocore.exceptions import ClientError, NoCredentialsError
+
+            errors = [
+                ClientError({"Error": {"Code": "AccessDenied", "Message": "private"}}, "HeadObject"),
+                NoCredentialsError(),
+            ]
+        else:
+            from google.api_core.exceptions import Forbidden
+            from google.auth.exceptions import RefreshError
+
+            errors = [Forbidden("private"), RefreshError("private")]
+
+        for error in errors:
+            def unavailable(*args, **kwargs):
+                raise error
+
+            monkeypatch.setattr(reader_store, "head", unavailable)
+            response = client.get(new_path, headers=_sign("GET", new_path))
+            assert response.status_code == 503
+            assert b"ServiceUnavailable" in response.content and b"private" not in response.content
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"bucket": ""},
+        {"bucket": "artifacts", "prefix": "../escape"},
+        {"bucket": "artifacts", "access_key": "must-not-be-embedded"},
+        {"bucket": "s3://user:password@artifacts"},
+        {"bucket": "artifacts", "region": 123},
+    ],
+)
+def test_cloud_replica_profile_rejects_invalid_or_secret_settings(monkeypatch, settings):
+    value = _config()
+    value["stores"]["replica"]["provider"] = "s3"
+    placement = PlacementConfig.from_dict(value)
+    monkeypatch.setenv("FSP_REGIONAL_MANAGER_ID", "manager-swc")
+    monkeypatch.setenv("FSP_REGIONAL_MANAGER_LOCATION", "azure:swedencentral")
+    monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "published")
+    monkeypatch.setenv("FSP_CATALOG_STORE_ACCOUNT_URL", "https://catalog.example.test")
+    monkeypatch.setenv("FSP_CATALOG_STORE_CONTAINER", "catalog")
+    monkeypatch.setenv("FSP_FEDERATION_REPLICA_STORES", json.dumps({"replica": settings}))
+    from fabric_shortcut_proxy.runtime import azure_artifact_store, cloud_artifact_store
+    monkeypatch.setattr(azure_artifact_store, "build_azure_store", lambda **kwargs: MemoryStore())
+    monkeypatch.setattr(
+        cloud_artifact_store, "build_cloud_data_store",
+        lambda *args, **kwargs: pytest.fail("invalid settings must not create a cloud client"),
+    )
+    with pytest.raises(ValueError):
+        FederatedPublicationCoordinator.from_environment(MemoryStore(), placement)
+
+
+def test_azure_replica_profile_defaults_to_managed_identity(monkeypatch):
+    placement = PlacementConfig.from_dict(_config())
+    settings = {"account_url": "https://replica.example.test", "container_name": "replica"}
+    calls = []
+    monkeypatch.setenv("FSP_REGIONAL_MANAGER_ID", "manager-swc")
+    monkeypatch.setenv("FSP_REGIONAL_MANAGER_LOCATION", "azure:swedencentral")
+    monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "published")
+    monkeypatch.delenv("FSP_CATALOG_STORE_ACCOUNT_URL", raising=False)
+    monkeypatch.delenv("FSP_CATALOG_STORE_CONTAINER", raising=False)
+    monkeypatch.setenv("FSP_FEDERATION_REPLICA_STORES", json.dumps({"replica": settings}))
+    from fabric_shortcut_proxy.runtime import azure_artifact_store
+
+    def build(**kwargs):
+        calls.append(kwargs)
+        return MemoryStore()
+
+    monkeypatch.setattr(azure_artifact_store, "build_azure_store", build)
+    FederatedPublicationCoordinator.from_environment(MemoryStore(), placement)
+    assert calls == [{"auth_mode": "managed_identity", **settings}]
+
+
+def test_cloud_regional_reader_requires_explicit_settings_before_default_store(monkeypatch):
+    from enterprise.control.regional_serving_app import app_from_environment
+    from fabric_shortcut_proxy.runtime import artifact_store
+
+    value = _config()
+    value["stores"]["replica"]["provider"] = "s3"
+    placement = PlacementConfig.from_dict(value)
+    monkeypatch.setattr(PlacementConfig, "from_environment", lambda: placement)
+    monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "replica")
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_ENDPOINT_ID", "secondary")
+    monkeypatch.delenv("FSP_REGIONAL_SERVING_CLOUD_STORE", raising=False)
+    monkeypatch.setattr(
+        artifact_store, "get_default_store",
+        lambda: pytest.fail("missing regional settings must not select the Manager store"),
+    )
+    with pytest.raises(ValueError, match="requires FSP_REGIONAL_SERVING_CLOUD_STORE"):
+        app_from_environment()
+
+
+def test_cloud_regional_reader_requires_shared_catalog_before_creating_clients(monkeypatch):
+    from enterprise.control.regional_serving_app import app_from_environment
+    from fabric_shortcut_proxy.runtime import cloud_artifact_store
+
+    value = _config()
+    value["stores"]["replica"]["provider"] = "gcs"
+    placement = PlacementConfig.from_dict(value)
+    monkeypatch.setattr(PlacementConfig, "from_environment", lambda: placement)
+    monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "replica")
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_ENDPOINT_ID", "secondary")
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_CLOUD_STORE", '{"bucket":"artifacts"}')
+    monkeypatch.delenv("FSP_CATALOG_STORE_ACCOUNT_URL", raising=False)
+    monkeypatch.delenv("FSP_CATALOG_STORE_CONTAINER", raising=False)
+    monkeypatch.setattr(
+        cloud_artifact_store, "build_cloud_data_store",
+        lambda *args, **kwargs: pytest.fail("missing catalog must not create cloud clients"),
+    )
+    with pytest.raises(ValueError, match="requires a shared Azure catalog store"):
+        app_from_environment()
+
+
+def test_cloud_regional_reader_rejects_cross_profile_endpoint(monkeypatch):
+    from enterprise.control.placement import ResidencyPolicyViolation
+    from enterprise.control.regional_serving_app import app_from_environment
+    from fabric_shortcut_proxy.runtime import cloud_artifact_store
+
+    value = _config()
+    value["stores"]["replica"]["provider"] = "s3"
+    placement = PlacementConfig.from_dict(value)
+    monkeypatch.setattr(PlacementConfig, "from_environment", lambda: placement)
+    monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "replica")
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_ENDPOINT_ID", "primary")
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_CLOUD_STORE", '{"bucket":"artifacts"}')
+    monkeypatch.setenv("FSP_CATALOG_STORE_ACCOUNT_URL", "https://catalog.example.test")
+    monkeypatch.setenv("FSP_CATALOG_STORE_CONTAINER", "catalog")
+    monkeypatch.setattr(
+        cloud_artifact_store, "build_cloud_data_store",
+        lambda *args, **kwargs: pytest.fail("cross-profile binding must not create cloud clients"),
+    )
+    with pytest.raises(ResidencyPolicyViolation, match="serving store must match"):
+        app_from_environment()

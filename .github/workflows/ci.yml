@@ -102,11 +102,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install cloud artifact SDKs
-        run: pip install -e ".[dev,azureblob,s3-artifacts,gcs-artifacts]"
-      - name: Run shared artifact conformance and SDK contracts
+        run: pip install -e ".[dev,azureblob,s3-artifacts,gcs-artifacts]" -e ./enterprise
+      - name: Run artifact conformance and regional SDK contracts
         env:
           REQUIRE_SIGV4: "0"
-        run: pytest tests/test_cloud_artifact_conformance.py tests/test_azure_artifact_store.py tests/test_artifact_store.py -v
+        run: pytest tests/test_cloud_artifact_conformance.py tests/test_azure_artifact_store.py tests/test_artifact_store.py tests/enterprise/test_regional_serving.py -v
 
   helm-chart:
     name: Helm chart validation

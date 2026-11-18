@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [the Config Builder guide](CONFIG_BUILDER_GUIDE.md).
 - Added opt-in Helm ingress for the exact Manager registration and observation
   routes, and a Manager startup probe with a five-minute initialization budget.
+- Added shared Problem Details and correlation IDs for Catalog, Manager, and
+  Config Builder operator errors, with OpenAPI error and revision headers.
+- Added S3/GCS replica profile wiring and regional reader configuration, plus
+  an opt-in live-provider artifact conformance suite. Live AWS/GCP acceptance
+  and production deployment remain open.
 
 ### Changed
 
@@ -22,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   use `If-Match` to reject stale writes; callers without it remain unconditional.
 - Native saves can switch between a database URL and a credential reference.
   An explicitly empty table registry persists and is accepted at startup.
+- Azure replica profiles without an explicit auth mode now use managed identity,
+  as documented.
 
 ## [3.1.0]: 2026-10-13
 

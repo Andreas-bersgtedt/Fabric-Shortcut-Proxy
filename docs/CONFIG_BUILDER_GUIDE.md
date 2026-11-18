@@ -36,6 +36,33 @@ revision check but are not serialized with an in-progress write. This does not
 make multi-file writes rollback-atomic, protect credential-store operations, or
 add conditional writes to other endpoints.
 
+### Operator API errors (source patch, not released 3.1.0)
+
+Errors from Catalog `/catalog`, Config Builder `/_config/api`, and Manager
+operator APIs use `application/problem+json`. The Manager paths include
+`/_manager/api`, `/_monitor/api`, `/_admin`, `/agents`, and operator `/control`
+routes. On standalone Agents, the boundary covers `/_config/api`,
+`/_monitor/api`, and `/_admin` only. Agent control routes, S3 responses,
+health probes, and HTML pages keep their existing protocols.
+
+Every problem contains `type`, `title`, `status`, `code`, and `correlationId`.
+The same ID appears in `X-Correlation-ID` and structured error logs. A caller
+can supply an ID of up to 128 characters matching
+`[A-Za-z0-9][A-Za-z0-9._:-]*`; invalid IDs are replaced. Error responses use
+`Cache-Control: no-store`. FastAPI request-validation lists are replaced
+without echoing submitted values, server errors have generic details, and
+retained legacy error fields are scrubbed. URLs in those fields are replaced
+with `[REDACTED URL]`, including malformed and signed URLs.
+
+The generic codes for HTTP 400, 401, 403, 404, 405, 406, 409, 422, 428, 429,
+500, 503, and 504 are `bad_request`, `authentication_required`,
+`permission_denied`, `not_found`, `method_not_allowed`, `not_acceptable`,
+`conflict`, `validation_error`, `precondition_required`, `rate_limited`,
+`internal_error`, `service_unavailable`, and `gateway_timeout`, respectively.
+Specific codes include `stale_revision`, `configuration_not_representable`,
+`configuration_persist_failed`, and `residency_policy_violation`. OpenAPI
+documents the shared problem schema and configuration revision headers.
+
 ### Typed source/table contract (opt-in source patch)
 
 Send `X-FSP-Configuration-Contract: 3.1.0` on **every** typed
@@ -104,9 +131,7 @@ credentials. Unrepresentable state and unsupported inputs return 422 with code
 `configuration_persist_failed`. Validation diagnostics never echo supplied
 credentials. Existing authentication middleware and `config.write` enforcement
 still apply; the opt-in header grants no permission and exposes no credential
-values. The full shared Problem Details contract in
-[issue #176](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/176)
-remains separate work.
+values.
 
 #### Supported references and native persistence
 

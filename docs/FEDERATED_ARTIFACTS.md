@@ -27,7 +27,9 @@ S3 uses conditional multipart completion. Failed multipart uploads are
 aborted; abort failures are logged and the original upload failure propagates.
 GCS uses generation preconditions and resumable uploads. Identical immutable
 retries succeed; different bytes at the same key raise `ObjectConflict`.
-Verification reads bytes incrementally in the regional process.
+S3 and GCS verification compare object size and the SHA-256 metadata recorded
+at upload; they do not rehash the object on every verification. Restrict writes
+to both object data and metadata.
 
 S3 and GCS are **not** added to `ARTIFACT_STORE_BACKEND`. The current Manager
 requires cross-object fenced writes and guarded batches. An independent lease
@@ -38,10 +40,47 @@ catalog record described below; it is not a general multi-object transaction.
 
 [test_cloud_artifact_conformance.py](../tests/test_cloud_artifact_conformance.py)
 runs the same data-plane/CAS checks against memory, local, Azure Blob, S3 and
-GCS implementations. Cloud tests use SDK doubles, not live cloud services.
+GCS implementations. Default cloud tests use SDK doubles, not live services.
 The dedicated CI matrix installs all three cloud SDK extras on Python 3.11
-and 3.12. Separate backend tests cover multipart cleanup, reader bounds,
-response closure, native SDK preconditions and error propagation.
+and 3.12 and tests regional replication and serving with doubles. Separate
+backend tests cover multipart cleanup, reader bounds, response closure, native
+SDK preconditions and error propagation.
+
+### Opt-in live conformance
+
+The same shared checks can run against live Blob, S3, or GCS. They have not
+been run for this source patch. Use dedicated non-production containers or
+buckets and an identity allowed to list, read, write, and delete within a test
+prefix. Never point the gate at production data. Each test creates a random
+subprefix and deletes only objects under that subprefix, including Azure's
+mutation lock and uncommitted blocks. A failed cleanup fails the test and
+reports its prefix. Interruptions can leave objects behind; inspect the test
+prefix afterward. The large-object immutable retry test attempts three uploads
+of just over 8 MiB per provider. Bucket versioning, soft delete, legal holds, and retention
+policies can preserve deleted data. The gate does not delete versions or
+override those policies.
+
+Install the `azureblob`, `s3-artifacts`, and `gcs-artifacts` extras for the
+selected providers. Azure uses `DefaultAzureCredential`, S3 uses the AWS SDK
+credential chain, and GCS uses Application Default Credentials. Do not put
+credentials in these variables. Select only configured providers:
+
+```powershell
+$env:FSP_LIVE_ARTIFACT_PROVIDERS = "azure,s3,gcs"
+$env:FSP_LIVE_ARTIFACT_PREFIX = "fsp-conformance"
+$env:FSP_LIVE_AZURE_ACCOUNT_URL = "https://<test-account>.blob.core.windows.net"
+$env:FSP_LIVE_AZURE_CONTAINER = "<dedicated-test-container>"
+$env:FSP_LIVE_S3_BUCKET = "<dedicated-test-bucket>"
+$env:FSP_LIVE_S3_REGION = "<test-region>"
+$env:FSP_LIVE_GCS_BUCKET = "<dedicated-test-bucket>"
+.\.venv\Scripts\python.exe -m pytest tests\test_cloud_artifact_conformance.py -q
+Remove-Item Env:\FSP_LIVE_ARTIFACT_PROVIDERS
+```
+
+The prefix must be a non-root path of letters, digits, underscores, hyphens,
+and optional internal slashes; do not end it with a slash. Leave the provider
+variable unset for ordinary local and CI tests. These checks do not replace
+workload identity, IAM isolation, regional Fabric reads, or failover drills.
 
 ## Residency configuration
 
@@ -129,33 +168,65 @@ an old fence.
 
 Each generation descriptor contains store ID, key, size and SHA-256 for every
 object and its generation manifest, plus sequence and production timestamp.
-The regional verifier hashes every object's streamed bytes, even if a store's
-metadata reports a matching digest. It also checks the manifest bytes. The manifest
-must describe exactly the descriptor's objects. Replication copies immutable
+The regional verifier calls the store's verification method for each object.
+Azure, S3, and GCS compare size and stored SHA-256 metadata; the default local
+store implementation hashes streamed bytes. The verifier also hashes the
+bounded manifest bytes, which must describe exactly the descriptor's objects.
+Replication copies immutable
 objects first and the manifest last, then verifies the destination. A failed
 copy does not change the catalog's previous pointer.
 
 `FSP_FEDERATION_REPLICA_STORES` wires the Manager's reconciliation loop to
-declared Azure replica profiles with managed/workload identity. The catalog's
-primary and replica pointers are the durable work list; restart re-verifies
+declared Azure, S3, or GCS replica profiles. Azure profiles use managed/workload
+identity. S3/GCS profiles accept only `bucket`, optional `prefix`, and optional
+S3 `region`; their SDK credential chains must be configured separately. The
+catalog's primary and replica pointers are the durable work list; restart re-verifies
 immutable copies and advances only complete replicas under the original owner
 fence. The loop logs storage failures and retries on the renewal cadence.
 HA standby Managers do not initiate reconciliation or owner renewal.
 Managers still publish to the policy's one primary staging/published store.
-Changing that physical primary during handover is not implemented.
+Changing that physical primary during handover is not implemented. S3/GCS
+replica and reader wiring is unreleased and has only SDK-double evidence.
+
+For example, after declaring `aws-replica` and `gcp-replica` with their
+providers and locations in placement, a Manager can set:
+
+```powershell
+$env:FSP_FEDERATION_REPLICA_STORES = '{"aws-replica":{"bucket":"<s3-bucket>","prefix":"fsp-replica","region":"eu-west-1"},"gcp-replica":{"bucket":"<gcs-bucket>","prefix":"fsp-replica"}}'
+```
+
+The policies must name those profiles as replicas and allow their exact
+locations. The Manager still uses its Azure or local fenced control store;
+`ARTIFACT_STORE_BACKEND` does not accept `s3` or `gcs`.
 
 `python -m enterprise.regional_serving` runs a database-free S3 reader. Its
 bucket-to-dataset assignments and endpoint/store binding are checked at startup
 without relaxing work-queue dispatch restrictions. GET, HEAD, Range and listing
 read one catalog-selected regional descriptor per request; unadvertised objects
 are not exposed. SigV4 and the existing access-key scope checks are required.
-The serving workload has no source Secret and needs a separate Blob Data Reader
-identity for local publications and catalog records. The Helm workload and
-network policy are disabled by default. TLS ingress must be configured separately.
+The serving workload has no source Secret. An Azure reader needs a separate
+Blob Data Reader identity for local publications and catalog records. The
+Helm regional reader is Azure-only and disabled by default; it does not deploy
+S3/GCS readers or configure their workload identities. TLS ingress must be
+configured separately.
 
-Reads verify the committed object's size and SHA-256 before serving. This
-currently incurs a full integrity read even for Range and HEAD, followed by the
-requested read; account for that Blob traffic before production rollout.
+For an S3/GCS reader running outside that Helm workload, set
+`FSP_ARTIFACT_STORE_PROFILE` and `FSP_REGIONAL_SERVING_ENDPOINT_ID` to the
+matching regional profile and endpoint, and set
+`FSP_REGIONAL_SERVING_CLOUD_STORE` to the same bucket, prefix, and S3 region
+used by the Manager for that replica. Configure
+`FSP_CATALOG_STORE_ACCOUNT_URL` and `FSP_CATALOG_STORE_CONTAINER` for the
+shared Azure catalog, its Azure identity, and
+`FSP_REGIONAL_SERVING_BUCKETS` for the bucket-to-dataset mapping. Do not set
+remote `FSP_FEDERATION_REPLICA_STORES` on a reader. A missing cloud profile
+or shared catalog fails startup. Install the matching cloud SDK extra in both
+Manager and reader environments; the default Python image does not include
+the S3/GCS artifact extras.
+
+Reads verify the committed object's size and SHA-256 before serving. Azure, S3,
+and GCS use object properties and stored digest metadata for this check; local
+stores may stream the object to verify it. Cloud Range and HEAD requests do not
+perform a separate full-object integrity read.
 Federated staging pruning is disabled because a lagging region can still need
 an older generation. Retention/garbage collection requires a catalog-aware
 reference policy; do not remove prior publication objects manually during drills.
@@ -233,7 +304,7 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 |---|---|---|
 | #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are deployed. A planned Sweden Central→Sweden South failover and planned failback preserved the exact 12,478-byte catalog hash, generation pointers and fencing. Private Endpoints were recreated after each swap, both Fabric shortcuts were verified, RA-GZRS was restored in Sweden Central, and stale-owner renewal/publication remained rejected at fence 6. | Acceptance criteria complete. |
 | #143 | Catalog CAS is the sole federated snapshot visibility commit. Live bidirectional handover advanced fences 1→2→3, the North Europe owner published generation 6, and its stale renewal and publication authority were rejected after handback. Tests also cover both owner directions, expiry and post-commit bookkeeping failure. | Physical primary-store relocation is not implemented. |
-| #144 / #171 | S3/GCS data stores, common data-plane/CAS conformance and a cloud-SDK CI matrix. | Production AWS/GCP integration and live provider conformance are deferred beyond v3.1.0 to #171. Cross-object control mutations are deliberately unsupported. |
+| #144 / #171 | S3/GCS data stores, replica/reader wiring, common data-plane/CAS tests, and an opt-in live-provider gate. SDK-double tests cover signed regional reads and interrupted replication. | Live provider conformance, AWS/GCP deployments, workload identity, IAM isolation, Fabric reads, and failover evidence remain. Cross-object S3/GCS control mutations are unsupported. |
 | #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite; deployed Azure-IaaS Agent authenticated with the `FSP.Agent` app role and no static shared secret; live proof that its identity can write/delete only in `fsp-hybrid-staging` while catalog, published and replica writes return 403; and a deployed mTLS fallback that re-verifies the CA-signed certificate at Manager, maps its SHA-256 fingerprint to `hybrid-site-01` and exactly the `hybrid-site` pool, while rejecting missing, unknown and Agent-mismatched certificates. | Acceptance criteria complete. |
 | #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch; actual regional reader identities can read assigned objects/catalog but receive 403 on writes; catalog and reader workloads mount minimized Secrets with no `DB_URL`; NetworkPolicies expose no SQL egress; catalog storage contains JSON metadata plus an empty lease-lock blob and no Parquet; and a live out-of-boundary replica policy returns `residency_policy_violation`. | Multi-store materialization dispatch is not implemented, but it is outside the current single-primary routing contract. |
 | #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, actual Fabric reads through both regional endpoints, a measured Sweden-loss recovery read in 23.478 seconds, and live proof that a lagging replica serves the older complete generation while the unadvertised generation returns 404. A 15-generation SQL-backed run completed with zero failures, verified every advertised object and manifest, exposed no intermediate pointer, and recorded a 15.310-second maximum against the 60-second SLO. | Acceptance criteria complete. Portable receipts are needed only if verification moves to an independent worker. |

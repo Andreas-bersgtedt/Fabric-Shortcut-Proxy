@@ -120,7 +120,9 @@ def test_current_diagrams_do_not_hard_code_fsp_release_version():
 
 def test_current_status_docs_match_delivered_features_and_issue_links():
     faq = (ROOT / "FAQ.md").read_text(encoding="utf-8")
-    assert "row-target split sizing and range/date/auto planning" in faq
+    assert "row-target split sizing and integer range/auto planning" in faq
+    assert "The lower-level date and row-number planner paths are not available through normal" in faq
+    assert "table startup, which currently requires an integer key" in faq
     assert "In progress / planned:** split" not in faq
     for issue in range(89, 97):
         assert (

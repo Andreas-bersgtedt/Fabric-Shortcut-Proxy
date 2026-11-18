@@ -935,6 +935,13 @@ async def request_trace_middleware(request, call_next):
     )
     return response
 
+from fabric_shortcut_proxy.observability.operator_errors import (
+    STANDALONE_OPERATOR_API_PREFIXES,
+    install_operator_errors,
+)
+
+install_operator_errors(app, prefixes=STANDALONE_OPERATOR_API_PREFIXES)
+
 # Operational endpoints (health / readiness / metrics). Mounted BEFORE the S3
 # catch-all router so literal paths like /metrics and /_admin/stats are not
 # captured by the /{bucket} and /{bucket}/{key} routes.

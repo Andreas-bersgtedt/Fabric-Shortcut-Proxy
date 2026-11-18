@@ -174,7 +174,7 @@ federation:
   managerLocation: ""
   ownerLeaseMs: 60000
   renewIntervalSeconds: 20
-  # Azure store settings keyed by declared replica profile; empty disables reconciliation.
+  # Azure, S3, or GCS settings keyed by declared replica profile; empty disables reconciliation.
   replicaStores: {}
   regionalServing:
     enabled: false

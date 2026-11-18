@@ -522,15 +522,24 @@ class FederatedPublicationCoordinator:
             raise ValueError("regional serving must not configure remote replica stores")
         for profile, settings in replica_settings.items():
             declared = placement.stores.get(profile)
-            if profile == storage_profile or declared is None or declared.provider != "azure":
-                raise ValueError("replica stores must be distinct declared Azure profiles")
-            if not isinstance(settings, dict) or not settings.get("account_url") or not settings.get("container_name"):
-                raise ValueError("replica store requires account_url and container_name")
-            if settings.get("auth_mode", "managed_identity") not in {"managed_identity", "workload_identity"}:
-                raise ValueError("replica stores require managed or workload identity")
-            from fabric_shortcut_proxy.runtime.azure_artifact_store import build_azure_store
+            if profile == storage_profile or declared is None:
+                raise ValueError("replica stores must be distinct declared profiles")
+            if declared.provider == "azure":
+                if not isinstance(settings, dict) or not settings.get("account_url") or not settings.get("container_name"):
+                    raise ValueError("replica store requires account_url and container_name")
+                if settings.get("auth_mode", "managed_identity") not in {"managed_identity", "workload_identity"}:
+                    raise ValueError("replica stores require managed or workload identity")
+                from fabric_shortcut_proxy.runtime.azure_artifact_store import build_azure_store
 
-            stores[profile] = build_azure_store(**settings)
+                stores[profile] = build_azure_store(**{"auth_mode": "managed_identity", **settings})
+            elif declared.provider in {"s3", "gcs"}:
+                from fabric_shortcut_proxy.runtime.cloud_artifact_store import (
+                    build_cloud_data_store_from_settings,
+                )
+
+                stores[profile] = build_cloud_data_store_from_settings(declared.provider, settings)
+            else:
+                raise ValueError("replica stores require an Azure, S3 or GCS profile")
         return cls(
             GlobalCatalog(catalog_store, placement),
             RegionalReplicaVerifier(placement, stores),

@@ -17,6 +17,10 @@ from tests.cloud_artifact_fakes import (
     FakeGCSBucket,
     FakeS3,
 )
+from tests.live_artifact_support import (
+    ScopedAzureContainer, cleanup_azure, cleanup_cloud, live_prefix, live_store,
+    selected_live_providers,
+)
 from tests.test_azure_artifact_store import _Container
 
 
@@ -27,18 +31,171 @@ def test_s3_sdk_has_native_conditional_put_and_multipart_completion():
         assert {"IfMatch", "IfNoneMatch"} <= set(model.operation_model(operation).input_shape.members)
 
 
-@pytest.fixture(params=["memory", "local", "azure", "s3", "gcs"])
+@pytest.fixture(params=["memory", "local", "azure", "s3", "gcs", *selected_live_providers()])
 def store(request, tmp_path):
     if request.param == "memory":
-        return MemoryStore()
-    if request.param == "local":
-        return LocalDirStore(str(tmp_path))
-    if request.param == "azure":
+        yield MemoryStore()
+    elif request.param == "local":
+        yield LocalDirStore(str(tmp_path))
+    elif request.param == "azure":
         pytest.importorskip("azure.core")
-        return AzureBlobArtifactStore(container=_Container())
-    if request.param == "s3":
-        return S3ArtifactStore(bucket="test", client=FakeS3(), prefix="pool-a")
-    return GCSArtifactStore(bucket=FakeGCSBucket(), prefix="pool-a")
+        yield AzureBlobArtifactStore(container=_Container())
+    elif request.param == "s3":
+        yield S3ArtifactStore(bucket="test", client=FakeS3(), prefix="pool-a")
+    elif request.param == "gcs":
+        yield GCSArtifactStore(bucket=FakeGCSBucket(), prefix="pool-a")
+    else:
+        with live_store(request.param.removeprefix("live-")) as cloud_store:
+            yield cloud_store
+
+
+@pytest.mark.parametrize("prefix", ["", "/", "../other", "x//other", "test/"])
+def test_live_acceptance_requires_a_constrained_prefix(monkeypatch, prefix):
+    monkeypatch.setenv("FSP_LIVE_ARTIFACT_PREFIX", prefix)
+    with pytest.raises(ValueError):
+        live_prefix()
+
+
+def test_live_acceptance_requires_explicit_known_providers(monkeypatch):
+    monkeypatch.delenv("FSP_LIVE_ARTIFACT_PROVIDERS", raising=False)
+    assert selected_live_providers() == []
+    monkeypatch.setenv("FSP_LIVE_ARTIFACT_PROVIDERS", "s3,gcs")
+    assert selected_live_providers() == ["live-s3", "live-gcs"]
+    for selection in ("s3,unknown", "s3,s3", "all"):
+        monkeypatch.setenv("FSP_LIVE_ARTIFACT_PROVIDERS", selection)
+        with pytest.raises(ValueError):
+            selected_live_providers()
+
+
+class ScopedFakeAzureContainer(_Container):
+    def list_blobs(self, *, name_starts_with="", include=None):
+        committed = list(super().list_blobs(name_starts_with=name_starts_with))
+        if not include:
+            return committed
+        assert include == ["uncommittedblobs"]
+        committed_names = {item.name for item in committed}
+        uncommitted = [
+            type("Blob", (), {"name": name})()
+            for name in self.uncommitted
+            if name.startswith(name_starts_with) and name not in committed_names
+        ]
+        return committed + uncommitted
+
+    def delete_blob(self, name):
+        if name in self.objects:
+            self.get_blob_client(name).delete_blob()
+        self.uncommitted.pop(name, None)
+
+
+def test_live_azure_scope_includes_lock_and_cleanup_only_deletes_its_prefix():
+    container = ScopedFakeAzureContainer()
+    prefix = "fsp-tests/unique-run/"
+    scoped = ScopedAzureContainer(container, prefix)
+    store = AzureBlobArtifactStore(container=scoped)
+    container.get_blob_client("fsp-tests/unique-run-other/keep").upload_blob(b"keep")
+    store.put("g/data", b"value")
+    with pytest.raises(ValueError, match="length mismatch"):
+        store.put_stream("g/uncommitted", [b"short"], length=99)
+    assert store.compare_and_swap("catalog", None, b"record")
+    assert {item.key for item in store.list()} == {
+        "_control/.artifact-store-lock", "catalog", "g/data",
+    }
+
+    cleanup_azure(container, prefix)
+    assert set(container.objects) == {"fsp-tests/unique-run-other/keep"}
+    assert not container.uncommitted
+
+
+def test_live_azure_cleanup_rejects_an_out_of_scope_listing():
+    class InvalidListing:
+        def list_blobs(self, **_kwargs):
+            return [type("Blob", (), {"name": "another-prefix/object"})()]
+
+        def delete_blob(self, _name):
+            pytest.fail("cleanup must not delete an out-of-scope blob")
+
+    with pytest.raises(RuntimeError, match="escaped"):
+        cleanup_azure(InvalidListing(), "fsp-tests/unique-run/")
+
+
+@pytest.mark.parametrize("provider", ["s3", "gcs"])
+def test_live_cloud_cleanup_preserves_neighboring_prefixes(provider):
+    if provider == "s3":
+        client = FakeS3()
+        scoped = S3ArtifactStore(bucket="b", client=client, prefix="fsp-tests/unique-run")
+        neighbor = S3ArtifactStore(bucket="b", client=client, prefix="fsp-tests/unique-run-other")
+    else:
+        bucket = FakeGCSBucket()
+        scoped = GCSArtifactStore(bucket=bucket, prefix="fsp-tests/unique-run")
+        neighbor = GCSArtifactStore(bucket=bucket, prefix="fsp-tests/unique-run-other")
+    scoped.put("g/data", b"test")
+    neighbor.put("g/data", b"keep")
+    cleanup_cloud(scoped)
+    assert not scoped.list()
+    assert neighbor.get("g/data") == b"keep"
+
+
+@pytest.mark.parametrize("provider", ["azure", "s3", "gcs"])
+def test_live_fixture_creates_and_cleans_a_unique_prefix_without_touching_neighbors(
+    monkeypatch, provider,
+):
+    monkeypatch.setenv("FSP_LIVE_ARTIFACT_PREFIX", "fsp-tests")
+    if provider == "azure":
+        identity = pytest.importorskip("azure.identity")
+        blob_sdk = pytest.importorskip("azure.storage.blob")
+        container = ScopedFakeAzureContainer()
+        container.get_blob_client("fsp-tests/neighbor/keep").upload_blob(b"keep")
+
+        class Credential:
+            def close(self):
+                pass
+
+        class Service:
+            def __init__(self, *, account_url, credential):
+                assert account_url == "https://test.blob.core.windows.net"
+                assert isinstance(credential, Credential)
+
+            def get_container_client(self, name):
+                assert name == "test-container"
+                return container
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(identity, "DefaultAzureCredential", Credential)
+        monkeypatch.setattr(blob_sdk, "BlobServiceClient", Service)
+        monkeypatch.setenv("FSP_LIVE_AZURE_ACCOUNT_URL", "https://test.blob.core.windows.net")
+        monkeypatch.setenv("FSP_LIVE_AZURE_CONTAINER", "test-container")
+        objects = container.objects
+    elif provider == "s3":
+        boto3 = pytest.importorskip("boto3")
+        sdk_client = FakeS3()
+        monkeypatch.setattr(boto3, "client", lambda service, region_name: sdk_client)
+        monkeypatch.setenv("FSP_LIVE_S3_BUCKET", "test-bucket")
+        monkeypatch.setenv("FSP_LIVE_S3_REGION", "us-east-1")
+        neighbor = S3ArtifactStore(bucket="test-bucket", client=sdk_client, prefix="fsp-tests/neighbor")
+        neighbor.put("keep", b"keep")
+        objects = sdk_client.objects
+    else:
+        storage = pytest.importorskip("google.cloud.storage")
+        bucket = FakeGCSBucket()
+
+        class StorageClient:
+            def bucket(self, name):
+                assert name == "test-bucket"
+                return bucket
+
+        monkeypatch.setattr(storage, "Client", StorageClient)
+        monkeypatch.setenv("FSP_LIVE_GCS_BUCKET", "test-bucket")
+        neighbor = GCSArtifactStore(bucket=bucket, prefix="fsp-tests/neighbor")
+        neighbor.put("keep", b"keep")
+        objects = bucket.objects
+
+    with live_store(provider) as test_store:
+        test_store.put("data", b"test")
+        assert len(objects) == 2
+        assert any(key.startswith("fsp-tests/") and key.endswith("/data") for key in objects)
+    assert set(objects) == {"fsp-tests/neighbor/keep"}
 
 
 def test_shared_stream_range_digest_and_metadata(store):
@@ -99,6 +256,17 @@ def test_shared_immutable_put_and_conflict(store):
     assert store.get("g/data") == b"same"
 
 
+def test_shared_large_immutable_upload_and_retry(store):
+    body = b"x" * (8 * 1024 * 1024 + 1)
+    digest = hashlib.sha256(body).hexdigest()
+    store.put_stream_if_absent("g/large", io.BytesIO(body), length=len(body))
+    store.put_stream_if_absent("g/large", io.BytesIO(body), length=len(body))
+    with pytest.raises(ObjectConflict):
+        store.put_stream_if_absent("g/large", io.BytesIO(body[:-1] + b"y"), length=len(body))
+    assert store.verify("g/large", size=len(body), content_hash=digest)
+    assert store.get("g/large", offset=len(body) - 8, length=8) == body[-8:]
+
+
 def test_shared_length_failure_never_publishes(store):
     with pytest.raises(ValueError, match="length mismatch"):
         store.put_stream("g/new", [b"short"], length=99)
@@ -146,6 +314,16 @@ def test_shared_compare_and_swap(store):
     assert not store.compare_and_swap("catalog", b"wrong", b"two")
     assert store.compare_and_swap("catalog", b"one", b"two")
     assert store.get("catalog") == b"two"
+
+
+def test_shared_compare_and_swap_race_has_one_winner(store):
+    store.put("race", b"original")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(
+            lambda number: store.compare_and_swap("race", b"original", str(number).encode()),
+            range(8),
+        ))
+    assert sum(results) == 1
 
 
 @pytest.mark.parametrize("provider", ["s3", "gcs"])

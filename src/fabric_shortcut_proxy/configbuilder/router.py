@@ -1150,7 +1150,8 @@ async def save_config(request: Request) -> JSONResponse:
         if typed and request.headers.get("if-match") is None:
             raise HTTPException(status_code=428, detail="If-Match is required for typed writes")
         failure = check_revision(
-            request.headers.get("if-match"), request.headers.get("x-correlation-id", ""),
+            request.headers.get("if-match"),
+            getattr(request.state, "correlation_id", request.headers.get("x-correlation-id", "")),
         )
         if failure is not None:
             return failure
@@ -1207,7 +1208,8 @@ async def apply_config(request: Request) -> JSONResponse:
         if typed and request.headers.get("if-match") is None:
             raise HTTPException(status_code=428, detail="If-Match is required for typed writes")
         failure = check_revision(
-            request.headers.get("if-match"), request.headers.get("x-correlation-id", ""),
+            request.headers.get("if-match"),
+            getattr(request.state, "correlation_id", request.headers.get("x-correlation-id", "")),
         )
         if failure is not None:
             return failure

@@ -80,6 +80,7 @@ def create_regional_serving_app(
     endpoint = placement.serving_endpoints.get(endpoint_id)
     if endpoint is None or endpoint.storage_profile != coordinator.storage_profile:
         raise ValueError("regional endpoint must bind its own configured store")
+    provider = placement.stores[endpoint.storage_profile].provider
     if not buckets or any(not bucket or "/" in bucket for bucket in buckets):
         raise ValueError("regional serving requires bucket-to-dataset assignments")
     bucket_tenants = {}
@@ -169,9 +170,21 @@ def create_regional_serving_app(
     @app.exception_handler(OSError)
     @app.exception_handler(AzureError)
     async def unavailable(request, exc):
-        log.error("regional_catalog_unavailable", detail=str(exc))
+        log.error("regional_catalog_unavailable", error_type=type(exc).__name__)
         return Response(error_response("ServiceUnavailable", "Regional publication is unavailable", request.url.path),
                         status_code=503, media_type="application/xml")
+
+    if provider == "s3":
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        app.add_exception_handler(BotoCoreError, unavailable)
+        app.add_exception_handler(ClientError, unavailable)
+    elif provider == "gcs":
+        from google.api_core.exceptions import GoogleAPIError
+        from google.auth.exceptions import GoogleAuthError
+
+        app.add_exception_handler(GoogleAPIError, unavailable)
+        app.add_exception_handler(GoogleAuthError, unavailable)
 
     @app.get("/healthz")
     def health():
@@ -209,7 +222,7 @@ def create_regional_serving_app(
         store = await asyncio.to_thread(assigned_store, bucket)
         if store is None:
             return Response(status_code=404)
-        mount = Mount(bucket=bucket, backend="azure")
+        mount = Mount(bucket=bucket, backend=provider)
         if request.method == "HEAD":
             return passthrough.head_bucket(mount)
         return await asyncio.to_thread(passthrough.list_objects, mount, request, store)
@@ -219,7 +232,7 @@ def create_regional_serving_app(
         store = await asyncio.to_thread(assigned_store, bucket)
         if store is None:
             return Response(status_code=404)
-        mount = Mount(bucket=bucket, backend="azure")
+        mount = Mount(bucket=bucket, backend=provider)
         handler = passthrough.head_object if request.method == "HEAD" else passthrough.get_object
         return await asyncio.to_thread(handler, mount, key, request, store)
 
@@ -234,18 +247,35 @@ def app_from_environment() -> FastAPI:
     from fabric_shortcut_proxy import config
 
     placement = PlacementConfig.from_environment()
-    placement.bind_serving_store(
-        os.environ.get("FSP_ARTIFACT_STORE_PROFILE", ""), config.ARTIFACT_STORE_BACKEND,
-        os.environ.get("FSP_REGIONAL_SERVING_ENDPOINT_ID", ""),
-    )
+    profile_id = os.environ.get("FSP_ARTIFACT_STORE_PROFILE", "").strip()
+    endpoint_id = os.environ.get("FSP_REGIONAL_SERVING_ENDPOINT_ID", "").strip()
+    profile = placement.stores.get(profile_id)
+    cloud_settings = os.environ.get("FSP_REGIONAL_SERVING_CLOUD_STORE", "").strip()
+    if profile is not None and profile.provider in {"s3", "gcs"}:
+        if not cloud_settings:
+            raise ValueError("regional S3/GCS serving requires FSP_REGIONAL_SERVING_CLOUD_STORE")
+        if not (
+            os.environ.get("FSP_CATALOG_STORE_ACCOUNT_URL", "").strip()
+            and os.environ.get("FSP_CATALOG_STORE_CONTAINER", "").strip()
+        ):
+            raise ValueError("regional S3/GCS serving requires a shared Azure catalog store")
+        placement.bind_serving_store(profile_id, profile.provider, endpoint_id)
+        from fabric_shortcut_proxy.runtime.cloud_artifact_store import (
+            build_cloud_data_store_from_settings,
+        )
+
+        store = build_cloud_data_store_from_settings(profile.provider, json.loads(cloud_settings))
+    else:
+        if cloud_settings:
+            raise ValueError("regional cloud store settings require an S3/GCS serving profile")
+        placement.bind_serving_store(profile_id, config.ARTIFACT_STORE_BACKEND, endpoint_id)
+        store = get_default_store()
     coordinator = FederatedPublicationCoordinator.from_environment(
-        get_default_store(), placement,
-        serving_endpoint_id=os.environ.get("FSP_REGIONAL_SERVING_ENDPOINT_ID", ""),
+        store, placement, serving_endpoint_id=endpoint_id,
     )
     buckets = json.loads(os.environ.get("FSP_REGIONAL_SERVING_BUCKETS", "{}"))
     if not isinstance(buckets, dict) or any(not isinstance(value, str) for value in buckets.values()):
         raise ValueError("FSP_REGIONAL_SERVING_BUCKETS must map buckets to dataset IDs")
     return create_regional_serving_app(
-        coordinator, endpoint_id=os.environ.get("FSP_REGIONAL_SERVING_ENDPOINT_ID", ""),
-        buckets=buckets,
+        coordinator, endpoint_id=endpoint_id, buckets=buckets,
     )

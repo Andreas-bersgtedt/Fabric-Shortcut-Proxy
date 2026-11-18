@@ -423,3 +423,24 @@ def build_cloud_data_store(provider: str, *, bucket: str, prefix: str = "", regi
         from google.cloud import storage
         return GCSArtifactStore(bucket=storage.Client().bucket(bucket), prefix=prefix)
     raise ValueError(f"unsupported cloud data store provider: {provider}")
+
+
+def build_cloud_data_store_from_settings(provider: str, settings: object) -> ArtifactStore:
+    """Validate a non-secret profile before constructing the cloud SDK client."""
+    if provider not in {"s3", "gcs"}:
+        raise ValueError("cloud artifact profiles require the s3 or gcs provider")
+    if not isinstance(settings, dict) or set(settings) - {"bucket", "prefix", "region"}:
+        raise ValueError("cloud artifact settings may contain only bucket, prefix and region")
+    bucket = settings.get("bucket")
+    prefix = settings.get("prefix", "")
+    region = settings.get("region", "")
+    if not isinstance(bucket, str) or not bucket.strip() or bucket != bucket.strip():
+        raise ValueError("cloud artifact bucket must be a non-empty string")
+    if any(char in bucket for char in "/\\:@?#") or any(char.isspace() for char in bucket):
+        raise ValueError("cloud artifact bucket must be a name, not a credential-bearing URL")
+    if not isinstance(prefix, str) or not isinstance(region, str) or region != region.strip():
+        raise ValueError("cloud artifact prefix and region must be strings")
+    if provider == "gcs" and region:
+        raise ValueError("GCS artifact profiles do not accept a region setting")
+    _reject_traversal(prefix)
+    return build_cloud_data_store(provider, bucket=bucket, prefix=prefix, region=region)

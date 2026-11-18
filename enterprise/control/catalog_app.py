@@ -10,6 +10,10 @@ from pydantic import BaseModel, Field
 from enterprise.control.federation import CatalogConflict, GlobalCatalog
 from enterprise.control.placement import PlacementConfig, ResidencyPolicyViolation
 from fabric_shortcut_proxy.observability.logging import configure_logging
+from fabric_shortcut_proxy.observability.operator_errors import (
+    CATALOG_API_PREFIXES,
+    install_operator_errors,
+)
 from fabric_shortcut_proxy.security.operator_auth import ManagerAuthMiddleware
 
 
@@ -69,6 +73,7 @@ def create_catalog_app(
         operator_only=True,
         operator_prefixes=("/catalog",),
     )
+    install_operator_errors(app, prefixes=CATALOG_API_PREFIXES)
 
     @app.exception_handler(CatalogConflict)
     async def catalog_conflict(_request, exc: CatalogConflict):

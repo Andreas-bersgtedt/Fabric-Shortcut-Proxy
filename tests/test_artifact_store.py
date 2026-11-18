@@ -145,8 +145,9 @@ def test_localdir_root_created_lazily(tmp_path):
 def test_build_store_factory(tmp_path):
     assert isinstance(build_store("memory"), MemoryStore)
     assert isinstance(build_store("local", local_dir=str(tmp_path)), LocalDirStore)
-    with pytest.raises(ValueError):
-        build_store("s3")
+    for backend in ("s3", "gcs"):
+        with pytest.raises(ValueError):
+            build_store(backend)
 
 
 def test_default_store_singleton_and_reset():

@@ -40,6 +40,10 @@ from enterprise.control.work_queue import DurableWorkQueue
 from enterprise.control.supervisor import AgentSupervisor
 from enterprise.control.transport import create_control_router
 from fabric_shortcut_proxy.observability.logging import configure_logging, get_logger
+from fabric_shortcut_proxy.observability.operator_errors import (
+    OPERATOR_API_PREFIXES,
+    install_operator_errors,
+)
 from fabric_shortcut_proxy.security.agent_auth import AgentAuthMiddleware
 
 log = get_logger(__name__)
@@ -512,6 +516,7 @@ def create_manager_app() -> FastAPI:
     app.add_middleware(AuthorizationMiddleware)
     app.add_middleware(ManagerAuthMiddleware)
     app.add_middleware(AgentAuthMiddleware)
+    install_operator_errors(app, prefixes=OPERATOR_API_PREFIXES)
     app.include_router(create_control_router(service))
 
     @app.get("/healthz")

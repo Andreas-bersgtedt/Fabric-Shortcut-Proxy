@@ -183,11 +183,19 @@ mismatches and unmapped identities fail closed.
   endpoint CIDR and port 443 to `catalog.egressAllowList`.
 - `federation.replicaStores`: Manager-only map of declared replica profiles to
   Azure Blob `account_url`, `container_name`, `auth_mode`, and optional identity
-  settings. Add private replica Blob and identity endpoint egress explicitly.
+  settings, or S3/GCS `bucket`, `prefix`, and optional S3 `region`. S3/GCS
+  replicas require an image built with their SDK extras and configured workload
+  identity. Their uploads also require a writable `TMPDIR` inside the allowed
+  residency boundary. The Manager's root filesystem is read-only, and the
+  chart does not configure a cloud upload spool; customize the deployment with
+  protected, capacity-sized writable storage before using these replicas. Add
+  storage and identity endpoint egress explicitly.
   The Manager reconciles catalog pointers on its renewal cadence; interrupted
   copies resume by immutable create-if-absent after restart.
 - `federation.regionalServing`: optional database-free, SigV4-authenticated S3
-  Deployment and ClusterIP Service. Configure `endpointId`, `storageProfile`,
+  Deployment and ClusterIP Service. The chart currently supports Azure Blob
+  regional readers only; S3/GCS reader deployments and workload identity are
+  not supplied by the chart. Configure `endpointId`, `storageProfile`,
   `buckets`, `artifactStoreAccountUrl`, and `artifactStoreContainer`.
   `serviceAccountName` and `clientId` create an annotated workload identity with
   **Storage Blob Data Reader** on both local publications and catalog records.

@@ -679,10 +679,11 @@ Create one Fabric shortcut per table.
 | `FSP_POLICY_BUNDLE_KEY_ID` | *(empty)* | Optional pinned `key_id`; a different bundle key ID fails startup |
 | `FSP_POLICY_BUNDLE_TIMEOUT_SECONDS` | `5` | Positive HTTPS fetch timeout. Connection failures, HTTP 408/429, HTTP 5xx, and timeouts use the verified cache |
 | `FSP_EGRESS_PRICING` | `{}` | Optional JSON with `currency` and decimal per-GiB `rates` keyed by exact `source->destination`; byte accounting does not depend on pricing |
-| `FSP_ARTIFACT_STORE_PROFILE` | *(empty)* | Placement store profile bound to the configured artifact backend and used for verified catalog advertisement |
-| `FSP_FEDERATION_REPLICA_STORES` | `{}` | Manager-only JSON map of declared replica profile IDs to Azure Blob settings: `account_url`, `container_name`, `auth_mode`, and optional `client_id`, `tenant_id`, `token_file`. Identity auth only; configures durable reconciliation on the renewal cadence |
+| `FSP_ARTIFACT_STORE_PROFILE` | *(empty)* | Placement profile bound to the Manager artifact backend or the regional reader's assigned store |
+| `FSP_FEDERATION_REPLICA_STORES` | `{}` | Manager-only JSON map of declared replica profile IDs to Azure Blob settings or S3/GCS `bucket`, optional `prefix`, and optional S3 `region`. Azure supports managed/workload identity; S3/GCS use SDK credential chains. Configures reconciliation on the renewal cadence |
 | `FSP_REGIONAL_SERVING_ENDPOINT_ID` | *(empty)* | Assigned placement endpoint for `python -m enterprise.regional_serving`; the local store must match its provider and location |
 | `FSP_REGIONAL_SERVING_BUCKETS` | `{}` | Regional reader JSON map of S3 bucket names to `connection_id::source_table`; no remote replica stores or database access are needed |
+| `FSP_REGIONAL_SERVING_CLOUD_STORE` | *(empty)* | Unreleased S3/GCS regional reader settings: JSON with `bucket`, optional `prefix`, and optional S3 `region`. The matching placement profile and shared Azure catalog must be configured; the Manager control store remains Azure/local |
 | `ENABLE_STORAGE_PROXY` | `0` | Serve mounted buckets (`config.mounts.json`) as read-only passthrough, see §14 |
 | `ENFORCE_MOUNT_AUTH` | `1` | Require SigV4 on mounted buckets even when `REQUIRE_SIGV4=0` |
 | `ENABLE_AUDIT_LOG` | `1` | Audit every mounted-object access (identity/bucket/key/bytes) |

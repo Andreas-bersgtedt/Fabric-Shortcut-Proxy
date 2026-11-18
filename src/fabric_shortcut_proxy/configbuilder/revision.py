@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import threading
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -24,6 +23,7 @@ REVISION_RESPONSES = {
             },
         },
     },
+    406: {"description": "The requested configuration contract is unsupported."},
 }
 WRITE_REVISION_RESPONSES = {
     **REVISION_RESPONSES,
@@ -49,6 +49,7 @@ WRITE_REVISION_RESPONSES = {
             },
         },
     },
+    428: {"description": "Typed configuration writes require If-Match."},
 }
 WRITE_REVISION_OPENAPI = {
     "parameters": [{
@@ -152,11 +153,9 @@ def check_revision(if_match: str | None, correlation_id: str) -> JSONResponse | 
     if if_match == current:
         return None
     from fabric_shortcut_proxy.observability.logging import get_logger
+    from fabric_shortcut_proxy.observability.operator_errors import correlation_id as safe_correlation_id
 
-    correlation = correlation_id if (
-        correlation_id and len(correlation_id) <= 128
-        and all(32 <= ord(char) < 127 for char in correlation_id)
-    ) else str(uuid.uuid4())
+    correlation = safe_correlation_id(correlation_id)
     get_logger(__name__).warning(
         "configuration_revision_rejected",
         code="stale_revision", correlation_id=correlation,

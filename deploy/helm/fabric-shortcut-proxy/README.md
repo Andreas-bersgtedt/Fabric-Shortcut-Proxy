@@ -24,6 +24,19 @@ reference.
 The Namespace, persistent volumes, and persistent claims carry Helm's `keep`
 policy so uninstalling the release does not remove retained state.
 
+The Manager and regional reader require the Enterprise package in the Python
+image. To include both cloud artifact SDKs alongside the default extras:
+
+```powershell
+docker build -f Dockerfile.python `
+  --build-arg FSP_ENTERPRISE=1 `
+  --build-arg FSP_EXTRAS=postgres,azureblob,keyvault,onelake,s3-artifacts,gcs-artifacts `
+  -t fabric-shortcut-proxy-cloud:dev .
+```
+
+Publish the image to the cluster's registry and set `images.python` to its
+immutable digest. The chart does not build or publish images.
+
 ## Windows PowerShell
 
 Install the pinned Helm version:

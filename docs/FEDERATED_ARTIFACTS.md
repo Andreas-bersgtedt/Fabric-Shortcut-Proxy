@@ -256,8 +256,9 @@ shared Azure catalog, its Azure identity, and
 `FSP_REGIONAL_SERVING_BUCKETS` for the bucket-to-dataset mapping. Do not set
 remote `FSP_FEDERATION_REPLICA_STORES` on a reader. A missing cloud profile
 or shared catalog fails startup. Install the matching cloud SDK extra in both
-Manager and reader environments; the default Python image does not include
-the S3/GCS artifact extras.
+Manager and reader environments. The default Python image does not include
+the Enterprise package or S3/GCS artifact extras; see the
+[Helm image build example](../deploy/helm/fabric-shortcut-proxy/README.md#prerequisites).
 
 Reads verify the committed object's size and SHA-256 before serving. Azure, S3,
 and GCS use object properties and stored digest metadata for this check; local

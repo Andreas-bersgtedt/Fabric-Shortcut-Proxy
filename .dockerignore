@@ -14,6 +14,20 @@ __pycache__
 *.log
 artifacts
 cache-data
+.artifacts
+.open_mirror_state
+.parquet_cache
+build
+dist
+**/secrets
+**/secrets.json
+**/.env
+**/.env.*
+**/*.env
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.duckdb
 agent-cpp/agent
 agent-cpp/build
 agent-cpp/native/build
@@ -26,3 +40,4 @@ config.open_mirror.json
 config.performance.json
 config.system.json
 config.tables.json
+config.tokenization.json

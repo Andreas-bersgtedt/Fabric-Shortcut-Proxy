@@ -12,7 +12,7 @@ using it outside a local lab.
 
 ![Config Builder overview](images/config-builder-overview.png)
 
-### Conditional configuration writes (source patch, not released 3.1.0)
+### Conditional configuration writes (starting in 3.2.0)
 
 `GET /_config/api/current` returns an opaque `ETag` and `Cache-Control: no-store`.
 The native response is unchanged: `settings` is an effective-settings array, not
@@ -36,7 +36,7 @@ revision check but are not serialized with an in-progress write. This does not
 make multi-file writes rollback-atomic, protect credential-store operations, or
 add conditional writes to other endpoints.
 
-### Operator API errors (source patch, not released 3.1.0)
+### Operator API errors (starting in 3.2.0)
 
 Errors from Catalog `/catalog`, Config Builder `/_config/api`, and Manager
 operator APIs use `application/problem+json`. The Manager paths include
@@ -63,13 +63,14 @@ Specific codes include `stale_revision`, `configuration_not_representable`,
 `configuration_persist_failed`, and `residency_policy_violation`. OpenAPI
 documents the shared problem schema and configuration revision headers.
 
-### Typed source/table contract (opt-in source patch)
+### Typed source/table contract (opt-in in 3.2.0)
 
 Send `X-FSP-Configuration-Contract: 3.1.0` on **every** typed
 `GET /_config/api/current`, `POST /_config/api/apply`, or
 `POST /_config/api/save`. Without this header, the browser keeps its existing
 settings-array response and native mutation format. An unsupported header value
 returns 406 rather than falling back to native interpretation.
+The header identifies the typed contract and remains `3.1.0` in release 3.2.0.
 
 An opted-in current response is exactly a settings object:
 

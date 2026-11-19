@@ -117,5 +117,7 @@ def test_live_gcs_mount_and_artifact_conformance_gate(capsys):
                 blob.delete()
             for blob in bucket.list_blobs(prefix=f"{prefix}/"):
                 blob.delete()
-        except NotFound:
-            pass
+        except Exception as exc:
+            status = getattr(exc, "code", None)
+            if status != 404 and exc.__class__.__name__ not in {"NotFound", "GoogleNotFound"}:
+                raise

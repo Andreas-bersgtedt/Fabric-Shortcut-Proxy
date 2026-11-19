@@ -76,3 +76,44 @@ async def test_sync_query_timeout_is_reported(sync_sqlite, monkeypatch):
         await executor.execute_split_query(
             "SELECT 1", {}, split_index=0, max_retries=0
         )
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "INSERT INTO t_sync (id, v) VALUES (3, 'c')",
+        "UPDATE t_sync SET v='c'",
+        "DELETE FROM t_sync",
+        "CREATE TABLE should_not_exist (id INTEGER)",
+        "DROP TABLE t_sync",
+        "MERGE INTO t_sync USING x ON 1=1",
+        "EXPORT DATA OPTIONS(uri='gs://bucket/*') AS SELECT * FROM t_sync",
+        "SELECT * FROM EXTERNAL_QUERY('connection', 'SELECT 1')",
+    ],
+)
+def test_read_only_sql_rejects_writes_ddl_and_cross_service(sql):
+    with pytest.raises(ValueError, match="read-only|write|DDL|cross-service"):
+        executor._validate_read_only_sql(sql)
+
+
+def test_read_only_sql_allows_select_and_with(monkeypatch):
+    monkeypatch.setattr(config, "DB_URL", "sqlite:///:memory:")
+    assert executor._validate_read_only_sql("SELECT 1") == "SELECT 1"
+    assert executor._validate_read_only_sql("WITH q AS (SELECT 1) SELECT * FROM q").startswith(
+        "WITH"
+    )
+    assert executor._validate_read_only_sql("PRAGMA data_version") == "PRAGMA data_version"
+
+
+def test_bigquery_sync_engine_does_not_pass_dbapi_timeout_arguments(monkeypatch):
+    captured = {}
+
+    def fake_create_engine(db_url, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(executor, "create_engine", fake_create_engine)
+    executor._make_sync_engine(
+        "bigquery://gcp-project/dataset", timeout_seconds=7
+    )
+    assert "connect_args" not in captured

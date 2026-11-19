@@ -34,6 +34,8 @@ def _file_uri_path(uri_path: str) -> str:
 def _not_found(exc: Exception) -> bool:
     if getattr(exc, "status_code", None) == 404:
         return True
+    if getattr(exc, "code", None) == 404:
+        return True
     response = getattr(exc, "response", None)
     if isinstance(response, dict):
         code = str((response.get("Error") or {}).get("Code") or "")
@@ -91,7 +93,7 @@ class ScopedIcebergFileIO(FileIO):
         from fabric_shortcut_proxy.storage.objectstore_reader import _remote_object_key
 
         key = _remote_object_key(self._mount, location, table_root=self._table_root)
-        scheme = "s3" if self._backend == "s3" else "az"
+        scheme = "s3" if self._backend == "s3" else ("az" if self._backend == "azure" else "gs")
         return f"{scheme}://{self._mount.root}/{key}", key
 
     def new_input(self, location: str) -> InputFile:
@@ -113,7 +115,11 @@ class ScopedIcebergFileIO(FileIO):
                     "ContentLength"
                 ]
             )
-        return int(self._client.get_blob_client(key).get_blob_properties().size)
+        if self._backend == "azure":
+            return int(self._client.get_blob_client(key).get_blob_properties().size)
+        blob = self._client.blob(key)
+        blob.reload()
+        return int(getattr(blob, "size", 0) or 0)
 
     def _exists(self, key: str) -> bool:
         if self._backend == "local":
@@ -142,13 +148,19 @@ class ScopedIcebergFileIO(FileIO):
                 return body.read()
             finally:
                 body.close()
-        return (
-            self._client.get_blob_client(key)
-            .download_blob(
-                offset=start,
-                length=size,
+        if self._backend == "azure":
+            return (
+                self._client.get_blob_client(key)
+                .download_blob(
+                    offset=start,
+                    length=size,
+                )
+                .readall()
             )
-            .readall()
+        return self._client.blob(key).download_as_bytes(
+            start=start,
+            end=start + size - 1,
+            raw_download=True,
         )
 
 

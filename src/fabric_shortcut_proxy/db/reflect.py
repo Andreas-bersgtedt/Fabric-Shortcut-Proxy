@@ -37,6 +37,10 @@ _DRIVERS: dict[str, str] = {
     "oracle": "oracle+oracledb",
     "oraclesql": "oracle+oracledb",
     "databricks": "databricks",
+    "bigquery": "bigquery",
+    "googlebigquery": "bigquery",
+    "google_bigquery": "bigquery",
+    "bq": "bigquery",
     "redshift": "redshift+redshift_connector",
     "teradata": "teradatasql",
     "impala": "impala",
@@ -48,6 +52,10 @@ _DEFAULT_PORTS: dict[str, int] = {
     "mssql": 1433, "sqlserver": 1433,
     "oracle": 1521, "oraclesql": 1521,
     "databricks": 443,
+    "bigquery": 443,
+    "googlebigquery": 443,
+    "google_bigquery": 443,
+    "bq": 443,
     "redshift": 5439,
     "teradata": 1025,
     "impala": 21050,
@@ -187,6 +195,28 @@ def build_url(
             f"Dialect {dialect!r} requires connection field(s): {', '.join(req)}."
         )
 
+    if key in ("bigquery", "googlebigquery", "google_bigquery", "bq"):
+        if not host:
+            raise ValueError("BigQuery requires a GCP project id in the Host field.")
+        if not database:
+            raise ValueError("BigQuery requires a default dataset in the Database field.")
+        if auth_method not in ("", "sql", "adc", "default"):
+            raise ValueError(
+                "BigQuery uses Application Default Credentials or workload identity; "
+                "do not configure a username/password or another auth method."
+            )
+        if username or password:
+            raise ValueError(
+                "BigQuery authentication must use ADC/workload identity; "
+                "username/password credentials are not accepted."
+            )
+        return URL.create(
+            "bigquery",
+            host=host,
+            database=database,
+            query=q,
+        )
+
     if drivername.startswith("mssql"):
         q.setdefault("driver", driver or _default_mssql_odbc_driver())
         if trust_cert:
@@ -268,7 +298,8 @@ class SchemaReflector:
         if self._is_async_driver(self._url.drivername):
             self._async_engine = _make_async_engine(self._url)
         else:
-            self._sync_engine = create_engine(self._url, echo=False, pool_pre_ping=True)
+            kwargs = {"echo": False, "pool_pre_ping": True}
+            self._sync_engine = create_engine(self._url, **kwargs)
         return self
 
     async def __aexit__(self, *exc) -> None:
@@ -346,10 +377,11 @@ class SchemaReflector:
     async def columns(self, source_table: str) -> list[dict]:
         schema, name = _split_qualified(source_table)
         cols = await self._run(lambda c: inspect(c).get_columns(name, schema=schema))
+        source_dialect = "bigquery" if "bigquery" in self._url.drivername.lower() else None
         return [
             {
                 "name": col["name"],
-                "type": sqlalchemy_type_to_iceberg(col["type"]),
+                "type": sqlalchemy_type_to_iceberg(col["type"], source_dialect),
                 "nullable": bool(col.get("nullable", True)),
             }
             for col in cols

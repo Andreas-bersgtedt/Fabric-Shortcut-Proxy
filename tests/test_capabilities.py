@@ -14,7 +14,18 @@ def test_flavor_from_db_url():
     assert flavor_from_db_url("mssql+aioodbc://h/db") == "mssql"
     assert flavor_from_db_url("oracle+oracledb://h/db") == "oracle"
     assert flavor_from_db_url("databricks://token:pat@dbc") == "databricks"
+    assert flavor_from_db_url("bigquery://gcp-project/dataset") == "bigquery"
     assert flavor_from_db_url("sqlite+aiosqlite:///x.db") == "sqlite"
+
+
+def test_bigquery_is_conservative_beta_source():
+    matrix = capability_matrix()
+    bigquery = matrix["bigquery"]
+    assert bigquery["support_status"] == "beta"
+    assert bigquery["execution_mode"] == "sync-threadpool-fallback"
+    assert bigquery["supports_primary_key_reflection"] is False
+    assert bigquery["requires_explicit_split_key"] is True
+    assert bigquery["supports_view_listing"] is True
 
 
 def test_capability_matrix_has_oracle_and_databricks():

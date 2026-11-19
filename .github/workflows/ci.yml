@@ -102,7 +102,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install cloud artifact SDKs
-        run: pip install -e ".[dev,azureblob,s3-artifacts,gcs-artifacts]" -e ./enterprise
+        run: pip install -e ".[dev,azureblob,s3-artifacts,gcs-artifacts,gcsproxy,bigquery]" -e ./enterprise
       - name: Run artifact conformance and regional SDK contracts
         env:
           REQUIRE_SIGV4: "0"
@@ -128,7 +128,7 @@ jobs:
         run: |
           docker build -f Dockerfile.python \
             --build-arg FSP_ENTERPRISE=1 \
-            --build-arg FSP_EXTRAS=postgres,azureblob,keyvault,onelake,s3-artifacts,gcs-artifacts \
+            --build-arg FSP_EXTRAS=postgres,azureblob,keyvault,onelake,s3-artifacts,gcs-artifacts,gcsproxy,bigquery \
             -t fsp-cloud-image:ci .
 
       - name: Verify installed packages and excluded local data

@@ -1,4 +1,4 @@
-"""Mount registry for local, S3-compatible, and Azure storage passthrough.
+"""Mount registry for local, S3-compatible, and Azure storage passthrough, plus GCS.
 
 A **mount** maps an S3 *bucket* to a storage backend + optional prefix so the
 proxy can serve existing files as byte passthrough. Loaded from the gitignored
@@ -6,9 +6,10 @@ proxy can serve existing files as byte passthrough. Loaded from the gitignored
 feature is inert unless configured AND ``ENABLE_STORAGE_PROXY`` is set.
 
 Supported backends are ``local`` for filesystem, NFS, or SMB paths; ``s3`` for
-AWS S3, MinIO, and compatible services; and ``azure`` for Blob Storage or ADLS
-Gen2. Each remote backend uses its configured credential provider. Unknown
-backends are rejected during configuration loading.
+AWS S3, MinIO, and compatible services; ``azure`` for Blob Storage or ADLS
+Gen2; and ``gcs`` for Google Cloud Storage. Each remote backend uses its
+configured credential provider. Unknown backends are rejected during
+configuration loading.
 
 Security: a mount bucket must differ from the DB warehouse bucket, keys are
 confined to the mount's ``prefix`` subtree (the backend also rejects ``..``), and
@@ -30,7 +31,7 @@ from fabric_shortcut_proxy.observability.logging import get_logger
 log = get_logger(__name__)
 
 _CONFIG_FILE = os.environ.get("MOUNTS_CONFIG_FILE", "config.mounts.json")
-_SUPPORTED_BACKENDS = ("local", "s3", "azure")   # local (P1), s3/MinIO (P2), Azure Blob/ADLS (P3)
+_SUPPORTED_BACKENDS = ("local", "s3", "azure", "gcs")
 
 
 def _enabled() -> bool:
@@ -45,7 +46,7 @@ def _enabled() -> bool:
 class Mount:
     """One bucket served as passthrough from a storage backend."""
     bucket: str
-    backend: str                 # "local" | "s3" | "azure"
+    backend: str                 # "local" | "s3" | "azure" | "gcs"
     root: str = ""               # local: filesystem path; s3: upstream bucket; azure: container
     prefix: str = ""             # confine serving to this subtree of the backend
     read_only: bool = True
@@ -200,6 +201,9 @@ def _build_mounts() -> dict[str, Mount]:
         if m.backend == "azure" and not m.root:
             print(f"[mounts] azure mount {m.bucket!r} missing 'root' (container); skipped.", file=sys.stderr)
             continue
+        if m.backend == "gcs" and not m.root:
+            print(f"[mounts] gcs mount {m.bucket!r} missing 'root' (upstream bucket); skipped.", file=sys.stderr)
+            continue
         if not m.read_only:
             print(f"[mounts] mount {m.bucket!r}: read-write not supported yet; serving read-only.", file=sys.stderr)
             m = replace(m, read_only=True)
@@ -289,6 +293,9 @@ def _build_backend(mount: Mount) -> ArtifactStore:
     if mount.backend == "azure":
         from fabric_shortcut_proxy.storage.azure_store import build_azure_store
         return build_azure_store(mount)
+    if mount.backend == "gcs":
+        from fabric_shortcut_proxy.storage.gcs_store import build_gcs_store
+        return build_gcs_store(mount)
     raise ValueError(f"unsupported mount backend: {mount.backend!r}")
 
 
@@ -328,6 +335,15 @@ def validate_mounts() -> list[str]:
                 from fabric_shortcut_proxy.storage.azure_auth import resolve_azure_auth, validate_azure_auth
                 auth = resolve_azure_auth(m)
                 problems.extend(f"mount {bucket!r}: {p}" for p in validate_azure_auth(auth))
+            except Exception as exc:  # noqa: BLE001 - surface a clean message, never a secret
+                problems.append(f"mount {bucket!r}: {exc}")
+        elif m.backend == "gcs":
+            if not m.root:
+                problems.append(f"mount {bucket!r}: gcs backend needs 'root' (the upstream bucket)")
+            try:
+                from fabric_shortcut_proxy.storage.gcs_auth import resolve_gcs_auth, validate_gcs_auth
+                auth = resolve_gcs_auth(m)
+                problems.extend(f"mount {bucket!r}: {p}" for p in validate_gcs_auth(auth))
             except Exception as exc:  # noqa: BLE001 - surface a clean message, never a secret
                 problems.append(f"mount {bucket!r}: {exc}")
     return problems

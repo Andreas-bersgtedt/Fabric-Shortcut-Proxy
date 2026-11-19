@@ -241,6 +241,34 @@
         "clientId": { "type": "string" }
       }
     },
+    "gcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "credentialsConfigMap",
+        "credentialsFileName",
+        "credentialMountPath",
+        "tokenMountPath",
+        "tokenAudience",
+        "project",
+        "bucket",
+        "dataset",
+        "location"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "credentialsConfigMap": { "type": "string" },
+        "credentialsFileName": { "type": "string", "minLength": 1 },
+        "credentialMountPath": { "type": "string", "minLength": 1 },
+        "tokenMountPath": { "type": "string", "minLength": 1 },
+        "tokenAudience": { "type": "string" },
+        "project": { "type": "string" },
+        "bucket": { "type": "string" },
+        "dataset": { "type": "string" },
+        "location": { "type": "string" }
+      }
+    },
     "nodeSelector": { "type": "object" },
     "storage": {
       "type": "object",

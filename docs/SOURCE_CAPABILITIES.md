@@ -16,6 +16,7 @@ currently requires an integer split key and rejects temporal keys.
 | redshift | beta | yes | yes | no | yes | yes | yes | no | no | no | no | no | no |
 | teradata | beta | yes | yes | no | yes | yes | yes | no | no | no | no | no | no |
 | impala | supported | yes | no | yes | yes | yes | yes | no | no | no | no | no | no |
+| bigquery | beta | yes | no | yes | yes | yes | yes | no | no | no | no | no | no |
 
 ## Beta release gate
 
@@ -36,6 +37,23 @@ following checks pass:
 locks the status and safety constraints. Passing this gate permits a beta
 release. It does not satisfy the live evidence required to promote a dialect
 from `beta` to `supported`.
+
+## BigQuery beta gate
+
+BigQuery is registered as beta with synchronous SQLAlchemy execution, explicit
+integer split-key selection, view listing, range/modulo planning, and no
+primary-key or row-estimate claim. It requires `sqlalchemy-bigquery`,
+`google-cloud-bigquery`, Application Default Credentials or workload identity,
+and an explicit GCP project plus dataset.
+
+The live gate is opt-in in `tests/test_integration_source_capabilities.py`.
+Set `FSP_RUN_SOURCE_CAPABILITY_GATES=1`, `BIGQUERY_PROJECT`,
+`BIGQUERY_DATASET`, and `INTEGRATION_BIGQUERY_TABLE`,
+`INTEGRATION_BIGQUERY_VIEW`, `INTEGRATION_BIGQUERY_INTEGER_KEY`, and
+`INTEGRATION_BIGQUERY_DATE_COLUMN`. Optionally set `BIGQUERY_LOCATION`.
+The gate discovers tables and views, reflects types, performs range, modulo,
+date coverage, exact count, and pool reconnect checks. It does not test writes
+or DDL.
 
 ## Important limits and fallbacks
 
@@ -112,6 +130,8 @@ $env:INTEGRATION_ORACLE_PK_COLUMN = "ID"
 # unauthenticated connection; set IMPALA_HOST/PORT/DATABASE only. For Databricks use
 # DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_HTTP_PATH, optional
 # DATABRICKS_CATALOG / DATABRICKS_SCHEMA, and INTEGRATION_DATABRICKS_* values.
+# For BigQuery use BIGQUERY_PROJECT, BIGQUERY_DATASET, optional BIGQUERY_LOCATION,
+# and INTEGRATION_BIGQUERY_* table/view/key/date values.
 .\.venv\Scripts\python.exe -m pytest tests/test_integration_source_capabilities.py -q
 ```
 

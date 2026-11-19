@@ -82,7 +82,7 @@ def _package_version() -> str:
     try:
         return package_version("fabric-shortcut-proxy")
     except PackageNotFoundError:
-        return "3.2.0"
+        return "3.2.1"
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +127,7 @@ def _conn_fields(d: dict) -> dict:
         password = token
 
     query: dict[str, str] = {}
-    for k in ("http_path", "catalog", "schema"):
+    for k in ("http_path", "catalog", "schema", "location"):
         v = d.get(k)
         if v:
             query[k] = str(v)
@@ -199,6 +199,7 @@ def _connection_form_fields(connection_id: str, db_url: str) -> dict:
         else "mssql" if driver.startswith("mssql")
         else "oracle" if driver.startswith("oracle")
         else "databricks" if driver.startswith("databricks")
+        else "bigquery" if driver.startswith("bigquery")
         else "redshift" if driver.startswith("redshift")
         else "teradata" if driver.startswith("teradatasql")
         else "impala" if driver.startswith("impala")
@@ -208,6 +209,8 @@ def _connection_form_fields(connection_id: str, db_url: str) -> dict:
     query = {str(key).lower(): str(value) for key, value in url.query.items()}
     auth_method = "sql"
     client_id = ""
+    if dialect == "bigquery":
+        auth_method = "adc"
     if dialect == "mssql":
         authentication = query.get("authentication", "").lower()
         trusted = query.get("trusted_connection", "").lower()
@@ -238,7 +241,8 @@ def _connection_form_fields(connection_id: str, db_url: str) -> dict:
         "database": database,
         "username": (
             ""
-            if dialect == "databricks" or auth_method in {"spn", "entra_proxy"}
+            if dialect in {"databricks", "bigquery"}
+            or auth_method in {"spn", "entra_proxy"}
             else (url.username or "")
         ),
         "password": "",
@@ -249,6 +253,7 @@ def _connection_form_fields(connection_id: str, db_url: str) -> dict:
         "http_path": query.get("http_path", ""),
         "catalog": query.get("catalog", ""),
         "schema": query.get("schema", ""),
+        "location": query.get("location", ""),
         "auth_method": auth_method,
         "client_id": client_id,
         "client_secret": "",
@@ -289,12 +294,18 @@ def _clean_error(exc: Exception) -> str:
         ("sqlalchemy.dialects:redshift", "redshift", "sqlalchemy-redshift + redshift-connector"),
         ("sqlalchemy.dialects:teradatasql", "teradata", "teradatasqlalchemy"),
         ("sqlalchemy.dialects:impala", "impala", "impyla"),
+        ("sqlalchemy.dialects:bigquery", "bigquery", "sqlalchemy-bigquery + google-cloud-bigquery"),
     ):
         if f"can't load plugin: {needle}" in low:
             msg = (
                 f"{msg}\nHint: the {extra} source driver is not installed in this "
                 f"environment. Install it with `pip install -e '.[{extra}]'` ({packages})."
             )
+    if "defaultcredentials" in low or "application default credentials" in low:
+        msg = (
+            f"{msg}\nHint: BigQuery/GCS authentication requires Application Default "
+            "Credentials or workload identity; configure ADC outside the source URL."
+        )
     if "im002" in low and "sqldriverconnect" in low:
         drivers = _installed_sql_server_odbc_drivers()
         if drivers:
@@ -2872,6 +2883,23 @@ def _validate_mounts_payload(mounts) -> tuple[list, list[str]]:
                 "endpoint": endpoint,
                 "endpoint_suffix": str(e.get("endpoint_suffix") or "").strip(),
             })
+        elif backend == "gcs":
+            if not root:
+                errors.append(f"mounts[{i}]: gcs backend needs 'root' (the upstream bucket)")
+                continue
+            credential = str(e.get("credential") or "").strip()
+            auth = str(e.get("auth") or "adc").strip().lower()
+            if credential:
+                errors.append(
+                    f"mounts[{i}]: gcs mounts use ADC/workload identity and do not accept embedded credentials"
+                )
+                continue
+            if auth not in ("adc", "anonymous"):
+                errors.append(
+                    f"mounts[{i}]: gcs auth must be 'adc' or 'anonymous'"
+                )
+                continue
+            entry.update({"credential": "", "auth": auth})
         fmt = str(e.get("format") or "").strip().lower()
         raw_snapshot_id = e.get("snapshot_id")
         if raw_snapshot_id not in (None, ""):
@@ -2938,6 +2966,8 @@ async def list_mounts() -> JSONResponse:
             entry.update({"credential": m.credential, "auth": m.auth,
                           "account": m.account, "endpoint": m.endpoint,
                           "endpoint_suffix": m.endpoint_suffix})
+        elif m.backend == "gcs":
+            entry.update({"credential": "", "auth": m.auth or "adc"})
         if getattr(m, "format", ""):
             entry["format"] = m.format
             entry["key_column"] = m.key_column
@@ -3034,8 +3064,10 @@ async def test_mount(request: Request) -> JSONResponse:
         return await _test_s3_mount(request, body, root, prefix)
     if backend == "azure":
         return await _test_azure_mount(request, body, root, prefix)
+    if backend == "gcs":
+        return await _test_gcs_mount(request, body, root, prefix)
     if backend != "local":
-        return JSONResponse({"ok": False, "error": f"backend {backend!r} not testable (use 'local', 's3', or 'azure')"})
+        return JSONResponse({"ok": False, "error": f"backend {backend!r} not testable (use 'local', 's3', 'azure', or 'gcs')"})
     if not root:
         return JSONResponse({"ok": False, "error": "root path is required"})
     request.state.mount_provider_id = "local"
@@ -3150,7 +3182,8 @@ async def _test_s3_mount(request: Request, body: dict, root: str, prefix: str) -
         sample = [name + ("/" if is_dir else "") for name, is_dir, *_ in entries[:20]]
     except Exception as exc:  # noqa: BLE001 - surface a clean, secret-free message
         return JSONResponse({"ok": False, "error": str(exc)})
-    return JSONResponse({"ok": True, "bucket": root, "auth_mode": auth.mode,
+    return JSONResponse({"ok": True, "bucket": root, "uri": f"s3://{root}",
+                         "auth_mode": auth.mode,
                          "sample": sample, "sample_count": len(sample)})
 
 
@@ -3181,7 +3214,37 @@ async def _test_azure_mount(request: Request, body: dict, root: str, prefix: str
         sample = [name + ("/" if is_dir else "") for name, is_dir, *_ in entries[:20]]
     except Exception as exc:  # noqa: BLE001 - surface a clean, secret-free message
         return JSONResponse({"ok": False, "error": str(exc)})
-    return JSONResponse({"ok": True, "bucket": root, "auth_mode": auth.mode,
+    return JSONResponse({"ok": True, "bucket": root, "uri": f"az://{root}",
+                         "auth_mode": auth.mode,
+                         "sample": sample, "sample_count": len(sample)})
+
+
+async def _test_gcs_mount(request: Request, body: dict, root: str, prefix: str) -> JSONResponse:
+    """Build the gcs backend from the posted mount and list one folder level."""
+    import fabric_shortcut_proxy.storage.mounts as sm
+    from fabric_shortcut_proxy.storage.gcs_auth import resolve_gcs_auth, validate_gcs_auth
+    from fabric_shortcut_proxy.storage.gcs_store import build_gcs_store
+
+    if not root:
+        return JSONResponse({"ok": False, "error": "gcs backend needs 'root' (the upstream bucket)"})
+    mount = sm._mount_from_json({**body, "backend": "gcs", "prefix": prefix})
+    _set_mount_audit_context(request, mount)
+    try:
+        auth = resolve_gcs_auth(mount)
+    except Exception as exc:  # noqa: BLE001 - never leak secret material
+        return JSONResponse({"ok": False, "error": str(exc)})
+    problems = validate_gcs_auth(auth)
+    if problems:
+        return JSONResponse({"ok": False, "error": "; ".join(problems)})
+    request.state.mount_provider_id = auth.mode
+    try:
+        store = build_gcs_store(mount)
+        entries = store.list_dir(mount.prefix)
+        sample = [name + ("/" if is_dir else "") for name, is_dir, *_ in entries[:20]]
+    except Exception as exc:  # noqa: BLE001 - surface a clean, secret-free message
+        return JSONResponse({"ok": False, "error": _clean_error(exc)})
+    return JSONResponse({"ok": True, "bucket": root, "uri": f"gs://{root}",
+                         "auth_mode": auth.mode,
                          "sample": sample, "sample_count": len(sample)})
 
 

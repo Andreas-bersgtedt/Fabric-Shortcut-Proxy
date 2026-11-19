@@ -305,6 +305,7 @@
       <option value="mssql">SQL Server</option>
       <option value="oracle">Oracle</option>
       <option value="databricks">Databricks SQL Warehouse</option>
+      <option value="bigquery">Google BigQuery</option>
       <option value="redshift">Amazon Redshift</option>
       <option value="teradata">Teradata</option>
       <option value="impala">Apache Impala</option>
@@ -336,6 +337,7 @@
       <div class="hint" style="margin:-6px 0 12px;">Entra ID service principal. Needs ODBC Driver 18 (or 17.4+). The secret is encrypted in the Manager credential store (and mirrored to Key Vault when write-back is on).</div>
     </div>
     <div id="proxyAuthNote" class="hint" style="display:none;margin:-6px 0 12px;">Reuses the proxy's own Entra identity — the one configured for Key Vault (issue #16): the service principal (<code>auth_mode=service_principal</code> + <code>azure_client_id</code> + <code>AZURE_CLIENT_SECRET</code>), a managed identity, or the default credential chain. No credentials are entered here; the SQL Server must grant that identity a login + read access. Needs ODBC Driver 18.</div>
+    <div id="bigqueryAuthNote" class="hint" style="display:none;margin:-6px 0 12px;">Uses Application Default Credentials or workload identity. Set the GCP project as <b>Host</b>, the default dataset as <b>Database</b>, and an optional dataset region or location under Advanced. Do not enter a username or password.</div>
     <details class="adv">
       <summary>Advanced</summary>
       <label>ODBC driver (SQL Server)</label>
@@ -350,6 +352,8 @@
         <div><label>Catalog (Databricks)</label><input id="catalog" placeholder="optional" /></div>
         <div><label>Schema (Databricks)</label><input id="schema" placeholder="optional" /></div>
       </div>
+      <label>Location (BigQuery)</label>
+      <input id="location" placeholder="US or europe-west4" />
     </details>
     <div class="actions">
       <button class="btn ghost" id="btnConnect">Test connection</button>
@@ -540,6 +544,17 @@
         <div class="actions" style="display:none;"><button class="btn ghost" id="btnSaveAzCred">Save Azure credential</button></div>
         <div class="status" id="azCredStatus"></div>
       </div>
+    </div>
+
+    <!-- GCS-only connection + auth fields -->
+    <div id="gcsConn" style="display:none;">
+      <hr style="border:none;border-top:1px solid var(--border,#2a2a3a);margin:14px 0;" />
+      <label>Authentication</label>
+      <select id="mountGcsAuthSource">
+        <option value="adc">ADC / workload identity (recommended)</option>
+        <option value="anonymous">Anonymous — public bucket</option>
+      </select>
+      <div class="hint" style="margin:4px 0 10px;">GCS mounts use the Google SDK credential chain; no secret is stored in <code>config.mounts.json</code>.</div>
     </div>
 
     <div id="tokConn" style="border-top:1px solid var(--line); margin-top:12px; padding-top:10px;">
@@ -1122,12 +1137,12 @@ function setSourceKind(kind){
 }
 
 const $ = (id) => document.getElementById(id);
-const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443", redshift: "5439", teradata: "1025", impala: "21050" };
+const DEFAULT_PORTS = { postgresql: "5432", mssql: "1433", oracle: "1521", databricks: "443", bigquery: "", redshift: "5439", teradata: "1025", impala: "21050" };
 // Connection fields live in the per-connection manager; only global builder
 // settings are persisted through the generic form store.
 const PERSIST = ["bucket","numSplits","tableFormat","materializeMode","refreshPoll","refreshStrategy","refreshTtl"];
 // Editable connection form fields (password is in-memory only, never persisted).
-const CONN_FIELDS = ["dialect","host","port","database","username","password","driver","token","http_path","catalog","schema","auth_method","client_id","client_secret"];
+const CONN_FIELDS = ["dialect","host","port","database","username","password","driver","token","http_path","catalog","schema","location","auth_method","client_id","client_secret"];
 
 const state = {
   db_url: "", db_url_masked: "",
@@ -1228,7 +1243,7 @@ function envVarFor(id){ return id==="default" ? "DB_URL" : ("DB_URL_" + String(i
 
 function newConn(id){
   return { id, dialect:"postgresql", host:"", port:"", database:"", username:"", password:"",
-    driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"",
+    driver:"", trust_cert:true, token:"", http_path:"", catalog:"", schema:"", location:"",
     auth_method:"sql", client_id:"", client_secret:"",
     db_url:"", db_url_masked:"", flavor:"", tested:false, connection:null, discovered:null,
     persisted:false, dirty:false, validating:false, saved_source_validated:false };
@@ -1272,18 +1287,21 @@ function writeFormFromConn(c){
 // inputs by method: SQL login -> user/pass, Windows -> none, SPN -> client id/secret.
 function updateAuthUI(){
   const isMssql = $("dialect").value === "mssql";
+  const isBigQuery = $("dialect").value === "bigquery";
   const method = isMssql ? ($("auth_method").value || "sql") : "sql";
   $("authRow").style.display = isMssql ? "" : "none";
-  $("sqlLoginRow").style.display = (!isMssql || method === "sql") ? "" : "none";
+  $("sqlLoginRow").style.display = (!isMssql && !isBigQuery) || (isMssql && method === "sql") ? "" : "none";
   $("winAuthNote").style.display = (isMssql && method === "windows") ? "" : "none";
   $("spnRow").style.display = (isMssql && method === "spn") ? "" : "none";
   $("proxyAuthNote").style.display = (isMssql && method === "entra_proxy") ? "" : "none";
+  $("bigqueryAuthNote").style.display = isBigQuery ? "" : "none";
 }
 function commitActive(){ readFormIntoConn(state.connections.get(state.activeConnId)); }
 
 function connFields(){
   const dialect = $("dialect").value;
   const authMethod = (dialect === "mssql") ? ($("auth_method").value || "sql") : "sql";
+  const effectiveAuthMethod = dialect === "bigquery" ? "adc" : authMethod;
   return {
     id: ($("connId").value.trim() || "default"),
     dialect: dialect,
@@ -1298,7 +1316,8 @@ function connFields(){
     http_path: $("http_path").value.trim() || null,
     catalog: $("catalog").value.trim() || null,
     schema: $("schema").value.trim() || null,
-    auth_method: authMethod,
+    location: $("location").value.trim() || null,
+    auth_method: effectiveAuthMethod,
     client_id: $("client_id").value.trim() || null,
     client_secret: $("client_secret").value,
   };
@@ -3047,6 +3066,7 @@ $("dialect").addEventListener("change", ()=>{
   $("http_path").value = "";
   $("catalog").value = "";
   $("schema").value = "";
+  $("location").value = "";
   $("trust_cert").checked = true;
   $("auth_method").value = "sql";
   $("client_id").value = "";
@@ -3190,6 +3210,7 @@ const BACKEND_LABELS = {
   local: "local — filesystem / NFS / SMB mount",
   s3: "s3 — AWS S3 / MinIO / S3-compatible",
   azure: "azure — Azure Blob / ADLS Gen2",
+  gcs: "gcs — Google Cloud Storage",
 };
 
 async function loadMounts(){
@@ -3234,8 +3255,10 @@ function renderMounts(){
       ? (m.endpoint ? m.endpoint + "/" : "s3://") + m.root
       : m.backend === "azure"
         ? (m.endpoint || ("az://" + (m.account || "") + "/")) + (m.endpoint ? "/" + m.root : m.root)
+        : m.backend === "gcs"
+          ? "gs://" + m.root
         : (m.root || "");
-    const authBadge = (m.backend === "s3" || m.backend === "azure")
+    const authBadge = (m.backend === "s3" || m.backend === "azure" || m.backend === "gcs")
       ? ` <span class="badge">${m.credential ? ("cred:"+m.credential) : (m.auth || "auth?")}</span>` : "";
     left.innerHTML = `<div class="cid">${m.bucket} <span class="badge">${m.backend}</span> <span class="badge ok">read-only</span>${authBadge}</div>`
       + `<div class="meta">${where}${m.prefix?(" · /"+m.prefix):""}${m.snapshot_id?(" · Iceberg snapshot "+m.snapshot_id):""}</div>`;
@@ -3253,15 +3276,19 @@ function applyBackendVisibility(){
   const backend = $("mountBackend").value;
   const isS3 = backend === "s3";
   const isAz = backend === "azure";
+  const isGcs = backend === "gcs";
   $("s3Conn").style.display = isS3 ? "" : "none";
   $("azConn").style.display = isAz ? "" : "none";
-  $("mountRootLabel").textContent = isS3 ? "Upstream bucket" : (isAz ? "Container" : "Root path");
+  $("gcsConn").style.display = isGcs ? "" : "none";
+  $("mountRootLabel").textContent = isS3 || isGcs ? "Upstream bucket" : (isAz ? "Container" : "Root path");
   $("mountRoot").placeholder = isS3
     ? "reports-bucket"
     : isAz
       ? "my-container"
+      : isGcs
+        ? "gcs-bucket"
       : "Z:\\finance   ·   /mnt/share   ·   \\\\server\\share";
-  $("btnTestMount").textContent = (isS3 || isAz) ? "Test connection" : "Test path";
+  $("btnTestMount").textContent = (isS3 || isAz || isGcs) ? "Test connection" : "Test path";
   if(isS3) applyAuthSourceVisibility();
   if(isAz) applyAzAuthSourceVisibility();
   populateTokFormats();
@@ -3318,6 +3345,7 @@ function editMount(bucket){
   $("mountAzSuffix").value = m.endpoint_suffix || "";
   $("mountAzAuthSource").value = m.credential ? "credential" : (m.auth || "credential");
   $("mountAzCredential").value = (m.backend === "azure") ? (m.credential || "") : $("mountAzCredential").value;
+  $("mountGcsAuthSource").value = m.auth === "anonymous" ? "anonymous" : "adc";
   applyBackendVisibility();
   const tokOn = !!m.format;
   $("mountTokOn").checked = tokOn;
@@ -3363,6 +3391,10 @@ function readMountForm(){
     const src = $("mountAzAuthSource").value;
     if(src === "credential"){ m.credential = $("mountAzCredential").value.trim(); m.auth = ""; }
     else { m.credential = ""; m.auth = src; }
+  }
+  if(backend === "gcs"){
+    m.credential = "";
+    m.auth = $("mountGcsAuthSource").value === "anonymous" ? "anonymous" : "adc";
   }
   if($("mountTokOn").checked && $("mountTokFormat").value){
     m.format = $("mountTokFormat").value;
@@ -3526,6 +3558,7 @@ $("btnAddMount").onclick = () => {
   $("mountCredential").value = "";
   $("mountAzAccount").value = ""; $("mountAzEndpoint").value = ""; $("mountAzSuffix").value = "";
   $("mountAzAuthSource").value = "credential"; $("mountAzCredential").value = "";
+  $("mountGcsAuthSource").value = "adc";
   applyBackendVisibility();
   $("mountTokOn").checked = false; $("tokBody").style.display = "none";
   tokState.columns = []; $("mountTokPolicy").innerHTML = ""; $("mountTokStatus").textContent = "";
@@ -3560,6 +3593,9 @@ $("btnApplyMount").onclick = async () => {
       s.className = "status err"; s.textContent = "Choose an authentication source (stored credential, default, managed identity, or anonymous)."; return; }
     if(m.credential === "" && $("mountAzAuthSource").value === "credential"){
       s.className = "status err"; s.textContent = "Enter a credential id and secret, or pick default/managed_identity/anonymous."; return; }
+  }
+  if(m.backend === "gcs"){
+    if(!m.root){ s.className = "status err"; s.textContent = "Upstream bucket is required for the gcs backend."; return; }
   }
   if(m.snapshot_id != null && (!/^[1-9]\d*$/.test(String(m.snapshot_id)) || !Number.isSafeInteger(Number(m.snapshot_id)))){
     s.className = "status err"; s.textContent = "Iceberg snapshot id must be a positive integer."; return; }
@@ -3617,7 +3653,7 @@ $("btnTestMount").onclick = async () => {
   const r = await api("/_config/api/mounts/test", m);
   if(!r.ok){ s.className = "status err"; s.textContent = "✗ " + (r.error || "backend not reachable"); return; }
   const sample = (r.sample && r.sample.length) ? " (" + r.sample.slice(0, 6).join(", ") + (r.sample.length > 6 ? "…" : "") + ")" : "";
-  const where = r.path || (r.bucket ? ("s3://" + r.bucket) : "backend");
+  const where = r.path || r.uri || (r.bucket ? ("s3://" + r.bucket) : "backend");
   s.className = "status ok";
   s.textContent = `✓ Reachable: ${where} — ${r.sample_count} entr${r.sample_count === 1 ? "y" : "ies"}${sample}`;
 };

@@ -70,7 +70,7 @@ Send `X-FSP-Configuration-Contract: 3.1.0` on **every** typed
 `POST /_config/api/save`. Without this header, the browser keeps its existing
 settings-array response and native mutation format. An unsupported header value
 returns 406 rather than falling back to native interpretation.
-The header identifies the typed contract and remains `3.1.0` in release 3.2.0.
+The header identifies the typed contract and remains `3.1.0` in release 3.2.1.
 
 An opted-in current response is exactly a settings object:
 
@@ -247,7 +247,9 @@ validation also makes that saved source ready for table changes; it is not neces
 to open, test, and save an unchanged source before adding a table.
 
 Use **Files & object storage** in the same tab to configure local, S3-compatible,
-or Azure mounts. A mount bucket must not reuse the warehouse bucket name.
+Azure, or Google Cloud Storage mounts. A mount bucket must not reuse the
+warehouse bucket name. GCS mounts use ADC/workload identity; no GCS secret is
+stored in `config.mounts.json`.
 
 ## 3. Select tables and splits
 

@@ -81,6 +81,30 @@ spec:
             - secretRef:
                 name: {{ .Values.sourceSecret.name }}
           env:
+            {{- if .Values.gcp.enabled }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: {{ printf "%s/%s" .Values.gcp.credentialMountPath .Values.gcp.credentialsFileName | quote }}
+            {{- with .Values.gcp.project }}
+            - name: GCP_PROJECT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.gcp.bucket }}
+            - name: GCS_BUCKET
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.gcp.dataset }}
+            - name: BIGQUERY_DATASET
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.gcp.location }}
+            - name: BIGQUERY_LOCATION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.gcp.project }}
+            - name: BIGQUERY_PROJECT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if ne .Values.agentAuth.mode "entra" }}
             - name: AGENT_TOKEN
               valueFrom:
@@ -165,6 +189,14 @@ spec:
               subPath: {{ . | quote }}
               {{- end }}
             {{- end }}
+            {{- if .Values.gcp.enabled }}
+            - name: gcp-adc
+              mountPath: {{ .Values.gcp.credentialMountPath | quote }}
+              readOnly: true
+            - name: gcp-aks-token
+              mountPath: {{ .Values.gcp.tokenMountPath | quote }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: artifacts
           persistentVolumeClaim:
@@ -173,6 +205,18 @@ spec:
         - name: credential-cache
           persistentVolumeClaim:
             claimName: fsp-manager-config
+        {{- end }}
+        {{- if .Values.gcp.enabled }}
+        - name: gcp-adc
+          configMap:
+            name: {{ required "gcp.credentialsConfigMap is required" .Values.gcp.credentialsConfigMap | quote }}
+        - name: gcp-aks-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+                  audience: {{ required "gcp.tokenAudience is required" .Values.gcp.tokenAudience | quote }}
         {{- end }}
 ---
 apiVersion: v1

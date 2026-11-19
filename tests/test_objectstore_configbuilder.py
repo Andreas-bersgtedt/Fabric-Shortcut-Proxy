@@ -159,11 +159,11 @@ def test_clean_error_redacts_cloud_tokens_and_shared_keys():
 def test_object_store_capabilities_shape():
     caps = _object_store_capabilities()
     assert set(caps["formats"]) == {"delta", "iceberg"}
-    assert caps["reader_backends"]["delta"] == ["local", "s3", "azure"]
-    assert caps["reader_backends"]["iceberg"] == ["local", "s3", "azure"]
+    assert caps["reader_backends"]["delta"] == ["local", "s3", "azure", "gcs"]
+    assert caps["reader_backends"]["iceberg"] == ["local", "s3", "azure", "gcs"]
     assert caps["output_formats"] == ["auto", "delta", "iceberg"]
     assert set(caps["reader_available"]) == {"delta", "iceberg"}
-    assert set(caps["reader_backend_available"]) == {"local", "s3", "azure"}
+    assert set(caps["reader_backend_available"]) == {"local", "s3", "azure", "gcs"}
     assert caps["reader_auth"]["s3"]["refreshing"] == [
         "assume_role", "web_identity", "sso",
     ]

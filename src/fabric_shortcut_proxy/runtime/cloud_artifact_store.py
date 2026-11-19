@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime
 import hashlib
 import hmac
+import inspect
 import os
 import tempfile
 import time
@@ -21,19 +22,61 @@ log = get_logger(__name__)
 _UPLOAD_CHUNK = 8 * 1024 * 1024
 
 
+def _gcs_retry_kwargs(method) -> dict:
+    """Pass a bounded SDK retry only when the installed Blob method supports it."""
+    try:
+        parameters = inspect.signature(method).parameters
+        supports_retry = "retry" in parameters
+        supports_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if not supports_retry and not supports_kwargs:
+            return {}
+        from google.api_core.retry import Retry
+        retry = Retry(
+            initial=1.0,
+            maximum=30.0,
+            multiplier=2.0,
+            deadline=120.0,
+        )
+        return {"retry": retry}
+    except (ImportError, TypeError, ValueError):
+        return {}
+
+
 def _mtime(value) -> int | None:
     return int(value.timestamp() * 1000) if isinstance(value, datetime) else None
 
 
-def _conflict(exc: Exception) -> bool:
+def _http_status(exc: Exception) -> int | None:
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code
+
     response = getattr(exc, "response", None)
     if isinstance(response, dict):
-        return response.get("ResponseMetadata", {}).get("HTTPStatusCode") in {409, 412}
-    return getattr(exc, "code", None) in {409, 412}
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if isinstance(status, int):
+            return status
+    else:
+        status = getattr(response, "status_code", None)
+        if isinstance(status, int):
+            return status
+
+    for arg in getattr(exc, "args", ()) or ():
+        if isinstance(arg, int):
+            return arg
+    return None
+
+
+def _conflict(exc: Exception) -> bool:
+    status = _http_status(exc)
+    return status in {409, 412}
 
 
 def _gcs_missing(exc: Exception) -> bool:
-    return getattr(exc, "code", None) == 404
+    return _http_status(exc) == 404
 
 
 @contextmanager
@@ -275,7 +318,9 @@ class GCSArtifactStore(ArtifactStore):
             blob.metadata = {"sha256": digest}
             options = {"if_generation_match": 0} if if_absent else {}
             try:
-                with blob.open("wb", chunk_size=_UPLOAD_CHUNK, **options) as writer:
+                open_options = dict(options)
+                open_options.update(_gcs_retry_kwargs(blob.open))
+                with blob.open("wb", chunk_size=_UPLOAD_CHUNK, **open_options) as writer:
                     while chunk := staged.read(_UPLOAD_CHUNK):
                         writer.write(chunk)
                 committed = True
@@ -302,7 +347,8 @@ class GCSArtifactStore(ArtifactStore):
         k = _normalize_key(key)
         blob = self._blob(k)
         try:
-            blob.reload()
+            reload_options = _gcs_retry_kwargs(blob.reload)
+            blob.reload(**reload_options)
         except Exception as exc:
             if _gcs_missing(exc):
                 return None
@@ -313,7 +359,8 @@ class GCSArtifactStore(ArtifactStore):
         k = _normalize_key(key)
         blob = self._blob(k)
         try:
-            blob.reload()
+            reload_options = _gcs_retry_kwargs(blob.reload)
+            blob.reload(**reload_options)
         except Exception as exc:
             if _gcs_missing(exc):
                 return False
@@ -345,13 +392,16 @@ class GCSArtifactStore(ArtifactStore):
             raise ValueError("invalid artifact read range or chunk size")
         blob = self._blob(key)
         try:
-            blob.reload()
+            reload_options = _gcs_retry_kwargs(blob.reload)
+            blob.reload(**reload_options)
             remaining = max(0, int(blob.size) - offset)
             if length is not None:
                 remaining = min(remaining, length)
             if remaining == 0:
                 return
-            with blob.open("rb", chunk_size=_STREAM_CHUNK, raw_download=True) as reader:
+            open_options = {"chunk_size": _STREAM_CHUNK, "raw_download": True}
+            open_options.update(_gcs_retry_kwargs(blob.open))
+            with blob.open("rb", **open_options) as reader:
                 reader.seek(offset)
                 while remaining:
                     chunk = reader.read(min(remaining, chunk_size))
@@ -374,7 +424,9 @@ class GCSArtifactStore(ArtifactStore):
 
     def delete(self, key: str) -> bool:
         try:
-            self._blob(key).delete()
+            blob = self._blob(key)
+            delete_options = _gcs_retry_kwargs(blob.delete)
+            blob.delete(**delete_options)
             return True
         except Exception as exc:
             if _gcs_missing(exc):
@@ -384,7 +436,8 @@ class GCSArtifactStore(ArtifactStore):
     def compare_and_swap(self, key: str, expected: bytes | None, data: bytes) -> bool:
         blob = self._blob(key)
         try:
-            blob.reload()
+            reload_options = _gcs_retry_kwargs(blob.reload)
+            blob.reload(**reload_options)
         except Exception as exc:
             if not _gcs_missing(exc):
                 raise
@@ -394,7 +447,12 @@ class GCSArtifactStore(ArtifactStore):
         else:
             generation = int(blob.generation)
             try:
-                current = blob.download_as_bytes(if_generation_match=generation, raw_download=True)
+                download_options = {
+                    "if_generation_match": generation,
+                    "raw_download": True,
+                }
+                download_options.update(_gcs_retry_kwargs(blob.download_as_bytes))
+                current = blob.download_as_bytes(**download_options)
             except Exception as exc:
                 if _conflict(exc) or _gcs_missing(exc):
                     return False
@@ -403,7 +461,9 @@ class GCSArtifactStore(ArtifactStore):
                 return False
         try:
             blob.metadata = {"sha256": hashlib.sha256(data).hexdigest()}
-            blob.upload_from_string(data, if_generation_match=generation)
+            upload_options = {"if_generation_match": generation}
+            upload_options.update(_gcs_retry_kwargs(blob.upload_from_string))
+            blob.upload_from_string(data, **upload_options)
             return True
         except Exception as exc:
             if _conflict(exc):

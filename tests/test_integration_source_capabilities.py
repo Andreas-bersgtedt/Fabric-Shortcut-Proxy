@@ -7,7 +7,9 @@ the query costs. No source service is contacted when the opt-in flag is absent.
 """
 from __future__ import annotations
 
+import asyncio
 import io
+import importlib.metadata
 import os
 
 import pytest
@@ -35,6 +37,7 @@ from fabric_shortcut_proxy.planner.split_planner import (
 _SOURCE_ENV = {
     "oracle": ("ORACLE", ("HOST", "DATABASE", "USERNAME", "PASSWORD")),
     "databricks": ("DATABRICKS", ("HOST", "TOKEN", "HTTP_PATH")),
+    "bigquery": ("BIGQUERY", ("PROJECT", "DATASET")),
     "redshift": ("REDSHIFT", ("HOST", "DATABASE", "USERNAME", "PASSWORD")),
     "teradata": ("TERADATA", ("HOST", "DATABASE", "USERNAME", "PASSWORD")),
     # The official Impala quickstart accepts unauthenticated NOSASL connections.
@@ -43,6 +46,18 @@ _SOURCE_ENV = {
 
 
 def _connection(prefix: str, dialect: str) -> dict:
+    if dialect == "bigquery":
+        query = {}
+        location = os.environ.get("BIGQUERY_LOCATION")
+        if location:
+            query["location"] = location
+        return {
+            "dialect": dialect,
+            "host": os.environ.get("BIGQUERY_PROJECT"),
+            "database": os.environ.get("BIGQUERY_DATASET"),
+            "auth_method": "adc",
+            "query": query,
+        }
     return {
         "dialect": dialect,
         "host": os.environ.get(f"{prefix}_HOST"),
@@ -286,7 +301,96 @@ async def test_source_capability_live_gate(dialect: str, monkeypatch):
     await executor.dispose_engines()
     smoke_sql = "SELECT 1 FROM dual" if dialect == "oracle" else "SELECT 1"
     assert int(await executor.execute_scalar(smoke_sql)) == 1
+    if dialect == "bigquery":
+        sqlalchemy_bigquery_version = importlib.metadata.version("sqlalchemy-bigquery")
+        google_bigquery_version = importlib.metadata.version("google-cloud-bigquery")
+        print(
+            "GCP_LIVE_BIGQUERY_EVIDENCE "
+            f"project={os.environ.get('BIGQUERY_PROJECT')} "
+            f"location={os.environ.get('BIGQUERY_LOCATION') or 'US'} "
+            f"dataset={os.environ.get('BIGQUERY_DATASET')} "
+            f"table={table} view={view} "
+            f"sdk=sqlalchemy-bigquery:{sqlalchemy_bigquery_version},"
+            f"google-cloud-bigquery:{google_bigquery_version} "
+            "scope=discovery,schema,range,modulo,date,count,reconnect"
+        )
     await executor.dispose_engines()
+
+
+@pytest.mark.asyncio
+async def test_bigquery_live_edge_cases(monkeypatch):
+    if not _live_gate_enabled(
+        "BIGQUERY",
+        ("PROJECT", "DATASET"),
+    ):
+        pytest.skip(
+            "Set FSP_RUN_SOURCE_CAPABILITY_GATES=1 and the documented "
+            "BIGQUERY integration variables to run this live edge gate."
+        )
+
+    connection = _connection("BIGQUERY", "bigquery")
+    url = build_url(**connection)
+    db_url = url.render_as_string(hide_password=False)
+    monkeypatch.setattr(config, "DB_URL", db_url)
+    await executor.dispose_engines()
+
+    table = os.environ["INTEGRATION_BIGQUERY_TABLE"]
+    integer_key = os.environ["INTEGRATION_BIGQUERY_INTEGER_KEY"]
+    dialect = get_dialect(db_url)
+    empty_sql = (
+        f"SELECT COUNT(*) FROM {dialect.quote_qualified(table)} "
+        f"WHERE {dialect.quote(integer_key)} < 0"
+    )
+    assert await executor.execute_scalar(empty_sql) == 0
+
+    for sql in (
+        "DELETE FROM fsp180uat.fsp180_rows WHERE id = 1",
+        "DROP TABLE fsp180uat.fsp180_rows",
+        "CREATE TABLE fsp180uat.invalid(id INTEGER)",
+        "EXPORT DATA OPTIONS(uri='gs://invalid/*') AS SELECT 1",
+        "LOAD DATA OVERWRITE fsp180uat.invalid FROM FILES(...)",
+    ):
+        with pytest.raises(ValueError):
+            executor._validate_read_only_sql(sql)
+
+    repeated_table = "fsp180uat.fsp180_repeated"
+    async with SchemaReflector(url) as reflector:
+        columns = await reflector.columns(repeated_table)
+    mapped = {column["name"]: column["type"] for column in columns}
+    assert mapped["tags"] == "string"
+    assert mapped["details"] == "string"
+
+    repeated_sql = (
+        f"SELECT id, tags, details FROM {dialect.quote_qualified(repeated_table)} "
+        "ORDER BY id"
+    )
+    rows = await executor.execute_split_query(repeated_sql, {}, 0)
+    assert len(rows) == 2
+    assert all(isinstance(row["tags"], str) for row in rows)
+    assert all(isinstance(row["details"], str) for row in rows)
+
+    old_timeout = config.QUERY_TIMEOUT_SECONDS
+    config.QUERY_TIMEOUT_SECONDS = 0.000001
+    try:
+        try:
+            await executor.execute_scalar(
+                f"SELECT COUNT(*) FROM {dialect.quote_qualified(table)}"
+            )
+            timeout_outcome = "bounded_result"
+        except (asyncio.TimeoutError, TimeoutError, executor.SourceUnavailable):
+            timeout_outcome = "bounded_timeout"
+    finally:
+        config.QUERY_TIMEOUT_SECONDS = old_timeout
+        await executor.dispose_engines()
+
+    print(
+        "GCP_LIVE_BIGQUERY_EDGE_EVIDENCE "
+        f"project={os.environ.get('BIGQUERY_PROJECT')} "
+        f"dataset={os.environ.get('BIGQUERY_DATASET')} "
+        f"table={table} repeated_table={repeated_table} "
+        f"timeout_outcome={timeout_outcome} "
+        "scope=empty,timeout,read-only,repeated-nested"
+    )
 
 
 @pytest.mark.asyncio

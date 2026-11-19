@@ -133,6 +133,57 @@ class SQLiteDialect(Dialect):
     name = "sqlite"
 
 
+class BigQueryDialect(Dialect):
+    """GoogleSQL quoting and integer modulo split predicates."""
+
+    name = "bigquery"
+    int_cast_type = "INT64"
+    quote_open = "`"
+    quote_close = "`"
+
+    def build_select(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        num_splits_param: str,
+        split_index_param: str,
+        max_rows_param: str,
+    ) -> str:
+        predicate = (
+            f"(MOD({self.cast_int(pk)}, :{num_splits_param})) "
+            f"= :{split_index_param}"
+        )
+        return (
+            f"SELECT {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"ORDER BY {pk} "
+            f"LIMIT :{max_rows_param}"
+        )
+
+    def build_select_range(
+        self,
+        *,
+        projected: str,
+        source: str,
+        pk: str,
+        key_lo_param: str,
+        key_hi_param: str,
+        max_rows_param: str,
+        key_type: str | None = None,
+    ) -> str:
+        predicate = f"{pk} >= :{key_lo_param} AND {pk} < :{key_hi_param}"
+        return (
+            f"SELECT {projected} "
+            f"FROM {source} "
+            f"WHERE {predicate} "
+            f"ORDER BY {pk} "
+            f"LIMIT :{max_rows_param}"
+        )
+
+
 class PostgresDialect(Dialect):
     name = "postgresql"
     int_cast_type = "BIGINT"
@@ -625,6 +676,7 @@ class ImpalaDialect(Dialect):
 
 
 _SQLITE = SQLiteDialect()
+_BIGQUERY = BigQueryDialect()
 _POSTGRES = PostgresDialect()
 _MSSQL = MSSQLDialect()
 _ORACLE = OracleDialect()
@@ -638,6 +690,8 @@ _GENERIC = Dialect()
 def get_dialect(db_url: str) -> Dialect:
     """Return the dialect adapter for a SQLAlchemy DB URL."""
     scheme = db_url.lower().split("://", 1)[0]
+    if "bigquery" in scheme:
+        return _BIGQUERY
     if "mssql" in scheme:
         return _MSSQL
     # Redshift before PostgreSQL: reuses Postgres query syntax but is distinct.

@@ -11,13 +11,27 @@ from fabric_shortcut_proxy.runtime.artifact_store import (
     LocalDirStore, MemoryStore, ObjectConflict, ObjectNotFound,
 )
 from fabric_shortcut_proxy.runtime.azure_artifact_store import AzureBlobArtifactStore
-from fabric_shortcut_proxy.runtime.cloud_artifact_store import GCSArtifactStore, S3ArtifactStore
+from fabric_shortcut_proxy.runtime.cloud_artifact_store import (
+    GCSArtifactStore,
+    S3ArtifactStore,
+    _conflict,
+    _gcs_missing,
+)
 from tests.cloud_artifact_fakes import (
     CloudError,
     FakeGCSBlob,
     FakeGCSBucket,
     FakeS3,
 )
+
+
+def test_gcs_sdk_status_errors_are_classified():
+    class InvalidResponse(Exception):
+        pass
+
+    assert _conflict(InvalidResponse("Request failed with status code", 412))
+    assert not _conflict(InvalidResponse("Request failed with status code", 500))
+    assert _gcs_missing(InvalidResponse("Request failed with status code", 404))
 from tests.live_artifact_support import (
     ScopedAzureContainer, cleanup_azure, cleanup_cloud, live_prefix, live_store,
     selected_live_providers,

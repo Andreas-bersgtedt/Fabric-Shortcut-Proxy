@@ -49,15 +49,34 @@ def _mtime(value) -> int | None:
     return int(value.timestamp() * 1000) if isinstance(value, datetime) else None
 
 
-def _conflict(exc: Exception) -> bool:
+def _http_status(exc: Exception) -> int | None:
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code
+
     response = getattr(exc, "response", None)
     if isinstance(response, dict):
-        return response.get("ResponseMetadata", {}).get("HTTPStatusCode") in {409, 412}
-    return getattr(exc, "code", None) in {409, 412}
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if isinstance(status, int):
+            return status
+    else:
+        status = getattr(response, "status_code", None)
+        if isinstance(status, int):
+            return status
+
+    for arg in getattr(exc, "args", ()) or ():
+        if isinstance(arg, int):
+            return arg
+    return None
+
+
+def _conflict(exc: Exception) -> bool:
+    status = _http_status(exc)
+    return status in {409, 412}
 
 
 def _gcs_missing(exc: Exception) -> bool:
-    return getattr(exc, "code", None) == 404
+    return _http_status(exc) == 404
 
 
 @contextmanager

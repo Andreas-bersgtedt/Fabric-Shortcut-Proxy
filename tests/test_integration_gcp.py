@@ -9,7 +9,7 @@ import uuid
 import pytest
 from google.api_core.exceptions import NotFound
 
-from fabric_shortcut_proxy.runtime.artifact_store import ObjectConflict
+from fabric_shortcut_proxy.runtime.artifact_store import ObjectConflict, ObjectNotFound
 
 
 def test_live_gcs_mount_and_artifact_conformance_gate(capsys):
@@ -89,6 +89,18 @@ def test_live_gcs_mount_and_artifact_conformance_gate(capsys):
         assert mount_store.head(f"{prefix}/data.bin") is not None
         assert mount_store.head(f"{prefix}-other/neighbor.txt") is not None
 
+        denied_store = GCSStore(
+            bucket=f"{bucket_name}-missing-uat",
+            client=client,
+        )
+        assert denied_store.head("missing.bin") is None
+        try:
+            denied_store.get("missing.bin")
+        except ObjectNotFound:
+            pass
+        else:
+            pytest.fail("Missing GCS bucket did not return ObjectNotFound")
+
         bucket.reload()
         region = str(getattr(bucket, "location", "") or "")
         sdk_version = importlib.metadata.version("google-cloud-storage")
@@ -97,7 +109,8 @@ def test_live_gcs_mount_and_artifact_conformance_gate(capsys):
             f"project={project or 'ADC-default'} "
             f"bucket={bucket_name} region={region or 'unknown'} "
             f"sdk=google-cloud-storage:{sdk_version} "
-            "scope=GCS read/write,size,SHA256,range,large-upload,retry,conflict,prefix isolation"
+            "scope=GCS read/write,size,SHA256,range,large-upload,retry,"
+            "conflict,prefix-isolation,denied-404"
         )
     finally:
         try:

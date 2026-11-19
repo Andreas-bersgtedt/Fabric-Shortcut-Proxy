@@ -1,6 +1,6 @@
 # Roadmap and open gaps
 
-This index summarizes open work as of 2026-11-18. GitHub issues are the
+This index summarizes open work as of 2026-11-19. GitHub issues are the
 authority for current scope, acceptance criteria, and status. Historical plans
 in [archive](archive/README.md) are not current implementation guidance.
 
@@ -11,7 +11,7 @@ in [archive](archive/README.md) are not current implementation guidance.
 | [#94: Source capability gaps](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/94) | Databricks, Redshift, and Teradata remain beta pending source-specific live evidence. Impala is supported for the tested CDP 7.1.7 / Impala 3.4 scope. See the [capability matrix and live gates](SOURCE_CAPABILITIES.md). |
 | [#171: Production AWS and GCP federation](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/171) | Production support remains deferred. The beta gate does not satisfy this issue's live deployment, identity, IAM isolation, Fabric reads, residency, or failover criteria. |
 | [#144: S3 and GCS artifact stores](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/144) | **Beta (prepared for 3.2.0):** opt-in S3/GCS data-plane replicas and regional readers with an Azure control plane. See the [cross-cloud beta release gate](FEDERATED_ARTIFACTS.md#cross-cloud-beta-release-gate). Production support still requires live conformance. |
-| [#180: GCS mounts and BigQuery source](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/180) | UAT-ready implementation is complete. The live gates remain opt-in and must record project, region, dataset, table, SDK versions, and scope before closure. |
+| [#180: GCS mounts and BigQuery source](https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/180) | Implementation and the Azure UAT deployment are ready. The live BigQuery gate passed on 2026-11-19 with 2 tests; AKS STS and IAM Credentials exchanges passed. GCS is blocked until the project is linked to an open billing account. |
 
 ## Delivered scope and boundaries
 

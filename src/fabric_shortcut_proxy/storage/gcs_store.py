@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import inspect
 
 from fabric_shortcut_proxy.runtime.artifact_store import (
     ArtifactStore,
@@ -33,6 +34,29 @@ def _reject_traversal(prefix: str) -> str:
     return p
 
 
+def _gcs_retry_kwargs(method) -> dict:
+    try:
+        parameters = inspect.signature(method).parameters
+        supports_retry = "retry" in parameters
+        supports_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if not supports_retry and not supports_kwargs:
+            return {}
+        from google.api_core.retry import Retry
+        return {
+            "retry": Retry(
+                initial=1.0,
+                maximum=30.0,
+                multiplier=2.0,
+                deadline=120.0,
+            )
+        }
+    except (ImportError, TypeError, ValueError):
+        return {}
+
+
 class GCSStore(ArtifactStore):
     """Read-only object store backed by a GCS bucket."""
 
@@ -49,7 +73,7 @@ class GCSStore(ArtifactStore):
         k = _normalize_key(key)
         blob = self._bucket_client().blob(k)
         try:
-            blob.reload()
+            blob.reload(**_gcs_retry_kwargs(blob.reload))
         except Exception as exc:
             if _gcs_missing(exc):
                 return None
@@ -80,17 +104,19 @@ class GCSStore(ArtifactStore):
         k = _normalize_key(key)
         blob = self._bucket_client().blob(k)
         try:
-            blob.reload()
+            blob.reload(**_gcs_retry_kwargs(blob.reload))
             remaining = max(0, int(getattr(blob, "size", 0) or 0) - offset)
             if length is not None:
                 remaining = min(remaining, length)
             while remaining:
                 end = offset + min(remaining, chunk_size) - 1
-                chunk = blob.download_as_bytes(
-                    start=offset,
-                    end=end,
-                    raw_download=True,
-                )
+                download_options = {
+                    "start": offset,
+                    "end": end,
+                    "raw_download": True,
+                }
+                download_options.update(_gcs_retry_kwargs(blob.download_as_bytes))
+                chunk = blob.download_as_bytes(**download_options)
                 if not chunk:
                     raise IOError("GCS mount stream ended before the object size")
                 yield chunk

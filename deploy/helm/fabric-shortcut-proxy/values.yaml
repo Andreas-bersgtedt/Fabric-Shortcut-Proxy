@@ -89,6 +89,18 @@ workloadIdentity:
   serviceAccountName: fsp-workload
   clientId: ""
 
+gcp:
+  enabled: false
+  credentialsConfigMap: ""
+  credentialsFileName: credentials.json
+  credentialMountPath: /var/run/secrets/gcp
+  tokenMountPath: /var/run/secrets/aks/gcp
+  tokenAudience: ""
+  project: ""
+  bucket: ""
+  dataset: ""
+  location: ""
+
 nodeSelector: {}
 
 storage:

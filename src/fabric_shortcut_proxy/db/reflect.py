@@ -298,7 +298,8 @@ class SchemaReflector:
         if self._is_async_driver(self._url.drivername):
             self._async_engine = _make_async_engine(self._url)
         else:
-            self._sync_engine = create_engine(self._url, echo=False, pool_pre_ping=True)
+            kwargs = {"echo": False, "pool_pre_ping": True}
+            self._sync_engine = create_engine(self._url, **kwargs)
         return self
 
     async def __aexit__(self, *exc) -> None:
@@ -376,10 +377,11 @@ class SchemaReflector:
     async def columns(self, source_table: str) -> list[dict]:
         schema, name = _split_qualified(source_table)
         cols = await self._run(lambda c: inspect(c).get_columns(name, schema=schema))
+        source_dialect = "bigquery" if "bigquery" in self._url.drivername.lower() else None
         return [
             {
                 "name": col["name"],
-                "type": sqlalchemy_type_to_iceberg(col["type"]),
+                "type": sqlalchemy_type_to_iceberg(col["type"], source_dialect),
                 "nullable": bool(col.get("nullable", True)),
             }
             for col in cols

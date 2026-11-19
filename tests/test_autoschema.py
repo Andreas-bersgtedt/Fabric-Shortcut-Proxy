@@ -89,6 +89,16 @@ def test_type_mapping_bigquery_supported_types():
         assert sqlalchemy_type_to_iceberg(fake_type) == expected
 
 
+def test_type_mapping_bigquery_repeated_and_nested_values_are_json_string():
+    try:
+        from sqlalchemy_bigquery import ARRAY, RECORD, STRUCT, STRING
+    except ImportError:
+        pytest.skip("needs sqlalchemy-bigquery")
+    assert sqlalchemy_type_to_iceberg(ARRAY(STRING()), "bigquery") == "string"
+    assert sqlalchemy_type_to_iceberg(RECORD, "bigquery") == "string"
+    assert sqlalchemy_type_to_iceberg(STRUCT, "bigquery") == "string"
+
+
 def test_type_mapping_rejects_nested_composite_types():
     from sqlalchemy import ARRAY
     with pytest.raises(ValueError, match="nested or composite"):

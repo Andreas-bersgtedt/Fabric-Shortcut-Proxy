@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import re
 import struct
 import time
 from typing import Any
@@ -24,6 +26,49 @@ from fabric_shortcut_proxy.observability.logging import get_logger
 from fabric_shortcut_proxy.observability import metrics
 
 log = get_logger(__name__)
+
+
+_READ_ONLY_SQL_PREFIX = re.compile(
+    r"^\s*(SELECT|WITH|PRAGMA|SHOW|DESCRIBE|DESC|EXPLAIN)\b",
+    re.IGNORECASE,
+)
+_BLOCKED_SQL_KEYWORDS = re.compile(
+    r"\b("
+    r"INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|TRUNCATE|"
+    r"CALL|EXECUTE|EXPORT\s+DATA|LOAD\s+DATA|EXTERNAL_QUERY"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _validate_read_only_sql(sql: str) -> str:
+    """Reject statements that can mutate or cross into another service."""
+    if not isinstance(sql, str) or not sql.strip():
+        raise ValueError("SQL statement is empty")
+    statement = sql.strip()
+    statement = re.sub(r"^(?:\s*--[^\n]*(?:\n|$))+", "", statement)
+    statement = re.sub(r"^\s*/\*.*?\*/\s*", "", statement, count=1, flags=re.DOTALL)
+    if not _READ_ONLY_SQL_PREFIX.match(statement):
+        raise ValueError(
+            "Only read-only SELECT/WITH/metadata SQL statements are allowed"
+        )
+    if _BLOCKED_SQL_KEYWORDS.search(statement):
+        raise ValueError("SQL write, DDL, or cross-service operations are not allowed")
+    return statement
+
+
+def _normalize_bigquery_row(row: dict[str, Any], connection: str) -> dict[str, Any]:
+    """Serialize repeated/nested BigQuery values as JSON text for Arrow output."""
+    if "bigquery" not in _db_url_for(connection).lower():
+        return row
+    return {
+        key: (
+            json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+            if isinstance(value, (list, tuple, dict))
+            else value
+        )
+        for key, value in row.items()
+    }
 
 _engine: AsyncEngine | None = None
 _sync_engine: Engine | None = None
@@ -355,6 +400,7 @@ async def execute_split_query(
     :class:`SourceUnavailable` once retries are exhausted so the caller can
     return a 503. ``connection`` selects the source (default: ``"default"``).
     """
+    sql = _validate_read_only_sql(sql)
     if max_retries is None:
         max_retries = _max_retries_for(connection)
     backoff = _retry_backoff_for(connection)
@@ -402,6 +448,7 @@ async def _execute_once(
     split_index: int,
     connection: str = "default",
 ) -> list[dict[str, Any]]:
+    sql = _validate_read_only_sql(sql)
     async with _gate_for(connection):
         async with asyncio.timeout(_query_timeout_for(connection)):
             log.info(
@@ -417,13 +464,19 @@ async def _execute_once(
                 async with engine.connect() as conn:
                     result = await conn.execute(text(sql), params)
                     columns = list(result.keys())
-                    rows = [dict(zip(columns, row)) for row in result.fetchall()]
+                    rows = [
+                        _normalize_bigquery_row(dict(zip(columns, row)), connection)
+                        for row in result.fetchall()
+                    ]
             else:
                 def _work() -> list[dict[str, Any]]:
                     with _sync_engine_for(connection).connect() as conn:
                         result = conn.execute(text(sql), params)
                         columns = list(result.keys())
-                        return [dict(zip(columns, row)) for row in result.fetchall()]
+                        return [
+                            _normalize_bigquery_row(dict(zip(columns, row)), connection)
+                            for row in result.fetchall()
+                        ]
 
                 rows = await asyncio.to_thread(_work)
 
@@ -451,6 +504,7 @@ async def stream_split_query(
     first batch is yielded. A failure after yielding rows raises
     :class:`SourceUnavailable` immediately to avoid duplicate output.
     """
+    sql = _validate_read_only_sql(sql)
     max_retries = _max_retries_for(connection)
     backoff = _retry_backoff_for(connection)
     for attempt in range(max_retries + 1):
@@ -472,7 +526,12 @@ async def stream_split_query(
                             async for partition in result.partitions(batch_rows):
                                 total += len(partition)
                                 yielded_batch = True
-                                yield [dict(zip(columns, row)) for row in partition]
+                                yield [
+                                    _normalize_bigquery_row(
+                                        dict(zip(columns, row)), connection
+                                    )
+                                    for row in partition
+                                ]
                             log.info("sql_stream_complete", split_index=split_index,
                                      rows_returned=total, attempt=attempt)
                     else:
@@ -534,6 +593,7 @@ async def execute_scalar(sql: str, params: dict[str, Any] | None = None, connect
 
     Uses async-native execution when available, else a sync-threadpool fallback.
     """
+    sql = _validate_read_only_sql(sql)
     params = params or {}
     async with _gate_for(connection):
         async with asyncio.timeout(_query_timeout_for(connection)):
@@ -558,6 +618,7 @@ async def fetch_column_bounds(source_table: str, key_column: str, connection: st
     src = d.quote_qualified(source_table)
     pk = d.quote(key_column)
     sql = f"SELECT MIN({pk}) AS lo, MAX({pk}) AS hi FROM {src}"
+    sql = _validate_read_only_sql(sql)
     async with asyncio.timeout(_query_timeout_for(connection)):
         if _async_mode_for(connection):
             engine = _engine_for(connection)
@@ -579,6 +640,7 @@ async def fetch_table_row_count(source_table: str, connection: str = "default") 
     d = _dialect_for(connection)
     src = d.quote_qualified(source_table)
     sql = f"SELECT COUNT(*) AS n FROM {src}"
+    sql = _validate_read_only_sql(sql)
     async with asyncio.timeout(_query_timeout_for(connection)):
         if _async_mode_for(connection):
             engine = _engine_for(connection)
@@ -659,6 +721,7 @@ async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, 
         f"FROM {ntile_src} WHERE {pk} IS NOT NULL) q "
         "GROUP BY fsp_ntile_bucket ORDER BY fsp_ntile_bucket"
     )
+    sql = _validate_read_only_sql(sql)
     async with asyncio.timeout(_query_timeout_for(connection)):
         if _async_mode_for(connection):
             engine = _engine_for(connection)
@@ -692,6 +755,7 @@ async def fetch_key_quantile_bounds(source_table: str, key_column: str, n: int, 
 
 async def _run_select_all(sql: str, params: dict, connection: str):
     """Run a read-only SELECT and return all rows (async-native or sync fallback)."""
+    sql = _validate_read_only_sql(sql)
     async with asyncio.timeout(_query_timeout_for(connection)):
         if _async_mode_for(connection):
             engine = _engine_for(connection)
@@ -875,12 +939,14 @@ _NESTED_SOURCE_TYPE_TOKENS = (
 )
 
 
-def sqlalchemy_type_to_iceberg(sa_type) -> str:
+def sqlalchemy_type_to_iceberg(sa_type, source_dialect: str | None = None) -> str:
     """Map a reflected SQLAlchemy column type to an Iceberg primitive type string."""
     name = type(sa_type).__name__.upper()
     rendered = str(sa_type).upper()
     combined = f"{name} {rendered}"
     if any(token in combined for token in _NESTED_SOURCE_TYPE_TOKENS):
+        if (source_dialect or "").strip().lower() == "bigquery":
+            return "string"
         raise ValueError(
             f"Source column type {type(sa_type).__name__!r} is a nested or composite "
             "type that cannot be materialized as a scalar column. Exclude the column "
@@ -1030,11 +1096,13 @@ async def derive_table_schema(source_table: str, connection: str = "default") ->
             f"Could not reflect any columns for source {source_table!r}. Check the "
             f"name and permissions, or provide an explicit schema in config.TABLES."
         )
+    db_url = _db_url_for(connection)
+    source_dialect = "bigquery" if "bigquery" in make_url(db_url).drivername.lower() else None
     return [
         config.ColumnDef(
             field_id=i,
             name=col["name"],
-            iceberg_type=sqlalchemy_type_to_iceberg(col["type"]),
+            iceberg_type=sqlalchemy_type_to_iceberg(col["type"], source_dialect),
             nullable=bool(col.get("nullable", True)),
         )
         for i, col in enumerate(cols, start=1)

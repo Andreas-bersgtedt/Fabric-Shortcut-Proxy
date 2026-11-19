@@ -32,6 +32,16 @@ def test_s3_sdk_has_native_conditional_put_and_multipart_completion():
         assert {"IfMatch", "IfNoneMatch"} <= set(model.operation_model(operation).input_shape.members)
 
 
+def test_gcs_sdk_retry_is_bounded():
+    storage = pytest.importorskip("google.cloud.storage")
+    from fabric_shortcut_proxy.runtime.cloud_artifact_store import _gcs_retry_kwargs
+
+    kwargs = _gcs_retry_kwargs(storage.Blob.open)
+    assert kwargs
+    retry = kwargs["retry"]
+    assert retry._deadline == 120.0
+
+
 @pytest.fixture(params=["memory", "local", "azure", "s3", "gcs", *selected_live_providers()])
 def store(request, tmp_path):
     if request.param == "memory":

@@ -8,6 +8,7 @@ the query costs. No source service is contacted when the opt-in flag is absent.
 from __future__ import annotations
 
 import io
+import importlib.metadata
 import os
 
 import pytest
@@ -299,6 +300,19 @@ async def test_source_capability_live_gate(dialect: str, monkeypatch):
     await executor.dispose_engines()
     smoke_sql = "SELECT 1 FROM dual" if dialect == "oracle" else "SELECT 1"
     assert int(await executor.execute_scalar(smoke_sql)) == 1
+    if dialect == "bigquery":
+        sqlalchemy_bigquery_version = importlib.metadata.version("sqlalchemy-bigquery")
+        google_bigquery_version = importlib.metadata.version("google-cloud-bigquery")
+        print(
+            "GCP_LIVE_BIGQUERY_EVIDENCE "
+            f"project={os.environ.get('BIGQUERY_PROJECT')} "
+            f"location={os.environ.get('BIGQUERY_LOCATION') or 'US'} "
+            f"dataset={os.environ.get('BIGQUERY_DATASET')} "
+            f"table={table} view={view} "
+            f"sdk=sqlalchemy-bigquery:{sqlalchemy_bigquery_version},"
+            f"google-cloud-bigquery:{google_bigquery_version} "
+            "scope=discovery,schema,range,modulo,date,count,reconnect"
+        )
     await executor.dispose_engines()
 
 

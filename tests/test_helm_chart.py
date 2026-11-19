@@ -287,6 +287,56 @@ def test_manager_replica_upload_spool_is_opt_in_and_bounded() -> None:
     }
 
 
+def test_gcp_adc_mount_is_opt_in_and_isolated() -> None:
+    import yaml
+
+    def pod_for(template: str) -> dict:
+        rendered = _render("--show-only", template)
+        workload = next(
+            item for item in yaml.safe_load_all(rendered)
+            if item["kind"] in {"Deployment", "StatefulSet"}
+        )
+        return workload["spec"]["template"]["spec"]
+
+    default_manager = pod_for("templates/manager.yaml")
+    assert all(item["name"] != "gcp-adc" for item in default_manager["volumes"])
+
+    configured = pod_for("templates/manager.yaml")
+    assert all(item["name"] != "gcp-adc" for item in configured["volumes"])
+
+    rendered = _render(
+        "--show-only", "templates/manager.yaml",
+        "--set", "gcp.enabled=true",
+        "--set", "gcp.credentialsConfigMap=fsp180-gcp-adc",
+        "--set", "gcp.tokenAudience=//iam.googleapis.com/projects/419012772842/locations/global/workloadIdentityPools/fsp180uat/providers/aks-sweden",
+        "--set", "gcp.project=project-86992797-5864-4dd6-901",
+        "--set", "gcp.bucket=fsp180-uat-test",
+        "--set", "gcp.dataset=fsp180uat",
+        "--set", "gcp.location=US",
+    )
+    workload = next(
+        item for item in yaml.safe_load_all(rendered)
+        if item["kind"] == "Deployment"
+    )
+    pod = workload["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    env = {
+        item["name"]: item["value"]
+        for item in container["env"]
+        if "value" in item
+    }
+    assert env["GOOGLE_APPLICATION_CREDENTIALS"] == "/var/run/secrets/gcp/credentials.json"
+    assert env["GCP_PROJECT"] == "project-86992797-5864-4dd6-901"
+    assert env["GCS_BUCKET"] == "fsp180-uat-test"
+    assert env["BIGQUERY_DATASET"] == "fsp180uat"
+    assert env["BIGQUERY_LOCATION"] == "US"
+    assert next(item for item in container["volumeMounts"] if item["name"] == "gcp-adc")["mountPath"] == "/var/run/secrets/gcp"
+    assert next(item for item in pod["volumes"] if item["name"] == "gcp-adc")["configMap"]["name"] == "fsp180-gcp-adc"
+    token = next(item for item in pod["volumes"] if item["name"] == "gcp-aks-token")
+    source = token["projected"]["sources"][0]["serviceAccountToken"]
+    assert source["audience"].startswith("//iam.googleapis.com/projects/")
+
+
 def test_manager_replica_upload_spool_requires_a_size_limit() -> None:
     result = _helm(
         "template", "fsp", str(CHART),

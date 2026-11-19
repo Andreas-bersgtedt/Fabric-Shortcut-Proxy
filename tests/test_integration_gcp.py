@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import importlib.metadata
+import hashlib
 import os
 import uuid
 
 import pytest
+from google.api_core.exceptions import NotFound
 
 from fabric_shortcut_proxy.runtime.artifact_store import ObjectConflict
 
@@ -47,6 +49,25 @@ def test_live_gcs_mount_and_artifact_conformance_gate(capsys):
         )
         assert mounted == payload[4:12]
 
+        large = b"x" * (8 * 1024 * 1024 + 1)
+        large_stat = artifact_store.put_stream(
+            "large.bin", [large], length=len(large)
+        )
+        assert large_stat.size == len(large)
+        assert artifact_store.verify(
+            "large.bin",
+            size=len(large),
+            content_hash=hashlib.sha256(large).hexdigest(),
+        )
+        tail = b"".join(
+            mount_store.get_stream(
+                f"{prefix}/large.bin",
+                offset=len(large) - 8,
+                length=8,
+            )
+        )
+        assert tail == b"x" * 8
+
         try:
             artifact_store.put_stream_if_absent(
                 "immutable.bin", [b"alpha"], length=5
@@ -76,10 +97,13 @@ def test_live_gcs_mount_and_artifact_conformance_gate(capsys):
             f"project={project or 'ADC-default'} "
             f"bucket={bucket_name} region={region or 'unknown'} "
             f"sdk=google-cloud-storage:{sdk_version} "
-            "scope=GCS read/write,size,SHA256,conflict,prefix isolation"
+            "scope=GCS read/write,size,SHA256,range,large-upload,retry,conflict,prefix isolation"
         )
     finally:
-        for blob in bucket.list_blobs(prefix=f"{prefix}-other/"):
-            blob.delete()
-        for blob in bucket.list_blobs(prefix=f"{prefix}/"):
-            blob.delete()
+        try:
+            for blob in bucket.list_blobs(prefix=f"{prefix}-other/"):
+                blob.delete()
+            for blob in bucket.list_blobs(prefix=f"{prefix}/"):
+                blob.delete()
+        except NotFound:
+            pass

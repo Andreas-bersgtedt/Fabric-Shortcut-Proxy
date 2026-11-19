@@ -7,5 +7,5 @@ This package adds the scale-out control plane to Fabric Shortcut Proxy Lite:
 - fenced active/passive Manager HA;
 - fleet supervision, gateway, monitoring, and retention services.
 
-Install the matching Lite package first. Enterprise 3.2.0 requires
-`fabric-shortcut-proxy==3.2.0`.
+Install the matching Lite package first. Enterprise 3.2.1 requires
+`fabric-shortcut-proxy==3.2.1`.

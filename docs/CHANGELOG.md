@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-11-19
+
 ### Added
 
 - Added GCS mount and Delta/Iceberg reader support using Application Default
@@ -14,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Google BigQuery as a beta SQL source with ADC/workload identity,
   project/dataset/location configuration, explicit split-key selection, and
   opt-in live capability and GCS conformance gates.
+
+### Fixed
+
+- Fixed GCS immutable-object conflict handling for SDK HTTP 412 responses.
+- Made optional GCP live-gate imports safe in Lite CI environments.
 
 ## [3.2.0] - 2026-11-18
 
@@ -855,7 +862,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.2.0...HEAD
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.2.1...HEAD
+[3.2.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.2.0...3.2.1
 [3.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.1.0...3.2.0
 [3.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.1...3.1.0
 [3.0.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.0...3.0.1

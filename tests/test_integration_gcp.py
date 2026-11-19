@@ -7,7 +7,6 @@ import os
 import uuid
 
 import pytest
-from google.api_core.exceptions import NotFound
 
 from fabric_shortcut_proxy.runtime.artifact_store import ObjectConflict, ObjectNotFound
 

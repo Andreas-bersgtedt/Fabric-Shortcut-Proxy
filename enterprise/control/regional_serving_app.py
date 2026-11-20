@@ -180,11 +180,14 @@ def create_regional_serving_app(
         app.add_exception_handler(BotoCoreError, unavailable)
         app.add_exception_handler(ClientError, unavailable)
     elif provider == "gcs":
-        from google.api_core.exceptions import GoogleAPIError
-        from google.auth.exceptions import GoogleAuthError
-
-        app.add_exception_handler(GoogleAPIError, unavailable)
-        app.add_exception_handler(GoogleAuthError, unavailable)
+        try:
+            from google.api_core.exceptions import GoogleAPIError
+            from google.auth.exceptions import GoogleAuthError
+        except ImportError:
+            pass
+        else:
+            app.add_exception_handler(GoogleAPIError, unavailable)
+            app.add_exception_handler(GoogleAuthError, unavailable)
 
     @app.get("/healthz")
     def health():

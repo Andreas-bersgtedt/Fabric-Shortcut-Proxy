@@ -277,16 +277,17 @@ GET, HEAD, Range, wrong-secret, unsigned, unadvertised-key and mutation-negative
 checks passed. The recreated GCS, cluster and registry resources were deleted
 after this pass.
 
-The live Fabric shortcut gate is blocked at two environment constraints:
-
-- Available workspaces use capacity IDs that returned `CapacityNotActive`, so a
-  Lakehouse or shortcut item cannot be provisioned.
-- HMAC key creation for the GSA failed under
-  `constraints/iam.disableServiceAccountKeyCreation`. No HMAC key was created.
+The Fabric capacity became active during the final proof. The existing
+`Issue_11_FSP_test` Lakehouse remained accessible and returned HTTP 200 through
+the Fabric Lakehouse REST API. The remaining live shortcut gate is HMAC key
+creation: GSA HMAC creation failed under
+`constraints/iam.disableServiceAccountKeyCreation`, and no HMAC key exists.
+The Fabric connection list contains no GCS connection that can replace the
+missing credential.
 
 Issue #182 therefore has live GKE, Workload Identity, GCS catalog/replica,
-SigV4, negative-IAM, residency, reader-restart and billing evidence. The live
-Fabric shortcut read remains blocked by inactive Fabric capacity and the
+SigV4, negative-IAM, residency, reader-restart, active-capacity and billing
+evidence. The live Fabric GCS shortcut read remains blocked by the organization
 service-account key policy.
 
 [issue-144]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/144

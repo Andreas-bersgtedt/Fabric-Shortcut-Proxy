@@ -275,6 +275,38 @@ def test_manager_uses_separate_catalog_store_when_configured(monkeypatch):
     assert coordinator.catalog.store is catalog_store
 
 
+def test_manager_uses_gcs_catalog_store_when_configured(monkeypatch):
+    placement = PlacementConfig.from_dict(_config())
+    artifact_store = MemoryStore()
+    catalog_store = MemoryStore()
+    monkeypatch.setenv("FSP_REGIONAL_MANAGER_ID", "manager-gke")
+    monkeypatch.setenv("FSP_REGIONAL_MANAGER_LOCATION", "gcp:europe-west1")
+    monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "published")
+    monkeypatch.setenv("FSP_CATALOG_STORE_GCS_BUCKET", "fsp182-gke-gcs")
+    monkeypatch.setenv("FSP_CATALOG_STORE_GCS_PREFIX", "catalog")
+    from fabric_shortcut_proxy.runtime import cloud_artifact_store
+
+    def build_gcs_store(provider, settings):
+        assert provider == "gcs"
+        assert settings == {
+            "bucket": "fsp182-gke-gcs",
+            "prefix": "catalog",
+        }
+        return catalog_store
+
+    monkeypatch.setattr(
+        cloud_artifact_store,
+        "build_cloud_data_store_from_settings",
+        build_gcs_store,
+    )
+
+    coordinator = FederatedPublicationCoordinator.from_environment(
+        artifact_store, placement
+    )
+    assert coordinator.store is artifact_store
+    assert coordinator.catalog.store is catalog_store
+
+
 def test_manager_lifespan_retries_replication_and_stops_it(monkeypatch):
     import threading
     from enterprise.control.manager_app import create_manager_app

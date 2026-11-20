@@ -307,6 +307,7 @@ def test_gcp_adc_mount_is_opt_in_and_isolated() -> None:
     rendered = _render(
         "--show-only", "templates/manager.yaml",
         "--set", "gcp.enabled=true",
+        "--set", "gcp.workloadIdentityProvider=aks",
         "--set", "gcp.credentialsConfigMap=fsp180-gcp-adc",
         "--set", "gcp.tokenAudience=//iam.googleapis.com/projects/419012772842/locations/global/workloadIdentityPools/fsp180uat/providers/aks-sweden",
         "--set", "gcp.project=project-86992797-5864-4dd6-901",
@@ -335,6 +336,85 @@ def test_gcp_adc_mount_is_opt_in_and_isolated() -> None:
     token = next(item for item in pod["volumes"] if item["name"] == "gcp-aks-token")
     source = token["projected"]["sources"][0]["serviceAccountToken"]
     assert source["audience"].startswith("//iam.googleapis.com/projects/")
+
+
+def test_gke_metadata_credentials_render_without_adc_mounts() -> None:
+    import yaml
+
+    rendered = _render(
+        "--show-only", "templates/manager.yaml",
+        "--set", "gcp.enabled=true",
+        "--set", "gcp.workloadIdentityProvider=gke",
+        "--set", "gcp.serviceAccountEmail=fsp182-gke@project.test.iam.gserviceaccount.com",
+        "--set", "gcp.project=project.test",
+        "--set", "gcp.bucket=fsp182-gke-gcs",
+    )
+    workload = next(
+        item for item in yaml.safe_load_all(rendered)
+        if item["kind"] == "Deployment"
+    )
+    pod = workload["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    env = {item["name"]: item.get("value", "") for item in container["env"]}
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
+    assert env["GCP_PROJECT"] == "project.test"
+    assert env["GCS_BUCKET"] == "fsp182-gke-gcs"
+    assert all(item["name"] != "gcp-adc" for item in pod["volumes"])
+    assert all(item["name"] != "gcp-adc" for item in container["volumeMounts"])
+
+    service_account = _render(
+        "--show-only", "templates/service-account.yaml",
+        "--set", "workloadIdentity.enabled=true",
+        "--set", "workloadIdentity.serviceAccountName=fsp182-manager",
+        "--set", "gcp.enabled=true",
+        "--set", "gcp.workloadIdentityProvider=gke",
+        "--set", "gcp.serviceAccountEmail=fsp182-gke@project.test.iam.gserviceaccount.com",
+    )
+    account = next(
+        item for item in yaml.safe_load_all(service_account)
+        if item["kind"] == "ServiceAccount"
+    )
+    assert account["metadata"]["annotations"] == {
+        "iam.gke.io/gcp-service-account":
+            "fsp182-gke@project.test.iam.gserviceaccount.com",
+    }
+
+
+def test_gcs_catalog_and_replica_settings_render_for_gke() -> None:
+    import yaml
+
+    rendered = _render(
+        "--show-only", "templates/manager.yaml",
+        "--set", "federation.enabled=true",
+        "--set", "federation.managerId=manager-gke",
+        "--set", "federation.managerLocation=gcp:europe-west1",
+        "--set", "federation.catalog.gcsBucket=fsp182-gke-gcs",
+        "--set", "federation.catalog.gcsPrefix=catalog",
+        "--set", "manager.artifactStoreProfile=gcp-replica",
+        "--set-json",
+        (
+            'federation.replicaStores='
+            '{"gcp-replica":{"bucket":"fsp182-gke-gcs","prefix":"fsp-replica"}}'
+        ),
+    )
+    deployment = next(
+        item for item in yaml.safe_load_all(rendered)
+        if item["kind"] == "Deployment"
+    )
+    env = {
+        item["name"]: item["value"]
+        for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        if "value" in item
+    }
+    assert env["FSP_CATALOG_STORE_GCS_BUCKET"] == "fsp182-gke-gcs"
+    assert env["FSP_CATALOG_STORE_GCS_PREFIX"] == "catalog"
+    assert "FSP_CATALOG_STORE_ACCOUNT_URL" not in env
+    assert json.loads(env["FSP_FEDERATION_REPLICA_STORES"]) == {
+        "gcp-replica": {
+            "bucket": "fsp182-gke-gcs",
+            "prefix": "fsp-replica",
+        },
+    }
 
 
 def test_manager_replica_upload_spool_requires_a_size_limit() -> None:
@@ -909,6 +989,23 @@ def test_azure_files_supports_isolated_volume_names_and_subpaths() -> None:
     assert "volumeName: phase3-config-pv" in rendered
     assert rendered.count('subPath: "phase3/artifacts"') == 2
     assert rendered.count('subPath: "phase3/config"') == 2
+
+
+def test_artifact_pvc_access_modes_are_configurable() -> None:
+    import yaml
+
+    rendered = _render(
+        "--show-only", "templates/storage.yaml",
+        "--set", "storage.artifacts.size=10Gi",
+        "--set", "storage.artifacts.storageClassName=standard-rwo",
+        "--set-json", 'storage.artifacts.accessModes=["ReadWriteOnce"]',
+    )
+    pvc = next(
+        item for item in yaml.safe_load_all(rendered)
+        if item["kind"] == "PersistentVolumeClaim"
+    )
+    assert pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
+    assert pvc["spec"]["storageClassName"] == "standard-rwo"
 
 
 def test_materializer_pool_token_can_differ_from_manager_shared_token() -> None:

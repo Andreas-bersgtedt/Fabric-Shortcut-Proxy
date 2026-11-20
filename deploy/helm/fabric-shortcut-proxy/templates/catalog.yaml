@@ -18,7 +18,7 @@ spec:
         app.kubernetes.io/name: fsp-global-catalog
         app.kubernetes.io/component: global-control-plane
         {{- include "fsp.commonLabels" . | nindent 8 }}
-        {{- if .Values.workloadIdentity.enabled }}
+        {{- if and .Values.workloadIdentity.enabled (not .Values.gcp.enabled) }}
         azure.workload.identity/use: "true"
         {{- end }}
     spec:
@@ -52,6 +52,12 @@ spec:
               value: {{ .Values.manager.agentPlacementConfig | toJson | quote }}
             - name: FSP_ARTIFACT_STORE_PROFILE
               value: {{ required "manager.artifactStoreProfile is required" .Values.manager.artifactStoreProfile | quote }}
+            {{- if .Values.federation.catalog.gcsBucket }}
+            - name: FSP_CATALOG_STORE_GCS_BUCKET
+              value: {{ .Values.federation.catalog.gcsBucket | quote }}
+            - name: FSP_CATALOG_STORE_GCS_PREFIX
+              value: {{ .Values.federation.catalog.gcsPrefix | quote }}
+            {{- else }}
             - name: ARTIFACT_STORE_BACKEND
               value: azure
             - name: ARTIFACT_STORE_ACCOUNT_URL
@@ -66,6 +72,7 @@ spec:
               value: {{ .Values.federation.catalog.artifactStoreTenantId | quote }}
             - name: ARTIFACT_STORE_TOKEN_FILE
               value: {{ .Values.federation.catalog.artifactStoreTokenFile | quote }}
+            {{- end }}
           ports:
             - name: catalog
               containerPort: {{ .Values.federation.catalog.port }}

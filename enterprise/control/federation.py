@@ -549,12 +549,34 @@ class FederatedPublicationCoordinator:
         catalog_container = os.environ.get(
             "FSP_CATALOG_STORE_CONTAINER", ""
         ).strip()
+        catalog_gcs_bucket = os.environ.get(
+            "FSP_CATALOG_STORE_GCS_BUCKET", ""
+        ).strip()
+        catalog_gcs_prefix = os.environ.get(
+            "FSP_CATALOG_STORE_GCS_PREFIX", ""
+        ).strip()
         if bool(catalog_account_url) != bool(catalog_container):
             raise ValueError(
                 "FSP_CATALOG_STORE_ACCOUNT_URL and FSP_CATALOG_STORE_CONTAINER "
                 "must be configured together"
             )
-        if catalog_account_url:
+        if catalog_gcs_bucket and (catalog_account_url or catalog_container):
+            raise ValueError(
+                "GCS catalog settings cannot be combined with Azure catalog settings"
+            )
+        if catalog_gcs_bucket:
+            from fabric_shortcut_proxy.runtime.cloud_artifact_store import (
+                build_cloud_data_store_from_settings,
+            )
+
+            catalog_store = build_cloud_data_store_from_settings(
+                "gcs",
+                {
+                    "bucket": catalog_gcs_bucket,
+                    "prefix": catalog_gcs_prefix,
+                },
+            )
+        elif catalog_account_url:
             from fabric_shortcut_proxy.runtime.azure_artifact_store import (
                 build_azure_store,
             )

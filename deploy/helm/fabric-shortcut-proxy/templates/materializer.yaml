@@ -32,7 +32,7 @@ spec:
         app.kubernetes.io/name: fsp-materializer
         app.kubernetes.io/component: materializer
         {{- include "fsp.commonLabels" . | nindent 8 }}
-        {{- if .Values.workloadIdentity.enabled }}
+        {{- if and .Values.workloadIdentity.enabled (not .Values.gcp.enabled) }}
         azure.workload.identity/use: "true"
         {{- end }}
     spec:
@@ -82,8 +82,10 @@ spec:
                 name: {{ .Values.sourceSecret.name }}
           env:
             {{- if .Values.gcp.enabled }}
+            {{- if eq .Values.gcp.workloadIdentityProvider "aks" }}
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: {{ printf "%s/%s" .Values.gcp.credentialMountPath .Values.gcp.credentialsFileName | quote }}
+            {{- end }}
             {{- with .Values.gcp.project }}
             - name: GCP_PROJECT
               value: {{ . | quote }}
@@ -189,7 +191,7 @@ spec:
               subPath: {{ . | quote }}
               {{- end }}
             {{- end }}
-            {{- if .Values.gcp.enabled }}
+            {{- if and .Values.gcp.enabled (eq .Values.gcp.workloadIdentityProvider "aks") }}
             - name: gcp-adc
               mountPath: {{ .Values.gcp.credentialMountPath | quote }}
               readOnly: true
@@ -206,7 +208,7 @@ spec:
           persistentVolumeClaim:
             claimName: fsp-manager-config
         {{- end }}
-        {{- if .Values.gcp.enabled }}
+        {{- if and .Values.gcp.enabled (eq .Values.gcp.workloadIdentityProvider "aks") }}
         - name: gcp-adc
           configMap:
             name: {{ required "gcp.credentialsConfigMap is required" .Values.gcp.credentialsConfigMap | quote }}

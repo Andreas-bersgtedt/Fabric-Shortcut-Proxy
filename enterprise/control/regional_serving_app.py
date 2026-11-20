@@ -180,11 +180,14 @@ def create_regional_serving_app(
         app.add_exception_handler(BotoCoreError, unavailable)
         app.add_exception_handler(ClientError, unavailable)
     elif provider == "gcs":
-        from google.api_core.exceptions import GoogleAPIError
-        from google.auth.exceptions import GoogleAuthError
-
-        app.add_exception_handler(GoogleAPIError, unavailable)
-        app.add_exception_handler(GoogleAuthError, unavailable)
+        try:
+            from google.api_core.exceptions import GoogleAPIError
+            from google.auth.exceptions import GoogleAuthError
+        except ImportError:
+            pass
+        else:
+            app.add_exception_handler(GoogleAPIError, unavailable)
+            app.add_exception_handler(GoogleAuthError, unavailable)
 
     @app.get("/healthz")
     def health():
@@ -254,11 +257,11 @@ def app_from_environment() -> FastAPI:
     if profile is not None and profile.provider in {"s3", "gcs"}:
         if not cloud_settings:
             raise ValueError("regional S3/GCS serving requires FSP_REGIONAL_SERVING_CLOUD_STORE")
-        if not (
+        if profile.provider == "s3" and not (
             os.environ.get("FSP_CATALOG_STORE_ACCOUNT_URL", "").strip()
             and os.environ.get("FSP_CATALOG_STORE_CONTAINER", "").strip()
         ):
-            raise ValueError("regional S3/GCS serving requires a shared Azure catalog store")
+            raise ValueError("regional S3 serving requires a shared Azure catalog store")
         placement.bind_serving_store(profile_id, profile.provider, endpoint_id)
         from fabric_shortcut_proxy.runtime.cloud_artifact_store import (
             build_cloud_data_store_from_settings,

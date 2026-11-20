@@ -71,7 +71,7 @@ metadata:
     {{- include "fsp.commonLabels" . | nindent 4 }}
 spec:
   accessModes:
-    - ReadWriteMany
+    {{- toYaml .Values.storage.artifacts.accessModes | nindent 4 }}
   resources:
     requests:
       storage: {{ .Values.storage.artifacts.size }}

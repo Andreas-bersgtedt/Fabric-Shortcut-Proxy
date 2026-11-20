@@ -318,25 +318,30 @@ def test_cloud_regional_reader_requires_explicit_settings_before_default_store(m
         app_from_environment()
 
 
-def test_cloud_regional_reader_requires_shared_catalog_before_creating_clients(monkeypatch):
+def test_gcs_regional_reader_can_use_gcs_catalog_store(monkeypatch):
     from enterprise.control.regional_serving_app import app_from_environment
     from fabric_shortcut_proxy.runtime import cloud_artifact_store
+    from fabric_shortcut_proxy.runtime.artifact_store import MemoryStore
 
     value = _config()
     value["stores"]["replica"]["provider"] = "gcs"
+    value["stores"]["replica"]["location"] = "gcp:europe-west1"
+    value["serving_endpoints"]["secondary"]["location"] = "gcp:europe-west1"
+    value["connections"]["erp"]["residency_locations"].append("gcp:europe-west1")
     placement = PlacementConfig.from_dict(value)
     monkeypatch.setattr(PlacementConfig, "from_environment", lambda: placement)
     monkeypatch.setenv("FSP_ARTIFACT_STORE_PROFILE", "replica")
     monkeypatch.setenv("FSP_REGIONAL_SERVING_ENDPOINT_ID", "secondary")
     monkeypatch.setenv("FSP_REGIONAL_SERVING_CLOUD_STORE", '{"bucket":"artifacts"}')
+    monkeypatch.setenv("FSP_REGIONAL_SERVING_BUCKETS", '{"sales":"erp::sales"}')
     monkeypatch.delenv("FSP_CATALOG_STORE_ACCOUNT_URL", raising=False)
     monkeypatch.delenv("FSP_CATALOG_STORE_CONTAINER", raising=False)
     monkeypatch.setattr(
         cloud_artifact_store, "build_cloud_data_store",
-        lambda *args, **kwargs: pytest.fail("missing catalog must not create cloud clients"),
+        lambda *args, **kwargs: MemoryStore(),
     )
-    with pytest.raises(ValueError, match="requires a shared Azure catalog store"):
-        app_from_environment()
+    app = app_from_environment()
+    assert app.title.endswith("regional serving")
 
 
 def test_cloud_regional_reader_rejects_cross_profile_endpoint(monkeypatch):

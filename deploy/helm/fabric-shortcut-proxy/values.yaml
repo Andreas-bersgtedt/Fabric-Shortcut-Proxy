@@ -91,6 +91,8 @@ workloadIdentity:
 
 gcp:
   enabled: false
+  workloadIdentityProvider: gke
+  serviceAccountEmail: ""
   credentialsConfigMap: ""
   credentialsFileName: credentials.json
   credentialMountPath: /var/run/secrets/gcp
@@ -106,6 +108,8 @@ nodeSelector: {}
 storage:
   artifacts:
     size: 100Gi
+    accessModes:
+      - ReadWriteMany
     storageClassName: null
     existingVolumeName: ""
   azureFiles:
@@ -201,6 +205,7 @@ federation:
     serviceAccountName: ""
     serviceAccountAnnotations: {}
     clientId: ""
+    gcpServiceAccountEmail: ""
     readerSecretName: ""
     artifactStoreAccountUrl: ""
     artifactStoreContainer: ""
@@ -227,6 +232,8 @@ federation:
   catalog:
     replicas: 1
     port: 9300
+    gcsBucket: ""
+    gcsPrefix: ""
     artifactStoreAccountUrl: ""
     artifactStoreContainer: catalog
     artifactStoreAuthMode: workload_identity

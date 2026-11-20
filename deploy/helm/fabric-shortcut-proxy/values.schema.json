@@ -246,6 +246,8 @@
       "additionalProperties": false,
       "required": [
         "enabled",
+        "workloadIdentityProvider",
+        "serviceAccountEmail",
         "credentialsConfigMap",
         "credentialsFileName",
         "credentialMountPath",
@@ -258,6 +260,8 @@
       ],
       "properties": {
         "enabled": { "type": "boolean" },
+        "workloadIdentityProvider": { "enum": ["gke", "aks"] },
+        "serviceAccountEmail": { "type": "string" },
         "credentialsConfigMap": { "type": "string" },
         "credentialsFileName": { "type": "string", "minLength": 1 },
         "credentialMountPath": { "type": "string", "minLength": 1 },
@@ -279,6 +283,14 @@
           "required": ["size"],
           "properties": {
             "size": { "$ref": "#/definitions/quantity" },
+            "accessModes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"]
+              }
+            },
             "storageClassName": { "type": ["string", "null"] },
             "existingVolumeName": { "type": "string" }
           }
@@ -366,6 +378,7 @@
                       ]
                     },
                     "clientId": { "type": "string" },
+                    "gcpServiceAccountEmail": { "type": "string" },
                     "tenantId": { "type": "string" },
                     "tokenFile": { "type": "string" }
                   }
@@ -473,6 +486,7 @@
               "additionalProperties": { "type": "string" }
             },
             "clientId": { "type": "string" },
+            "gcpServiceAccountEmail": { "type": "string" },
             "readerSecretName": { "type": "string" },
             "artifactStoreAccountUrl": { "type": "string" },
             "artifactStoreContainer": { "type": "string" },
@@ -493,6 +507,8 @@
           "required": [
             "replicas",
             "port",
+            "gcsBucket",
+            "gcsPrefix",
             "artifactStoreAccountUrl",
             "artifactStoreContainer",
             "artifactStoreAuthMode",
@@ -505,8 +521,10 @@
           "properties": {
             "replicas": { "type": "integer", "minimum": 1 },
             "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "gcsBucket": { "type": "string" },
+            "gcsPrefix": { "type": "string" },
             "artifactStoreAccountUrl": { "type": "string" },
-            "artifactStoreContainer": { "type": "string", "minLength": 1 },
+            "artifactStoreContainer": { "type": "string" },
             "artifactStoreAuthMode": {
               "enum": ["managed_identity", "workload_identity", "default"]
             },

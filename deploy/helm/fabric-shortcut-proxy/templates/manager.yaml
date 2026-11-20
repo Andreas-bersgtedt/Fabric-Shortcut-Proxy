@@ -33,7 +33,7 @@ spec:
         app.kubernetes.io/name: fsp-manager
         app.kubernetes.io/component: control-plane
         {{- include "fsp.commonLabels" . | nindent 8 }}
-        {{- if .Values.workloadIdentity.enabled }}
+        {{- if and .Values.workloadIdentity.enabled (not .Values.gcp.enabled) }}
         azure.workload.identity/use: "true"
         {{- end }}
     spec:
@@ -68,8 +68,10 @@ spec:
                 optional: true
           env:
             {{- if .Values.gcp.enabled }}
+            {{- if eq .Values.gcp.workloadIdentityProvider "aks" }}
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: {{ printf "%s/%s" .Values.gcp.credentialMountPath .Values.gcp.credentialsFileName | quote }}
+            {{- end }}
             {{- with .Values.gcp.project }}
             - name: GCP_PROJECT
               value: {{ . | quote }}
@@ -177,6 +179,12 @@ spec:
               value: {{ .Values.federation.renewIntervalSeconds | quote }}
             - name: FSP_FEDERATION_REPLICA_STORES
               value: {{ .Values.federation.replicaStores | toJson | quote }}
+            {{- if .Values.federation.catalog.gcsBucket }}
+            - name: FSP_CATALOG_STORE_GCS_BUCKET
+              value: {{ .Values.federation.catalog.gcsBucket | quote }}
+            - name: FSP_CATALOG_STORE_GCS_PREFIX
+              value: {{ .Values.federation.catalog.gcsPrefix | quote }}
+            {{- else }}
             - name: FSP_CATALOG_STORE_ACCOUNT_URL
               value: {{ required "federation.catalog.artifactStoreAccountUrl is required" .Values.federation.catalog.artifactStoreAccountUrl | quote }}
             - name: FSP_CATALOG_STORE_CONTAINER
@@ -189,6 +197,7 @@ spec:
               value: {{ .Values.federation.catalog.artifactStoreTenantId | quote }}
             - name: FSP_CATALOG_STORE_TOKEN_FILE
               value: {{ .Values.federation.catalog.artifactStoreTokenFile | quote }}
+            {{- end }}
             {{- end }}
             - name: CONTROL_HOST
               value: 0.0.0.0
@@ -298,7 +307,7 @@ spec:
               mountPath: /etc/fsp-policy
               readOnly: true
             {{- end }}
-            {{- if .Values.gcp.enabled }}
+            {{- if and .Values.gcp.enabled (eq .Values.gcp.workloadIdentityProvider "aks") }}
             - name: gcp-adc
               mountPath: {{ .Values.gcp.credentialMountPath | quote }}
               readOnly: true
@@ -320,7 +329,7 @@ spec:
           persistentVolumeClaim:
             claimName: fsp-manager-config
         {{- end }}
-        {{- if .Values.gcp.enabled }}
+        {{- if and .Values.gcp.enabled (eq .Values.gcp.workloadIdentityProvider "aks") }}
         - name: gcp-adc
           configMap:
             name: {{ required "gcp.credentialsConfigMap is required" .Values.gcp.credentialsConfigMap | quote }}

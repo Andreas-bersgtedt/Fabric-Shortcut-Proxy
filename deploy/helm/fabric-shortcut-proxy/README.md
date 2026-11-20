@@ -90,6 +90,11 @@ schema, remote Helm ownership support, and the existing source Secret before mut
   materializer identity **Storage Blob Data Contributor** on the container or its storage
   account. The chart does not configure storage keys or create the container.
 - `workloadIdentity`: Azure workload identity service account configuration.
+- `gcp`: GKE and AKS GCP identity configuration. Set
+  `workloadIdentityProvider: gke`, `serviceAccountEmail` to the target GSA,
+  and `gcp.enabled: true` for GKE metadata credentials. GKE renders the
+  `iam.gke.io/gcp-service-account` annotation on the chart service accounts
+  and adds no static credentials or ADC mount.
 - `agentAuth`: Entra, required, or one-release compatibility mode plus Secret key
   references. The default is `required`; values never contain token material.
   `identityTokensSecretName` optionally references a Secret containing the

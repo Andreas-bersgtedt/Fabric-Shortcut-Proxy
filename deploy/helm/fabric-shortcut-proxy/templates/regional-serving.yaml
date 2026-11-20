@@ -2,6 +2,7 @@
 {{- $serving := .Values.federation.regionalServing }}
 {{- $cloudStore := $serving.cloudStore | default dict }}
 {{- $annotations := $serving.serviceAccountAnnotations | default dict }}
+{{- $gcpServiceAccountEmail := $serving.gcpServiceAccountEmail | default "" }}
 {{- if not $serving.buckets }}{{ fail "federation.regionalServing.buckets is required" }}{{ end }}
 {{- if hasKey $annotations "azure.workload.identity/client-id" }}
 {{- fail "use federation.regionalServing.clientId for the Azure workload identity" }}
@@ -9,8 +10,8 @@
 {{- if and $cloudStore (or $serving.artifactStoreAccountUrl $serving.artifactStoreContainer) }}
 {{- fail "cannot combine cloudStore with Azure artifact store settings" }}
 {{- end }}
-{{- if and $cloudStore (not .Values.workloadIdentity.enabled) }}
-{{- fail "cloud regional serving requires workloadIdentity.enabled=true for the Azure catalog" }}
+{{- if and $cloudStore (not .Values.workloadIdentity.enabled) (not .Values.gcp.enabled) }}
+{{- fail "cloud regional serving requires workloadIdentity.enabled=true" }}
 {{- end }}
 apiVersion: v1
 kind: ServiceAccount
@@ -20,7 +21,11 @@ metadata:
   labels:
     {{- include "fsp.commonLabels" . | nindent 4 }}
   annotations:
+    {{- if $gcpServiceAccountEmail }}
+    iam.gke.io/gcp-service-account: {{ $gcpServiceAccountEmail | quote }}
+    {{- else }}
     azure.workload.identity/client-id: {{ required "federation.regionalServing.clientId is required" $serving.clientId | quote }}
+    {{- end }}
     {{- with $annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -48,7 +53,7 @@ spec:
       labels:
         app.kubernetes.io/name: fsp-regional-serving
         {{- include "fsp.commonLabels" . | nindent 8 }}
-        {{- if .Values.workloadIdentity.enabled }}
+        {{- if and .Values.workloadIdentity.enabled (not $gcpServiceAccountEmail) }}
         azure.workload.identity/use: "true"
         {{- end }}
     spec:
@@ -105,12 +110,21 @@ spec:
             - name: ARTIFACT_STORE_TOKEN_FILE
               value: ""
             {{- end }}
+            {{- if $gcpServiceAccountEmail }}
+            {{- if .Values.federation.catalog.gcsBucket }}
+            - name: FSP_CATALOG_STORE_GCS_BUCKET
+              value: {{ .Values.federation.catalog.gcsBucket | quote }}
+            - name: FSP_CATALOG_STORE_GCS_PREFIX
+              value: {{ .Values.federation.catalog.gcsPrefix | quote }}
+            {{- end }}
+            {{- else }}
             - name: FSP_CATALOG_STORE_ACCOUNT_URL
               value: {{ required "federation.catalog.artifactStoreAccountUrl is required" .Values.federation.catalog.artifactStoreAccountUrl | quote }}
             - name: FSP_CATALOG_STORE_CONTAINER
               value: {{ .Values.federation.catalog.artifactStoreContainer | quote }}
             - name: FSP_CATALOG_STORE_AUTH_MODE
               value: workload_identity
+            {{- end }}
             - name: ENABLE_CREDENTIAL_STORE
               value: "0"
           ports:

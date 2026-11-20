@@ -51,9 +51,29 @@ def create_catalog_app(
     placement: PlacementConfig | None = None,
 ) -> FastAPI:
     if store is None:
-        from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
+        import os
 
-        store = get_default_store()
+        catalog_gcs_bucket = os.environ.get(
+            "FSP_CATALOG_STORE_GCS_BUCKET", ""
+        ).strip()
+        if catalog_gcs_bucket:
+            from fabric_shortcut_proxy.runtime.cloud_artifact_store import (
+                build_cloud_data_store_from_settings,
+            )
+
+            store = build_cloud_data_store_from_settings(
+                "gcs",
+                {
+                    "bucket": catalog_gcs_bucket,
+                    "prefix": os.environ.get(
+                        "FSP_CATALOG_STORE_GCS_PREFIX", ""
+                    ).strip(),
+                },
+            )
+        else:
+            from fabric_shortcut_proxy.runtime.artifact_store import get_default_store
+
+            store = get_default_store()
     catalog = GlobalCatalog(store, placement or PlacementConfig.from_environment())
 
     @contextlib.asynccontextmanager

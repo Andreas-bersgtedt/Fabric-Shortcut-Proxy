@@ -254,11 +254,11 @@ def app_from_environment() -> FastAPI:
     if profile is not None and profile.provider in {"s3", "gcs"}:
         if not cloud_settings:
             raise ValueError("regional S3/GCS serving requires FSP_REGIONAL_SERVING_CLOUD_STORE")
-        if not (
+        if profile.provider == "s3" and not (
             os.environ.get("FSP_CATALOG_STORE_ACCOUNT_URL", "").strip()
             and os.environ.get("FSP_CATALOG_STORE_CONTAINER", "").strip()
         ):
-            raise ValueError("regional S3/GCS serving requires a shared Azure catalog store")
+            raise ValueError("regional S3 serving requires a shared Azure catalog store")
         placement.bind_serving_store(profile_id, profile.provider, endpoint_id)
         from fabric_shortcut_proxy.runtime.cloud_artifact_store import (
             build_cloud_data_store_from_settings,

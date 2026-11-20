@@ -279,16 +279,27 @@ after this pass.
 
 The Fabric capacity became active during the final proof. The existing
 `Issue_11_FSP_test` Lakehouse remained accessible and returned HTTP 200 through
-the Fabric Lakehouse REST API. The remaining live shortcut gate is HMAC key
-creation: GSA HMAC creation failed under
-`constraints/iam.disableServiceAccountKeyCreation`, and no HMAC key exists.
-The Fabric connection list contains no GCS connection that can replace the
-missing credential.
+the Fabric Lakehouse REST API. A user-account HMAC key was created because
+`constraints/iam.disableServiceAccountKeyCreation` prevents service-account
+key creation in this project. The HMAC secret is not stored in this repository.
+
+On 2026-11-20, a 2,809-byte Parquet fixture was uploaded to
+`gs://fsp182-fabric-gcs-project-86992797-5864-4dd6-901/published/1/fsp182-fabric-live.parquet`.
+Fabric connection `c72566e0-b0f1-4dbf-929d-54334e32672a` was created with HTTP
+201 for the bucket-specific Google Cloud Storage endpoint. OneLake shortcut
+`fsp182-gcs-live` was created in `Files` with HTTP 201.
+
+OneLake returned HTTP 200 for HEAD and HTTP 206 for Range
+`bytes=0-63`; the Range response reported `/2809` and a 64-byte body. The HEAD
+response included `x-ms-onelake-from-shortcut-path: true`. A complete GET read
+through the shortcut returned all 2,809 bytes. Parsing the downloaded Parquet
+fixture succeeded with 8 rows and columns `customer_id`, `full_name`, `email`,
+`phone`, `ssn`, `city`, and `signup_date`.
 
 Issue #182 therefore has live GKE, Workload Identity, GCS catalog/replica,
-SigV4, negative-IAM, residency, reader-restart, active-capacity and billing
-evidence. The live Fabric GCS shortcut read remains blocked by the organization
-service-account key policy.
+SigV4, negative-IAM, residency, reader-restart, Fabric capacity, HMAC, OneLake
+shortcut and billing evidence. The GCS object, HMAC key and temporary Fabric
+connection/shortcut were removed after the proof.
 
 [issue-144]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/144
 [issue-171]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/issues/171
@@ -446,7 +457,7 @@ tests exercise last-good reads, replication catch-up and corruption rejection.
 |---|---|---|
 | #142 | Metadata-only CAS catalog, authenticated service/API, Helm workload and private RA-GZRS infrastructure are deployed. A planned Sweden Central→Sweden South failover and planned failback preserved the exact 12,478-byte catalog hash, generation pointers and fencing. Private Endpoints were recreated after each swap, both Fabric shortcuts were verified, RA-GZRS was restored in Sweden Central, and stale-owner renewal/publication remained rejected at fence 6. | Acceptance criteria complete. |
 | #143 | Catalog CAS is the sole federated snapshot visibility commit. Live bidirectional handover advanced fences 1→2→3, the North Europe owner published generation 6, and its stale renewal and publication authority were rejected after handback. Tests also cover both owner directions, expiry and post-commit bookkeeping failure. | Physical primary-store relocation is not implemented. |
-| #144 / #171 / #182 / #183 | GCS live shared-conformance and mount conformance passed in 3.2.1 UAT. GCS regional replication/serving integration passed the SDK-backed environment test. Recreated GKE/GCS proof passed catalog, replica, signed-reader and negative-IAM checks on 2026-11-20. Live S3/Blob provider evidence and AWS deployment remain. Cross-object S3/GCS control mutations are unsupported. | GCS provider/store evidence is complete. #171 remains the umbrella; #182 owns GCP/GKE/GCS and #183 owns AWS/EKS/S3. The live GKE/GCS proof is complete. The live Fabric shortcut read is blocked by inactive workspace capacity and the service-account key policy. |
+| #144 / #171 / #182 / #183 | GCS live shared-conformance and mount conformance passed in 3.2.1 UAT. GCS regional replication/serving integration passed the SDK-backed environment test. Recreated GKE/GCS proof passed catalog, replica, signed-reader and negative-IAM checks on 2026-11-20. The live Fabric GCS shortcut passed OneLake HEAD 200, Range 206 and an 8-row Parquet parse. Live S3/Blob provider evidence and AWS deployment remain. Cross-object S3/GCS control mutations are unsupported. | GCS provider/store evidence is complete. #171 remains the umbrella for shared cross-cloud residency and failover; #182 owns GCP/GKE/GCS and #183 owns AWS/EKS/S3. |
 | #145 | Entra managed identity; additive VM VNet peerings and Blob private DNS link; container-scoped staging identity; packaged-checkout installer with private DNS/identity/readiness preflight and async SQLite; deployed Azure-IaaS Agent authenticated with the `FSP.Agent` app role and no static shared secret; live proof that its identity can write/delete only in `fsp-hybrid-staging` while catalog, published and replica writes return 403; and a deployed mTLS fallback that re-verifies the CA-signed certificate at Manager, maps its SHA-256 fingerprint to `hybrid-site-01` and exactly the `hybrid-site` pool, while rejecting missing, unknown and Agent-mismatched certificates. | Acceptance criteria complete. |
 | #146 | Whole-chain declaration validation, inherited constraints and dispatch rejection; regional reader binds its local profile/provider/endpoint without enabling cross-store dispatch; actual regional reader identities can read assigned objects/catalog but receive 403 on writes; catalog and reader workloads mount minimized Secrets with no `DB_URL`; NetworkPolicies expose no SQL egress; catalog storage contains JSON metadata plus an empty lease-lock blob and no Parquet; and a live out-of-boundary replica policy returns `residency_policy_violation`. | Multi-store materialization dispatch is not implemented, but it is outside the current single-primary routing contract. |
 | #147 | Durable asynchronous Manager reconciliation, immutable copying, verified advertisement, restart/catch-up tests, signed regional S3 GET/HEAD/Range/list reads, deployed replica/reader identities and TLS endpoints, actual Fabric reads through both regional endpoints, a measured Sweden-loss recovery read in 23.478 seconds, and live proof that a lagging replica serves the older complete generation while the unadvertised generation returns 404. A 15-generation SQL-backed run completed with zero failures, verified every advertised object and manifest, exposed no intermediate pointer, and recorded a 15.310-second maximum against the 60-second SLO. | Acceptance criteria complete. Portable receipts are needed only if verification moves to an independent worker. |

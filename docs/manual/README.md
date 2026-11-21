@@ -1,6 +1,6 @@
-# Fabric Shortcut Proxy — User Manual
+# Fabric Shortcut Proxy User Manual
 
-Version 3.2.1
+Version 3.2.2
 
 This manual is the end-to-end guide to installing, configuring, and operating the
 Fabric Shortcut Proxy. It is organized into chapters (files) that each cover one

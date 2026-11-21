@@ -84,7 +84,7 @@ def create_catalog_app(
 
     app = FastAPI(
         title="Fabric Shortcut Proxy: Global Catalog",
-        version="3.2.1",
+        version="3.2.2",
         lifespan=lifespan,
     )
     app.state.catalog = catalog

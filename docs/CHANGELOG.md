@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.2] - 2026-11-21
+
+### Added
+
+- Added GKE GCS federation configuration for Google Cloud Workload Identity,
+  GCS catalog and replica stores, and GCS-backed regional readers.
+- Added Helm coverage for GKE service-account annotations, GCS catalog and
+  replica environment settings, regional-reader cloud-store settings, and
+  configurable PVC access modes.
+- Recorded live GKE/GCS evidence for a zonal `europe-west1-b` proof:
+  Workload Identity, catalog and replica reads, SigV4 GET/HEAD/Range, negative
+  IAM and prefix isolation, and reader Pod restart.
+- Recorded live Microsoft Fabric OneLake evidence: a GCS HMAC connection and
+  shortcut returned HTTP 201, OneLake HEAD returned 200, Range returned 206,
+  and a complete 2,809-byte Parquet fixture parsed into 8 rows and 7 columns.
+
+### Changed
+
+- Updated release documentation and package metadata to describe the GCP
+  GKE/GCS capability as delivered under issue #182.
+- Recorded `£0.00` GCP console cost for 1-20 November 2026 against the trial
+  credit and the temporary proof cleanup.
+
+### Fixed
+
+- Added optional Google SDK exception handling for Lite and Enterprise CI
+  environments without GCP dependencies.
+
 ## [3.2.1] - 2026-11-19
 
 ### Added
@@ -864,7 +892,8 @@ data appear as shortcut-readable table objects in Microsoft Fabric.
 - **Manager/Agent** control plane: table/snapshot registry, agent supervisor,
   gateway round-robin, heartbeats, leader-lease HA, rolling restart, retention GC.
 
-[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.2.1...HEAD
+[Unreleased]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.2.2...HEAD
+[3.2.2]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.2.1...3.2.2
 [3.2.1]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.2.0...3.2.1
 [3.2.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.1.0...3.2.0
 [3.1.0]: https://github.com/Andreas-bersgtedt/Fabric-Shortcut-Proxy/compare/3.0.1...3.1.0

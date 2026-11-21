@@ -1,19 +1,20 @@
 # Upgrade to 3.2
 
-Version 3.2.1 includes the 3.2.0 operator API contract and adds live GCS mount
-and BigQuery beta support, plus opt-in S3/GCS replica and
-regional-reader support. S3/GCS support is beta for non-production evaluation;
-live-provider acceptance is still open.
+Version 3.2.2 includes the 3.2.0 operator API contract and GCP GKE/GCS
+deployment support. It adds live GCS mount and BigQuery beta support, GKE
+Workload Identity configuration, GCS catalog and replica stores, signed
+regional-reader profiles, and a live Fabric OneLake shortcut read. AWS, shared
+cross-cloud failover, and other provider production exits remain separate work.
 
 ## Before upgrading
 
 - Back up the configuration and encrypted credential store using the
   [backup guidance](BACKUP_RESTORE.md). Keep the 3.1.0 images and chart
   available for rollback.
-- Upgrade Lite and Enterprise together. Enterprise 3.2.1 requires exactly
-  `fabric-shortcut-proxy==3.2.1`. Roll out matching Manager, Python
+- Upgrade Lite and Enterprise together. Enterprise 3.2.2 requires exactly
+  `fabric-shortcut-proxy==3.2.2`. Roll out matching Manager, Python
   materializer, catalog, and regional-reader images.
-- The chart defaults to Python and C++ image tags `3.2.1`. Publish and verify
+- The chart defaults to Python and C++ image tags `3.2.2`. Publish and verify
   those images before deploying, or configure the intended immutable image
   digests. The C++ serving Agent has its own versioning.
 - Quiesce configuration writes during a mixed-version rollout. The 3.1.0
@@ -53,6 +54,6 @@ before configuring the beta workloads.
 
 Stop configuration writes, roll back the chart and matching images together,
 and verify readiness and the previous regional reads. Configuration saved by
-3.2.1 is not automatically reverted; verify it against 3.1.0 or restore the
+3.2.2 is not automatically reverted; verify it against 3.1.0 or restore the
 pre-upgrade backup before resuming writes. Do not assume that a 3.1.0 client
 enforces `If-Match`.

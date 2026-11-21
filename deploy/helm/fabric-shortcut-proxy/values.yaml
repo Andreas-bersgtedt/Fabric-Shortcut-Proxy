@@ -7,11 +7,11 @@ images:
   pullSecrets: []
   python:
     repository: fabric-shortcut-proxy-python
-    tag: "3.2.1"
+    tag: "3.2.2"
     digest: ""
   cpp:
     repository: fabric-shortcut-proxy-cpp
-    tag: "3.2.1"
+    tag: "3.2.2"
     digest: ""
   nginx:
     repository: nginx

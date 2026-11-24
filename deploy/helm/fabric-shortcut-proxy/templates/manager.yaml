@@ -68,9 +68,13 @@ spec:
                   path.parent.mkdir(parents=True, exist_ok=True)
                   seed = json.loads(os.environ["FSP_USER_DIRECTORY_SEED"])
                   path.write_text(json.dumps(seed, indent=2) + "\n", encoding="utf-8")
+              module_target = Path(os.environ["FSP_MODULE_PACKAGES_DIR"])
+              module_target.mkdir(parents=True, exist_ok=True)
           env:
             - name: FSP_USER_DIRECTORY_FILE
               value: {{ .Values.manager.userDirectoryFile | quote }}
+            - name: FSP_MODULE_PACKAGES_DIR
+              value: {{ .Values.manager.modulePackagesDir | quote }}
             - name: FSP_USER_DIRECTORY_SEED
               value: {{ dict "users" .Values.manager.userDirectorySeed.users "groups" .Values.manager.userDirectorySeed.groups | toJson | quote }}
           volumeMounts:
@@ -268,6 +272,14 @@ spec:
               value: {{ .Values.manager.adminUiEnabled | quote }}
             - name: FSP_USER_DIRECTORY_FILE
               value: {{ .Values.manager.userDirectoryFile | quote }}
+            - name: FSP_MODULE_PACKAGES_DIR
+              value: {{ .Values.manager.modulePackagesDir | quote }}
+            - name: PYTHONPATH
+              value: {{ .Values.manager.modulePackagesDir | quote }}
+            - name: TMPDIR
+              value: /tmp
+            - name: PIP_CACHE_DIR
+              value: /tmp/pip-cache
             - name: AGENT_HOST_ALLOWLIST
               value: {{ .Values.manager.agentHostAllowlist | quote }}
             {{- if .Values.manager.entra.enabled }}
@@ -334,6 +346,10 @@ spec:
             - name: artifacts
               mountPath: /config
             {{- end }}
+            - name: module-installer-tmp
+              mountPath: /tmp
+            - name: module-installer-tmp
+              mountPath: /var/tmp
             {{- if $replicaSpool.enabled }}
             - name: replica-upload-spool
               mountPath: /run/fsp-replica-spool
@@ -370,6 +386,8 @@ spec:
           persistentVolumeClaim:
             claimName: fsp-manager-config
         {{- end }}
+        - name: module-installer-tmp
+          emptyDir: {}
         {{- if and .Values.gcp.enabled (eq .Values.gcp.workloadIdentityProvider "aks") }}
         - name: gcp-adc
           configMap:

@@ -162,6 +162,7 @@ manager:
   monitorEnabled: "1"
   adminUiEnabled: "0"
   userDirectoryFile: /config/users.json
+  modulePackagesDir: /config/module-packages
   userDirectorySeed:
     enabled: false
     users: []

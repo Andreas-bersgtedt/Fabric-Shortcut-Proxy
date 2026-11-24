@@ -143,6 +143,10 @@ spec:
               value: /config
             - name: CREDENTIAL_STORE_PATH
               value: {{ .Values.manager.credentialStorePath | quote }}
+            - name: FSP_MODULE_PACKAGES_DIR
+              value: {{ .Values.manager.modulePackagesDir | quote }}
+            - name: PYTHONPATH
+              value: {{ .Values.manager.modulePackagesDir | quote }}
             {{- end }}
           ports:
             - name: health

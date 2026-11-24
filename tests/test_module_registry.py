@@ -87,6 +87,20 @@ def test_status_ignores_desired_profile_for_missing_package(monkeypatch):
     assert oracle["effective_enabled"] is False
 
 
+def test_module_installer_targets_writable_directory():
+    import module_installer
+
+    command, packages = module_installer._pip_command(
+        ["postgres", "oracle"],
+        "/config/module-packages",
+    )
+    assert "--target" in command
+    target = command[command.index("--target") + 1]
+    assert target == "/config/module-packages"
+    assert "asyncpg" in packages
+    assert "oracledb" in packages
+
+
 @pytest.mark.asyncio
 async def test_install_uses_allowlisted_profile(monkeypatch, tmp_path):
     import module_installer
@@ -112,5 +126,8 @@ async def test_install_uses_allowlisted_profile(monkeypatch, tmp_path):
     assert accepted["desired"] == ["postgres"]
     assert module_installer.status()["status"] == "succeeded"
     command = calls[0][0]
-    assert ".[postgres]" in command
+    assert "--target" in command
+    target = command[command.index("--target") + 1]
+    assert target == "/tmp/fsp-module-packages"
+    assert "asyncpg" in command
     assert "not-a-package" not in command

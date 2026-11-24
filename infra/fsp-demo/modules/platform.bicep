@@ -144,6 +144,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-07-01' = {
         name: appSubnetName
         properties: {
           addressPrefix: networkConfig.appSubnetPrefix
+          networkSecurityGroup: {
+            id: appSubnetNsg.id
+          }
         }
       }
       {
@@ -187,6 +190,11 @@ resource aks 'Microsoft.ContainerService/managedClusters@2025-05-01' = {
   name: aksName
   location: location
   tags: tags
+  dependsOn: [
+    vnet
+    appSubnetNsg
+    nginxPublicIp
+  ]
   identity: {
     type: 'SystemAssigned'
   }
@@ -428,47 +436,43 @@ resource nginxPublicIp 'Microsoft.Network/publicIPAddresses@2024-07-01' = {
   }
 }
 
-resource appSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-07-01' existing = {
+resource appSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-07-01' = {
   name: '${vnetName}-${appSubnetName}-nsg-${location}'
-}
-
-resource publicIngressRule 'Microsoft.Network/networkSecurityGroups/securityRules@2024-07-01' = {
-  parent: appSubnetNsg
-  name: 'AllowFspPublicIngress'
+  location: location
+  tags: tags
   properties: {
-    priority: 500
-    access: 'Allow'
-    direction: 'Inbound'
-    protocol: 'Tcp'
-    sourcePortRange: '*'
-    destinationPortRanges: [
-      '80'
-      '443'
+    securityRules: [
+      {
+        name: 'AllowFspPublicIngress'
+        properties: {
+          priority: 500
+          access: 'Allow'
+          direction: 'Inbound'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRanges: [
+            '80'
+            '443'
+          ]
+          sourceAddressPrefix: 'Internet'
+          destinationAddressPrefix: nginxPublicIp.properties.ipAddress
+        }
+      }
+      {
+        name: 'AllowOpdgFspPrivateHttps'
+        properties: {
+          priority: 510
+          access: 'Allow'
+          direction: 'Inbound'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '443'
+          sourceAddressPrefix: networkConfig.sourceIngressCidr
+          destinationAddressPrefix: fspPrivateLoadBalancerIp
+        }
+      }
     ]
-    sourceAddressPrefix: 'Internet'
-    destinationAddressPrefix: nginxPublicIp.properties.ipAddress
   }
-  dependsOn: [
-    aks
-  ]
-}
-
-resource opdgPrivateIngressRule 'Microsoft.Network/networkSecurityGroups/securityRules@2024-07-01' = {
-  parent: appSubnetNsg
-  name: 'AllowOpdgFspPrivateHttps'
-  properties: {
-    priority: 510
-    access: 'Allow'
-    direction: 'Inbound'
-    protocol: 'Tcp'
-    sourcePortRange: '*'
-    destinationPortRange: '443'
-    sourceAddressPrefix: networkConfig.sourceIngressCidr
-    destinationAddressPrefix: fspPrivateLoadBalancerIp
-  }
-  dependsOn: [
-    aks
-  ]
 }
 
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {

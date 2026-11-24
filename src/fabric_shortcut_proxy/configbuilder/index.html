@@ -4866,7 +4866,7 @@ function renderModules(){
       option.textContent = value ? "enabled" : "disabled";
       const effectiveEnabled = typeof module.effective_enabled === "boolean"
         ? module.effective_enabled
-        : (module.desired || module.active || module.required);
+        : (module.required || (module.active && module.id !== "reidentification"));
       option.selected = effectiveEnabled === value;
       option.disabled = module.required && !value;
       select.appendChild(option);

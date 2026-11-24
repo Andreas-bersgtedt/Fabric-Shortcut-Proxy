@@ -131,8 +131,7 @@ def module_status() -> dict:
         installed, versions = _installed(module)
         active, detail = _active(module, installed)
         effective_enabled = (
-            module.id in desired
-            or module.id in required
+            module.id in required
             or (active and module.id != "reidentification")
         )
         rows.append({

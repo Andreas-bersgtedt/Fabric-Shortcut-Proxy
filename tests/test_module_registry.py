@@ -66,6 +66,27 @@ def test_status_keeps_reidentification_disabled_until_profile_selected(monkeypat
     assert reidentification["effective_enabled"] is False
 
 
+def test_status_ignores_desired_profile_for_missing_package(monkeypatch):
+    monkeypatch.setattr(module_registry, "desired_profile", lambda: ["oracle"])
+    monkeypatch.setattr(module_registry, "required_modules", lambda: {})
+    monkeypatch.setattr(
+        module_registry,
+        "_installed",
+        lambda module: (False, {}),
+    )
+    monkeypatch.setattr(
+        module_registry,
+        "_active",
+        lambda module, installed: (False, "package missing"),
+    )
+    status = module_registry.module_status()
+    oracle = next(row for row in status["modules"] if row["id"] == "oracle")
+    assert oracle["desired"] is True
+    assert oracle["installed"] is False
+    assert oracle["active"] is False
+    assert oracle["effective_enabled"] is False
+
+
 @pytest.mark.asyncio
 async def test_install_uses_allowlisted_profile(monkeypatch, tmp_path):
     import module_installer

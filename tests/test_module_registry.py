@@ -50,7 +50,20 @@ def test_status_reports_installed_and_active(monkeypatch):
     postgres = next(row for row in status["modules"] if row["id"] == "postgres")
     assert postgres["installed"] is True
     assert postgres["active"] is True
+    assert postgres["effective_enabled"] is True
     assert postgres["restart_required"] is True
+
+
+def test_status_keeps_reidentification_disabled_until_profile_selected(monkeypatch):
+    monkeypatch.setattr(module_registry.importlib.metadata, "version", lambda package: "1.0")
+    monkeypatch.setattr(module_registry.importlib.util, "find_spec", lambda name: object())
+    status = module_registry.module_status()
+    reidentification = next(
+        row for row in status["modules"] if row["id"] == "reidentification"
+    )
+    assert reidentification["active"] is True
+    assert reidentification["desired"] is False
+    assert reidentification["effective_enabled"] is False
 
 
 @pytest.mark.asyncio

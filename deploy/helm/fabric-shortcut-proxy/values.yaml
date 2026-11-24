@@ -162,6 +162,10 @@ manager:
   monitorEnabled: "1"
   adminUiEnabled: "0"
   userDirectoryFile: /config/users.json
+  userDirectorySeed:
+    enabled: false
+    users: []
+    groups: []
   credentialStorePath: /config/credentials.json
   agentHostAllowlist: "127.0.0.1,0.0.0.0,::1,::,localhost"
   operatorSecretName: fsp-manager-auth

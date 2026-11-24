@@ -4864,7 +4864,10 @@ function renderModules(){
       const option = document.createElement("option");
       option.value = String(value);
       option.textContent = value ? "enabled" : "disabled";
-      option.selected = module.desired === value;
+      const effectiveEnabled = typeof module.effective_enabled === "boolean"
+        ? module.effective_enabled
+        : (module.desired || module.active || module.required);
+      option.selected = effectiveEnabled === value;
       option.disabled = module.required && !value;
       select.appendChild(option);
     });

@@ -130,12 +130,18 @@ def module_status() -> dict:
     for module in CATALOG:
         installed, versions = _installed(module)
         active, detail = _active(module, installed)
+        effective_enabled = (
+            module.id in desired
+            or module.id in required
+            or (active and module.id != "reidentification")
+        )
         rows.append({
             "id": module.id,
             "extra": module.extra,
             "capability": module.capability,
             "packages": list(module.packages),
             "desired": module.id in desired,
+            "effective_enabled": effective_enabled,
             "required": module.id in required,
             "required_reason": required.get(module.id),
             "installed": installed,

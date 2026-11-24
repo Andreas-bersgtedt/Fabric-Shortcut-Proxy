@@ -50,6 +50,47 @@ spec:
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      {{- if .Values.manager.userDirectorySeed.enabled }}
+      initContainers:
+        - name: seed-user-directory
+          image: {{ include "fsp.image" .Values.images.python | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - python
+            - -c
+          args:
+            - |
+              from pathlib import Path
+              import json
+              import os
+              path = Path(os.environ["FSP_USER_DIRECTORY_FILE"])
+              if not path.exists():
+                  path.parent.mkdir(parents=True, exist_ok=True)
+                  seed = json.loads(os.environ["FSP_USER_DIRECTORY_SEED"])
+                  path.write_text(json.dumps(seed, indent=2) + "\n", encoding="utf-8")
+          env:
+            - name: FSP_USER_DIRECTORY_FILE
+              value: {{ .Values.manager.userDirectoryFile | quote }}
+            - name: FSP_USER_DIRECTORY_SEED
+              value: {{ dict "users" .Values.manager.userDirectorySeed.users "groups" .Values.manager.userDirectorySeed.groups | toJson | quote }}
+          volumeMounts:
+            {{- if .Values.storage.azureFiles.enabled }}
+            - name: config
+              mountPath: /config
+              {{- with .Values.storage.azureFiles.managerConfig.subPath }}
+              subPath: {{ . | quote }}
+              {{- end }}
+            {{- else }}
+            - name: artifacts
+              mountPath: /config
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      {{- end }}
       containers:
         - name: manager
           image: {{ include "fsp.image" .Values.images.python | quote }}

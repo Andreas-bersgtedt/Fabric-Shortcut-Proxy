@@ -47,6 +47,10 @@ manager:
   adminUiEnabled: "1"
   credentialStorePath: /config/secrets/credentials.json
   agentHostAllowlist: "127.0.0.1,0.0.0.0,::1,::,localhost,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  userDirectorySeed:
+    enabled: false
+    users: []
+    groups: []
   entra:
     enabled: true
     tenantId: 00000000-0000-0000-0000-000000000001
